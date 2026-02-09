@@ -7,18 +7,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/pion/webrtc/v3"
 )
 
 // Engine manages WebRTC peer connections and media handling
 // All WebRTC operations happen in the Bridge, not in containers
 type Engine struct {
-	config     EngineConfig
-	mediaAPI   *webrtc.API
-	mu         sync.RWMutex
-	connections map[string]*PeerConnectionWrapper
-	stopChan   chan struct{}
-	wg         sync.WaitGroup
+	config       EngineConfig
+	mediaAPI     *webrtc.API
+	mu           sync.RWMutex
+	connections  map[string]*PeerConnectionWrapper
+	stopChan     chan struct{}
+	wg           sync.WaitGroup
+	turnManager  *turn.Manager // TURN credential manager
 }
 
 // EngineConfig holds configuration for the WebRTC engine
@@ -370,7 +372,7 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
-// SetTURNServers configures TURN servers for the engine
+// SetTURNServers configures TURN servers for the engine with ephemeral credentials
 func (e *Engine) SetTURNServers(turnURL, turnUsername, turnPassword string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -383,6 +385,45 @@ func (e *Engine) SetTURNServers(turnURL, turnUsername, turnPassword string) {
 			Credential: turnPassword,
 		},
 	)
+}
+
+// SetTURNServersWithManager configures TURN servers using the TURN manager
+// This generates ephemeral credentials per session
+func (e *Engine) SetTURNServersWithManager(sessionID string, ttl time.Duration) ([]webrtc.ICEServer, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.turnManager == nil {
+		return nil, fmt.Errorf("TURN manager not initialized")
+	}
+
+	// Generate ephemeral TURN credentials
+	turnCreds, err := e.turnManager.GenerateTURNCredentials(sessionID, ttl)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate TURN credentials: %w", err)
+	}
+
+	// Convert to Pion ICE servers
+	iceServers := make([]webrtc.ICEServer, 0, len(turnCreds))
+	for _, cred := range turnCreds {
+		iceServers = append(iceServers, webrtc.ICEServer{
+			URLs:       []string{cred.TURNServer},
+			Username:   cred.Username,
+			Credential: cred.Password,
+		})
+	}
+
+	// Add to configuration
+	e.config.Configuration.ICEServers = append(e.config.Configuration.ICEServers, iceServers...)
+
+	return iceServers, nil
+}
+
+// SetTURNManager sets the TURN credential manager
+func (e *Engine) SetTURNManager(manager *turn.Manager) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.turnManager = manager
 }
 
 // CreateDataChannel creates a new data channel on the peer connection
