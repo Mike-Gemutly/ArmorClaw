@@ -60,7 +60,7 @@ jobs:
           CONTAINER_ID=$(
             docker run -d --rm \
               -e OPENAI_API_KEY="sk-test-ci-secret" \
-              armorclaw/agent:v1 sleep infinity
+              armorclaw/agent:v1 python -c "import time; time.sleep(999999)"
           )
           sleep 2
 
