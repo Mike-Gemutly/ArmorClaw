@@ -1,0 +1,81 @@
+# Test configuration for WebRTC soak testing
+# This configuration is designed for long-running stability tests
+
+[bridge]
+# Test socket path
+socket_path = "/run/armorclaw/soak-test.sock"
+
+# Enable detailed logging for soak testing
+log_level = "info"
+log_format = "json"
+
+# Matrix configuration (disabled for soak testing)
+[matrix]
+homeserver = "https://matrix.example.com"
+user_id = "@bridge:example.com"
+device_id = "SOAKTEST"
+enabled = false
+
+# WebRTC configuration
+[webrtc]
+# Long lifetimes for soak testing
+default_lifetime = "1h"
+max_lifetime = "24h"
+
+# ICE servers (public STUN only)
+[[webrtc.ice_servers]]
+urls = ["stun:stun.l.google.com:19302"]
+
+# Audio configuration
+[webrtc.audio]
+sample_rate = 48000
+channels = 1
+bitrate = 64000
+
+# Security - memory-only for tests
+[security]
+# Use memory-only keystore for tests
+keystore_path = ":memory:"
+keystore_password = "test-soak-password"
+
+# Enable strict validation to catch issues
+strict_validation = true
+
+# Voice configuration for soak testing
+[voice]
+# Moderate limits for soak testing
+max_concurrent_calls = 50
+max_call_duration = "24h"
+
+# Minimal rate limiting (to test rotation)
+rate_limit_calls = 1000
+rate_limit_window = "1h"
+
+# Open access for soak tests
+allow_all_users = true
+allow_all_rooms = true
+
+# Disable E2EE requirement for soak tests
+require_e2ee = false
+require_signaling_tls = false
+
+# Budget limits (very high for soak testing)
+default_token_limit = 10000000
+default_duration_limit = "24h"
+warning_threshold = 0.95
+hard_stop = false
+
+# TTL configuration (long intervals)
+[voice.ttl]
+default_ttl = "1h"
+max_ttl = "24h"
+enforcement_interval = "5m"
+warning_threshold = 0.95
+hard_stop = false
+
+# Memory tracking
+[testing]
+# Enable memory profiling
+enable_pprof = true
+# Record heap allocations
+heap_profile_interval = "5m"

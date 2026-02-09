@@ -1,0 +1,72 @@
+# Test configuration for WebRTC load testing
+# This configuration is optimized for high concurrent call handling
+
+[bridge]
+# Test socket path
+socket_path = "/run/armorclaw/load-test.sock"
+
+# Disable logging for performance
+log_level = "error"
+
+# Matrix configuration (disabled for load testing)
+[matrix]
+homeserver = "https://matrix.example.com"
+user_id = "@bridge:example.com"
+device_id = "LOADTEST"
+enabled = false
+
+# WebRTC configuration
+[webrtc]
+# Higher limits for load testing
+default_lifetime = "10m"
+max_lifetime = "1h"
+
+# ICE servers (public STUN only)
+[[webrtc.ice_servers]]
+urls = ["stun:stun.l.google.com:19302"]
+
+# Audio configuration optimized for performance
+[webrtc.audio]
+sample_rate = 48000
+channels = 1
+bitrate = 64000
+
+# Security - relaxed for load testing
+[security]
+# Use memory-only keystore for tests
+keystore_path = ":memory:"
+keystore_password = "test-load-password"
+
+# Disable strict validation for load testing
+strict_validation = false
+
+# Higher limits for load testing
+[voice]
+max_concurrent_calls = 100
+max_call_duration = "2h"
+
+# Disable rate limiting for load tests
+rate_limit_calls = 0
+rate_limit_window = "1h"
+
+# Disable allowlists for load tests
+allow_all_users = true
+allow_all_rooms = true
+
+# Disable E2EE requirement for load tests
+require_e2ee = false
+require_signaling_tls = false
+
+# Budget limits (high for load testing)
+default_token_limit = 1000000
+default_duration_limit = "2h"
+warning_threshold = 0.9
+hard_stop = true
+
+# TTL configuration
+[voice.ttl]
+default_ttl = "10m"
+max_ttl = "1h"
+enforcement_interval = "30s"
+warning_threshold = 0.9
+hard_stop = true
