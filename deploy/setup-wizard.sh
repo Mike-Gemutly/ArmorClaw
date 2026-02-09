@@ -145,24 +145,25 @@ init_logging() {
 #=============================================================================
 
 step_welcome() {
-    print_step 1 12 "Welcome and Overview"
+    print_step 1 14 "Welcome and Overview"
 
     cat <<'EOF'
 ${BOLD}Welcome to ArmorClaw!${NC}
 
 ArmorClaw is a secure containerization system for AI agents. This wizard will guide you through:
 
-  1. ✓ System requirements check
-  2. ✓ Docker installation/verification
-  3. ✓ Container image setup
-  4. ✓ Bridge installation
-  5. ✓ Budget confirmation (FINANCIAL RESPONSIBILITY)
-  6. ✓ Configuration file creation
-  7. ✓ Keystore initialization
-  8. ✓ First API key setup
-  9. ✓ Systemd service setup
-  10. ✓ Post-installation verification
-  11. ✓ Start first agent (optional)
+  1. System requirements check
+  2. Docker installation/verification
+  3. Container image setup
+  4. Bridge installation
+  5. Budget confirmation (FINANCIAL RESPONSIBILITY)
+  6. Configuration file creation
+  7. Keystore initialization
+  8. First API key setup
+  9. Systemd service setup
+  10. Post-installation verification
+  11. Advanced features (WebRTC Voice, Host Hardening, Production Logging)
+  12. Start first agent (optional)
 
 ${BOLD}Estimated time:${NC} 10-15 minutes
 ${BOLD}Configuration directory:${NC} /etc/armorclaw
@@ -183,7 +184,7 @@ EOF
 #=============================================================================
 
 step_prerequisites() {
-    print_step 2 11 "System Requirements Check"
+    print_step 2 14 "System Requirements Check"
 
     local all_ok=true
 
@@ -263,7 +264,7 @@ step_prerequisites() {
 #=============================================================================
 
 step_docker() {
-    print_step 3 11 "Docker Verification"
+    print_step 3 14 "Docker Verification"
 
     if check_command docker; then
         local docker_version=$(docker --version | awk '{print $3}' | sed 's/,//')
@@ -325,7 +326,7 @@ step_docker() {
 #=============================================================================
 
 step_container() {
-    print_step 4 11 "Container Image Setup"
+    print_step 4 14 "Container Image Setup"
 
     # Check if image exists locally
     print_info "Checking for ArmorClaw agent container image..."
@@ -369,7 +370,7 @@ step_container() {
 #=============================================================================
 
 step_bridge_install() {
-    print_step 5 11 "Bridge Installation"
+    print_step 5 14 "Bridge Installation"
 
     # Check if already installed
     if [ -f "/usr/local/bin/armorclaw-bridge" ] || [ -f "/opt/armorclaw/armorclaw-bridge" ]; then
@@ -444,9 +445,9 @@ step_bridge_install() {
 #=============================================================================
 
 step_budget_confirmation() {
-    print_step 6 11 "Budget Confirmation"
+    print_step 6 14 "Budget Confirmation"
 
-    cat <<EOF
+    cat <<'EOF'
 ${BOLD}CRITICAL: Financial Responsibility${NC}
 
 ArmorClaw provides token budget tracking, but you MUST set hard limits
@@ -459,6 +460,15 @@ EOF
     echo "  1. ${CYAN}OpenAI${NC}: https://platform.openai.com/settings/limits"
     echo "  2. ${CYAN}Anthropic${NC}: https://console.anthropic.com/settings/limits"
     echo ""
+    echo -e "${BOLD}Provider Cost Configuration${NC}"
+    echo ""
+    echo "ArmorClaw tracks token usage with default provider costs:"
+    echo "  • gpt-4:         \$30.00 per 1M tokens"
+    echo "  • gpt-3.5-turbo:  \$2.00 per 1M tokens"
+    echo "  • claude-3-opus:  \$15.00 per 1M tokens"
+    echo "  • claude-3-sonnet: \$3.00 per 1M tokens"
+    echo ""
+    echo "You can customize these later in config.toml under [budget.provider_costs]"
 
     print_info "Set your hard monthly limit to a reasonable amount (e.g., \$100)"
     echo ""
@@ -477,7 +487,7 @@ EOF
 #=============================================================================
 
 step_configuration() {
-    print_step 7 11 "Configuration File Creation"
+    print_step 7 14 "Configuration File Creation"
 
     print_info "Creating configuration directory..."
     sudo mkdir -p "$CONFIG_DIR"
@@ -492,7 +502,30 @@ step_configuration() {
     print_info "${BOLD}Configuration Options:${NC}"
 
     local socket_path=$(prompt_input "Socket path" "$SOCKET_PATH")
+
+    # Enhanced logging configuration
+    echo ""
+    print_info "${BOLD}Logging Configuration${NC}"
+    echo "  ${CYAN}Level:${NC}   debug, info, warn, error"
+    echo "  ${CYAN}Format:${NC}  text (human-readable) or json (structured for log aggregation)"
+    echo "  ${CYAN}Output:${NC}  stdout (console) or file:/path/to/log (persistent)"
+    echo ""
+    print_info "${CYAN}Recommendation:${NC} Use JSON format for production with log aggregation"
+    print_info "Security events are always logged regardless of level"
+
     local log_level=$(prompt_input "Log level [debug/info/warn/error]" "info")
+    local log_format=$(prompt_input "Log format [text/json]" "text")
+    local log_output=$(prompt_input "Log output [stdout]" "stdout")
+
+    # Ask about file logging if JSON format selected
+    local log_file=""
+    if [ "$log_format" = "json" ]; then
+        if prompt_yes_no "Enable persistent file logging for production?"; then
+            log_file="/var/log/armorclaw/bridge.log"
+            log_output=$(prompt_input "Log file path" "$log_file")
+        fi
+    fi
+
     local daemonize=$(prompt_input "Run as daemon [true/false]" "false")
 
     # Matrix configuration (optional)
@@ -518,6 +551,14 @@ step_configuration() {
         print_info "ArmorClaw can restrict Matrix communication to trusted senders and rooms."
         print_info "This provides an additional layer of security for remote agent control."
         echo ""
+        print_info "${BOLD}Wildcards for Trusted Senders:${NC}"
+        echo "  • @alice:example.com       - Specific user only"
+        echo "  • *@admin.example.com     - All users from admin domain"
+        echo "  • *:example.com            - Everyone on homeserver"
+        echo ""
+        echo -e "${YELLOW}Security:${NC} Empty allowlist = allow all (default for testing)"
+        echo -e "${GREEN}Recommendation:${NC} Start with specific users, expand as needed"
+        echo ""
 
         local enable_trust="false"
         local trusted_senders=""
@@ -528,7 +569,7 @@ step_configuration() {
             enable_trust="true"
             echo ""
             print_info "Enter trusted Matrix user IDs (one per line, empty line to finish):"
-            print_info "Format: @user:domain.com, *@trusted.domain.com, or *:domain.com for wildcards"
+            print_info "${CYAN}Format:${NC} @user:domain.com, *@trusted.domain.com, or *:domain.com for wildcards"
             echo ""
             while IFS= read -r line; do
                 [ -z "$line" ] && break
@@ -537,7 +578,7 @@ step_configuration() {
 
             echo ""
             print_info "Enter trusted room IDs (one per line, empty line to finish):"
-            print_info "Format: !roomid:domain.com"
+            print_info "${CYAN}Format:${NC} !roomid:domain.com"
             echo ""
             while IFS= read -r line; do
                 [ -z "$line" ] && break
@@ -623,8 +664,95 @@ EOF
 
 [logging]
 level = "$log_level"
-output = "stdout"
+format = "$log_format"
+output = "$log_output"
 EOF
+
+    if [ -n "$log_file" ]; then
+        sudo tee -a "$config_file" > /dev/null <<EOF
+file = "$log_file"
+EOF
+    fi
+
+    # Voice and WebRTC configuration
+    if [ -n "$VOICE_CONFIG" ]; then
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[voice]
+$VOICE_CONFIG
+
+[voice.general]
+default_lifetime = "30m"
+max_lifetime = "2h"
+auto_answer = false
+require_membership = true
+max_concurrent_calls = 5
+
+[voice.security]
+require_e2ee = true
+min_e2ee_algorithm = "megolm.v1.aes-sha2"
+rate_limit = 10
+rate_limit_burst = 20
+require_approval = false
+
+[voice.budget]
+enabled = true
+global_token_limit = 0
+global_duration_limit = "0s"
+enforcement_interval = "30s"
+EOF
+    fi
+
+    # WebRTC signaling configuration
+    if [ -n "$WEBRTC_SIGNALING" ]; then
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[webrtc.signaling]
+$WEBRTC_SIGNALING
+enabled = false
+addr = "0.0.0.0:8443"
+path = "/webrtc"
+tls_cert = ""
+tls_key = ""
+EOF
+    fi
+
+    # Notifications configuration
+    if [ "$notifications_enabled" = "true" ]; then
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[notifications]
+enabled = true
+$notifications_config
+EOF
+    else
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[notifications]
+enabled = false
+admin_room_id = ""
+alert_threshold = 0.8
+EOF
+    fi
+
+    # Event bus configuration
+    if [ "$eventbus_enabled" = "true" ]; then
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[eventbus]
+$eventbus_config
+EOF
+    else
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[eventbus]
+websocket_enabled = false
+websocket_addr = "0.0.0.0:8444"
+websocket_path = "/events"
+max_subscribers = 100
+inactivity_timeout = "30m"
+EOF
+    fi
 
     # Set permissions
     sudo chown armorclaw:armorclaw "$config_file"
@@ -640,7 +768,7 @@ EOF
 #=============================================================================
 
 step_keystore() {
-    print_step 8 11 "Keystore Initialization"
+    print_step 8 14 "Keystore Initialization"
 
     local keystore_db="$DATA_DIR/keystore.db"
 
@@ -680,7 +808,7 @@ EOF
 #=============================================================================
 
 step_api_key() {
-    print_step 9 11 "First API Key Setup"
+    print_step 9 14 "First API Key Setup"
 
     echo ""
     print_info "${BOLD}You can now add your first API key for AI agents.${NC}"
@@ -734,7 +862,7 @@ step_api_key() {
 #=============================================================================
 
 step_systemd() {
-    print_step 10 11 "Systemd Service Setup"
+    print_step 10 14 "Systemd Service Setup"
 
     local service_file="/etc/systemd/system/armorclaw-bridge.service"
 
@@ -801,7 +929,7 @@ EOF
 #=============================================================================
 
 step_verify() {
-    print_step 11 11 "Final Verification"
+    print_step 11 14 "Final Verification"
 
     print_info "Running verification checks..."
 
@@ -919,11 +1047,234 @@ print_completion() {
 }
 
 #=============================================================================
-# Step 10: Start First Agent
+# Step 13: Advanced Features (Optional)
+#=============================================================================
+
+step_advanced_features() {
+    print_step 12 14 "Advanced Features (Optional)"
+
+    cat <<'EOF'
+${BOLD}Advanced Security & Features${NC}
+
+This step configures optional advanced features for production deployments:
+
+  • ${CYAN}WebRTC Voice Calling${NC} - Secure audio calls via Matrix
+  • ${CYAN}Notifications${NC} - Matrix-based system alerts
+  • ${CYAN}Event Bus${NC} - Real-time event push via WebSocket
+  • ${CYAN}Host Hardening${NC} - Firewall + SSH hardening scripts
+  • ${CYAN}Production Logging${NC} - JSON structured logging with file output
+
+${YELLOW}Note:${NC} All features are optional and can be configured later
+EOF
+
+    echo ""
+
+    # WebRTC Voice Calling
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}WebRTC Voice Calling${NC}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo ""
+    cat <<'EOF'
+Enable secure voice calls through Matrix with:
+  • End-to-end encrypted audio via Opus codec
+  • Budget-controlled calls with token/duration limits
+  • NAT traversal via TURN/STUN
+  • E2EE requirement enforcement
+  • Rate limiting and concurrent call limits
+
+${CYAN}Documentation:${NC} docs/guides/webrtc-voice-guide.md
+EOF
+    echo ""
+    if prompt_yes_no "Enable WebRTC Voice Calling?"; then
+        print_info "WebRTC Voice will be enabled in configuration"
+
+        # Voice configuration
+        local voice_default_lifetime=$(prompt_input "Default call lifetime [e.g., 30m]" "30m")
+        local voice_max_lifetime=$(prompt_input "Maximum call lifetime [e.g., 2h]" "2h")
+        local voice_max_concurrent=$(prompt_input "Maximum concurrent calls" "5")
+        local voice_require_e2ee="true"
+        if ! prompt_yes_no "Require end-to-end encryption for calls?"; then
+            voice_require_e2ee="false"
+        fi
+
+        VOICE_CONFIG="enabled = true
+default_lifetime = \"$voice_default_lifetime\"
+max_lifetime = \"$voice_max_lifetime\"
+max_concurrent_calls = $voice_max_concurrent
+require_e2ee = $voice_require_e2ee"
+
+        # WebRTC signaling configuration
+        echo ""
+        print_info "WebRTC Signaling enables browser-based voice clients"
+        if prompt_yes_no "Enable WebRTC signaling server?"; then
+            local signaling_addr=$(prompt_input "Signaling server address" "0.0.0.0:8443")
+            local signaling_path=$(prompt_input "Signaling WebSocket path" "/webrtc")
+
+            WEBRTC_SIGNALING="signaling_enabled = true
+signaling_addr = \"$signaling_addr\"
+signaling_path = \"$signaling_path\""
+        else
+            WEBRTC_SIGNALING="signaling_enabled = false"
+        fi
+
+        print_info "You can customize additional voice settings in config.toml"
+    else
+        VOICE_ENABLED="false"
+        VOICE_CONFIG="enabled = false"
+        WEBRTC_SIGNALING="signaling_enabled = false"
+        print_info "WebRTC Voice disabled (can be enabled later)"
+    fi
+
+    echo ""
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}Notification System${NC}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo ""
+    cat <<'EOF'
+Enable Matrix-based notifications for system events:
+  • ${CYAN}Budget alerts${NC} - Warning when approaching/exceeding limits
+  • ${CYAN}Security events${NC} - Authentication failures, access denied
+  • ${CYAN}Container events${NC} - Started, stopped, failed, restarted
+  • ${CYAN}System alerts${NC} - Startup, shutdown
+
+Notifications are sent to a Matrix admin room of your choice.
+EOF
+    echo ""
+    local notifications_enabled="false"
+    local notifications_config=""
+    if [ "$matrix_enabled" = "true" ]; then
+        if prompt_yes_no "Enable notification system?"; then
+            notifications_enabled="true"
+            local admin_room=$(prompt_input "Admin room ID for notifications" "")
+            local alert_threshold=$(prompt_input "Alert threshold (percentage, e.g., 80)" "80")
+
+            if [ -n "$admin_room" ]; then
+                notifications_config="admin_room_id = \"$admin_room\"
+alert_threshold = $alert_threshold"
+            else
+                print_warning "No admin room specified, using default notifications"
+                notifications_config=""
+            fi
+        fi
+    else
+        print_info "Notifications require Matrix to be enabled"
+    fi
+
+    echo ""
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}Event Bus (Real-Time Event Push)${NC}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo ""
+    cat <<'EOF'
+Enable real-time Matrix event push via WebSocket:
+  • ${CYAN}Real-time delivery${NC} - No polling delay for events
+  • ${CYAN}Event filtering${NC} - Subscribe by room, sender, or event type
+  • ${CYAN}WebSocket support${NC} - Standard protocol for browser/clients
+  • ${CYAN}Reduced bandwidth${NC} - Only relevant events delivered
+
+${CYAN}Documentation:${NC} docs/guides/websocket-client-guide.md
+EOF
+    echo ""
+    local eventbus_enabled="false"
+    local eventbus_config=""
+    if prompt_yes_no "Enable event bus for real-time event push?"; then
+        eventbus_enabled="true"
+
+        # WebSocket server configuration
+        if prompt_yes_no "Enable WebSocket server for event push?"; then
+            local ws_addr=$(prompt_input "WebSocket listen address" "0.0.0.0:8444")
+            local ws_path=$(prompt_input "WebSocket path" "/events")
+            local max_subs=$(prompt_input "Maximum concurrent subscribers" "100")
+            local inactive_timeout=$(prompt_input "Inactivity timeout" "30m")
+
+            eventbus_config="websocket_enabled = true
+websocket_addr = \"$ws_addr\"
+websocket_path = \"$ws_path\"
+max_subscribers = $max_subs
+inactivity_timeout = \"$inactive_timeout\""
+        else
+            eventbus_config="websocket_enabled = false"
+        fi
+    fi
+
+    echo ""
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}Host Security Hardening${NC}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo ""
+    cat <<'EOF'
+Configure host-level security to protect your VPS:
+  • ${CYAN}Firewall (UFW)${NC} - Deny-all default with Tailscale VPN auto-detection
+  • ${CYAN}SSH Hardening${NC} - Key-only authentication, root login disabled
+
+${YELLOW}Warning:${NC} These scripts modify system firewall and SSH configuration
+${CYAN}Documentation:${NC} docs/guides/security-configuration.md
+EOF
+    echo ""
+    if prompt_yes_no "Configure host security hardening?"; then
+        print_info "Checking for security scripts..."
+
+        if [ -f "./deploy/setup-firewall.sh" ] && [ -f "./deploy/harden-ssh.sh" ]; then
+            print_info "Running firewall configuration..."
+            sudo bash ./deploy/setup-firewall.sh
+            print_success "Firewall configured"
+
+            print_info "Running SSH hardening..."
+            sudo bash ./deploy/harden-ssh.sh
+            print_success "SSH hardened"
+
+            print_warning "You may need to reconnect SSH after hardening"
+        else
+            print_warning "Security scripts not found in ./deploy/"
+            print_info "You can run them later:"
+            echo "  sudo ./deploy/setup-firewall.sh"
+            echo "  sudo ./deploy/harden-ssh.sh"
+        fi
+    else
+        print_info "Host hardening skipped (can be configured later)"
+    fi
+
+    echo ""
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}Production Logging${NC}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${NC}"
+    echo ""
+    cat <<'EOF'
+Enable production-ready logging with:
+  • ${CYAN}JSON format${NC} - Structured logs for log aggregation systems
+  • ${CYAN}File output${NC} - Persistent logs for audit trails
+  • ${CYAN}Security events${NC} - Automatic logging of auth, containers, budgets, PII
+
+${GREEN}Benefits:${NC}
+  • Machine-parseable JSON for ELK/Splunk/other log aggregators
+  • Persistent audit trails for compliance
+  • Detailed security event tracking
+EOF
+    echo ""
+
+    # Check if user already selected JSON logging in configuration step
+    if [ "$log_format" = "json" ]; then
+        print_success "Production logging already configured (JSON format)"
+    elif prompt_yes_no "Enable production logging now?"; then
+        print_info "Production logging will be configured in config.toml"
+        print_info "You can customize logging in config.toml under [logging] section"
+    else
+        print_info "Production logging skipped (can be enabled in config.toml)"
+    fi
+
+    echo ""
+    print_success "Advanced features configuration complete"
+    echo ""
+    print_info "All advanced features can be configured later in:"
+    echo "  $CONFIG_DIR/config.toml"
+}
+
+#=============================================================================
+# Step 14: Start First Agent
 #=============================================================================
 
 step_start_agent() {
-    print_step 12 12 "Start First Agent (Optional)"
+    print_step 13 14 "Start First Agent (Optional)"
 
     echo ""
     echo "Would you like to start your first agent now?"
@@ -1057,6 +1408,7 @@ main() {
     step_api_key
     step_systemd
     step_verify
+    step_advanced_features
     step_start_agent
 
     # Print completion message
