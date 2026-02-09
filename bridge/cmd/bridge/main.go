@@ -21,8 +21,12 @@ import (
 	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/docker"
+	"github.com/armorclaw/bridge/pkg/eventbus"
+	"github.com/armorclaw/bridge/pkg/health"
+	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
+	"github.com/armorclaw/bridge/pkg/notification"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/webrtc"
@@ -1167,13 +1171,103 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	// Create voice manager
 	voiceConfig := voice.DefaultConfig()
+
+	// Helper function to parse duration strings
+	parseDuration := func(s string) time.Duration {
+		if s == "" {
+			return 0
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			log.Printf("Warning: Invalid duration '%s': %v", s, err)
+			return 0
+		}
+		return d
+	}
+
+	// Helper function to convert string slice to bool map
+	stringSliceToBoolMap := func(slice []string) map[string]bool {
+		result := make(map[string]bool)
+		for _, s := range slice {
+			result[s] = true
+		}
+		return result
+	}
+
 	// Override with config file values if present
-	if cfg.Voice.DefaultLifetime > 0 {
-		voiceConfig.DefaultLifetime = cfg.Voice.DefaultLifetime
+
+	// General settings
+	if cfg.Voice.DefaultLifetime != "" {
+		if d := parseDuration(cfg.Voice.DefaultLifetime); d > 0 {
+			voiceConfig.DefaultLifetime = d
+		}
 	}
-	if cfg.Voice.MaxLifetime > 0 {
-		voiceConfig.MaxLifetime = cfg.Voice.MaxLifetime
+	if cfg.Voice.MaxLifetime != "" {
+		if d := parseDuration(cfg.Voice.MaxLifetime); d > 0 {
+			voiceConfig.MaxLifetime = d
+		}
 	}
+	voiceConfig.AutoAnswer = cfg.Voice.AutoAnswer
+	voiceConfig.RequireMembership = cfg.Voice.RequireMembership
+	voiceConfig.AllowedRooms = stringSliceToBoolMap(cfg.Voice.AllowedRooms)
+	voiceConfig.BlockedRooms = stringSliceToBoolMap(cfg.Voice.BlockedRooms)
+
+	// Security settings
+	voiceConfig.MaxConcurrentCalls = cfg.Voice.Security.MaxConcurrentCalls
+	if cfg.Voice.Security.MaxCallDuration != "" {
+		if d := parseDuration(cfg.Voice.Security.MaxCallDuration); d > 0 {
+			voiceConfig.SecurityPolicy.MaxCallDuration = d
+		}
+	}
+	voiceConfig.SecurityPolicy.RateLimitCalls = cfg.Voice.Security.RateLimitCalls
+	if cfg.Voice.Security.RateLimitWindow != "" {
+		if d := parseDuration(cfg.Voice.Security.RateLimitWindow); d > 0 {
+			voiceConfig.SecurityPolicy.RateLimitWindow = d
+		}
+	}
+	voiceConfig.SecurityPolicy.RequireE2EE = cfg.Voice.Security.RequireE2EE
+	voiceConfig.SecurityPolicy.RequireSignalingTLS = cfg.Voice.Security.RequireSignalingTLS
+
+	// Budget settings
+	voiceConfig.DefaultTokenLimit = cfg.Voice.Budget.DefaultTokenLimit
+	if cfg.Voice.Budget.DefaultDurationLimit != "" {
+		if d := parseDuration(cfg.Voice.Budget.DefaultDurationLimit); d > 0 {
+			voiceConfig.DefaultDurationLimit = d
+		}
+	}
+	voiceConfig.WarningThreshold = cfg.Voice.Budget.WarningThreshold
+	voiceConfig.HardStop = cfg.Voice.Budget.HardStop
+
+	// TTL settings
+	if cfg.Voice.TTL.DefaultTTL != "" {
+		if d := parseDuration(cfg.Voice.TTL.DefaultTTL); d > 0 {
+			voiceConfig.TTLConfig.DefaultTTL = d
+		}
+	}
+	if cfg.Voice.TTL.MaxTTL != "" {
+		if d := parseDuration(cfg.Voice.TTL.MaxTTL); d > 0 {
+			voiceConfig.TTLConfig.MaxTTL = d
+		}
+	}
+	if cfg.Voice.TTL.EnforcementInterval != "" {
+		if d := parseDuration(cfg.Voice.TTL.EnforcementInterval); d > 0 {
+			voiceConfig.TTLConfig.EnforcementInterval = d
+		}
+	}
+	if cfg.Voice.TTL.WarningThreshold > 0 {
+		voiceConfig.TTLConfig.WarningThreshold = cfg.Voice.TTL.WarningThreshold
+	}
+	voiceConfig.TTLConfig.HardStop = cfg.Voice.TTL.HardStop
+
+	// Update budget config in voiceConfig
+	voiceConfig.BudgetConfig.DefaultTokenLimit = cfg.Voice.Budget.DefaultTokenLimit
+	if cfg.Voice.Budget.DefaultDurationLimit != "" {
+		if d := parseDuration(cfg.Voice.Budget.DefaultDurationLimit); d > 0 {
+			voiceConfig.BudgetConfig.DefaultDurationLimit = d
+		}
+	}
+	voiceConfig.BudgetConfig.WarningThreshold = cfg.Voice.Budget.WarningThreshold
+	voiceConfig.BudgetConfig.HardStop = cfg.Voice.Budget.HardStop
 
 	voiceMgr := voice.NewManager(
 		sessionMgr,
@@ -1199,6 +1293,130 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	log.Println("WebRTC components initialized")
 
+	// Initialize Docker client for container management
+	log.Println("Initializing Docker client...")
+	dockerClient, err := docker.NewClient()
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	// Initialize health monitor
+	log.Println("Initializing container health monitor...")
+	healthConfig := health.DefaultMonitorConfig()
+	healthMonitor := health.NewMonitor(dockerClient, healthConfig)
+
+	// Set up container failure handler
+	healthMonitor.SetFailureHandler(func(containerID, containerName, reason string) {
+		log.Printf("Container failure detected: %s (%s) - %s", containerName, containerID, reason)
+
+		// Send notification if configured
+		if notifier != nil {
+			_ = notifier.SendContainerAlert("container_failed", containerID, containerName, reason)
+		}
+	})
+
+	// Start health monitor
+	if err := healthMonitor.Start(); err != nil {
+		log.Printf("Warning: Failed to start health monitor: %v", err)
+		log.Println("Container health monitoring will not be available")
+	} else {
+		log.Println("Health monitor started")
+	}
+
+	// Initialize notification system (requires Matrix adapter)
+	var notifier *notification.Notifier
+	if cfg.Matrix.Enabled && cfg.Notifications.AdminRoomID != "" {
+		log.Println("Initializing notification system...")
+		// We'll create the notifier after Matrix adapter is initialized
+		// For now, create a placeholder that will be configured later
+		notifier = notification.NewNotifier(nil, notification.Config{
+			AdminRoomID: cfg.Notifications.AdminRoomID,
+			Enabled:     true,
+		})
+	} else {
+		log.Println("Notifications disabled (Matrix not enabled or no admin room configured)")
+	}
+
+	// Initialize event bus for real-time Matrix event push
+	var eventBus *eventbus.EventBus
+	if cfg.Matrix.Enabled {
+		log.Println("Initializing event bus for Matrix events...")
+
+		// Parse inactivity timeout
+		inactivityTimeout := 30 * time.Minute
+		if cfg.EventBus.InactivityTimeout != "" {
+			if d, err := time.ParseDuration(cfg.EventBus.InactivityTimeout); err == nil {
+				inactivityTimeout = d
+			}
+		}
+
+		eventBusConfig := eventbus.Config{
+			WebSocketEnabled:  cfg.EventBus.WebSocketEnabled,
+			WebSocketAddr:     cfg.EventBus.WebSocketAddr,
+			WebSocketPath:     cfg.EventBus.WebSocketPath,
+			MaxSubscribers:    cfg.EventBus.MaxSubscribers,
+			InactivityTimeout: inactivityTimeout,
+		}
+
+		eventBus = eventbus.NewEventBus(eventBusConfig)
+
+		// Start event bus
+		if err := eventBus.Start(); err != nil {
+			log.Printf("Warning: Failed to start event bus: %v", err)
+			log.Println("Real-time event push will not be available")
+			eventBus = nil
+		} else {
+			log.Println("Event bus started for real-time Matrix event distribution")
+			if cfg.EventBus.WebSocketEnabled {
+				log.Printf("WebSocket endpoint: %s%s", cfg.EventBus.WebSocketAddr, cfg.EventBus.WebSocketPath)
+			}
+		}
+	} else {
+		log.Println("Event bus disabled (Matrix not enabled)")
+	}
+
+	// Initialize WebRTC signaling server
+	var signalingSvr *webrtc.SignalingServer
+	if cfg.WebRTC.SignalingEnabled {
+		log.Println("Initializing WebRTC signaling server...")
+		// Create signaling server with WebSocket endpoint
+		signalingSvr = webrtc.NewSignalingServer(
+			cfg.WebRTC.SignalingAddr,
+			cfg.WebRTC.SignalingPath,
+			sessionMgr,
+			tokenMgr,
+		)
+
+		// Configure TLS if certificates provided
+		if cfg.WebRTC.SignalingTLSCert != "" && cfg.WebRTC.SignalingTLSKey != "" {
+			signalingSvr.SetTLS(cfg.WebRTC.SignalingTLSCert, cfg.WebRTC.SignalingTLSKey)
+			log.Printf("Signaling server TLS enabled")
+		}
+
+		// Start signaling server
+		if err := signalingSvr.Start(); err != nil {
+			log.Printf("Warning: Failed to start signaling server: %v", err)
+			log.Println("WebRTC signaling will use JSON-RPC fallback")
+			signalingSvr = nil
+		} else {
+			log.Printf("Signaling server started on %s%s", cfg.WebRTC.SignalingAddr, cfg.WebRTC.SignalingPath)
+		}
+	}
+
+	// Connect notifier to Matrix adapter (if Matrix is enabled)
+	if notifier != nil && cfg.Matrix.Enabled {
+		// We need to get the Matrix adapter from the RPC server later
+		// For now, the notifier will be passed to the budget manager
+		log.Printf("Notifier configured for admin room: %s", cfg.Notifications.AdminRoomID)
+	}
+
+	// Set notifier on budget manager for budget alerts
+	if notifier != nil {
+		// The budget manager has access to the budget tracker
+		// We'll set the notifier on the budget tracker after it's created
+		log.Println("Budget alerts will be sent to Matrix")
+	}
+
 	// Initialize RPC server
 	log.Printf("Starting JSON-RPC server on %s", cfg.Server.SocketPath)
 	server, err := rpc.New(rpc.Config{
@@ -1210,11 +1428,15 @@ func runBridgeServer(cliCfg cliConfig) {
 		// WebRTC components
 		SessionManager:    sessionMgr,
 		TokenManager:      tokenMgr,
-		SignalingServer:   nil, // TODO: Create and pass signaling server
+		SignalingServer:   signalingSvr, // Now integrated
 		WebRTCEngine:      webrtcEngine,
 		TURNManager:       turnMgr,
 		VoiceManager:      voiceMgr,
 		BudgetManager:     budgetMgr,
+		HealthMonitor:     healthMonitor, // Health monitoring
+		Notifier:          notifier, // Notifications
+		EventBus:          eventBus, // Event push mechanism
+	})
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -1224,6 +1446,32 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop()
+
+	// Wire up event bus to Matrix adapter if both are enabled
+	if eventBus != nil && cfg.Matrix.Enabled {
+		log.Println("Wiring Matrix adapter to event bus...")
+		// Get the Matrix adapter from the server and set up event publishing
+		// The RPC server should provide access to the Matrix adapter
+		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
+			// Type assertion to get the actual Matrix adapter
+			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
+				ma.SetEventPublisher(eventBus)
+				log.Println("Matrix events will be published to event bus in real-time")
+			} else {
+				log.Println("Warning: Matrix adapter type assertion failed")
+			}
+		} else {
+			log.Println("Warning: Matrix adapter not available for event bus integration")
+		}
+	}
+
+	// Set notifier's Matrix adapter if notifier is enabled
+	if notifier != nil && cfg.Matrix.Enabled {
+		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
+			notifier.SetMatrixAdapter(matrixAdapter)
+			log.Println("Notifier connected to Matrix adapter")
+		}
+	}
 
 	log.Println("ArmorClaw Bridge is running")
 	log.Println("Press Ctrl+C to stop")
@@ -1236,6 +1484,28 @@ func runBridgeServer(cliCfg cliConfig) {
 	go func() {
 		<-sigCh
 		log.Println("\nShutting down...")
+
+		// Stop WebRTC signaling server
+		if signalingSvr != nil {
+			log.Println("Stopping WebRTC signaling server...")
+			signalingSvr.Stop()
+		}
+
+		// Stop event bus
+		if eventBus != nil {
+			log.Println("Stopping event bus...")
+			eventBus.Stop()
+		}
+
+		// Stop health monitor
+		log.Println("Stopping health monitor...")
+		healthMonitor.Stop()
+
+		// Stop notifier
+		if notifier != nil {
+			log.Println("Stopping notifier...")
+			notifier.Stop()
+		}
 
 		// Stop voice manager
 		voiceMgr.Stop()

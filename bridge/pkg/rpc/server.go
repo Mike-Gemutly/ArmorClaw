@@ -150,6 +150,11 @@ type Server struct {
 	turnMgr        *webrtc.TURNManager
 	voiceMgr       interface{} // *voice.Manager
 	budgetMgr      interface{} // *budget.Manager
+
+	// Health and notification components
+	healthMonitor  interface{} // *health.Monitor
+	notifier       interface{} // *notification.Notifier
+	eventBus       interface{} // *eventbus.EventBus
 }
 
 // ContainerInfo holds information about a running container
@@ -178,6 +183,11 @@ type Config struct {
 	TURNManager      *webrtc.TURNManager
 	VoiceManager     interface{} // *voice.Manager
 	BudgetManager    interface{} // *budget.Manager
+
+	// Health and notification components
+	HealthMonitor    interface{} // *health.Monitor
+	Notifier         interface{} // *notification.Notifier
+	EventBus         interface{} // *eventbus.EventBus
 }
 
 // New creates a new JSON-RPC server
@@ -221,6 +231,10 @@ func New(cfg Config) (*Server, error) {
 		turnMgr:       cfg.TURNManager,
 		voiceMgr:      cfg.VoiceManager,
 		budgetMgr:     cfg.BudgetManager,
+		// Health and notification components
+		healthMonitor: cfg.HealthMonitor,
+		notifier:      cfg.Notifier,
+		eventBus:      cfg.EventBus,
 	}
 
 	// Initialize Matrix adapter if homeserver is configured
@@ -307,6 +321,12 @@ func (s *Server) Stop() error {
 
 	s.wg.Wait()
 	return nil
+}
+
+// GetMatrixAdapter returns the Matrix adapter for external integration
+// This allows other components (like event bus) to wire up Matrix event publishing
+func (s *Server) GetMatrixAdapter() interface{} {
+	return s.matrix
 }
 
 // acceptConnections accepts incoming connections

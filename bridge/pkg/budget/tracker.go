@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/notification"
 )
 
 // TokenCosts defines approximate costs per 1M tokens (input + output average)
@@ -51,6 +53,7 @@ type BudgetTracker struct {
 	mutex          sync.RWMutex         `json:"-"`
 	stateFilePath  string               `json:"-"`
 	costs          map[string]float64   `json:"costs"`
+	notifier       *notification.Notifier `json:"-"`
 }
 
 // NewBudgetTracker creates a new budget tracker
@@ -222,12 +225,35 @@ func (b *BudgetTracker) GetMonthlyLimit() float64 {
 	return b.config.MonthlyLimitUSD
 }
 
-// sendAlert sends a budget alert (logs for now, could send Matrix message)
+// sendAlert sends a budget alert via the notification system
 func (b *BudgetTracker) sendAlert(alertType string, current, limit float64) {
-	// TODO: Send via Matrix adapter
-	// For now, just log the alert
+	// Try to send via notification system first
+	if b.notifier != nil {
+		// Determine session ID (use "global" for budget-wide alerts)
+		sessionID := "global"
+		if alertType == "session_limit" || alertType == "session_warning" {
+			// For session-specific alerts, we'd need to track the current session
+			// For now, use "session" as a placeholder
+			sessionID = "session"
+		}
+
+		err := b.notifier.SendBudgetAlert(alertType, sessionID, current, limit)
+		if err == nil {
+			return // Successfully sent via Matrix
+		}
+		// Fall through to logging if Matrix send fails
+	}
+
+	// Fallback to console logging
 	fmt.Printf("[BUDGET ALERT] %s - Current: $%.2f, Limit: $%.2f\n",
 		alertType, current, limit)
+}
+
+// SetNotifier sets the notification system for budget alerts
+func (b *BudgetTracker) SetNotifier(notifier *notification.Notifier) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.notifier = notifier
 }
 
 // jsonState is used for JSON serialization

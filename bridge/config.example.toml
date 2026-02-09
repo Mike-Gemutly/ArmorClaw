@@ -274,3 +274,59 @@ warn_before_expiration = "5m"
 # Action on TTL expiration
 # Options: "terminate", "warn", "extend"
 on_expiration = "terminate"
+
+[notifications]
+# Notification system configuration
+
+# Admin room ID for receiving system notifications
+# Notifications will be sent to this Matrix room
+admin_room_id = ""
+
+# Enable notifications (requires Matrix to be enabled)
+enabled = false
+
+# Alert threshold (percentage of budget used)
+# Example: 0.8 = send alerts when 80% of budget is used
+alert_threshold = 0.8
+
+[eventbus]
+# Event bus for real-time Matrix event push
+# This replaces polling for Matrix events in containers
+
+# Enable WebSocket server for event push
+# Containers can subscribe to real-time Matrix events via WebSocket
+websocket_enabled = false
+
+# WebSocket listen address (e.g., "0.0.0.0:8444")
+websocket_addr = "0.0.0.0:8444"
+
+# WebSocket path for event subscriptions
+websocket_path = "/events"
+
+# Maximum concurrent subscribers
+# Prevents resource exhaustion from too many connections
+max_subscribers = 100
+
+# Inactivity timeout for subscribers
+# Valid units: s (seconds), m (minutes), h (hours)
+# Subscribers inactive for this long are disconnected
+inactivity_timeout = "30m"
+
+[webrtc.signaling]
+# WebRTC signaling server configuration
+
+# Enable WebSocket signaling server for WebRTC
+# This provides real-time signaling for browser clients
+enabled = false
+
+# WebSocket listen address (e.g., "0.0.0.0:8443")
+addr = "0.0.0.0:8443"
+
+# WebSocket path (e.g., "/webrtc")
+path = "/webrtc"
+
+# TLS certificate file (optional, for wss://)
+tls_cert = ""
+
+# TLS key file (optional, for wss://)
+tls_key = ""

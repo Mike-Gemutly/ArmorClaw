@@ -17,6 +17,11 @@ import (
 	"github.com/armorclaw/bridge/pkg/pii"
 )
 
+// EventPublisher interface for publishing events to external systems
+type EventPublisher interface {
+	Publish(event *MatrixEvent) error
+}
+
 // MatrixAdapter implements Matrix client protocol
 type MatrixAdapter struct {
 	homeserverURL   string
@@ -33,6 +38,7 @@ type MatrixAdapter struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	piiScrubber      *pii.Scrubber
+	eventPublisher   EventPublisher // Event bus for real-time event publishing
 }
 
 // MatrixEvent represents a Matrix event
@@ -356,6 +362,26 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) {
 				default:
 					// Queue full, drop event
 				}
+
+				// Publish to event bus if configured (real-time push)
+				m.mu.RLock()
+				publisher := m.eventPublisher
+				m.mu.RUnlock()
+
+				if publisher != nil {
+					// Publish event asynchronously to avoid blocking sync
+					go func(e *MatrixEvent) {
+						if err := publisher.Publish(e); err != nil {
+							// Log but don't block on publish failures
+							logger.Global().Warn("Failed to publish event to event bus",
+								"error", err,
+								"event_id", e.EventID,
+								"room_id", e.RoomID,
+								"sender", e.Sender,
+							)
+						}
+					}(&event)
+				}
 			}
 		}
 	}
@@ -504,6 +530,14 @@ func (m *MatrixAdapter) GetTrustedRooms() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]string{}, m.trustedRooms...)
+}
+
+// SetEventPublisher sets the event publisher for real-time event distribution
+// This allows the Matrix adapter to publish events to an event bus
+func (m *MatrixAdapter) SetEventPublisher(publisher EventPublisher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventPublisher = publisher
 }
 
 // Close closes the adapter and stops sync

@@ -90,6 +90,12 @@ type Config struct {
 	// Voice configuration
 	Voice VoiceConfig `toml:"voice"`
 
+	// Notifications configuration
+	Notifications NotificationsConfig `toml:"notifications"`
+
+	// Event bus configuration
+	EventBus EventBusConfig `toml:"eventbus"`
+
 	// Logging configuration
 	Logging LoggingConfig `toml:"logging"`
 }
@@ -218,6 +224,13 @@ type WebRTCConfig struct {
 
 	// AudioCodec configuration
 	AudioCodec AudioCodecConfig `toml:"audio_codec"`
+
+	// Signaling server configuration
+	SignalingEnabled bool   `toml:"signaling_enabled" env:"ARMORCLAW_SIGNALING_ENABLED"`
+	SignalingAddr    string `toml:"signaling_addr" env:"ARMORCLAW_SIGNALING_ADDR"`
+	SignalingPath    string `toml:"signaling_path" env:"ARMORCLAW_SIGNALING_PATH"`
+	SignalingTLSCert string `toml:"signaling_tls_cert" env:"ARMORCLAW_SIGNALING_TLS_CERT"`
+	SignalingTLSKey string `toml:"signaling_tls_key" env:"ARMORCLAW_SIGNALING_TLS_KEY"`
 }
 
 // ICEServerConfig represents an ICE server configuration
@@ -331,6 +344,36 @@ type VoiceTTLConfig struct {
 	HardStop bool `toml:"hard_stop" env:"ARMORCLAW_VOICE_TTL_HARD_STOP"`
 }
 
+// NotificationsConfig holds notification system configuration
+type NotificationsConfig struct {
+	// AdminRoomID is the Matrix room ID for admin notifications
+	AdminRoomID string `toml:"admin_room_id" env:"ARMORCLAW_ADMIN_ROOM"`
+
+	// Enabled controls whether notifications are sent
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_NOTIFICATIONS_ENABLED"`
+
+	// AlertThreshold is the percentage at which to send alerts (0.0-1.0)
+	AlertThreshold float64 `toml:"alert_threshold" env:"ARMORCLAW_ALERT_THRESHOLD"`
+}
+
+// EventBusConfig holds event bus configuration for real-time event push
+type EventBusConfig struct {
+	// WebSocketEnabled enables the WebSocket server for event push
+	WebSocketEnabled bool `toml:"websocket_enabled" env:"ARMORCLAW_EVENTBUS_WEBSOCKET_ENABLED"`
+
+	// WebSocketAddr is the WebSocket listen address
+	WebSocketAddr string `toml:"websocket_addr" env:"ARMORCLAW_EVENTBUS_WEBSOCKET_ADDR"`
+
+	// WebSocketPath is the WebSocket path
+	WebSocketPath string `toml:"websocket_path" env:"ARMORCLAW_EVENTBUS_WEBSOCKET_PATH"`
+
+	// MaxSubscribers is the maximum concurrent subscribers
+	MaxSubscribers int `toml:"max_subscribers" env:"ARMORCLAW_EVENTBUS_MAX_SUBSCRIBERS"`
+
+	// InactivityTimeout is the timeout for inactive subscribers
+	InactivityTimeout string `toml:"inactivity_timeout" env:"ARMORCLAW_EVENTBUS_INACTIVITY_TIMEOUT"`
+}
+
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
@@ -388,6 +431,12 @@ func DefaultConfig() *Config {
 				Bitrate:    64000,
 				PayloadType: 111,
 			},
+			// Signaling server configuration
+			SignalingEnabled: false,
+			SignalingAddr:    "0.0.0.0:8443",
+			SignalingPath:    "/webrtc",
+			SignalingTLSCert: "",
+			SignalingTLSKey: "",
 		},
 		Voice: VoiceConfig{
 			DefaultLifetime:      "30m",
@@ -417,6 +466,18 @@ func DefaultConfig() *Config {
 				WarningThreshold:     0.9,
 				HardStop:              true,
 			},
+		},
+		Notifications: NotificationsConfig{
+			AdminRoomID:    "",
+			Enabled:        false,
+			AlertThreshold: 0.8,
+		},
+		EventBus: EventBusConfig{
+			WebSocketEnabled:  false,
+			WebSocketAddr:     "0.0.0.0:8444",
+			WebSocketPath:     "/events",
+			MaxSubscribers:    100,
+			InactivityTimeout: "30m",
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
