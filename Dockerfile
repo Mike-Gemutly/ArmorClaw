@@ -65,8 +65,9 @@ RUN mkdir -p /opt/openclaw && \
 COPY container/opt/openclaw/* /opt/openclaw/
 COPY container/openclaw/ /opt/openclaw/
 
-# Make health check executable
-RUN chmod +x /opt/openclaw/health.sh
+# Make entrypoint and health check executable
+RUN chmod +x /opt/openclaw/entrypoint.py && \
+    chmod +x /opt/openclaw/health.sh
 
 # Ensure all runtime files are owned by claw user
 RUN chown -R claw:claw /opt/openclaw
