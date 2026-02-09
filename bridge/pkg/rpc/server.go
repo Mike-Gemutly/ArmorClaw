@@ -147,6 +147,9 @@ type Server struct {
 	tokenMgr       *webrtc.TokenManager
 	signalingSvr   *webrtc.SignalingServer
 	webrtcEngine   *webrtc.Engine
+	turnMgr        *webrtc.TURNManager
+	voiceMgr       interface{} // *voice.Manager
+	budgetMgr      interface{} // *budget.Manager
 }
 
 // ContainerInfo holds information about a running container
@@ -166,6 +169,15 @@ type Config struct {
 	MatrixHomeserver string
 	MatrixUsername   string
 	MatrixPassword   string
+
+	// WebRTC components (optional - voice calls)
+	SessionManager   *webrtc.SessionManager
+	TokenManager     *webrtc.TokenManager
+	SignalingServer  *webrtc.SignalingServer
+	WebRTCEngine     *webrtc.Engine
+	TURNManager      *webrtc.TURNManager
+	VoiceManager     interface{} // *voice.Manager
+	BudgetManager    interface{} // *budget.Manager
 }
 
 // New creates a new JSON-RPC server
@@ -201,6 +213,14 @@ func New(cfg Config) (*Server, error) {
 		ctx:          ctx,
 		cancel:       cancel,
 		securityLog:  logger.NewSecurityLogger(logger.Global().WithComponent("rpc")),
+		// WebRTC components
+		sessionMgr:   cfg.SessionManager,
+		tokenMgr:     cfg.TokenManager,
+		signalingSvr: cfg.SignalingServer,
+		webrtcEngine: cfg.WebRTCEngine,
+		turnMgr:       cfg.TURNManager,
+		voiceMgr:      cfg.VoiceManager,
+		budgetMgr:     cfg.BudgetManager,
 	}
 
 	// Initialize Matrix adapter if homeserver is configured

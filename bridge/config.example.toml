@@ -158,3 +158,119 @@ token_secret = "change-me-to-a-strong-random-secret"
 # Token TTL (should be shorter than session TTL for security)
 token_ttl = "15m"
 
+[voice]
+# Enable Matrix voice call support
+enabled = false
+
+[voice.general]
+# Default call lifetime (time-to-live)
+# Valid units: s (seconds), m (minutes), h (hours)
+default_lifetime = "30m"
+
+# Maximum call lifetime (hard limit)
+max_lifetime = "2h"
+
+# Automatically answer incoming calls
+auto_answer = false
+
+# Require the bridge to be a member of the room for calls
+require_membership = true
+
+# Maximum number of concurrent calls allowed
+# Set to 0 for unlimited (not recommended for production)
+max_concurrent_calls = 5
+
+# Default token limit per call (number of API operations)
+# 1 token ~= 1 second of audio processing
+default_token_limit = 3600  # ~1 hour at default rate
+
+# Default duration limit per call
+default_duration_limit = "1h"
+
+# Warning threshold (percentage of budget used)
+# Example: 0.8 = warn when 80% of budget is used
+warning_threshold = 0.8
+
+# Hard stop when budget is exceeded (true = terminate call immediately)
+hard_stop = false
+
+[voice.rooms]
+# Room access control - specify rooms by Matrix room ID
+# Leave empty to allow calls from any room (not recommended)
+
+# Allowed rooms (whitelist)
+# Calls only accepted from these rooms
+allowed = []
+
+# Blocked rooms (blacklist)
+# Calls rejected from these rooms
+blocked = []
+
+[voice.security]
+# Voice call security policies
+
+# Require end-to-end encryption for voice calls
+require_e2ee = true
+
+# Minimum E2EE encryption algorithm
+# Options: "olm.v1.curve25519-aes-sha2", "megolm.v1.aes-sha2"
+min_e2ee_algorithm = "megolm.v1.aes-sha2"
+
+# Rate limiting (calls per minute per user)
+rate_limit = 10
+
+# Rate limiting burst size (temporary allowance)
+rate_limit_burst = 20
+
+# Require explicit user approval for new callers
+require_approval = false
+
+# Approval timeout (how long to wait for approval)
+approval_timeout = "5m"
+
+# Audit all voice calls (log to security audit trail)
+audit_calls = true
+
+# Maximum call participants (1 = direct call only)
+max_participants = 2
+
+[voice.budget]
+# Voice call budget enforcement
+
+# Enable budget tracking
+enabled = true
+
+# Global token limit for all voice calls
+# Set to 0 to use per-call limits only
+global_token_limit = 0
+
+# Global duration limit for all voice calls
+# Valid units: s (seconds), m (minutes), h (hours)
+global_duration_limit = "0s"  # 0 = unlimited
+
+# Budget enforcement interval
+# How often to check budget limits
+enforcement_interval = "30s"
+
+[voice.ttl]
+# Session TTL (time-to-live) management
+
+# Default session TTL
+# Valid units: s (seconds), m (minutes), h (hours)
+default_ttl = "30m"
+
+# Maximum allowed TTL
+# Prevents callers from requesting excessively long sessions
+max_ttl = "2h"
+
+# TTL enforcement interval
+# How often to check for expired sessions
+enforcement_interval = "1m"
+
+# Enable TTL warnings
+# Log warnings when sessions are approaching expiration
+warn_before_expiration = "5m"
+
+# Action on TTL expiration
+# Options: "terminate", "warn", "extend"
+on_expiration = "terminate"

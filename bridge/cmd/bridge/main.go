@@ -18,11 +18,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/docker"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/rpc"
+	"github.com/armorclaw/bridge/pkg/voice"
+	"github.com/armorclaw/bridge/pkg/webrtc"
 )
 
 var (
@@ -1138,6 +1141,64 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	log.Println("Keystore initialized with hardware-derived master key")
 
+	// Initialize WebRTC components
+	log.Println("Initializing WebRTC components...")
+
+	// Create session manager
+	sessionMgr := webrtc.NewSessionManager(30 * time.Minute)
+
+	// Create token manager
+	tokenMgr := webrtc.NewTokenManager()
+
+	// Create WebRTC engine
+	webrtcConfig := webrtc.DefaultEngineConfig()
+	webrtcEngine, err := webrtc.NewEngine(webrtcConfig)
+	if err != nil {
+		log.Fatalf("Failed to create WebRTC engine: %v", err)
+	}
+
+	// Create TURN manager (optional)
+	var turnMgr *webrtc.TURNManager
+	if cfg.WebRTC.TURNSharedSecret != "" {
+		turnMgr = webrtc.NewTURNManager(cfg.WebRTC.TURNSharedSecret, cfg.WebRTC.TURNServerURL)
+		webrtcEngine.SetTURNManager(turnMgr)
+		log.Println("TURN manager initialized")
+	}
+
+	// Create voice manager
+	voiceConfig := voice.DefaultConfig()
+	// Override with config file values if present
+	if cfg.Voice.DefaultLifetime > 0 {
+		voiceConfig.DefaultLifetime = cfg.Voice.DefaultLifetime
+	}
+	if cfg.Voice.MaxLifetime > 0 {
+		voiceConfig.MaxLifetime = cfg.Voice.MaxLifetime
+	}
+
+	voiceMgr := voice.NewManager(
+		sessionMgr,
+		tokenMgr,
+		webrtcEngine,
+		turnMgr,
+		voiceConfig,
+	)
+
+	// Start voice manager
+	if err := voiceMgr.Start(); err != nil {
+		log.Printf("Warning: Failed to start voice manager: %v", err)
+		log.Println("Voice calls will not be available")
+	}
+
+	// Create budget manager
+	budgetMgr := budget.NewManager(budget.Config{
+		GlobalTokenLimit:     cfg.Budget.GlobalTokenLimit,
+		GlobalDurationLimit:  cfg.Budget.GlobalDurationLimit,
+		WarningThreshold:     cfg.Budget.WarningThreshold,
+		HardStop:             cfg.Budget.HardStop,
+	})
+
+	log.Println("WebRTC components initialized")
+
 	// Initialize RPC server
 	log.Printf("Starting JSON-RPC server on %s", cfg.Server.SocketPath)
 	server, err := rpc.New(rpc.Config{
@@ -1146,6 +1207,14 @@ func runBridgeServer(cliCfg cliConfig) {
 		MatrixHomeserver: cfg.Matrix.HomeserverURL,
 		MatrixUsername:   cfg.Matrix.Username,
 		MatrixPassword:   cfg.Matrix.Password,
+		// WebRTC components
+		SessionManager:    sessionMgr,
+		TokenManager:      tokenMgr,
+		SignalingServer:   nil, // TODO: Create and pass signaling server
+		WebRTCEngine:      webrtcEngine,
+		TURNManager:       turnMgr,
+		VoiceManager:      voiceMgr,
+		BudgetManager:     budgetMgr,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -1160,17 +1229,22 @@ func runBridgeServer(cliCfg cliConfig) {
 	log.Println("Press Ctrl+C to stop")
 
 	// Wait for interrupt signal
-	ctx, cancel := context.WithCancel(context.Background())
+	shutdownCtx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigCh
 		log.Println("\nShutting down...")
+
+		// Stop voice manager
+		voiceMgr.Stop()
+		webrtcEngine.Stop()
+
 		cancel()
 	}()
 
-	<-ctx.Done()
+	<-shutdownCtx.Done()
 	log.Println("ArmorClaw Bridge stopped")
 }
 

@@ -155,6 +155,7 @@ type MatrixCall struct {
 	SDPOffer      string
 	SDPAnswer     string
 	Candidates    []Candidate
+	BudgetSession *VoiceSessionTracker // Budget tracking
 	mu            sync.RWMutex
 	closeOnce     sync.Once
 	closeChan     chan struct{}
@@ -191,17 +192,47 @@ type Config struct {
 
 	// Blocked rooms
 	BlockedRooms map[string]bool
+
+	// Security policy integration
+	SecurityPolicy SecurityPolicy
+
+	// Budget configuration
+	BudgetConfig Config
+
+	// TTL configuration
+	TTLConfig TTLConfig
+
+	// Token limits
+	DefaultTokenLimit uint64
+	DefaultDurationLimit time.Duration
+
+	// Rate limiting
+	MaxConcurrentCalls int
+	WarningThreshold float64
+	HardStop bool
 }
 
 // DefaultConfig returns default voice manager configuration
 func DefaultConfig() Config {
+	securityPolicy := DefaultSecurityPolicy()
+	budgetConfig := DefaultConfig()
+	ttlConfig := DefaultTTLConfig()
+
 	return Config{
-		DefaultLifetime:    30 * time.Minute,
-		MaxLifetime:        2 * time.Hour,
-		AutoAnswer:         false,
-		RequireMembership:  true,
-		AllowedRooms:       make(map[string]bool),
-		BlockedRooms:       make(map[string]bool),
+		DefaultLifetime:      30 * time.Minute,
+		MaxLifetime:          2 * time.Hour,
+		AutoAnswer:           false,
+		RequireMembership:    true,
+		AllowedRooms:         make(map[string]bool),
+		BlockedRooms:         make(map[string]bool),
+		SecurityPolicy:       securityPolicy,
+		BudgetConfig:         budgetConfig,
+		TTLConfig:            ttlConfig,
+		DefaultTokenLimit:     budgetConfig.DefaultTokenLimit,
+		DefaultDurationLimit:  budgetConfig.DefaultDurationLimit,
+		MaxConcurrentCalls:    securityPolicy.MaxConcurrentCalls,
+		WarningThreshold:      budgetConfig.WarningThreshold,
+		HardStop:             budgetConfig.HardStop,
 	}
 }
 

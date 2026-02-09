@@ -84,6 +84,12 @@ type Config struct {
 	// Budget configuration
 	Budget BudgetConfig `toml:"budget"`
 
+	// WebRTC configuration
+	WebRTC WebRTCConfig `toml:"webrtc"`
+
+	// Voice configuration
+	Voice VoiceConfig `toml:"voice"`
+
 	// Logging configuration
 	Logging LoggingConfig `toml:"logging"`
 }
@@ -193,6 +199,138 @@ type LoggingConfig struct {
 	File string `toml:"file" env:"ARMORCLAW_LOG_FILE"`
 }
 
+// WebRTCConfig holds WebRTC engine configuration
+type WebRTCConfig struct {
+	// DefaultLifetime is the default session lifetime
+	DefaultLifetime string `toml:"default_lifetime" env:"ARMORCLAW_WEBRTC_DEFAULT_LIFETIME"`
+
+	// MaxLifetime is the maximum session lifetime
+	MaxLifetime string `toml:"max_lifetime" env:"ARMORCLAW_WEBRTC_MAX_LIFETIME"`
+
+	// TURNSharedSecret is the shared secret for TURN credentials
+	TURNSharedSecret string `toml:"turn_shared_secret" env:"ARMORCLAW_TURN_SHARED_SECRET"`
+
+	// TURNServerURL is the TURN server URL
+	TURNServerURL string `toml:"turn_server_url" env:"ARMORCLAW_TURN_SERVER_URL"`
+
+	// ICEServers is a list of ICE servers (STUN/TURN)
+	ICEServers []ICEServerConfig `toml:"ice_servers"`
+
+	// AudioCodec configuration
+	AudioCodec AudioCodecConfig `toml:"audio_codec"`
+}
+
+// ICEServerConfig represents an ICE server configuration
+type ICEServerConfig struct {
+	// URLs is a list of ICE server URLs
+	URLs []string `toml:"urls"`
+
+	// Username for TURN authentication (optional)
+	Username string `toml:"username" env:"ARMORCLAW_ICE_USERNAME"`
+
+	// Credential for TURN authentication (optional)
+	Credential string `toml:"credential" env:"ARMORCLAW_ICE_CREDENTIAL"`
+}
+
+// AudioCodecConfig holds audio codec configuration
+type AudioCodecConfig struct {
+	// SampleRate is the audio sample rate in Hz
+	SampleRate uint32 `toml:"sample_rate"`
+
+	// Channels is the number of audio channels (1=mono, 2=stereo)
+	Channels uint8 `toml:"channels"`
+
+	// Bitrate is the target bitrate in bps
+	Bitrate uint32 `toml:"bitrate"`
+
+	// PayloadType is the RTP payload type
+	PayloadType uint8 `toml:"payload_type"`
+}
+
+// VoiceConfig holds voice call configuration
+type VoiceConfig struct {
+	// DefaultLifetime is the default call lifetime
+	DefaultLifetime string `toml:"default_lifetime" env:"ARMORCLAW_VOICE_DEFAULT_LIFETIME"`
+
+	// MaxLifetime is the maximum call lifetime
+	MaxLifetime string `toml:"max_lifetime" env:"ARMORCLAW_VOICE_MAX_LIFETIME"`
+
+	// AutoAnswer automatically answers incoming calls
+	AutoAnswer bool `toml:"auto_answer" env:"ARMORCLAW_VOICE_AUTO_ANSWER"`
+
+	// RequireMembership requires room membership for calls
+	RequireMembership bool `toml:"require_membership" env:"ARMORCLAW_VOICE_REQUIRE_MEMBERSHIP"`
+
+	// AllowedRooms is a list of allowed rooms (empty = all allowed)
+	AllowedRooms []string `toml:"allowed_rooms" env:"ARMORCLAW_VOICE_ALLOWED_ROOMS"`
+
+	// BlockedRooms is a list of blocked rooms
+	BlockedRooms []string `toml:"blocked_rooms" env:"ARMORCLAW_VOICE_BLOCKED_ROOMS"`
+
+	// Security configuration
+	Security VoiceSecurityConfig `toml:"security"`
+
+	// Budget configuration
+	Budget VoiceBudgetConfig `toml:"budget"`
+
+	// TTL configuration
+	TTL VoiceTTLConfig `toml:"ttl"`
+}
+
+// VoiceSecurityConfig holds voice security settings
+type VoiceSecurityConfig struct {
+	// MaxConcurrentCalls is the maximum number of concurrent calls
+	MaxConcurrentCalls int `toml:"max_concurrent_calls" env:"ARMORCLAW_VOICE_MAX_CONCURRENT"`
+
+	// MaxCallDuration is the maximum call duration
+	MaxCallDuration string `toml:"max_call_duration" env:"ARMORCLAW_VOICE_MAX_CALL_DURATION"`
+
+	// RateLimitCalls is the maximum calls per time window
+	RateLimitCalls int `toml:"rate_limit_calls" env:"ARMORCLAW_VOICE_RATE_LIMIT_CALLS"`
+
+	// RateLimitWindow is the rate limit time window
+	RateLimitWindow string `toml:"rate_limit_window" env:"ARMORCLAW_VOICE_RATE_LIMIT_WINDOW"`
+
+	// RequireE2EE requires end-to-end encryption
+	RequireE2EE bool `toml:"require_e2ee" env:"ARMORCLAW_VOICE_REQUIRE_E2EE"`
+
+	// RequireSignalingTLS requires TLS for signaling
+	RequireSignalingTLS bool `toml:"require_signaling_tls" env:"ARMORCLAW_VOICE_REQUIRE_SIGNALING_TLS"`
+}
+
+// VoiceBudgetConfig holds voice budget settings
+type VoiceBudgetConfig struct {
+	// DefaultTokenLimit is the default token limit per call
+	DefaultTokenLimit uint64 `toml:"default_token_limit" env:"ARMORCLAW_VOICE_DEFAULT_TOKEN_LIMIT"`
+
+	// DefaultDurationLimit is the default duration limit per call
+	DefaultDurationLimit string `toml:"default_duration_limit" env:"ARMORCLAW_VOICE_DEFAULT_DURATION_LIMIT"`
+
+	// WarningThreshold is the percentage at which to warn (0.0-1.0)
+	WarningThreshold float64 `toml:"warning_threshold" env:"ARMORCLAW_VOICE_WARNING_THRESHOLD"`
+
+	// HardStop enforces hard limits when exceeded
+	HardStop bool `toml:"hard_stop" env:"ARMORCLAW_VOICE_HARD_STOP"`
+}
+
+// VoiceTTLConfig holds voice TTL settings
+type VoiceTTLConfig struct {
+	// DefaultTTL is the default TTL for voice sessions
+	DefaultTTL string `toml:"default_ttl" env:"ARMORCLAW_VOICE_DEFAULT_TTL"`
+
+	// MaxTTL is the maximum allowed TTL
+	MaxTTL string `toml:"max_ttl" env:"ARMORCLAW_VOICE_MAX_TTL"`
+
+	// EnforcementInterval is how often to check TTL
+	EnforcementInterval string `toml:"enforcement_interval" env:"ARMORCLAW_VOICE_ENFORCEMENT_INTERVAL"`
+
+	// WarningThreshold is the percentage at which to warn
+	WarningThreshold float64 `toml:"warning_threshold" env:"ARMORCLAW_VOICE_TTL_WARNING_THRESHOLD"`
+
+	// HardStop enforces hard TTL expiration
+	HardStop bool `toml:"hard_stop" env:"ARMORCLAW_VOICE_TTL_HARD_STOP"`
+}
+
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
@@ -233,6 +371,52 @@ func DefaultConfig() *Config {
 			AlertThreshold:  80.0,  // Warn at 80%
 			HardStop:        true,   // Prevent overages by default
 			ProviderCosts:   make(map[string]float64),
+		},
+		WebRTC: WebRTCConfig{
+			DefaultLifetime: "30m",
+			MaxLifetime:     "2h",
+			TURNSharedSecret: "",
+			TURNServerURL:    "",
+			ICEServers: []ICEServerConfig{
+				{
+					URLs: []string{"stun:stun.l.google.com:19302"},
+				},
+			},
+			AudioCodec: AudioCodecConfig{
+				SampleRate: 48000,
+				Channels:   1,
+				Bitrate:    64000,
+				PayloadType: 111,
+			},
+		},
+		Voice: VoiceConfig{
+			DefaultLifetime:      "30m",
+			MaxLifetime:          "2h",
+			AutoAnswer:           false,
+			RequireMembership:    true,
+			AllowedRooms:         []string{},
+			BlockedRooms:         []string{},
+			Security: VoiceSecurityConfig{
+				MaxConcurrentCalls:  10,
+				MaxCallDuration:    "1h",
+				RateLimitCalls:      10,
+				RateLimitWindow:     "1h",
+				RequireE2EE:         true,
+				RequireSignalingTLS: true,
+			},
+			Budget: VoiceBudgetConfig{
+				DefaultTokenLimit:    100000,
+				DefaultDurationLimit: "30m",
+				WarningThreshold:    0.8,
+				HardStop:             true,
+			},
+			TTL: VoiceTTLConfig{
+				DefaultTTL:           "10m",
+				MaxTTL:               "1h",
+				EnforcementInterval:  "30s",
+				WarningThreshold:     0.9,
+				HardStop:              true,
+			},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
