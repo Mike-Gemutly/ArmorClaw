@@ -2,6 +2,15 @@
 
 Thank you for your interest in contributing to ArmorClaw! This document provides guidelines for contributing to the project.
 
+## AI Contributors
+
+This project includes [CLAUDE.md](CLAUDE.md) with AI-specific guidance for:
+- Documentation flow (README → Architecture → Features → Functions)
+- Development standards and best practices
+- Project navigation and context
+
+Please review CLAUDE.md if you're working with AI assistants on this project.
+
 ## Development Setup
 
 ### Prerequisites
@@ -28,9 +37,14 @@ docker build -t armorclaw/agent:v1 .
 # Run all tests
 make test-all
 
-# Run specific test suite
+# Run specific test suites
 make test-hardening
-./tests/test-secrets.sh
+make test-secrets
+make test-exploits
+make test-e2e
+
+# Quick smoke test (hardening only)
+make smoke
 ```
 
 ## Code Style

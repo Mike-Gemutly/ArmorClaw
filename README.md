@@ -2,10 +2,6 @@
 
 > **Secure containment for powerful AI agents** — Run GPT-4, Claude, and other agents safely with hardened containers, ephemeral secrets, and strict isolation.
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/armorclaw/armorclaw)](https://goreportcard.com/github.com/armorclaw/armorclaw)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/armorclaw/armorclaw/blob/main/LICENSE)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://hub.docker.com/r/armorclaw/agent)
-
 ---
 
 ## 🎯 Why ArmorClaw?
@@ -216,56 +212,6 @@ Connect via Element X mobile app - chat with your agent from anywhere:
 
 ---
 
-## 📦 Installation
-
-### Prerequisites
-
-- **OS:** Linux (Ubuntu 22.04/24.04, Debian 12), macOS, or Windows (WSL2)
-- **Docker:** Installed and running
-- **Ports:** 80, 443 available (for Element X/Matrix access)
-
-### Option 1: One-Command Install (Recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy.sh | bash
-```
-
-This will:
-1. Detect your platform and download the correct binary
-2. Install Docker (if needed)
-3. Build and start all services
-4. Provision Matrix with admin user and room
-5. Provide Element X connection details
-
-### Option 2: Manual Install
-
-```bash
-# 1. Clone repository
-git clone https://github.com/armorclaw/armorclaw.git
-cd armorclaw
-
-# 2. Run deployment
-./deploy/deploy-all.sh
-
-# 3. Connect via Element X
-# (Details shown at end of deployment)
-```
-
-### Option 3: With Docker Compose
-
-```bash
-# 1. Set your domain
-echo "MATRIX_DOMAIN=your-domain.com" > .env
-
-# 2. Start services
-docker-compose -f docker-compose-stack.yml up -d
-
-# 3. Provision Matrix
-docker-compose -f docker-compose-stack.yml run --rm provision
-```
-
----
-
 ## 🚀 Usage
 
 ### Start an Agent
@@ -310,9 +256,8 @@ echo '{"jsonrpc":"2.0","method":"stop","params":{"name":"my-agent"},"id":1}' | s
 - **[Architecture Review](docs/output/review.md)** — Implementation snapshot with all functions
 
 ### Reference
-- **[API Reference](docs/reference/bridge.md)** — Local Bridge API documentation
-- **[Container Reference](docs/reference/container.md)** — Container hardening and security
-- **[Deployment Guide](docs/guides/deployment-guide.md)** — Comprehensive deployment documentation
+- **[RPC API Reference](docs/reference/rpc-api.md)** — Complete JSON-RPC 2.0 API documentation
+- **[Infrastructure Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md)** — Comprehensive deployment documentation
 
 ### Navigation Path for LLMs
 **README** → **[Documentation Hub](docs/index.md)** → **[V1 Architecture](docs/plans/2026-02-05-armorclaw-v1-design.md)** → **[Reference Docs](docs/reference/)** → **[Function Catalog](docs/output/review.md)**
@@ -345,7 +290,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## 📜 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE.md](LICENSE.md) file for details.
 
 ---
 
@@ -360,8 +305,8 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## 📮 Support
 
 - **Issues:** [GitHub Issues](https://github.com/armorclaw/armorclaw/issues)
-- **Documentation:** [Full Documentation](https://github.com/armorclaw/armorclaw/blob/main/docs/index.md)
-- **License:** [MIT](https://github.com/armorclaw/armorclaw/blob/main/LICENSE)
+- **Documentation:** [Full Documentation](docs/index.md)
+- **License:** [MIT License](LICENSE.md)
 
 ---
 
