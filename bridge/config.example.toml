@@ -105,3 +105,56 @@ output = "/var/log/armorclaw/bridge.log"
 # - service (armorclaw)
 # - version (bridge version)
 # - context-specific fields (session_id, container_id, key_id, etc.)
+
+[webrtc]
+# Enable WebRTC voice call support
+enabled = false
+
+[webrtc.signaling]
+# WebSocket server address for WebRTC signaling
+listen_address = "0.0.0.0:8443"
+
+# WebSocket path for signaling connections
+path = "/webrtc"
+
+# TLS certificate for secure WebSocket (wss://)
+# Leave empty to use unencrypted WebSocket (not recommended for production)
+tls_cert = "/etc/armorclaw/cert.pem"
+tls_key = "/etc/armorclaw/key.pem"
+
+[webrtc.session]
+# Default session TTL (time-to-live)
+# Valid units: s (seconds), m (minutes), h (hours)
+default_ttl = "10m"
+
+# Maximum allowed TTL
+max_ttl = "1h"
+
+# How often to check for expired sessions
+cleanup_interval = "1m"
+
+[webrtc.turn]
+# TURN server configuration for NAT traversal
+enabled = true
+
+# TURN server address
+server = "turn:matrix.armorclaw.com:3478"
+
+# STUN server address
+stun_server = "stun:matrix.armorclaw.com:3478"
+
+[webrtc.media]
+# Audio configuration
+sample_rate = 48000  # Audio sample rate in Hz
+channels = 1         # Number of audio channels (1 = mono, 2 = stereo)
+bitrate = 64000      # Target bitrate in bps
+payload_type = 111   # RTP payload type for Opus codec
+
+[webrtc.security]
+# Call session token secret for HMAC generation
+# In production, use a strong random secret (32+ bytes)
+token_secret = "change-me-to-a-strong-random-secret"
+
+# Token TTL (should be shorter than session TTL for security)
+token_ttl = "15m"
+
