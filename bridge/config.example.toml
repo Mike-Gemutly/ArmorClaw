@@ -1,0 +1,107 @@
+# ArmorClaw Bridge Configuration Example
+#
+# This file contains all available configuration options for the ArmorClaw bridge.
+# Copy this file to ~/.armorclaw/config.toml or /etc/armorclaw/config.toml
+# and customize it for your environment.
+#
+# Configuration precedence (highest to lowest):
+# 1. Environment variables (ARMORCLAW_*)
+# 2. Configuration file
+# 3. Built-in defaults
+
+[server]
+# Path to the Unix domain socket for JSON-RPC communication
+socket_path = "/run/armorclaw/bridge.sock"
+
+# Path to the PID file for daemon mode
+pid_file = "/run/armorclaw/bridge.pid"
+
+# Run as a background daemon
+daemonize = false
+
+[keystore]
+# Path to the encrypted keystore database
+# The database is encrypted using SQLCipher with a hardware-derived master key
+db_path = "~/.armorclaw/keystore.db"
+
+# Optional: Override the hardware-derived master key
+# WARNING: If set, the database will only be accessible with this key
+# For production use, leave this empty to use hardware-derived keys
+master_key = ""
+
+[matrix]
+# Enable Matrix communication
+enabled = false
+
+# Matrix homeserver URL
+homeserver_url = "https://matrix.example.com"
+
+# Matrix username for auto-login
+username = "bridge-bot"
+
+# Matrix password for auto-login
+password = "change-me"
+
+# Device ID for the Matrix client
+device_id = "armorclaw-bridge"
+
+# Sync interval in seconds
+sync_interval = 5
+
+# Rooms to automatically join on login
+auto_rooms = []
+
+[matrix.retry]
+# Maximum number of retry attempts for Matrix operations
+max_retries = 3
+
+# Delay between retries in seconds
+retry_delay = 5
+
+# Backoff multiplier (each retry waits longer)
+backoff_multiplier = 2.0
+
+[logging]
+# Log level: debug, info, warn, error
+# Security events are always logged at INFO level regardless of this setting
+level = "info"
+
+# Log format: text, json
+# Use "json" for structured logging with machine-parseable security events
+# Recommended for production environments with log aggregation systems
+format = "json"
+
+# Log output: stdout, stderr, or absolute file path
+# Use file output for persistent logs and audit trails
+output = "/var/log/armorclaw/bridge.log"
+
+# Examples:
+# 1. Console logging with JSON format (development):
+#    format = "json"
+#    output = "stdout"
+#
+# 2. File logging with structured format (production):
+#    format = "json"
+#    output = "/var/log/armorclaw/bridge.log"
+#
+# 3. Simple text logging (local testing):
+#    format = "text"
+#    output = "stdout"
+#
+# Security events include:
+# - auth_attempt, auth_success, auth_failure, auth_rejected
+# - container_start, container_stop, container_error, container_timeout
+# - secret_access, secret_inject, secret_cleanup
+# - access_denied, access_granted
+# - pii_detected, pii_redacted
+# - budget_warning, budget_exceeded
+# - hitl_required, hitl_approved, hitl_rejected, hitl_timeout
+#
+# All security events include:
+# - timestamp (UTC, RFC3339)
+# - level (debug, info, warn, error)
+# - component (bridge, rpc, matrix, security)
+# - event_type (one of the security events listed above)
+# - service (armorclaw)
+# - version (bridge version)
+# - context-specific fields (session_id, container_id, key_id, etc.)

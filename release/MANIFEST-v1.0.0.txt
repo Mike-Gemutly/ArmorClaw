@@ -1,0 +1,55 @@
+ArmorClaw v1.0.0 Release Manifest
+===================================
+
+Release Date: 2026-02-06
+Version: v1.0.0
+License: MIT
+GitHub: https://github.com/armorclaw/armorclaw
+
+Release Contents:
+-----------------
+armorclaw-v1.0.0-linux-amd64.tar.gz
+  Size: 5.8 MB (compressed)
+  SHA256: dbe82e7f746170b036fc47aae954f207963995ae2d47b059ff10798ed50f18a6
+
+Archive Contents:
+-----------------
+File                        Size        Description
+------------------------    --------    ----------------------------------------
+armorclaw-bridge            11.0 MB     Linux amd64 binary
+install-bridge.sh           11.6 KB     Installation script
+verify-bridge.sh            11.5 KB     Deployment verification script
+verify-checksum.sh          5.4 KB      Checksum verification utility
+config.example.toml         1.8 KB      Configuration template
+LICENSE                     1.1 KB      MIT License
+README.md                   3.7 KB      User documentation
+VERSION                     ~50 B       Version information
+SHA256SUMS                   642 B      File integrity checksums
+SHA256SUMS.example           577 B      Checksum file format example
+
+Installation:
+-------------
+1. Extract archive:
+   tar -xzf armorclaw-v1.0.0-linux-amd64.tar.gz
+
+2. Verify checksums:
+   cd armorclaw-v1.0.0-linux-amd64
+   sha256sum -c SHA256SUMS
+
+3. Install bridge:
+   sudo ./install-bridge.sh
+
+4. Verify installation:
+   sudo ./verify-bridge.sh
+
+Requirements:
+-------------
+- Linux (Ubuntu 22.04/24.04, Debian 12)
+- Docker (for container runtime)
+- systemd (for service management)
+- Root/sudo access
+
+Support:
+--------
+- Issues: https://github.com/armorclaw/armorclaw/issues
+- Documentation: https://github.com/armorclaw/armorclaw/blob/main/doc/index.md

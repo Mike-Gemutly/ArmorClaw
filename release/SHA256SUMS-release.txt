@@ -1,0 +1,12 @@
+# ArmorClaw v1.0.0 Release Checksums
+# Generated: 2026-02-06
+# License: MIT
+
+# Linux amd64 Release
+dbe82e7f746170b036fc47aae954f207963995ae2d47b059ff10798ed50f18a6  armorclaw-v1.0.0-linux-amd64.tar.gz
+
+# To verify:
+# 1. Download the archive and this checksums file
+# 2. Run: sha256sum -c SHA256SUMS-release.txt
+# 3. Extract: tar -xzf armorclaw-v1.0.0-linux-amd64.tar.gz
+# 4. Verify contents: cd armorclaw-v1.0.0-linux-amd64 && sha256sum -c SHA256SUMS

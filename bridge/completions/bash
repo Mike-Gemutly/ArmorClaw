@@ -1,0 +1,89 @@
+# ArmorClaw Bridge Bash Completion Script
+# Install: source <(armorclaw-bridge completion bash)
+# Or: cp to /etc/bash_completion.d/armorclaw-bridge
+
+_armorclaw_bridge_commands() {
+    local commands="init validate add-key list-keys start setup version help"
+    echo "$commands"
+}
+
+_armorclaw_bridge_providers() {
+    local providers="openai anthropic openrouter google gemini xai"
+    echo "$providers"
+}
+
+_armorclaw_bridge_list_keys() {
+    local keys_output=$(armorclaw-bridge list-keys 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        echo "$keys_output" | grep "•" | awk '{print $2}'
+    fi
+}
+
+_armorclaw_bridge() {
+    local cur prev words cword
+    _init_completion || return
+
+    # Handle command completion
+    if [ $cword -eq 1 ]; then
+        COMPREPLY=($(compgen -W "$(_armorclaw_bridge_commands)" -- "$cur"))
+        return 0
+    fi
+
+    # Get the command
+    local cmd="${words[1]}"
+
+    # Handle subcommand completions
+    case "$cmd" in
+        init)
+            COMPREPLY=($(compgen -W "--help -h" -- "$cur"))
+            ;;
+        validate)
+            COMPREPLY=($(compgen -W "--config -c --help -h" -- "$cur"))
+            ;;
+        setup)
+            COMPREPLY=($(compgen -W "--help -h" -- "$cur"))
+            ;;
+        add-key)
+            case "$prev" in
+                --provider|-p)
+                    COMPREPLY=($(compgen -W "$(_armorclaw_bridge_providers)" -- "$cur"))
+                    ;;
+                --token|-t)
+                    # Don't complete token values (they're sensitive)
+                    COMPREPLY=()
+                    ;;
+                --id|--name|-n)
+                    COMPREPLY=($(compgen -W "openai-default anthropic-default" -- "$cur"))
+                    ;;
+                *)
+                    COMPREPLY=($(compgen -W "--provider --token --id --name --help -h" -- "$cur"))
+                    ;;
+            esac
+            ;;
+        list-keys)
+            COMPREPLY=($(compgen -W "--help -h" -- "$cur"))
+            ;;
+        start)
+            case "$prev" in
+                --key|-k)
+                    COMPREPLY=($(compgen -W "$(_armorclaw_bridge_list_keys)" -- "$cur"))
+                    ;;
+                *)
+                    COMPREPLY=($(compgen -W "--key --help -h" -- "$cur"))
+                    ;;
+            esac
+            ;;
+        version|--version|-v)
+            ;;
+        help|--help|-h)
+            ;;
+        *)
+            COMPREPLY=($(compgen -W "--help -h" -- "$cur"))
+            ;;
+    esac
+
+    return 0
+}
+
+complete -F _armorclaw_bridge armorclaw-bridge
+complete -F _armorclaw_bridge ./build/armorclaw-bridge

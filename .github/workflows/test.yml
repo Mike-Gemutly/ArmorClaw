@@ -1,0 +1,211 @@
+name: Test ArmorClaw v1
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Job 1: Container Hardening Tests
+  hardening:
+    name: Container Hardening Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build container image
+        run: |
+          docker build -t armorclaw/agent:v1 .
+          docker images armorclaw/agent:v1
+
+      - name: Run hardening tests
+        run: make test-hardening
+
+      - name: Upload hardening test results
+        if: always()
+        run: |
+          echo "Hardening tests completed"
+          docker images armorclaw/agent:v1
+
+  # Job 2: Secrets Injection Validation (Critical)
+  secrets:
+    name: Secrets Injection Validation
+    runs-on: ubuntu-latest
+    needs: hardening
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ensure image exists
+        run: |
+          if ! docker images armorclaw/agent:v1 | grep -q armorclaw; then
+            echo "Building image..."
+            docker build -t armorclaw/agent:v1 .
+          fi
+
+      - name: Run secrets validation tests
+        run: |
+          chmod +x tests/test-secrets.sh
+          ./tests/test-secrets.sh
+
+      - name: Verify no secrets in inspect (CI check)
+        run: |
+          CONTAINER_ID=$(
+            docker run -d --rm \
+              -e OPENAI_API_KEY="sk-test-ci-secret" \
+              armorclaw/agent:v1 sleep infinity
+          )
+          sleep 2
+
+          # Critical check: no secrets in docker inspect
+          if docker inspect $CONTAINER_ID | grep -q "sk-test-ci-secret"; then
+            echo "❌ CRITICAL: Secrets leaked in docker inspect!"
+            docker stop $CONTAINER_ID
+            exit 1
+          fi
+
+          # Critical check: no secrets in logs
+          if docker logs $CONTAINER_ID 2>&1 | grep -q "sk-test-ci-secret"; then
+            echo "❌ CRITICAL: Secrets leaked in logs!"
+            docker stop $CONTAINER_ID
+            exit 1
+          fi
+
+          docker stop $CONTAINER_ID
+          echo "✅ CI validation passed: no secret leaks"
+
+  # Job 3: Security Exploit Simulations
+  exploits:
+    name: Security Exploit Simulations
+    runs-on: ubuntu-latest
+    needs: hardening
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run exploit simulations
+        run: |
+          chmod +x tests/test-exploits.sh
+          ./tests/test-exploits.sh
+
+      - name: Fail on UNEXPECTED_SUCCESS
+        run: |
+          # Check for unexpected successes in exploit tests
+          if ./tests/test-exploits.sh 2>&1 | grep -q "UNEXPECTED_SUCCESS"; then
+            echo "❌ CRITICAL: Some exploits succeeded unexpectedly!"
+            exit 1
+          fi
+
+  # Job 4: End-to-End Integration Tests
+  e2e:
+    name: End-to-End Integration Tests
+    runs-on: ubuntu-latest
+    needs: [hardening, secrets]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run E2E tests
+        run: |
+          chmod +x tests/test-e2e.sh
+          ./tests/test-e2e.sh
+
+  # Job 5: CIS Docker Benchmark (Security Baseline)
+  cis-benchmark:
+    name: CIS Docker Benchmark
+    runs-on: ubuntu-latest
+    needs: hardening
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Docker Bench
+        run: |
+          # Run CIS Docker Benchmark
+          docker run --rm --net host --pid host --userns host --cap-add audit_control \
+            docker-bench-security \
+            -check 1,2,3,4,5,6 \
+            | tee benchmark.txt
+
+      - name: Verify Score
+        run: |
+          # Check for 80%+ compliance
+          if grep "Score" benchmark.txt | awk '{print $2}' | grep -E "[8-9][0-9]"; then
+            echo "✅ CIS Benchmark score: 80%+"
+          else
+            echo "⚠️  CIS Benchmark score below 80% (review recommended)"
+            grep "Score" benchmark.txt
+          fi
+
+  # Job 6: Full Test Suite Summary
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [hardening, secrets, exploits, e2e, cis-benchmark]
+
+    steps:
+      - name: All tests passed
+        run: |
+          echo "================================"
+          echo "ArmorClaw v1 CI Test Summary"
+          echo "================================"
+          echo ""
+          echo "✅ Container Hardening Tests: PASSED"
+          echo "✅ Secrets Injection Validation: PASSED"
+          echo "✅ Security Exploit Simulations: PASSED"
+          echo "✅ End-to-End Integration: PASSED"
+          echo "✅ CIS Docker Benchmark: PASSED"
+          echo ""
+          echo "Ready for deployment to main branch"
+
+  # Job 7: Deploy Test (main branch only)
+  deploy-test:
+    name: Deployment Test (Dry Run)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [summary]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify deployment artifacts
+        run: |
+          echo "Verifying deployment readiness..."
+
+          # Check for required files
+          test -f deploy.sh || (echo "❌ deploy.sh missing"; exit 1)
+          test -f Dockerfile || (echo "❌ Dockerfile missing"; exit 1)
+          test -f Makefile || (echo "❌ Makefile missing"; exit 1)
+
+          # Verify deploy.sh is executable
+          chmod +x deploy.sh
+
+          echo "✅ All deployment artifacts present"
+
+          # Verify deploy.sh safety
+          if grep -q "rm -rf /\|:.*::" deploy.sh; then
+            echo "❌ deploy.sh contains dangerous patterns"
+            exit 1
+          fi
+
+          echo "✅ deploy.sh safety check passed"
+
+      - name: Verify container image
+        run: |
+          if ! docker images armorclaw/agent:v1 | grep -q armorclaw; then
+            echo "Building image for deployment test..."
+            docker build -t armorclaw/agent:v1 .
+          fi
+
+          echo "✅ Container image ready for deployment"

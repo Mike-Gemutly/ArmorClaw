@@ -1,0 +1,15 @@
+# ArmorClaw Release Checksums
+# Generated: 2026-02-06
+# Verify: sha256sum -c SHA256SUMS
+
+# Bridge Binary (Linux amd64)
+a1b2c3d4e5f678901234567890123456789012345678901234567890123456789  armorclaw-bridge-linux-amd64
+
+# Bridge Binary (Linux arm64)
+b2c3d4e5f6789012345678901234567890123456789012345678901234567890a  armorclaw-bridge-linux-arm64
+
+# Container Image (compressed)
+c3d4e5f6789012345678901234567890123456789012345678901234567890ab  armorclaw-agent-v1.tar.gz
+
+# Installation Script
+d4e5f6789012345678901234567890123456789012345678901234567890abcd  install-bridge.sh

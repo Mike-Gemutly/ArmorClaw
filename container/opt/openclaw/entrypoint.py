@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""
+ArmorClaw v1 Container Entrypoint
+Security boundary: loads secrets from FD passing, starts agent, never logs secret values
+"""
+import os
+import sys
+import subprocess
+import json
+
+# ============================================================================
+# Secrets Loading (File Descriptor Passing)
+# ============================================================================
+
+def validate_secrets(secrets: dict) -> bool:
+    """
+    Validate the structure of loaded secrets.
+
+    Args:
+        secrets: Dict to validate
+
+    Returns:
+        bool: True if secrets structure is valid
+    """
+    if not secrets:
+        return False
+
+    required_fields = ['provider', 'token']
+    for field in required_fields:
+        if field not in secrets:
+            print(f"[ArmorClaw] ✗ ERROR: Missing required field in secrets: {field}", file=sys.stderr)
+            return False
+
+    # Validate token is not empty
+    if not secrets.get('token'):
+        print(f"[ArmorClaw] ✗ ERROR: Token is empty", file=sys.stderr)
+        return False
+
+    return True
+
+def load_secrets_from_bridge() -> dict:
+    """
+    Load secrets from the bridge-provided file descriptor or pipe.
+
+    The bridge creates a file at /run/secrets containing the
+    secrets JSON. We read from it and set environment variables.
+
+    Returns:
+        dict: Loaded secrets with keys: provider, token, display_name
+    """
+    # Check for SECRETS_PATH environment variable (bridge-mounted file)
+    secrets_path = os.getenv('ARMORCLAW_SECRETS_PATH', '/run/secrets')
+
+    secrets = None
+
+    # Try reading from pipe/file first
+    # Need to check if it's a file (not just a directory)
+    if os.path.isfile(secrets_path):
+        try:
+            print(f"[ArmorClaw] Loading secrets from {secrets_path}")
+            with open(secrets_path, 'r') as f:
+                secrets = json.load(f)
+
+            # Validate secrets structure
+            if not validate_secrets(secrets):
+                print("[ArmorClaw] ✗ ERROR: Invalid secrets structure", file=sys.stderr)
+                print("[ArmorClaw] Secrets must contain 'provider' and 'token' fields", file=sys.stderr)
+                return None
+
+            print("[ArmorClaw] ✓ Secrets loaded from bridge")
+        except json.JSONDecodeError as e:
+            print(f"[ArmorClaw] ✗ ERROR: Invalid JSON in secrets file: {e}", file=sys.stderr)
+            return None
+        except Exception as e:
+            print(f"[ArmorClaw] ⚠ Failed to load secrets from file: {e}", file=sys.stderr)
+    elif os.path.isdir(secrets_path):
+        # Directory exists but no file - bridge might not have created it yet
+        print(f"[ArmorClaw] ⚠ Secrets directory exists but no file found at {secrets_path}", file=sys.stderr)
+
+    # If no secrets from file, try environment variables (for testing)
+    if not secrets:
+        env_vars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
+                    'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY']
+        for var in env_vars:
+            if os.getenv(var):
+                print(f"[ArmorClaw] ⚠ Using environment variable {var} (testing mode)")
+                # Don't return secrets from env vars - just note they exist
+                break
+
+    return secrets
+
+def apply_secrets(secrets: dict) -> bool:
+    """
+    Apply loaded secrets to the environment.
+
+    Args:
+        secrets: Dict with provider, token, and optional display_name
+
+    Returns:
+        bool: True if secrets were applied successfully
+    """
+    if not secrets or 'token' not in secrets:
+        return False
+
+    provider = secrets.get('provider', 'unknown').lower()
+    token = secrets['token']
+
+    # Map provider to environment variable name
+    provider_env_map = {
+        'openai': 'OPENAI_API_KEY',
+        'anthropic': 'ANTHROPIC_API_KEY',
+        'openrouter': 'OPENROUTER_API_KEY',
+        'google': 'GOOGLE_API_KEY',
+        'gemini': 'GEMINI_API_KEY',
+        'xai': 'XAI_API_KEY',
+    }
+
+    env_var = provider_env_map.get(provider)
+    if env_var:
+        os.environ[env_var] = token
+        os.environ['ARMORCLAW_PROVIDER'] = provider  # Set provider for agent
+        print(f"[ArmorClaw] ✓ {provider} API key loaded from bridge")
+        return True
+    else:
+        print(f"[ArmorClaw] ⚠ Unknown provider: {provider}", file=sys.stderr)
+        return False
+
+# ============================================================================
+# Secrets Verification (Fail-Fast)
+# ============================================================================
+
+# Try to load secrets from bridge first
+bridge_secrets = load_secrets_from_bridge()
+if bridge_secrets:
+    apply_secrets(bridge_secrets)
+
+# Check for API keys (either from bridge or environment)
+secrets_present = False
+
+if os.getenv('OPENAI_API_KEY'):
+    print("[ArmorClaw] ✓ OpenAI API key present")
+    secrets_present = True
+
+if os.getenv('ANTHROPIC_API_KEY'):
+    print("[ArmorClaw] ✓ Anthropic API key present")
+    secrets_present = True
+
+if os.getenv('OPENROUTER_API_KEY'):
+    print("[ArmorClaw] ✓ OpenRouter API key present")
+    secrets_present = True
+
+if os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY'):
+    print("[ArmorClaw] ✓ Google/Gemini API key present")
+    secrets_present = True
+
+if os.getenv('XAI_API_KEY'):
+    print("[ArmorClaw] ✓ xAI API key present")
+    secrets_present = True
+
+# Fail if no secrets detected
+if not secrets_present:
+    print("[ArmorClaw] ✗ ERROR: No API keys detected", file=sys.stderr)
+    print("[ArmorClaw] Container cannot start without credentials", file=sys.stderr)
+    print("[ArmorClaw]", file=sys.stderr)
+    print("[ArmorClaw] To inject secrets, start container via bridge:", file=sys.stderr)
+    print('[ArmorClaw]   echo \'{"method":"start","params":{"key_id":"..."}}\' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock', file=sys.stderr)
+    print("[ArmorClaw]", file=sys.stderr)
+    print("[ArmorClaw] For testing only, use: docker run -e OPENAI_API_KEY=sk-... armorclaw/agent:v1", file=sys.stderr)
+    sys.exit(1)
+
+# ============================================================================
+# Security: Verify Hardening (Self-Check)
+# ============================================================================
+
+# Verify we're running as non-root (UID 10001)
+try:
+    current_uid = os.getuid()
+    if current_uid != 10001:
+        print(f"[ArmorClaw] ✗ WARNING: Not running as UID 10001 (current: {current_uid})", file=sys.stderr)
+except AttributeError:
+    # Windows doesn't have os.getuid, but container is Linux
+    pass
+
+# ============================================================================
+# Secrets Hygiene (Cleanup After Agent Inherits)
+# ============================================================================
+# NOTE: We NO LONGER unset environment variables here.
+# The agent process (started via os.execv below) will inherit them.
+# Once the agent process is running, we can't clear these from /proc/self/environ
+# but that's acceptable since the container is isolated.
+
+# ============================================================================
+# Health Check and Validation
+# ============================================================================
+
+def validate_agent_startup(cmd):
+    """
+    Validate that the agent command is executable before attempting exec.
+    This provides early failure with clear error messages.
+
+    Args:
+        cmd: Command list to execute
+
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    import shutil
+
+    if not cmd or not cmd[0]:
+        return False, "Empty command specified"
+
+    # Check if command exists
+    cmd_path = shutil.which(cmd[0])
+    if not cmd_path:
+        # Provide helpful error message
+        print(f"[ArmorClaw] ✗ ERROR: Command not found: {cmd[0]}", file=sys.stderr)
+        print(f"[ArmorClaw] Searched in PATH: {os.environ.get('PATH', '')}", file=sys.stderr)
+        return False, f"Command '{cmd[0]}' not found in PATH"
+
+    # Check if command is executable
+    if not os.access(cmd_path, os.X_OK):
+        return False, f"Command '{cmd[0]}' is not executable"
+
+    # For Python commands, verify Python is available
+    if cmd[0] in ['python', 'python3', 'python3.11']:
+        try:
+            subprocess.run([cmd[0], '--version'], capture_output=True, check=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            return False, f"{cmd[0]} --version timed out (check system resources)"
+        except subprocess.CalledProcessError as e:
+            return False, f"{cmd[0]} is not functional: {e}"
+        except FileNotFoundError:
+            return False, f"{cmd[0]} not found"
+
+    return True, None
+
+def check_agent_readiness():
+    """
+    Check if the agent environment is ready for startup.
+    This is called before attempting to start the agent.
+
+    Returns:
+        bool: True if environment is ready
+    """
+    # Check for required environment variables
+    required_vars = []
+    for var in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
+                'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY']:
+        if os.getenv(var):
+            required_vars.append(var)
+
+    if not required_vars:
+        print("[ArmorClaw] ⚠ WARNING: No API keys detected - agent may fail", file=sys.stderr)
+
+    # Check available memory (basic sanity check)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            meminfo = f.read()
+            # Parse MemAvailable (or MemTotal if MemAvailable not present)
+            for line in meminfo.split('\n'):
+                if line.startswith('MemAvailable:') or line.startswith('MemTotal:'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        kb = int(parts[1])
+                        mb = kb // 1024
+                        if mb < 128:  # Less than 128MB available
+                            print(f"[ArmorClaw] ⚠ WARNING: Low memory available ({mb}MB)", file=sys.stderr)
+                        break
+    except (FileNotFoundError, ValueError, IndexError):
+        pass  # Meminfo not available (non-Linux or read error)
+
+    return True
+
+# ============================================================================
+# Start OpenClaw Agent
+# ============================================================================
+
+print("[ArmorClaw] Starting OpenClaw agent...")
+
+# Get the command to run from CMD or use default
+if len(sys.argv) > 1:
+    cmd = sys.argv[1:]
+else:
+    # Default: start ArmorClaw agent (direct Python import)
+    cmd = ['python', '-c', 'from openclaw import main; main()']
+
+# Pre-flight validation
+print(f"[ArmorClaw] Validating agent startup: {' '.join(cmd[:2])}...")
+is_valid, error_msg = validate_agent_startup(cmd)
+if not is_valid:
+    print(f"[ArmorClaw] ✗ ERROR: Agent validation failed: {error_msg}", file=sys.stderr)
+    print(f"[ArmorClaw] Container cannot start without the agent", file=sys.stderr)
+    print(f"[ArmorClaw]", file=sys.stderr)
+    print(f"[ArmorClaw] This may indicate:", file=sys.stderr)
+    print(f"[ArmorClaw]   1. The agent module is not installed", file=sys.stderr)
+    print(f"[ArmorClaw]   2. The container image is incomplete", file=sys.stderr)
+    print(f"[ArmorClaw]   3. A build or installation issue", file=sys.stderr)
+    print(f"[ArmorClaw]", file=sys.stderr)
+    print(f"[ArmorClaw] For testing, you can override the command:", file=sys.stderr)
+    print(f'[ArmorClaw]   docker run --rm -e OPENAI_API_KEY=sk-... {cmd[0]} <your-command>', file=sys.stderr)
+    sys.exit(127)  # 127 = command not found
+
+# Check environment readiness
+if not check_agent_readiness():
+    print("[ArmorClaw] ⚠ WARNING: Environment checks failed", file=sys.stderr)
+    print("[ArmorClaw] Agent may not function correctly", file=sys.stderr)
+
+print("[ArmorClaw] ✓ Agent validation passed, starting...")
+
+# Use exec to replace Python with agent process (PID 1)
+# This ensures signals are handled correctly and environment is inherited
+# Note: os.execv does not return on success - the current process is replaced
+# Timeout handling is the responsibility of the container orchestrator (Docker)
+try:
+    # Try to find the command (already validated above)
+    import shutil
+    cmd_path = shutil.which(cmd[0])
+    if cmd_path:
+        os.execv(cmd_path, cmd)
+    else:
+        # Command not found, try execvp as fallback
+        os.execvp(cmd[0], cmd)
+except (FileNotFoundError, OSError) as e:
+    # This should not happen after validation, but handle it anyway
+    print(f"[ArmorClaw] ✗ ERROR: Unexpected error during exec: {e}", file=sys.stderr)
+    print(f"[ArmorClaw] Command: {' '.join(cmd)}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    # Catch-all for any other errors
+    print(f"[ArmorClaw] ✗ ERROR: Failed to start agent: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# This line should never be reached due to exec
+print("[ArmorClaw] ✗ ERROR: exec returned unexpectedly", file=sys.stderr)
+sys.exit(1)

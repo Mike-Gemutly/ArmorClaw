@@ -1,0 +1,95 @@
+# ArmorClaw .gitignore
+
+# Development documentation (kept in /docs/ but not in repo)
+/docs/
+/doc/
+
+# Build artifacts
+/build/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go specific
+*.mod.sum
+vendor/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.cert
+
+# Local configuration
+/armorclaw/config.toml
+/armorclaw/keystore.db
+/armorclaw/cdg.db
+/.armorclaw/
+
+# Runtime files
+/run/
+*.pid
+*.sock
+
+# Logs
+*.log
+/logs/
+
+# Test coverage
+*.coverprofile
+coverage.html
+coverage.out
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+
+# Node modules (if any frontend)
+node_modules/
+
+# Docker volumes (local development)
+docker-volumes/
+
+# Claude Code memory (local only)
+C:\Users\Micha\.claude\projects\
+
+# Local deployment artifacts
+*.tar.gz
+*.tgz
+secureclaw-*.tar.gz
+
+# Local environment scripts
+claude_code_zai_env.sh
+
+# Windows null device artifacts
+nul

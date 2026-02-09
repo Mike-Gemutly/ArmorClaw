@@ -1,0 +1,103 @@
+#compdef armorclaw-bridge
+# ArmorClaw Bridge Zsh Completion Script
+# Install: source <(armorclaw-bridge completion zsh)
+# Or: cp to /usr/local/share/zsh/site-functions/_armorclaw-bridge
+
+_armorclaw_bridge_commands() {
+    local -a commands
+    commands=(
+        'init:Initialize configuration file'
+        'validate:Validate configuration'
+        'setup:Run interactive setup wizard'
+        'add-key:Add an API key to the keystore'
+        'list-keys:List all stored API keys'
+        'start:Start an agent container'
+        'version:Show version information'
+        'help:Show help information'
+    )
+    _describe 'command' commands
+}
+
+_armorclaw_bridge_providers() {
+    local -a providers
+    providers=(
+        'openai:OpenAI (GPT-4, GPT-3.5)'
+        'anthropic:Anthropic (Claude)'
+        'openrouter:OpenRouter (multi-provider)'
+        'google:Google (Gemini)'
+        'gemini:Google (Gemini)'
+        'xai:xAI (Grok)'
+    )
+    _describe 'provider' providers
+}
+
+_armorclaw_bridge_list_keys() {
+    local -a keys
+    keys=($(armorclaw-bridge list-keys 2>/dev/null | grep "•" | awk '{print $2}'))
+    if [ ${#keys[@]} -eq 0 ]; then
+        _message 'no keys found (run: armorclaw-bridge add-key)'
+    else
+        _describe 'stored-key' keys
+    fi
+}
+
+_armorclaw_bridge() {
+    local -a commands
+    commands=(
+        'init:Initialize configuration file'
+        'validate:Validate configuration'
+        'setup:Run interactive setup wizard'
+        'add-key:Add an API key to the keystore'
+        'list-keys:List all stored API keys'
+        'start:Start an agent container'
+        'version:Show version information'
+        'help:Show help information'
+    )
+
+    case $state in
+        command)
+            _describe 'command' commands
+            ;;
+        init)
+            _arguments \
+                '(-c --config-output)'{-c,--config-output}'[Output path for config file]'
+            ;;
+        validate)
+            _arguments \
+                '(-c --config)'{-c,--config}'[Path to configuration file]'
+            ;;
+        setup)
+            _arguments \
+                '(-c --config)'{-c,--config}'[Path to configuration file]'
+            ;;
+        add-key)
+            _arguments \
+                '(-p --provider)'{-p,--provider}'[AI provider]:provider:_armorclaw_bridge_providers' \
+                '(-t --token)'{-t,--token}'[API token]' \
+                '(-i --id)'{-i,--id}'[Key ID (default: <provider>-default)]' \
+                '(-n --name)'{-n,--name}'[Display name for the key]'
+            ;;
+        list-keys)
+            _arguments \
+                '(-c --config)'{-c,--config}'[Path to configuration file]'
+            ;;
+        start)
+            _arguments \
+                '(-k --key)'{-k,--key}'[Key ID to use]:key:_armorclaw_bridge_list_keys' \
+                '(-c --config)'{-c,--config}'[Path to configuration file]'
+            ;;
+        version)
+            ;;
+        help)
+            ;;
+        *)
+            _arguments \
+                '(-c --config)'{-c,--config}'[Path to configuration file]' \
+                '(-v --verbose)'{-v,--verbose}'[Verbose logging (debug level)]' \
+                '(-h --help)'{-h,--help}'[Show help]' \
+                '(-V --version)'{-V,--version}'[Show version]'
+            ;;
+    esac
+}
+
+_armorclaw_bridge "$@"

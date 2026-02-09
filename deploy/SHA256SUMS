@@ -1,0 +1,6 @@
+# ArmorClaw Release Checksums
+# Generated: 2026-02-06
+# Verify: sha256sum -c SHA256SUMS
+
+# Bridge Binary (Windows amd64)
+1e32dd391fa3ca247fc8b08043c9665a79500e29e754b528cb9e881fda05f20a  armorclaw-bridge.exe

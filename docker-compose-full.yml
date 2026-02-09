@@ -1,0 +1,211 @@
+# Docker Compose: ArmorClaw Complete Stack
+# All-in-one deployment for ArmorClaw with Matrix
+# Launch container and immediately connect via Element X
+
+version: "3.8"
+
+services:
+  # ========================================
+  # Matrix Conduit Homeserver
+  # ========================================
+  matrix:
+    image: matrixconduit/matrix-conduit:v0.4.0
+    container_name: armorclaw-matrix
+    restart: unless-stopped
+
+    volumes:
+      - conduit_data:/var/lib/matrix-conduit
+      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
+
+    ports:
+      - "6167:6167"   # Client API
+      - "8448:8448"   # Federation
+
+    networks:
+      - armorclaw-net
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:6167/_matrix/client/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 50M
+
+  # ========================================
+  # Caddy Reverse Proxy (with automatic SSL)
+  # ========================================
+  caddy:
+    image: caddy:2-alpine
+    container_name: armorclaw-caddy
+    restart: unless-stopped
+
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./configs/Caddyfile:/etc/caddy/Caddyfile:ro
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    networks:
+      - armorclaw-net
+
+    depends_on:
+      - matrix
+
+    deploy:
+      resources:
+        limits:
+          memory: 100M
+        reservations:
+          memory: 20M
+
+    environment:
+      - MATRIX_DOMAIN=${MATRIX_DOMAIN:-matrix.localhost}
+      - ACME_AGREE=true
+
+  # ========================================
+  # ArmorClaw Bridge (Containerized)
+  # ========================================
+  bridge:
+    image: armorclaw/bridge:v1.0.0
+    container_name: armorclaw-bridge
+    restart: unless-stopped
+
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile
+
+    volumes:
+      - bridge_data:/etc/armorclaw
+      - bridge_run:/run/armorclaw
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-in-Docker for agent containers
+
+    networks:
+      - armorclaw-net
+
+    depends_on:
+      - matrix
+
+    environment:
+      - ARMORCLAW_CONFIG=/etc/armorclaw/config.toml
+      - ARMORCLAW_MATRIX_ENABLED=true
+      - ARMORCLAW_MATRIX_HOMESERVER_URL=http://matrix:6167
+      - ARMORCLAW_MATRIX_USERNAME=${MATRIX_BRIDGE_USER:-bridge}
+      - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-change-me}
+
+    deploy:
+      resources:
+        limits:
+          memory: 100M
+        reservations:
+          memory: 30M
+
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+
+  # ========================================
+  # Provisioning Service (One-time setup)
+  # ========================================
+  provision:
+    image: alpine:latest
+    container_name: armorclaw-provision
+    restart: "no"
+
+    volumes:
+      - ./scripts:/scripts:ro
+      - provision_data:/provision
+
+    networks:
+      - armorclaw-net
+
+    depends_on:
+      - matrix
+
+    command: |
+      sh -c "
+        chmod +x /scripts/provision-matrix.sh
+        /scripts/provision-matrix.sh
+      "
+
+    environment:
+      - MATRIX_DOMAIN=${MATRIX_DOMAIN:-matrix.localhost}
+      - MATRIX_HOMESERVER_URL=http://matrix:6167
+      - MATRIX_ADMIN_USER=${MATRIX_ADMIN_USER:-admin}
+      - MATRIX_ADMIN_PASSWORD=${MATRIX_ADMIN_PASSWORD:-admin}
+      - MATRIX_BRIDGE_USER=${MATRIX_BRIDGE_USER:-bridge}
+      - MATRIX_BRIDGE_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-bridge123}
+      - ROOM_NAME=${ROOM_NAME:-ArmorClaw Agents}
+      - ROOM_ALIAS=${ROOM_ALIAS:-agents}
+
+  # ========================================
+  # Health Monitor
+  # ========================================
+  healthcheck:
+    image: alpine:latest
+    container_name: armorclaw-health
+    restart: unless-stopped
+
+    networks:
+      - armorclaw-net
+
+    command: |
+      sh -c "
+        apk add --no-cache curl
+        while true; do
+          echo 'Checking services...'
+          curl -sf http://matrix:6167/_matrix/client/versions || echo 'Matrix: DOWN'
+          curl -sf http://caddy:2019/config/ || echo 'Caddy: DOWN'
+          echo '---'
+          sleep 30
+        done
+      "
+
+    depends_on:
+      - matrix
+      - caddy
+      - bridge
+
+    deploy:
+      resources:
+        limits:
+          memory: 50M
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  armorclaw-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ========================================
+# Volumes
+# ========================================
+volumes:
+  conduit_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  bridge_data:
+    driver: local
+  bridge_run:
+    driver: local
+  provision_data:
+    driver: local

@@ -1,0 +1,108 @@
+# ArmorClaw Complete Stack - All-in-One Deployment
+# Launch and immediately connect via Element X
+
+name: armorclaw
+
+version: "3.8"
+
+services:
+  matrix:
+    image: matrixconduit/matrix-conduit:v0.4.0
+    container_name: armorclaw-matrix
+    restart: unless-stopped
+    volumes:
+      - conduit_data:/var/lib/matrix-conduit
+      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
+    ports:
+      - "6167:6167"
+      - "8448:8448"
+    networks:
+      - armorclaw-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6167/_matrix/client/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: armorclaw-caddy
+    restart: unless-stopped
+    volumes:
+      - caddy_data:/data
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - armorclaw-net
+    environment:
+      - MATRIX_DOMAIN=${MATRIX_DOMAIN:-matrix.localhost}
+    depends_on:
+      - matrix
+
+  bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile
+    container_name: armorclaw-bridge
+    restart: unless-stopped
+    volumes:
+      - bridge_data:/etc/armorclaw
+      - bridge_run:/run/armorclaw
+      - bridge_keystore:/var/lib/armorclaw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - armorclaw-net
+    environment:
+      - ARMORCLAW_CONFIG=/etc/armorclaw/config.toml
+      - ARMORCLAW_KEYSTORE_DB=/var/lib/armorclaw/keystore.db
+      - ARMORCLAW_SOCKET_PATH=/run/armorclaw/bridge.sock
+      - ARMORCLAW_LOG_LEVEL=info
+      - ARMORCLAW_MATRIX_ENABLED=true
+      - ARMORCLAW_MATRIX_HOMESERVER_URL=http://matrix:6167
+      - ARMORCLAW_MATRIX_USERNAME=${MATRIX_BRIDGE_USER:-bridge}
+      - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-bridge123}
+    depends_on:
+      matrix:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pgrep", "armorclaw-bridge"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  provision:
+    image: alpine:latest
+    container_name: armorclaw-provision
+    restart: "no"
+    volumes:
+      - ./scripts:/scripts:ro
+      - provision_data:/provision
+    networks:
+      - armorclaw-net
+    command: sh -c "chmod +x /scripts/provision-matrix.sh && /scripts/provision-matrix.sh"
+    environment:
+      - MATRIX_DOMAIN=${MATRIX_DOMAIN:-matrix.localhost}
+      - MATRIX_HOMESERVER_URL=http://matrix:6167
+      - MATRIX_ADMIN_USER=${MATRIX_ADMIN_USER:-admin}
+      - MATRIX_ADMIN_PASSWORD=${MATRIX_ADMIN_PASSWORD:-admin}
+      - MATRIX_BRIDGE_USER=${MATRIX_BRIDGE_USER:-bridge}
+      - MATRIX_BRIDGE_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-bridge123}
+      - ROOM_NAME=${ROOM_NAME:-ArmorClaw Agents}
+      - ROOM_ALIAS=${ROOM_ALIAS:-agents}
+    depends_on:
+      - matrix
+
+networks:
+  armorclaw-net:
+    driver: bridge
+
+volumes:
+  conduit_data:
+  caddy_data:
+  bridge_data:
+  bridge_run:
+  bridge_keystore:
+  provision_data:

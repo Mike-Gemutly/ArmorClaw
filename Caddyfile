@@ -1,0 +1,25 @@
+{$MATRIX_DOMAIN:matrix.localhost} {
+    reverse_proxy matrix:6167
+
+    handle_path /_matrix/client/* {
+        reverse_proxy matrix:6167
+    }
+
+    handle_path /_matrix/federation/* {
+        reverse_proxy matrix:6167
+    }
+
+    handle /.well-known/matrix/client {
+        respond "{\"m.homeserver\": {\"base_url\": \"https://{$MATRIX_DOMAIN}\"}}" 200 {
+            header Content-Type application/json
+            header Access-Control-Allow-Origin *
+        }
+    }
+
+    handle /.well-known/matrix/server {
+        respond "{\"m.server\": \"{$MATRIX_DOMAIN}:443\"}" 200 {
+            header Content-Type application/json
+            header Access-Control-Allow-Origin *
+        }
+    }
+}
