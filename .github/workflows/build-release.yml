@@ -60,7 +60,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache-dependency-path: bridge/go.sum
 
       - name: Download dependencies
         working-directory: ./bridge
@@ -142,7 +142,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: armorclaw/agent
+          images: ${{ secrets.DOCKER_USERNAME }}/agent
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
