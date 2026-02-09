@@ -57,19 +57,19 @@ test-hardening:
 	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 sh -c 'command -v apt' 2>/dev/null && \
 		(echo "❌ FAIL: apt available"; exit 1) || echo "✅ 13. apt denied: apt command not found"
 
-# Verify safe tools are available
-	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 sh -c 'command -v cp' >/dev/null || \
+# Verify safe tools are available (use Python to bypass entrypoint validation)
+	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 python -c "import shutil; assert shutil.which('cp'), 'cp not found'" >/dev/null 2>&1 || \
 		(echo "❌ FAIL: cp not available"; exit 1)
 	@echo "✅ 14. Safe tool available: cp"
-	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 sh -c 'command -v mkdir' >/dev/null || \
+	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 python -c "import shutil; assert shutil.which('mkdir'), 'mkdir not found'" >/dev/null 2>&1 || \
 		(echo "❌ FAIL: mkdir not available"; exit 1)
 	@echo "✅ 15. Safe tool available: mkdir"
-	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 sh -c 'command -v stat' >/dev/null || \
+	@docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 python -c "import shutil; assert shutil.which('stat'), 'stat not found'" >/dev/null 2>&1 || \
 		(echo "❌ FAIL: stat not available"; exit 1)
 	@echo "✅ 16. Safe tool available: stat"
 
 # Verify read-only root filesystem (with --read-only flag)
-	@docker run --rm --read-only -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 sh -c 'touch /etc/test-file' 2>/dev/null && \
+	@docker run --rm --read-only -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 python -c "open('/etc/test-file', 'w')" 2>/dev/null && \
 		(echo "❌ FAIL: Root filesystem is writable"; exit 1) || \
 		echo "✅ 17. Read-only root: Cannot write to /etc"
 
