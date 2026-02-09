@@ -57,6 +57,9 @@ vendor/
 coverage.html
 coverage.out
 
+# Decrypted test files (encrypted versions in repo)
+bridge/pkg/pii/scrubber_test.go
+
 # Database files
 *.db
 *.sqlite

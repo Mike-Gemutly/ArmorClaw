@@ -1,10 +1,14 @@
 # ArmorClaw v1 Test Suite
 # Tests verify containment guarantees and hardening posture
 
-.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean
+.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets
+
+# Decrypt test files with secrets before running tests
+decrypt-test-secrets:
+	@./decrypt-test-secrets.sh
 
 # Default: run all tests
-test-all: test-hardening test-secrets test-exploits test-e2e
+test-all: decrypt-test-secrets test-hardening test-secrets test-exploits test-e2e
 	@echo ""
 	@echo "✅ All test suites passed"
 
@@ -91,6 +95,7 @@ test-e2e:
 clean:
 	@echo "Cleaning up test artifacts..."
 	@rm -f /tmp/armorclaw-test-* 2>/dev/null || true
+	@rm -f bridge/pkg/pii/scrubber_test.go 2>/dev/null || true
 	@docker stop test-sec 2>/dev/null || true
 	@docker rm test-sec 2>/dev/null || true
 	@echo "✅ Clean complete"
