@@ -3,6 +3,7 @@
 # Development documentation (kept in /docs/ but not in repo)
 /docs/
 /doc/
+/logos/
 
 # Build artifacts
 /build/
@@ -13,6 +14,7 @@
 *.dylib
 *.test
 *.out
+CLAUDE.md
 
 # Go specific
 *.mod.sum
@@ -21,6 +23,7 @@ vendor/
 # IDE and editor files
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
