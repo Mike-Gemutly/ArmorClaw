@@ -207,6 +207,8 @@ Connect via Element X mobile app - chat with your agent from anywhere:
 | **Host Hardening** ✅ NEW | Automated firewall (UFW) & SSH hardening | Production-ready security baseline |
 
 > **Build Process Note**: The Docker container build process has been optimized to prevent circular dependencies in security hardening while maintaining all security protections.
+>
+> **Fix Applied**: Resolved circular dependency bug where the `rm` command was trying to delete itself during the security hardening phase. The fix removes `/bin/rm` from the list of files to delete in the Docker build process (line 88 of Dockerfile).
 
 **Compliance Ready:** Supports GDPR, HIPAA, SOC 2 requirements through data isolation, audit logging, and access controls.
 
