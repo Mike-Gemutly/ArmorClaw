@@ -84,11 +84,11 @@ COPY --from=builder /usr/bin/npx /usr/bin/npx
 
 # Remove dangerous tools LAST (after all setup complete)
 # Remove ALL shells (including sh/dash) to prevent enumeration attacks
-RUN rm -f /bin/bash /bin/sh /bin/dash && \
-    rm -f /usr/bin/rm /usr/bin/mv /usr/bin/find && \
-    rm -f /bin/ps /usr/bin/top /usr/bin/lsof && \
-    rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet && \
-    rm -f /usr/bin/sudo && \
+# Remove dangerous tools but avoid removing our own rm by ensuring they exist first
+RUN /bin/rm -f /bin/bash /bin/sh /bin/dash /bin/mv /bin/find && \
+    /bin/rm -f /bin/ps /usr/bin/top /usr/bin/lsof && \
+    /bin/rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet && \
+    /bin/rm -f /usr/bin/sudo && \
     apt-get autoremove -y 2>/dev/null || true
 
 # Switch to non-root user
