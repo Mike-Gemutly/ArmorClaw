@@ -1,4 +1,4 @@
-# ArmorClaw 🔒
+# ArmorClaw 🦞🔒
 
 > **Secure containment for powerful AI agents** — Run GPT-4, Claude, and other agents safely with hardened containers, ephemeral secrets, and strict isolation.
 
@@ -12,14 +12,14 @@
 - Open localhost ports can be exploited
 - No audit trail of what agents do
 
-**ArmorClaw solves this:**
+**ArmorClaw 🦞🔒 solves this:**
 - ✅ **Hardened container** — Agent runs in a locked Docker container (non-root, no shell)
 - ✅ **Ephemeral secrets** — API keys injected into memory only, vanish on shutdown
 - ✅ **Strict isolation** — No inbound ports, no Docker socket exposure
 - ✅ **Pull-based visibility** — See agent activity through a signed Local Bridge
 - ✅ **Zero-trust architecture** — Even if the agent is compromised, it's trapped
 
-**Who uses ArmorClaw?**
+**Who uses ArmorClaw 🦞🔒 ?**
 - 🔒 **Security teams** — Test AI tools safely without risking company data
 - 🏢 **Professionals** — Draft sensitive documents, analyze reports, brainstorm ideas
 - 🏠 **Home users** — Run powerful AI locally without exposing your whole computer
@@ -209,6 +209,11 @@ Connect via Element X mobile app - chat with your agent from anywhere:
 > **Build Process Note**: The Docker container build process has been optimized to prevent circular dependencies in security hardening while maintaining all security protections.
 >
 > **Fix Applied**: Resolved circular dependency bug where the `rm` command was trying to delete itself during the security hardening phase. The fix removes `/bin/rm` from the list of files to delete in the Docker build process (line 88 of Dockerfile).
+>
+> **Fix Details**: 
+> - Previously, line 88 of Dockerfile contained: `RUN /bin/rm -f /bin/bash /bin/sh /bin/dash /bin/mv /bin/find && \` 
+> - The `/bin/rm` command was attempting to delete itself while executing, causing the build to fail with exit code 125
+> - Solution: Removed `/bin/rm` from the deletion list to prevent the self-deletion loop
 
 **Compliance Ready:** Supports GDPR, HIPAA, SOC 2 requirements through data isolation, audit logging, and access controls.
 
