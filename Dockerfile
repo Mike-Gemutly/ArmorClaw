@@ -83,8 +83,8 @@ COPY --from=builder /usr/bin/npm /usr/bin/npm
 COPY --from=builder /usr/bin/npx /usr/bin/npx
 
 # Remove dangerous tools LAST (after all setup complete)
-# Note: preserve /bin/sh for command execution, but remove most dangerous tools
-RUN rm -f /bin/bash && \
+# Remove ALL shells (including sh/dash) to prevent enumeration attacks
+RUN rm -f /bin/bash /bin/sh /bin/dash && \
     rm -f /usr/bin/rm /usr/bin/mv /usr/bin/find && \
     rm -f /bin/ps /usr/bin/top /usr/bin/lsof && \
     rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet && \
@@ -104,7 +104,7 @@ VOLUME ["/run/secrets"]
 # Environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/opt/venv/bin:$PATH"
-ENV PYTHONPATH="/opt:$PYTHONPATH"
+ENV PYTHONPATH="/opt"
 ENV ARMORCLAW_SECRETS_PATH="/run/secrets"
 ENV ARMORCLAW_SECRETS_FD="3"
 
