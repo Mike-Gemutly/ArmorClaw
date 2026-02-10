@@ -106,7 +106,7 @@ $containerOutput = docker run -d --rm `
     -e OPENAI_API_KEY="sk-e2e-test-$timestamp" `
     -e ANTHROPIC_API_KEY="sk-ant-e2e-$timestamp" `
     armorclaw/agent:v1 `
-    sleep infinity 2>&1
+    python -c "import time; time.sleep(999999)" 2>&1
 
 $CONTAINER_ID = $containerOutput.Trim()
 

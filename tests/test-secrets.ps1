@@ -46,7 +46,7 @@ Write-Host "Starting container with test secret..."
 docker run -d --rm --name $CONTAINER_NAME `
     -e OPENAI_API_KEY="$TEST_SECRET" `
     -e ANTHROPIC_API_KEY="sk-ant-test-$timestamp" `
-    armorclaw/agent:v1 sleep infinity 2>&1 | Out-Null
+    armorclaw/agent:v1 python -c "import time; time.sleep(999999)" 2>&1 | Out-Null
 
 Start-Sleep -Seconds 2
 
@@ -175,7 +175,7 @@ Start-Sleep -Seconds 1
 
 # Start NEW container WITHOUT secrets
 docker run -d --rm --name $CONTAINER_NAME `
-    armorclaw/agent:v1 sleep infinity 2>&1 | Out-Null
+    armorclaw/agent:v1 python -c "import time; time.sleep(999999)" 2>&1 | Out-Null
 Start-Sleep -Seconds 1
 
 # Verify NO secrets in the restarted container
