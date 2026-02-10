@@ -16,8 +16,9 @@ BRIDGE_BIN="$TEST_DIR/armorclaw-bridge"
 # Cleanup handler
 cleanup() {
     echo "Cleaning up test artifacts..."
-    # Stop any running containers
-    ./tests/test-exploits.sh >/dev/null 2>&1 || true
+    # Stop any test containers
+    docker stop "e2e-test-$$" "e2e-test-restart-$$" 2>/dev/null || true
+    docker rm "e2e-test-$$" "e2e-test-restart-$$" 2>/dev/null || true
 
     # Kill bridge if running
     pkill -f "$BRIDGE_BIN" 2>/dev/null || true
@@ -122,11 +123,12 @@ fi
 # Wait for container to be ready
 sleep 2
 
-# Verify container is running
-if docker ps | grep -q "$CONTAINER_ID"; then
+# Verify container is running (use container name since docker ps truncates IDs)
+if docker ps --format '{{.Names}}' | grep -q "e2e-test-$$"; then
     echo "✅ Container is running"
 else
     echo "❌ FAIL: Container not in running list"
+    docker logs "e2e-test-$$" 2>&1 || true
     exit 1
 fi
 
@@ -138,15 +140,16 @@ echo ""
 echo "Test 4: Secrets Injection Verification"
 echo "----------------------------------------"
 
-# Check that secrets are in process memory
-if docker exec $CONTAINER_ID env | grep -q "OPENAI_API_KEY=sk-e2e"; then
+# Check that secrets are in process memory (use container name for reliability)
+E2E_NAME="e2e-test-$$"
+if docker exec $E2E_NAME env | grep -q "OPENAI_API_KEY=sk-e2e"; then
     echo "✅ OpenAI secret injected into process memory"
 else
     echo "❌ FAIL: OpenAI secret not in process memory"
     exit 1
 fi
 
-if docker exec $CONTAINER_ID env | grep -q "ANTHROPIC_API_KEY=sk-ant-e2e"; then
+if docker exec $E2E_NAME env | grep -q "ANTHROPIC_API_KEY=sk-ant-e2e"; then
     echo "✅ Anthropic secret injected into process memory"
 else
     echo "❌ FAIL: Anthropic secret not in process memory"
@@ -156,7 +159,7 @@ fi
 # Verify no secrets in docker inspect
 # Note: Environment variables passed via -e WILL appear in docker inspect (expected)
 # Production bridge mode uses file descriptor passing which does NOT have this limitation
-if docker inspect $CONTAINER_ID | grep -q "sk-e2e"; then
+if docker inspect $E2E_NAME | grep -q "sk-e2e"; then
     echo "ℹ️  INFO: Secrets visible in docker inspect (expected with -e flag)"
     echo "   Production bridge mode uses file descriptor passing for true secrecy"
 else
@@ -171,15 +174,15 @@ echo ""
 echo "Test 5: Container Health"
 echo "-----------------------"
 
-# Run health check script if it exists
-if docker exec $CONTAINER_ID /opt/openclaw/health.sh 2>/dev/null; then
+# Run health check (uses Python since /bin/sh is removed)
+if docker exec $E2E_NAME python3 -c "from openclaw import agent; print('OK')" 2>/dev/null; then
     echo "✅ Health check passed"
-elif docker exec $CONTAINER_ID python -c "import sys; sys.exit(0)" 2>/dev/null; then
+elif docker exec $E2E_NAME python -c "import sys; sys.exit(0)" 2>/dev/null; then
     echo "✅ Python runtime available (health OK)"
-elif docker exec $CONTAINER_ID node -e "process.exit(0)" 2>/dev/null; then
+elif docker exec $E2E_NAME node -e "process.exit(0)" 2>/dev/null; then
     echo "✅ Node runtime available (health OK)"
 else
-    echo "⚠️  Health check script not found, but container is running"
+    echo "⚠️  Health check not passing, but container is running"
 fi
 
 echo ""
@@ -191,31 +194,33 @@ echo "Test 6: Container Restart"
 echo "--------------------------"
 
 # Stop container
-docker stop $CONTAINER_ID >/dev/null 2>&1
+docker stop $E2E_NAME >/dev/null 2>&1
 sleep 1
 
-# Start NEW container WITHOUT secrets
+# Start NEW container with a DIFFERENT dummy key (container needs API key to start)
 # Note: Use Python for sleep since /bin/sh is removed in hardened image
+NEW_NAME="e2e-test-restart-$$"
 NEW_CONTAINER_ID=$(
   docker run -d --rm \
-    --name "e2e-test-restart-$$" \
+    --name "$NEW_NAME" \
+    -e OPENAI_API_KEY="sk-restart-dummy-key" \
     armorclaw/agent:v1 \
     python -c "import time; time.sleep(999999)"
 )
 
-sleep 1
+sleep 2
 
-# Verify NO secrets in restarted container
-if docker exec $NEW_CONTAINER_ID env | grep -q "sk-e2e"; then
+# Verify NO old secrets in restarted container
+if docker exec $NEW_NAME env | grep -q "sk-e2e"; then
     echo "❌ FAIL: Old secrets persisted in new container!"
-    docker stop $NEW_CONTAINER_ID >/dev/null 2>&1
+    docker stop $NEW_NAME >/dev/null 2>&1 || true
     exit 1
 else
     echo "✅ Secrets do NOT persist across container restart"
 fi
 
 # Clean up
-docker stop $NEW_CONTAINER_ID >/dev/null 2>&1
+docker stop $NEW_NAME >/dev/null 2>&1 || true
 
 echo ""
 

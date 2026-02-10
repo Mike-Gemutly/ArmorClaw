@@ -96,15 +96,22 @@ else
     echo "✅ PASS: No secrets in /etc/environment"
 fi
 
-# Check other common disk locations
+# Check other common disk locations (use Python since find is removed for security)
 for DISK_PATH in /tmp /var/tmp /home; do
-    DISK_CONTENT=$(docker exec $CONTAINER_NAME find $DISK_PATH -type f 2>/dev/null | head -5 || echo "")
-    if [ -n "$DISK_CONTENT" ]; then
-        SECRET_ON_DISK=$(docker exec $CONTAINER_NAME grep -r "sk-" $DISK_PATH 2>/dev/null || echo "")
-        if [ -n "$SECRET_ON_DISK" ]; then
-            echo "❌ FAIL: Secret found on disk in $DISK_PATH!"
-            exit 1
-        fi
+    SECRET_ON_DISK=$(docker exec $CONTAINER_NAME python3 -c "
+import os
+for root, dirs, files in os.walk('$DISK_PATH'):
+    for f in files:
+        try:
+            path = os.path.join(root, f)
+            with open(path) as fh:
+                if 'sk-' in fh.read(4096):
+                    print(path)
+        except: pass
+" 2>/dev/null || echo "")
+    if [ -n "$SECRET_ON_DISK" ]; then
+        echo "❌ FAIL: Secret found on disk in $DISK_PATH!"
+        exit 1
     fi
 done
 echo "✅ PASS: No secrets found on disk"
@@ -171,12 +178,13 @@ echo "---------------------------------------------"
 docker stop $CONTAINER_NAME >/dev/null 2>&1
 sleep 1
 
-# Start new container WITHOUT secrets
+# Start new container with a DIFFERENT dummy key (container requires API key to start)
 docker run -d --rm --name $CONTAINER_NAME \
+    -e OPENAI_API_KEY="sk-restart-dummy-key" \
     armorclaw/agent:v1 python -c "import time; time.sleep(999999)" >/dev/null 2>&1
-sleep 1
+sleep 2
 
-# Verify NO secrets in the restarted container
+# Verify NO old secrets in the restarted container
 if docker exec $CONTAINER_NAME env | grep -q "$TEST_SECRET"; then
     echo "❌ FAIL: Secret persisted after restart!"
     exit 1

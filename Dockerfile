@@ -108,9 +108,9 @@ ENV PYTHONPATH="/opt"
 ENV ARMORCLAW_SECRETS_PATH="/run/secrets"
 ENV ARMORCLAW_SECRETS_FD="3"
 
-# Health check - verifies agent module is importable
+# Health check - verifies agent module is importable (uses Python since /bin/sh is removed)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/opt/openclaw/health.sh"] || exit 1
+    CMD ["python3", "-c", "from openclaw import agent; print('OK')"]
 
 # Entrypoint (secrets verification + agent startup)
 ENTRYPOINT ["/opt/openclaw/entrypoint.py"]
