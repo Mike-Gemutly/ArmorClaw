@@ -206,6 +206,8 @@ Connect via Element X mobile app - chat with your agent from anywhere:
 | **Container TTL** ✅ NEW | Auto-removes idle containers (10 min default) | Prevents resource leaks |
 | **Host Hardening** ✅ NEW | Automated firewall (UFW) & SSH hardening | Production-ready security baseline |
 
+> **Build Process Note**: The Docker container build process has been optimized to prevent circular dependencies in security hardening while maintaining all security protections.
+
 **Compliance Ready:** Supports GDPR, HIPAA, SOC 2 requirements through data isolation, audit logging, and access controls.
 
 > **📖 Security Configuration Guide:** See [docs/guides/security-configuration.md](docs/guides/security-configuration.md) for complete security feature documentation.
