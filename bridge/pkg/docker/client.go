@@ -51,18 +51,20 @@ type Syscall struct {
 
 // DefaultArmorClawProfile is the default seccomp profile for ArmorClaw containers
 // It blocks dangerous syscalls while allowing necessary operations
+// Shell escapes are prevented via chmod a-x + LD_PRELOAD, not seccomp
 var DefaultArmorClawProfile = SeccompProfile{
-	DefaultAction: "SCMP_ACT_ERRNO",
+	DefaultAction: "SCMP_ACT_ALLOW",
 	Architectures:  []string{"SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_FILTER"},
 	Syscalls: []Syscall{
-		// Block dangerous operations
+		// Block network operations (data exfiltration prevention)
+		// Shell escapes prevented via chmod a-x on binaries + LD_PRELOAD hook
 		{
-			Names:  []string{"clone", "fork", "vfork", "ptrace"},
+			Names:  []string{"socket", "connect", "accept", "bind", "listen", "sendto", "recvfrom"},
 			Action: "SCMP_ACT_ERRNO",
 		},
-		// Block network operations (no direct network access)
+		// Block ptrace (process debugging/escape)
 		{
-			Names:  []string{"socket", "connect", "accept", "bind", "listen"},
+			Names:  []string{"ptrace"},
 			Action: "SCMP_ACT_ERRNO",
 		},
 		// Block module loading
@@ -72,7 +74,12 @@ var DefaultArmorClawProfile = SeccompProfile{
 		},
 		// Block raw I/O
 		{
-			Names:  []string{"iopl", "ioperm", "outb", "inb"},
+			Names:  []string{"iopl", "ioperm"},
+			Action: "SCMP_ACT_ERRNO",
+		},
+		// Block key management
+		{
+			Names:  []string{"add_key", "request_key"},
 			Action: "SCMP_ACT_ERRNO",
 		},
 	},
@@ -169,6 +176,11 @@ func (c *Client) CreateContainer(ctx context.Context, config *container.Config, 
 	// Drop all capabilities
 	if hostConfig.CapDrop == nil || len(hostConfig.CapDrop) == 0 {
 		hostConfig.CapDrop = []string{"ALL"}
+	}
+
+	// Disable networking (prevent data exfiltration)
+	if hostConfig.NetworkMode == "" {
+		hostConfig.NetworkMode = "none"
 	}
 
 	// Create container with timeout

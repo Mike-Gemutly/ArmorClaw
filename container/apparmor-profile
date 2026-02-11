@@ -1,0 +1,90 @@
+# AppArmor profile for ArmorClaw container
+# Blocks filesystem escapes and restricts capabilities
+
+#include <tunables/global>
+
+profile armorclaw_container flags=(attach_disconnected,mediate_deleted) {
+  # Allow base operations
+  capability,
+  dac_override,
+  dac_read_search,
+  fowner,
+  fsetid,
+  setgid,
+  setuid,
+  setfcap,
+
+  # Deny host filesystem access
+  deny /home/** rw,
+  deny /root/** rw,
+  deny /var/host/** rw,
+  deny /host/** rw,
+  deny /proc/*/cmdline r,
+  deny /proc/*/environ r,
+  deny /proc/*/maps r,
+  deny /proc/*/fd r,
+
+  # Allow container filesystem
+  /opt/openclaw/** r,
+  /opt/venv/** r,
+  /tmp/** rw,
+  /run/secrets/** r,
+
+  # Deny network
+  network unix stream,
+  deny network inet stream,
+  deny network inet dgram,
+  deny network inet6 stream,
+  deny network inet6 dgram,
+
+  # Deny process execution outside container
+  deny /bin/** x,
+  deny /usr/bin/** x,
+  deny /usr/local/bin/** x,
+
+  # Allow Python runtime (restricted)
+  /usr/bin/python3 mr,
+  /opt/venv/bin/python3 mr,
+  /usr/bin/python3.11 mr,
+
+  # Allow Node runtime (restricted)
+  /usr/bin/node mr,
+  /usr/lib/node_modules/** r,
+
+  # Deny shells completely
+  deny /bin/sh x,
+  deny /bin/bash x,
+  deny /bin/dash x,
+  deny /usr/bin/zsh x,
+
+  # Deny dangerous tools
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+  deny /usr/bin/nc x,
+  deny /usr/bin/telnet x,
+  deny /bin/rm x,
+  deny /bin/mv x,
+  deny /usr/bin/sudo x,
+
+  # Allow read-only access to system libraries
+  /usr/lib/** r,
+  /lib/** r,
+  /lib64/** r,
+
+  # Allow procfs (self only, restricted)
+  /proc/self/** r,
+  /proc/self/environ r,
+  deny /proc/self/exe l,
+
+  # Deny ptrace (process debugging)
+  deny ptrace read,
+
+  # Deny mount operations
+  deny mount,
+  deny umount,
+
+  # Deny module operations
+  deny init_module,
+  deny finit_module,
+  deny delete_module,
+}

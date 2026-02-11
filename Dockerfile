@@ -50,6 +50,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities (allowlisted only)
     coreutils \
     ca-certificates \
+    # Security hook compilation
+    gcc \
+    libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create dedicated non-root user (UID 10001, not 65534)
@@ -64,6 +67,12 @@ RUN mkdir -p /opt/openclaw && \
 # Copy OpenClaw runtime files
 COPY container/opt/openclaw/* /opt/openclaw/
 COPY container/openclaw/ /opt/openclaw/
+
+# Create lib directory and compile security hook library
+RUN mkdir -p /opt/openclaw/lib && \
+    gcc -shared -fPIC -o /opt/openclaw/lib/libarmorclaw_hook.so \
+    /opt/openclaw/security_hook.c -ldl && \
+    rm -f /opt/openclaw/security_hook.c
 
 # Make entrypoint and health check executable
 RUN chmod +x /opt/openclaw/entrypoint.py && \
@@ -82,14 +91,28 @@ COPY --from=builder /usr/bin/node /usr/bin/node
 COPY --from=builder /usr/bin/npm /usr/bin/npm
 COPY --from=builder /usr/bin/npx /usr/bin/npx
 
-# Remove dangerous tools LAST (after all setup complete)
-# Remove ALL shells (including sh/dash) to prevent enumeration attacks
-# Remove dangerous tools but avoid removing our own rm by ensuring they exist first
-RUN /bin/rm -f /bin/bash /bin/dash /bin/mv /bin/find && \
-    /bin/rm -f /bin/ps /usr/bin/top /usr/bin/lsof && \
-    /bin/rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet && \
-    /bin/rm -f /usr/bin/sudo && \
+# ============================================================================
+# SECURITY HARDENING: Multi-layered defense against runtime exploits
+# ============================================================================
+# Layer 1: Remove execute permissions from ALL binaries (must do BEFORE removing shell)
+# This prevents Python/Node from exec'ing anything, even if present
+RUN find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true && \
+    find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true && \
+    chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true
+
+# Layer 2: Remove dangerous tools (traditional hardening) - do this LAST
+RUN /bin/rm -f /bin/bash /bin/dash /bin/sh /bin/mv /bin/find && \
+    /bin/rm -f /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace && \
+    /bin/rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp && \
+    /bin/rm -f /usr/bin/sudo /usr/bin/su /usr/bin/passwd && \
+    /bin/rm -f /usr/bin/gdb /usr/bin/ltrace && \
     apt-get autoremove -y 2>/dev/null || true
+
+# Layer 3: LD_PRELOAD hook to intercept dangerous library calls at library level
+# (Already compiled above in /opt/openclaw/lib/libarmorclaw_hook.so)
+
+# Layer 4: Seccomp + Network isolation applied at runtime by bridge
+# Bridge applies: --security-opt seccomp=profile.json --network=none
 
 # Switch to non-root user
 USER claw
@@ -107,6 +130,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/opt"
 ENV ARMORCLAW_SECRETS_PATH="/run/secrets"
 ENV ARMORCLAW_SECRETS_FD="3"
+# Security hook: Blocks execve(), socket(), connect() at library level
+ENV LD_PRELOAD="/opt/openclaw/lib/libarmorclaw_hook.so"
 
 # Health check - verifies agent module is importable (uses Python since /bin/sh is removed)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

@@ -1,0 +1,62 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86"],
+  "syscalls": [
+    {
+      "name": "socket",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [
+        {
+          "index": 0,
+          "value": 2,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_EQ"
+        }
+      ],
+      "comment": "Block AF_INET sockets (IPv4) - data exfiltration prevention"
+    },
+    {
+      "name": "socket",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [
+        {
+          "index": 0,
+          "value": 10,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_EQ"
+        }
+      ],
+      "comment": "Block AF_INET6 sockets (IPv6) - data exfiltration prevention"
+    },
+    {
+      "name": "socket",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [
+        {
+          "index": 0,
+          "value": 1,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_EQ"
+        }
+      ],
+      "comment": "Block AF_LOCAL/AF_UNIX sockets with SOCK_STREAM (optional, very restrictive)"
+    },
+    {
+      "name": "connect",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block all outbound connections - belt and suspenders"
+    },
+    {
+      "name": "sendto",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block sendto for additional network safety"
+    },
+    {
+      "name": "recvfrom",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block recvfrom for additional network safety"
+    }
+  ],
+  "flags": ["SECCOMP_FILTER_FLAG_TSYNC"],
+  "comment": "ArmorClaw Seccomp Profile v2 - Network isolation only (shell escapes handled by chmod a-x + LD_PRELOAD)"
+}

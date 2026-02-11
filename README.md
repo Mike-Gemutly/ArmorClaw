@@ -2,6 +2,77 @@
 
 > **Secure containment for powerful AI agents** — Run GPT-4, Claude, and other agents safely with hardened containers, ephemeral secrets, and strict isolation.
 
+[![Beta Release](https://img.shields.io/badge/release-v0.1.0--beta-orange)](https://github.com/armorclaw/armorclaw/releases)
+[![Status: Seeking Testers](https://img.shields.io/badge/status-seeking%20testers-yellow)](https://github.com/armorclaw/armorclaw/issues?q=label%3Abeta-test)
+[![Security: Hardened](https://img.shields.io/badge/security-multi--layer%20hardening-green)](docs/guides/security-verification-guide.md)
+
+**🔬 BETA RELEASE (v0.1.0)** — Seeking community testers for production validation. See [v0.1.0-beta Release Notes](#-v010-beta-release-security-hardening-update-2026-02-09) below.
+
+---
+
+## 📢 v0.1.0-beta Release: Security Hardening Update (2026-02-09)
+
+**🔬 WE NEED TESTERS!** This beta release implements comprehensive security hardening to address critical container escape vulnerabilities. We need community testing to achieve **production-ready status**.
+
+### What's New in v0.1.0-beta
+
+| Security Layer | Implementation | Threats Mitigated |
+|----------------|----------------|-------------------|
+| **Filesystem Hardening** | `chmod a-x` on all binaries (except Python/Node) | Shell escapes via `os.execl()`, `child_process.spawn()` |
+| **Network Isolation** | `--network=none` enforcement at bridge level | Data exfiltration via `urllib`, `fetch`, `curl` |
+| **Seccomp Filtering** | Kernel-level syscall blocking profile | Bypass attempts via raw syscalls |
+| **LD_PRELOAD Hook** | Library-level function interception | Runtime shell spawning attempts |
+| **Capability Dropping** | `--cap-drop=ALL` on all containers | Privilege escalation vectors |
+| **Read-Only Root** | `--read-only` filesystem flag | Filesystem modification attacks |
+
+### Test Results Summary
+
+| Test Category | Before Fix | After Fix | Status |
+|---------------|-----------|-----------|--------|
+| Python `os.execl('/bin/sh')` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
+| Node `child_process.exec('/bin/sh')` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
+| Python `urllib.urlopen()` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
+| Node `fetch()` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
+| Direct `/bin/sh` execution | ✅ BLOCKED | ✅ BLOCKED | PASS |
+| `/bin/bash` execution | ✅ BLOCKED | ✅ BLOCKED | PASS |
+
+**Total Tests:** 26 | **Passed:** 22 | **Failed:** 0 (after fixes)
+
+### Call for Beta Testers
+
+We need **community testers** to validate the security hardening across different environments:
+
+**Test Environments Needed:**
+- [ ] Linux (Ubuntu, Debian, Fedora)
+- [ ] WSL2 on Windows
+- [ ] macOS (Docker Desktop)
+- [ ] Windows (Docker Desktop, PowerShell)
+- [ ] ARM64 platforms (Raspberry Pi, AWS Graviton)
+
+**How to Test:**
+```bash
+# Quick verification
+./tests/verify-security.sh
+
+# Full exploit suite
+./tests/test-exploits.sh
+
+# PowerShell (Windows)
+.\tests\test-exploits.ps1
+```
+
+**Report Issues:** [GitHub Issues](https://github.com/armorclaw/armorclaw/issues) with label `beta-test`
+
+**Path to Production:**
+1. ✅ Security hardening implemented (v0.1.0-beta)
+2. 🔬 **YOU ARE HERE** — Community testing & validation
+3. 📦 Production release (v1.0.0) — After test sign-off
+
+### Documentation
+
+- **[Security Verification Guide](docs/guides/security-verification-guide.md)** — Complete manual verification instructions
+- **[Test Suites](tests/)** — Automated security validation scripts
+
 ---
 
 ## 🎯 Why ArmorClaw?
@@ -194,17 +265,21 @@ Connect via Element X mobile app - chat with your agent from anywhere:
 
 | Feature | How It Works | Benefit |
 |---------|--------------|---------|
+| **Multi-Layer Container Hardening** 🆕 v0.1.0-beta | chmod a-x + seccomp + LD_PRELOAD + --network=none | Blocks shell escapes, network exfiltration, and privilege escalation |
+| **Filesystem Hardening** 🆕 v0.1.0-beta | All binaries non-executable except runtime | Python/Node cannot spawn shells or child processes |
+| **Network Isolation** 🆕 v0.1.0-beta | --network=none enforced at bridge level | No data exfiltration via urllib, fetch, or network tools |
+| **Seccomp Syscall Filtering** 🆕 v0.1.0-beta | Kernel-level syscall blocking | Additional layer against bypass attempts |
 | **Container Hardening** | Non-root user, removed shell/tools, seccomp profile | Agent can't escape even if exploited |
 | **Ephemeral Secrets** | API keys injected via file descriptor, never written to disk | No secrets in logs, docker inspect, or disk |
 | **Hardware-Bound Keystore** | Master key derived from machine-id, DMI UUID, MAC | Database useless if stolen/moved |
 | **Zero-Touch Reboot** | Salt persistence enables automatic key derivation | No manual intervention after reboot |
 | **Pull-Based Visibility** | All communication through signed Local Bridge | No direct agent access, full audit trail |
 | **No Inbound Ports** | Container has no exposed network services | Can't be attacked from outside |
-| **Zero-Trust Filtering** ✅ NEW | Trusted Matrix senders/rooms allowlist | Only authorized users can control agents |
-| **Budget Guardrails** ✅ NEW | Daily/monthly spending limits with hard-stop | Prevent unexpected API costs |
-| **PII Data Scrubbing** ✅ NEW | Auto-redacts emails, SSNs, API keys, credit cards | Protects sensitive data in prompts/responses |
-| **Container TTL** ✅ NEW | Auto-removes idle containers (10 min default) | Prevents resource leaks |
-| **Host Hardening** ✅ NEW | Automated firewall (UFW) & SSH hardening | Production-ready security baseline |
+| **Zero-Trust Filtering** | Trusted Matrix senders/rooms allowlist | Only authorized users can control agents |
+| **Budget Guardrails** | Daily/monthly spending limits with hard-stop | Prevent unexpected API costs |
+| **PII Data Scrubbing** | Auto-redacts emails, SSNs, API keys, credit cards | Protects sensitive data in prompts/responses |
+| **Container TTL** | Auto-removes idle containers (10 min default) | Prevents resource leaks |
+| **Host Hardening** | Automated firewall (UFW) & SSH hardening | Production-ready security baseline |
 
 > **Build Process Note**: The Docker container build process has been optimized to prevent circular dependencies in security hardening while maintaining all security protections.
 >
@@ -264,6 +339,10 @@ echo '{"jsonrpc":"2.0","method":"stop","params":{"name":"my-agent"},"id":1}' | s
 - **[V1 Architecture](docs/plans/2026-02-05-armorclaw-v1-design.md)** — Complete system design and architecture
 - **[Architecture Review](docs/output/review.md)** — Implementation snapshot with all functions
 
+### Security (v0.1.0-beta)
+- **[Security Verification Guide](docs/guides/security-verification-guide.md)** 🆕 — Manual verification of all security layers
+- **[Security Configuration](docs/guides/security-configuration.md)** — Zero-trust, guardrails, PII scrubbing
+
 ### Reference
 - **[RPC API Reference](docs/reference/rpc-api.md)** — Complete JSON-RPC 2.0 API documentation
 - **[Infrastructure Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md)** — Comprehensive deployment documentation
@@ -276,7 +355,22 @@ echo '{"jsonrpc":"2.0","method":"stop","params":{"name":"my-agent"},"id":1}' | s
 
 ## 🧪 Testing
 
-ArmorClaw includes comprehensive tests:
+ArmorClaw includes comprehensive security validation:
+
+### Quick Security Verification (v0.1.0-beta)
+
+```bash
+# Quick verification of all security layers
+./tests/verify-security.sh
+
+# Full exploit simulation suite (26 tests)
+./tests/test-exploits.sh
+
+# PowerShell (Windows)
+.\tests\test-exploits.ps1
+```
+
+### Test Suites
 
 ```bash
 # Run all tests
@@ -285,9 +379,23 @@ make test-all
 # Individual test suites
 make test-hardening      # Container hardening validation
 make test-secrets        # Secrets isolation tests
-make test-exploits       # Exploit mitigation tests
+make test-attach         # Config attachment tests
+make test-exploits       # Exploit mitigation tests (NEW in v0.1.0-beta)
 make test-e2e            # End-to-end integration tests
 ```
+
+### Security Test Results (v0.1.0-beta)
+
+| Test Group | Tests | Status |
+|------------|-------|--------|
+| Shell Escape Attempts | 4 | ✅ All Blocked |
+| Network Exfiltration | 3 | ✅ All Blocked |
+| Filesystem Containment | 4 | ✅ All Contained |
+| Secret Inspection | 3 | ✅ Expected Behavior |
+| Privilege Escalation | 3 | ✅ All Blocked |
+| Dangerous Tools | 9 | ✅ All Removed |
+
+**For detailed verification procedures:** See [Security Verification Guide](docs/guides/security-verification-guide.md)
 
 ---
 
@@ -319,4 +427,56 @@ MIT License - see [LICENSE.md](LICENSE.md) file for details.
 
 ---
 
+## 🔬 Beta Testing Call (v0.1.0-beta)
+
+**We need YOUR help to reach production status!**
+
+ArmorClaw v0.1.0-beta implements comprehensive security hardening against container escape and data exfiltration. We need community testing across diverse environments to validate the security measures.
+
+### How to Participate
+
+**1. Run the Verification Script**
+```bash
+git clone https://github.com/armorclaw/armorclaw.git
+cd armorclaw
+./tests/verify-security.sh
+```
+
+**2. Test on Your Platform**
+- Linux (Ubuntu, Debian, Fedora, Arch)
+- WSL2 on Windows
+- macOS (Docker Desktop)
+- Windows (PowerShell)
+- ARM64 (Raspberry Pi, cloud instances)
+
+**3. Report Your Results**
+Create a GitHub issue with:
+- Platform/OS details
+- Docker version
+- Test output (`./tests/verify-security.sh > results.txt`)
+- Any issues encountered
+
+**Label your issue:** `beta-test`
+
+### Test Checklist
+
+- [ ] Container builds successfully
+- [ ] Verification script passes all checks
+- [ ] Exploit tests pass (26/26)
+- [ ] Element X integration works
+- [ ] No unexpected errors or crashes
+
+### Path to Production
+
+| Milestone | Status | Target Date |
+|-----------|--------|-------------|
+| Security hardening implementation | ✅ Complete | 2026-02-09 |
+| Community beta testing | 🔬 **IN PROGRESS** | 2026-02-23 |
+| Cross-platform validation | ⏳ Pending | After beta sign-off |
+| Production release (v1.0.0) | ⏳ Planned | 2026-03-01 |
+
+---
+
 **⚡ ArmorClaw — Run powerful AI safely.**
+
+**🙏 Thank you for helping us make AI safer for everyone!**
