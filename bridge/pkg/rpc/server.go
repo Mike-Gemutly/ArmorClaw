@@ -16,12 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/armorclaw/bridge/internal/adapter"
+	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/docker"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/webrtc"
+	"github.com/docker/docker/api/types/container"
 )
 
 const (
@@ -39,8 +40,8 @@ var (
 	ErrInvalidRequest    = errors.New("invalid JSON-RPC request")
 	ErrMethodNotFound    = errors.New("method not found")
 	ErrInvalidParams     = errors.New("invalid parameters")
-	ErrContainerTimeout   = errors.New("container operation timed out")
-	ErrContainerConflict  = errors.New("container with this name already exists")
+	ErrContainerTimeout  = errors.New("container operation timed out")
+	ErrContainerConflict = errors.New("container with this name already exists")
 )
 
 // Human-readable error messages with helpful suggestions
@@ -125,36 +126,39 @@ const (
 	// Custom errors
 	ContainerRunning = -1
 	ContainerStopped = -2
-	KeyNotFound       = -3
+	KeyNotFound      = -3
 )
 
 // Server is a JSON-RPC 2.0 server over Unix domain socket
 type Server struct {
-	socketPath    string
-	listener      net.Listener
-	keystore      *keystore.Keystore
-	matrix        *adapter.MatrixAdapter
-	docker        *docker.Client
-	containers    map[string]*ContainerInfo
-	mu            sync.RWMutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	securityLog   *logger.SecurityLogger
-	wg            sync.WaitGroup
-	containerDir  string // Directory for container-specific sockets
+	socketPath   string
+	listener     net.Listener
+	keystore     *keystore.Keystore
+	matrix       *adapter.MatrixAdapter
+	docker       *docker.Client
+	containers   map[string]*ContainerInfo
+	mu           sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	securityLog  *logger.SecurityLogger
+	wg           sync.WaitGroup
+	containerDir string // Directory for container-specific sockets
 	// WebRTC components
-	sessionMgr     *webrtc.SessionManager
-	tokenMgr       *webrtc.TokenManager
-	signalingSvr   *webrtc.SignalingServer
-	webrtcEngine   *webrtc.Engine
-	turnMgr        *webrtc.TURNManager
-	voiceMgr       interface{} // *voice.Manager
-	budgetMgr      interface{} // *budget.Manager
+	sessionMgr   *webrtc.SessionManager
+	tokenMgr     *webrtc.TokenManager
+	signalingSvr *webrtc.SignalingServer
+	webrtcEngine *webrtc.Engine
+	turnMgr      *webrtc.TURNManager
+	voiceMgr     interface{} // *voice.Manager
+	budgetMgr    interface{} // *budget.Manager
 
 	// Health and notification components
-	healthMonitor  interface{} // *health.Monitor
-	notifier       interface{} // *notification.Notifier
-	eventBus       interface{} // *eventbus.EventBus
+	healthMonitor interface{} // *health.Monitor
+	notifier      interface{} // *notification.Notifier
+	eventBus      interface{} // *eventbus.EventBus
+
+	// Audit logging
+	auditLog *audit.AuditLog
 }
 
 // ContainerInfo holds information about a running container
@@ -176,18 +180,21 @@ type Config struct {
 	MatrixPassword   string
 
 	// WebRTC components (optional - voice calls)
-	SessionManager   *webrtc.SessionManager
-	TokenManager     *webrtc.TokenManager
-	SignalingServer  *webrtc.SignalingServer
-	WebRTCEngine     *webrtc.Engine
-	TURNManager      *webrtc.TURNManager
-	VoiceManager     interface{} // *voice.Manager
-	BudgetManager    interface{} // *budget.Manager
+	SessionManager  *webrtc.SessionManager
+	TokenManager    *webrtc.TokenManager
+	SignalingServer *webrtc.SignalingServer
+	WebRTCEngine    *webrtc.Engine
+	TURNManager     *webrtc.TURNManager
+	VoiceManager    interface{} // *voice.Manager
+	BudgetManager   interface{} // *budget.Manager
 
 	// Health and notification components
-	HealthMonitor    interface{} // *health.Monitor
-	Notifier         interface{} // *notification.Notifier
-	EventBus         interface{} // *eventbus.EventBus
+	HealthMonitor interface{} // *health.Monitor
+	Notifier      interface{} // *notification.Notifier
+	EventBus      interface{} // *eventbus.EventBus
+
+	// Audit logging
+	AuditLog *audit.AuditLog
 }
 
 // New creates a new JSON-RPC server
@@ -228,13 +235,15 @@ func New(cfg Config) (*Server, error) {
 		tokenMgr:     cfg.TokenManager,
 		signalingSvr: cfg.SignalingServer,
 		webrtcEngine: cfg.WebRTCEngine,
-		turnMgr:       cfg.TURNManager,
-		voiceMgr:      cfg.VoiceManager,
-		budgetMgr:     cfg.BudgetManager,
+		turnMgr:      cfg.TURNManager,
+		voiceMgr:     cfg.VoiceManager,
+		budgetMgr:    cfg.BudgetManager,
 		// Health and notification components
 		healthMonitor: cfg.HealthMonitor,
 		notifier:      cfg.Notifier,
 		eventBus:      cfg.EventBus,
+		// Audit logging
+		auditLog: cfg.AuditLog,
 	}
 
 	// Initialize Matrix adapter if homeserver is configured
@@ -432,6 +441,14 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleWebRTCIceCandidate(req)
 	case "webrtc.end":
 		return s.handleWebRTCEnd(req)
+	case "store_key":
+		return s.handleStoreKey(req)
+	case "webrtc.list":
+		return s.handleWebRTCList(req)
+	case "list_configs":
+		return s.handleListConfigs(req)
+	case "webrtc.get_audit_log":
+		return s.handleWebRTCGetAuditLog(req)
 	default:
 		return &Response{
 			JSONRPC: "2.0",
@@ -450,10 +467,10 @@ func (s *Server) handleStatus(req *Request) *Response {
 	defer s.mu.RUnlock()
 
 	status := map[string]interface{}{
-		"version":     "1.0.0",
-		"state":       "running",
-		"socket":      s.socketPath,
-		"containers":  len(s.containers),
+		"version":    "1.0.0",
+		"state":      "running",
+		"socket":     s.socketPath,
+		"containers": len(s.containers),
 		"container_ids": func() []string {
 			ids := make([]string, 0, len(s.containers))
 			for _, c := range s.containers {
@@ -733,10 +750,10 @@ func (s *Server) handleStart(req *Request) *Response {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
-			"container_id": containerID,
+			"container_id":   containerID,
 			"container_name": containerName,
-			"status":       "running",
-			"endpoint":     socketPath,
+			"status":         "running",
+			"endpoint":       socketPath,
 		},
 	}
 }
@@ -820,8 +837,8 @@ func (s *Server) handleStop(req *Request) *Response {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
-			"status":        "stopped",
-			"container_id":  params.ContainerID,
+			"status":         "stopped",
+			"container_id":   params.ContainerID,
 			"container_name": info.Name,
 		},
 	}
@@ -1110,10 +1127,10 @@ func (s *Server) handleMatrixStatus(req *Request) *Response {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
-			"enabled":    true,
-			"status":     status,
-			"user_id":    userID,
-			"logged_in":  token != "",
+			"enabled":   true,
+			"status":    status,
+			"user_id":   userID,
+			"logged_in": token != "",
 		},
 	}
 }
@@ -1198,10 +1215,10 @@ func (s *Server) handleMatrixLogin(req *Request) *Response {
 func (s *Server) handleAttachConfig(req *Request) *Response {
 	// Parse parameters
 	var params struct {
-		Name     string `json:"name"`               // Config filename
-		Content  string `json:"content"`            // File content (base64 or raw)
-		Encoding string `json:"encoding,omitempty"` // "base64" or "raw" (default: raw)
-		Type     string `json:"type,omitempty"`     // "env", "toml", "yaml", "json", etc.
+		Name     string            `json:"name"`               // Config filename
+		Content  string            `json:"content"`            // File content (base64 or raw)
+		Encoding string            `json:"encoding,omitempty"` // "base64" or "raw" (default: raw)
+		Type     string            `json:"type,omitempty"`     // "env", "toml", "yaml", "json", etc.
 		Metadata map[string]string `json:"metadata,omitempty"` // Additional metadata
 	}
 
@@ -1428,11 +1445,11 @@ type WebRTCStartParams struct {
 
 // WebRTCStartResult is the result of starting a WebRTC session
 type WebRTCStartResult struct {
-	SessionID       string                 `json:"session_id"`
-	SDPAnswer       string                 `json:"sdp_answer"`
+	SessionID       string                  `json:"session_id"`
+	SDPAnswer       string                  `json:"sdp_answer"`
 	TURNCredentials *webrtc.TURNCredentials `json:"turn_credentials"`
-	SignalingURL   string                 `json:"signaling_url"`
-	Token           string                 `json:"token"` // Call session token
+	SignalingURL    string                  `json:"signaling_url"`
+	Token           string                  `json:"token"` // Call session token
 }
 
 // handleWebRTCStart initiates a WebRTC voice session
@@ -1568,7 +1585,7 @@ func (s *Server) handleWebRTCStart(req *Request) *Response {
 		SessionID:       session.ID,
 		SDPAnswer:       sdpAnswer,
 		TURNCredentials: turnCreds,
-		SignalingURL:   "wss://matrix.armorclaw.com:8443/webrtc",
+		SignalingURL:    "wss://matrix.armorclaw.com:8443/webrtc",
 	}
 
 	// Convert token to JSON for transport
@@ -1598,8 +1615,8 @@ func (s *Server) handleWebRTCStart(req *Request) *Response {
 
 // WebRTCIceCandidateParams are parameters for adding an ICE candidate
 type WebRTCIceCandidateParams struct {
-	SessionID  string          `json:"session_id"`
-	Candidate  json.RawMessage `json:"candidate"` // ICE candidate JSON
+	SessionID string          `json:"session_id"`
+	Candidate json.RawMessage `json:"candidate"` // ICE candidate JSON
 }
 
 // handleWebRTCIceCandidate handles ICE candidate exchange
@@ -1778,4 +1795,252 @@ func (s *Server) validateRoomAccess(roomID string) error {
 	// TODO: Integrate with zero-trust configuration
 
 	return nil
+}
+
+// handleStoreKey stores a new credential in the keystore
+func (s *Server) handleStoreKey(req *Request) *Response {
+	var params struct {
+		ID          string   `json:"id"`
+		Provider    string   `json:"provider"`
+		Token       string   `json:"token"`
+		DisplayName string   `json:"display_name,omitempty"`
+		ExpiresAt   int64    `json:"expires_at,omitempty"`
+		Tags        []string `json:"tags,omitempty"`
+	}
+
+	if len(req.Params) == 0 {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "id, provider, and token are required",
+			},
+		}
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	if params.ID == "" || params.Provider == "" || params.Token == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "id, provider, and token are required",
+			},
+		}
+	}
+
+	if s.keystore == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "keystore not initialized",
+			},
+		}
+	}
+
+	cred := keystore.Credential{
+		ID:          params.ID,
+		Provider:    keystore.Provider(params.Provider),
+		Token:       params.Token,
+		DisplayName: params.DisplayName,
+		CreatedAt:   time.Now().Unix(),
+		ExpiresAt:   params.ExpiresAt,
+		Tags:        params.Tags,
+	}
+
+	if err := s.keystore.Store(cred); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to store key: %v", err),
+			},
+		}
+	}
+
+	s.securityLog.LogSecretAccess(s.ctx, params.ID, params.Provider, slog.String("status", "stored"))
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"id":         params.ID,
+			"provider":   params.Provider,
+			"created_at": cred.CreatedAt,
+		},
+	}
+}
+
+// handleWebRTCList lists all active WebRTC sessions
+func (s *Server) handleWebRTCList(req *Request) *Response {
+	if s.sessionMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"active_sessions": 0,
+				"sessions":        []interface{}{},
+			},
+		}
+	}
+
+	sessions := s.sessionMgr.List()
+	result := make([]map[string]interface{}, len(sessions))
+	for i, sess := range sessions {
+		result[i] = map[string]interface{}{
+			"session_id":   sess.ID,
+			"room_id":      sess.RoomID,
+			"state":        sess.State.String(),
+			"created_at":   sess.CreatedAt.Format(time.RFC3339),
+			"duration":     time.Since(sess.CreatedAt).String(),
+			"container_id": sess.ContainerID,
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"active_sessions": s.sessionMgr.Count(),
+			"sessions":        result,
+		},
+	}
+}
+
+// handleListConfigs lists all attached configuration files
+func (s *Server) handleListConfigs(req *Request) *Response {
+	configDir := DefaultConfigsDir
+
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  []interface{}{},
+			}
+		}
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to read configs directory: %v", err),
+			},
+		}
+	}
+
+	configs := make([]map[string]interface{}, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		configs = append(configs, map[string]interface{}{
+			"name":     entry.Name(),
+			"path":     filepath.Join(configDir, entry.Name()),
+			"size":     info.Size(),
+			"modified": info.ModTime().Format(time.RFC3339),
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  configs,
+	}
+}
+
+// handleWebRTCGetAuditLog retrieves the WebRTC security audit log
+func (s *Server) handleWebRTCGetAuditLog(req *Request) *Response {
+	var params struct {
+		Limit     int    `json:"limit,omitempty"`
+		EventType string `json:"event_type,omitempty"`
+		SessionID string `json:"session_id,omitempty"`
+		RoomID    string `json:"room_id,omitempty"`
+	}
+
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: err.Error(),
+				},
+			}
+		}
+	}
+
+	if s.auditLog == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"entries": []interface{}{},
+				"count":   0,
+			},
+		}
+	}
+
+	queryParams := audit.QueryParams{
+		Limit:     params.Limit,
+		EventType: audit.EventType(params.EventType),
+		SessionID: params.SessionID,
+		RoomID:    params.RoomID,
+	}
+
+	entries, err := s.auditLog.Query(queryParams)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to query audit log: %v", err),
+			},
+		}
+	}
+
+	result := make([]map[string]interface{}, len(entries))
+	for i, entry := range entries {
+		result[i] = map[string]interface{}{
+			"timestamp":  entry.Timestamp.Format(time.RFC3339),
+			"event_type": entry.EventType,
+			"session_id": entry.SessionID,
+			"room_id":    entry.RoomID,
+			"user_id":    entry.UserID,
+			"details":    entry.Details,
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"entries": result,
+			"count":   len(result),
+		},
+	}
 }

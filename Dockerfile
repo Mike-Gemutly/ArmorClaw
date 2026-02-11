@@ -42,6 +42,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Minimal attack surface with only what's needed to run OpenClaw
 FROM debian:bookworm-slim AS runtime
 
+# Build arguments (passed by CI/CD workflows)
+ARG BUILD_DATE
+ARG VCS_REF
+
+# Labels for image metadata
+LABEL org.opencontainers.image.title="ArmorClaw Agent" \
+      org.opencontainers.image.description="Hardened container runtime for AI agents" \
+      org.opencontainers.image.version="v1.0.0" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
 # Install runtime dependencies only — explicit, minimal
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Python runtime
@@ -96,21 +107,27 @@ COPY --from=builder /usr/bin/npx /usr/bin/npx
 # ============================================================================
 
 # Layer 1: Remove dangerous tools (keep /bin/sh for build, will disable in Layer 2)
+# CRITICAL: Remove /bin/rm FIRST to prevent circular dependency with Layer 2
 # We keep /bin/sh and /bin/dash to allow Layer 2 to execute
 # They will be disabled by removing execute permissions in Layer 2
-RUN rm -f /bin/bash /bin/mv /bin/find \
-    && rm -f /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace \
-    && rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp \
-    && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/passwd \
-    && rm -f /usr/bin/gdb /usr/bin/ltrace \
+RUN rm -f /bin/rm \
+    /bin/bash /bin/mv /bin/find \
+    /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace \
+    /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp \
+    /usr/bin/sudo /usr/bin/su /usr/bin/passwd \
+    /usr/bin/gdb /usr/bin/ltrace \
+    /usr/bin/rm /usr/bin/shred /usr/bin/unlink \
+    /usr/bin/openssl /usr/bin/dd \
     && apt-get autoremove -y 2>/dev/null || true
 
 # Layer 2: Remove execute permissions from ALL remaining binaries
 # This disables /bin/sh, /bin/dash, and all other tools - they exist but can't run
-# Then re-enable only Python/Node runtime executables
-RUN find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true \
-    && find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true \
-    && chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true
+# Then re-enable only Python/Node runtime and safe utilities needed for operation
+RUN chmod a-x /bin/sh /bin/dash /usr/bin/dash /usr/bin/shred /usr/bin/unlink /usr/bin/openssl /usr/bin/dd \
+    && find -L /bin -type f | xargs -r chmod a-x 2>/dev/null || true \
+    && find -L /usr/bin -type f | xargs -r chmod a-x 2>/dev/null || true \
+    && chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true \
+    && chmod +x /usr/bin/id /usr/bin/cp /usr/bin/mkdir /usr/bin/stat /usr/bin/cat /usr/bin/ls /usr/bin/head /usr/bin/tail /usr/bin/wc /usr/bin/sed /usr/bin/grep /usr/bin/basename /usr/bin/dirname /usr/bin/readlink /usr/bin/realpath 2>/dev/null || true
 
 # Layer 3: LD_PRELOAD hook to intercept dangerous library calls at library level
 # (Already compiled above in /opt/openclaw/lib/libarmorclaw_hook.so)

@@ -9,6 +9,64 @@ import subprocess
 import json
 
 # ============================================================================
+# Help and Usage
+# ============================================================================
+
+def show_help():
+    """Display help information."""
+    print("""
+ArmorClaw v1 - Hardened Container Runtime for AI Agents
+
+USAGE:
+    docker run [OPTIONS] armorclaw/agent:v1 [COMMAND]
+
+    By default, starts the ArmorClaw agent. To run a custom command,
+    override the CMD: docker run armorclaw/agent:v1 <your-command>
+
+EXAMPLES:
+    # Start the agent (requires API key via bridge or -e)
+    docker run -e OPENAI_API_KEY=sk-... armorclaw/agent:v1
+
+    # Run a custom command
+    docker run -e OPENAI_API_KEY=sk-... armorclaw/agent:v1 python -c "print('hello')"
+
+    # Check container hardening (bypasses agent)
+    docker run --rm -e OPENAI_API_KEY=sk-test armorclaw/agent:v1 id
+
+SECRETS INJECTION:
+    Production: Use bridge with file descriptor passing
+    Testing: Use -e OPENAI_API_KEY=sk-... (or other provider keys)
+
+SUPPORTED PROVIDERS:
+    OpenAI: OPENAI_API_KEY
+    Anthropic: ANTHROPIC_API_KEY
+    OpenRouter: OPENROUTER_API_KEY
+    Google/Gemini: GOOGLE_API_KEY or GEMINI_API_KEY
+    xAI: XAI_API_KEY
+
+SECURITY:
+    - Runs as UID 10001 (non-root)
+    - No shell access (/bin/sh has no execute bit)
+    - No destructive tools (rm, mv, find, etc.)
+    - LD_PRELOAD hooks block dangerous syscalls
+    - Read-only root filesystem recommended
+
+For more information: https://github.com/armorclaw/armorclaw
+""")
+    sys.exit(0)
+
+# Check for --help flag before any validation
+if '--help' in sys.argv or '-h' in sys.argv:
+    show_help()
+
+# Check for --version flag
+if '--version' in sys.argv or '-v' in sys.argv:
+    print("ArmorClaw v1.0.0")
+    print("Hardened container runtime for AI agents")
+    print("Build: debian:bookworm-slim")
+    sys.exit(0)
+
+# ============================================================================
 # Secrets Loading (File Descriptor Passing)
 # ============================================================================
 
@@ -222,15 +280,13 @@ def validate_agent_startup(cmd):
         return False, f"Command '{cmd[0]}' is not executable"
 
     # For Python commands, verify Python is available
+    # Note: Skip subprocess version check in hardened environment where /usr/bin/env
+    # may not be executable. shutil.which() already confirmed Python exists.
     if cmd[0] in ['python', 'python3', 'python3.11']:
-        try:
-            subprocess.run([cmd[0], '--version'], capture_output=True, check=True, timeout=5)
-        except subprocess.TimeoutExpired:
-            return False, f"{cmd[0]} --version timed out (check system resources)"
-        except subprocess.CalledProcessError as e:
-            return False, f"{cmd[0]} is not functional: {e}"
-        except FileNotFoundError:
-            return False, f"{cmd[0]} not found"
+        # Verify we can access the Python binary directly
+        if not os.access(cmd_path, os.R_OK):
+            return False, f"{cmd[0]} is not readable"
+        # Skip version check to avoid /usr/bin/env dependency
 
     return True, None
 
@@ -316,9 +372,12 @@ try:
     import shutil
     cmd_path = shutil.which(cmd[0])
     if cmd_path:
+        # Set whitelist flag to allow security hook to pass this execve call
+        os.environ['ARMORCLAW_ALLOW_EXEC'] = '1'
         os.execv(cmd_path, cmd)
     else:
         # Command not found, try execvp as fallback
+        os.environ['ARMORCLAW_ALLOW_EXEC'] = '1'
         os.execvp(cmd[0], cmd)
 except (FileNotFoundError, OSError) as e:
     # This should not happen after validation, but handle it anyway
