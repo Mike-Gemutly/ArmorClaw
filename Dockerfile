@@ -95,10 +95,10 @@ COPY --from=builder /usr/bin/npx /usr/bin/npx
 # SECURITY HARDENING: Multi-layered defense against runtime exploits
 # ============================================================================
 
-# Layer 1: Remove dangerous tools in a single RUN command
-# All deletions happen in one shell session before /bin/sh is affected
-# Note: /bin/sh is a symlink to /bin/dash on Debian, so deleting dash breaks sh
-RUN rm -f /bin/bash /bin/dash /bin/mv /bin/find \
+# Layer 1: Remove dangerous tools (keep /bin/sh for build, will disable in Layer 2)
+# We keep /bin/sh and /bin/dash to allow Layer 2 to execute
+# They will be disabled by removing execute permissions in Layer 2
+RUN rm -f /bin/bash /bin/mv /bin/find \
     && rm -f /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace \
     && rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp \
     && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/passwd \
@@ -106,7 +106,8 @@ RUN rm -f /bin/bash /bin/dash /bin/mv /bin/find \
     && apt-get autoremove -y 2>/dev/null || true
 
 # Layer 2: Remove execute permissions from ALL remaining binaries
-# This prevents Python/Node from exec'ing anything (even if tools were present)
+# This disables /bin/sh, /bin/dash, and all other tools - they exist but can't run
+# Then re-enable only Python/Node runtime executables
 RUN find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true \
     && find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true \
     && chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true
