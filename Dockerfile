@@ -94,21 +94,22 @@ COPY --from=builder /usr/bin/npx /usr/bin/npx
 # ============================================================================
 # SECURITY HARDENING: Multi-layered defense against runtime exploits
 # ============================================================================
-# Layer 1: Remove dangerous tools (MUST do first, while /bin/sh still works!)
-# This removes shells and dangerous tools before we strip execute permissions
-RUN /bin/rm -f /bin/bash /bin/dash /bin/sh /bin/mv /bin/find && \
-    /bin/rm -f /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace && \
-    /bin/rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp && \
-    /bin/rm -f /usr/bin/sudo /usr/bin/su /usr/bin/passwd && \
-    /bin/rm -f /usr/bin/gdb /usr/bin/ltrace && \
-    apt-get autoremove -y 2>/dev/null || true
+
+# Layer 1: Remove dangerous tools (MUST do while /bin/sh still works!)
+# Split into separate RUN commands to avoid deleting the shell mid-execution
+RUN rm -f /bin/bash /bin/dash /bin/sh /bin/mv /bin/find
+RUN rm -f /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace
+RUN rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp
+RUN rm -f /usr/bin/sudo /usr/bin/su /usr/bin/passwd
+RUN rm -f /usr/bin/gdb /usr/bin/ltrace
+RUN apt-get autoremove -y 2>/dev/null || true
 
 # Layer 2: Remove execute permissions from ALL remaining binaries
 # This prevents Python/Node from exec'ing anything (even if tools were present)
-# Must do AFTER removing tools since we need /bin/sh to run the commands above
-RUN find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true && \
-    find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true && \
-    chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true
+# Using /usr/bin/find explicitly since /bin/find may have been removed
+RUN /usr/bin/find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true
+RUN /usr/bin/find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true
+RUN chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true
 
 # Layer 3: LD_PRELOAD hook to intercept dangerous library calls at library level
 # (Already compiled above in /opt/openclaw/lib/libarmorclaw_hook.so)
