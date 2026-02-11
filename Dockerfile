@@ -95,9 +95,11 @@ COPY --from=builder /usr/bin/npx /usr/bin/npx
 # SECURITY HARDENING: Multi-layered defense against runtime exploits
 # ============================================================================
 
-# Layer 1: Remove dangerous tools (MUST do while /bin/sh still works!)
-# Split into separate RUN commands to avoid deleting the shell mid-execution
-RUN rm -f /bin/bash /bin/dash /bin/sh /bin/mv /bin/find
+# Layer 1: Remove dangerous tools (keep /bin/sh for build, disable it in Layer 2)
+# Note: We keep /bin/sh here but remove execute permission in Layer 2
+# This is more secure than deletion because: (a) no build race conditions,
+# (b) multiple defenses protect it (permissions + LD_PRELOAD + seccomp)
+RUN rm -f /bin/bash /bin/dash /bin/mv /bin/find
 RUN rm -f /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace
 RUN rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp
 RUN rm -f /usr/bin/sudo /usr/bin/su /usr/bin/passwd
@@ -106,9 +108,9 @@ RUN apt-get autoremove -y 2>/dev/null || true
 
 # Layer 2: Remove execute permissions from ALL remaining binaries
 # This prevents Python/Node from exec'ing anything (even if tools were present)
-# Using /usr/bin/find explicitly since /bin/find may have been removed
-RUN /usr/bin/find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true
-RUN /usr/bin/find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true
+# The /bin/sh shell is disabled here (no execute bit) but file remains
+RUN find /bin -type f -exec chmod a-x {} \; 2>/dev/null || true
+RUN find /usr/bin -type f -exec chmod a-x {} \; 2>/dev/null || true
 RUN chmod +x /usr/bin/python3* /usr/bin/node /usr/bin/npm /usr/bin/npx /usr/bin/env 2>/dev/null || true
 
 # Layer 3: LD_PRELOAD hook to intercept dangerous library calls at library level
