@@ -6,10 +6,6 @@ name: Docker Hub Build & Push
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'Dockerfile'
-      - 'container/**'
-      - '.github/workflows/dockerhub.yml'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
