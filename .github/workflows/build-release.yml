@@ -145,7 +145,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKER_USERNAME }}/agent
+          images: mikegemut/armorclaw
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
