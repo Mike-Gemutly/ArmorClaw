@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Default values
-IMAGE_NAME="${IMAGE_NAME:-armorclaw/agent}"
+IMAGE_NAME="${IMAGE_NAME:-mikegemut/armorclaw}"
 VERSION="${VERSION:-v1.0.0}"
 REGISTRY="${REGISTRY:-docker.io}"
 PUSH="${PUSH:-false}"

@@ -21,8 +21,8 @@ jobs:
 
       - name: Build container image
         run: |
-          docker build -t armorclaw/agent:v1 .
-          docker images armorclaw/agent:v1
+          docker build -t mikegemut/armorclaw:latest .
+          docker images mikegemut/armorclaw:latest
 
       - name: Run hardening tests
         run: make test-hardening
@@ -31,7 +31,7 @@ jobs:
         if: always()
         run: |
           echo "Hardening tests completed"
-          docker images armorclaw/agent:v1
+          docker images mikegemut/armorclaw:latest
 
   # Job 2: Secrets Injection Validation (Critical)
   secrets:
@@ -45,9 +45,9 @@ jobs:
 
       - name: Ensure image exists
         run: |
-          if ! docker images armorclaw/agent:v1 | grep -q armorclaw; then
+          if ! docker images mikegemut/armorclaw:latest | grep -q mikegemut; then
             echo "Building image..."
-            docker build -t armorclaw/agent:v1 .
+            docker build -t mikegemut/armorclaw:latest .
           fi
 
       - name: Run secrets validation tests
@@ -60,7 +60,7 @@ jobs:
           CONTAINER_ID=$(
             docker run -d --rm \
               -e OPENAI_API_KEY="sk-test-ci-secret" \
-              armorclaw/agent:v1 python -c "import time; time.sleep(999999)"
+              mikegemut/armorclaw:latest python -c "import time; time.sleep(999999)"
           )
           sleep 2
 
@@ -96,7 +96,7 @@ jobs:
 
       - name: Build container image
         run: |
-          docker build -t armorclaw/agent:v1 .
+          docker build -t mikegemut/armorclaw:latest .
 
       - name: Run exploit simulations
         run: |
@@ -130,7 +130,7 @@ jobs:
 
       - name: Build container image
         run: |
-          docker build -t armorclaw/agent:v1 .
+          docker build -t mikegemut/armorclaw:latest .
 
       - name: Run Docker Bench
         run: |
@@ -217,9 +217,9 @@ jobs:
 
       - name: Verify container image
         run: |
-          if ! docker images armorclaw/agent:v1 | grep -q armorclaw; then
+          if ! docker images mikegemut/armorclaw:latest | grep -q armorclaw; then
             echo "Building image for deployment test..."
-            docker build -t armorclaw/agent:v1 .
+            docker build -t mikegemut/armorclaw:latest .
           fi
 
           echo "✅ Container image ready for deployment"
