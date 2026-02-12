@@ -4,6 +4,20 @@
 > **Created:** 2026-02-11
 > **Status:** Ready for Implementation
 
+> **User Story Gaps:** See [user-story-gaps.md](user-story-gaps.md) for analysis of missing stories
+
+---
+
+## Summary
+
+**Original Stories:** 4
+**Missing Stories Identified:** 12
+**Total Stories After Gap Analysis:** 16
+
+**Critical Gaps (P0):** 8 stories - Must implement for v1.0
+**Medium Gaps (P1):** 3 stories - Can defer to v1.1
+**Low Gaps (P2):** 1 story - Nice to have
+
 ---
 
 ## Task Breakdown
