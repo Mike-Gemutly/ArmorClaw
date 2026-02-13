@@ -665,14 +665,28 @@ func (s *Server) handleStart(req *Request) *Response {
 		slog.String("image", params.Image),
 	)
 
-	// 4. Create container config with secrets injection
+	// 4. Create container config with secrets injection and proxy support
+	// Check for HTTP_PROXY environment variable for SDTW adapter egress support
+	httpProxy := os.Getenv("HTTP_PROXY")
+	envVars := []string{
+		fmt.Sprintf("ARMORCLAW_KEY_ID=%s", params.KeyID),
+		fmt.Sprintf("ARMORCLAW_ENDPOINT=%s", socketPath),
+		"ARMORCLAW_SECRETS_PATH=/run/secrets",
+	}
+
+	// Add HTTP_PROXY to container environment if configured (for SDTW adapter egress)
+	if httpProxy != "" {
+		envVars = append(envVars, fmt.Sprintf("HTTP_PROXY=%s", httpProxy))
+		// Log proxy configuration
+		s.securityLog.LogSecurityEvent("container_start_with_proxy",
+			slog.String("proxy", httpProxy),
+			slog.String("container", containerName),
+		)
+	}
+
 	containerConfig := &container.Config{
 		Image: params.Image,
-		Env: []string{
-			fmt.Sprintf("ARMORCLAW_KEY_ID=%s", params.KeyID),
-			fmt.Sprintf("ARMORCLAW_ENDPOINT=%s", socketPath),
-			"ARMORCLAW_SECRETS_PATH=/run/secrets",
-		},
+		Env:  envVars,
 	}
 
 	// Mount secrets file into container at /run/secrets (fixed location)

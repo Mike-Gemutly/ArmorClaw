@@ -1,0 +1,114 @@
+# Squid/Nginx Egress Proxy for ArmorClaw SDTW Adapters
+# This proxy enables SDTW adapters to make HTTPS requests to external platforms
+
+version: '3.8'
+
+services:
+  # Squid proxy server
+  squid:
+    image: squid:latest
+    container_name: armorclaw-squid
+    restart: unless-stopped
+    networks:
+      bridge:
+        ipv4_address: 172.18.0.10
+        ports:
+          - "8443:8080"
+    networks:
+      bridge:
+        ipv4_address: 172.18.0.11
+        ports:
+          - "8080:8080"
+
+  # SDTW adapter proxies
+  slack-proxy:
+    image: armorclaw/sdtw-slack-proxy:latest
+    container_name: armorclaw-slack-proxy
+    restart: unless-stopped
+    depends_on:
+      - squid
+    environment:
+      - HTTP_PROXY: "http://squid:3128:8080"
+      - OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      - OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      - ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      - GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+      - GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      - XAI_API_KEY: "${XAI_API_KEY}"
+
+  discord-proxy:
+    image: armorclaw/sdtw-discord-proxy:latest
+    container_name: armorclaw-discord-proxy
+    restart: unless-stopped
+    depends_on:
+      - squid
+    environment:
+      - HTTP_PROXY: "http://squid:3128:8080"
+      - DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN}"
+      - OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      - ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+  teams-proxy:
+    image: armorclaw/sdtw-teams-proxy:latest
+    container_name: armorclaw-teams-proxy
+    restart: unless-stopped
+    depends_on:
+      - squid
+    environment:
+      - HTTP_PROXY: "http://squid:3128:8080"
+      - OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      - OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+      - ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      - GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+      - GEMINI_API_KEY: "${GEMINI_API_KEY}"
+
+networks:
+  squid:
+    driver: bridge
+    ipam:
+      driver: bridge
+    config:
+      subnet: 172.18.0.0/24
+    services:
+      squid:
+    image: squid:latest
+
+  bridge:
+    driver: bridge
+    ipam:
+      driver: bridge
+    config:
+      subnet: 172.18.0.10/24
+    services:
+      slack-proxy:
+      slack-proxy:
+        image: armorclaw/sdtw-slack-proxy:latest
+        container_name: armorclaw-slack-proxy
+        restart: unless-stopped
+        depends_on:
+          - squid
+        environment:
+          - HTTP_PROXY: "http://squid:3128:8080"
+          - SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+          - OPENAI_API_KEY: proxy-server
+      teams-proxy:
+      image: armorclaw/sdtw-teams-proxy:latest
+      container_name: armorclaw-teams-proxy
+      restart: unless-stopped
+      depends_on:
+        - squid
+        environment:
+          - HTTP_PROXY: "http://squid:3128:8080"
+          - OPENAI_API_KEY: "${OPENAI_API_KEY}"
+          - MICROSOFT_API_KEY: "${MICROSOFT_API_KEY}"
+          - XAI_API_KEY: "${XAI_API_KEY}"
+      whatsapp-proxy:
+        image: armorclaw/sdtw-whatsapp-proxy:latest
+        container_name: armorclaw-whatsapp-proxy
+        restart: unless-stopped
+        depends_on:
+          - squid
+        environment:
+          - HTTP_PROXY: "http://squid:3128:8080"
+          - OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+          - WHATSAPP_API_KEY: "${WHATSAPP_API_KEY}"

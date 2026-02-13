@@ -171,6 +171,10 @@ def apply_secrets(secrets: dict) -> bool:
         'google': 'GOOGLE_API_KEY',
         'gemini': 'GEMINI_API_KEY',
         'xai': 'XAI_API_KEY',
+        'slack': 'SLACK_BOT_TOKEN',
+        'discord': 'DISCORD_BOT_TOKEN',
+        'teams': 'MICROSOFT_API_KEY',
+        'whatsapp': 'WHATSAPP_API_KEY',
     }
 
     env_var = provider_env_map.get(provider)
@@ -225,6 +229,52 @@ if not secrets_present:
     print("[ArmorClaw]", file=sys.stderr)
     print("[ArmorClaw] For testing only, use: docker run -e OPENAI_API_KEY=sk-... armorclaw/agent:v1", file=sys.stderr)
     sys.exit(1)
+
+# ============================================================================
+# Egress Proxy Configuration (HTTP_PROXY)
+# ============================================================================
+
+def configure_proxy() -> bool:
+    """
+    Configure HTTP proxy for SDTW adapter outbound requests.
+
+    SDTW adapters (Slack, Discord, Teams, WhatsApp) need to make
+    HTTPS requests to external platform APIs. This function configures
+    the HTTP proxy to enable that outbound traffic.
+
+    Returns:
+        bool: True if proxy was configured successfully
+    """
+    # Check for HTTP_PROXY environment variable (set by bridge)
+    http_proxy = os.getenv('HTTP_PROXY')
+
+    if not http_proxy:
+        # No proxy configured - direct access (will fail in isolated containers)
+        print("[ArmorClaw] ℹ No HTTP_PROXY configured - SDTW adapters may fail")
+        return False
+
+    # Validate proxy URL format
+    if not http_proxy.startswith('http://') and not http_proxy.startswith('https://'):
+        print(f"[ArmorClaw] ⚠ WARNING: Invalid HTTP_PROXY format: {http_proxy}", file=sys.stderr)
+        return False
+
+    # Set proxy environment variables for Python HTTP clients
+    # Most Python HTTP libraries (requests, urllib3, httpx) respect these
+    os.environ['HTTP_PROXY'] = http_proxy
+    os.environ['HTTPS_PROXY'] = http_proxy  # For HTTPS requests
+    os.environ['http_proxy'] = http_proxy  # Lowercase version
+    os.environ['https_proxy'] = http_proxy  # Lowercase version
+
+    # Disable proxy for localhost connections (if any)
+    os.environ['NO_PROXY'] = 'localhost,127.0.0.1'
+
+    print(f"[ArmorClaw] ✓ Egress proxy configured: {http_proxy}")
+    print("[ArmorClaw] ℹ SDTW adapters will use proxy for outbound HTTPS requests")
+
+    return True
+
+# Configure egress proxy before agent starts
+configure_proxy()
 
 # ============================================================================
 # Security: Verify Hardening (Self-Check)
