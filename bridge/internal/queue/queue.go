@@ -4,12 +4,8 @@ package queue
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // QueueConfig configures queue behavior
@@ -80,6 +76,34 @@ type QueueStats struct {
 	InflightCount int
 	FailedCount   int
 	DLQCount      int
+}
+
+// MessageType represents the type of message
+type MessageType string
+
+const (
+	MessageTypeText  MessageType = "text"
+	MessageTypeImage MessageType = "image"
+	MessageTypeFile  MessageType = "file"
+	MessageTypeMedia MessageType = "media"
+)
+
+// Attachment represents a file attachment
+type Attachment struct {
+	ID       string
+	URL      string
+	MimeType string
+	Size     int64
+	Filename string
+}
+
+// MessageQueue manages persistent message queue
+type MessageQueue struct {
+	config      QueueConfig
+	db          *sql.DB
+	metrics      *QueueMetrics
+	mu          sync.RWMutex
+	shutdownChan chan struct{}
 }
 
 // NewMessageQueue creates a new queue instance
