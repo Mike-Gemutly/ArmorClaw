@@ -273,6 +273,124 @@ func (si *SecretInjector) Cleanup(containerName string) error {
 	return nil
 }
 
+// UpdateSecrets sends updated secrets to a running container (P0-CRIT-3)
+// This is used by send_secret RPC method to deliver new credentials to running containers.
+func (si *SecretInjector) UpdateSecrets(containerName string, cred keystore.Credential) error {
+	si.mu.Lock()
+	defer si.mu.Unlock()
+
+	// Check if container exists and is running
+	session, exists := si.sockets[containerName]
+	if !exists || exists.State != "running" {
+		return fmt.Errorf("container not found or not running: %s", containerName)
+	}
+
+	// Create a new socket for update delivery
+	socketPath := filepath.Join(si.socketDir, containerName+".update."+fmt.Sprint(time.Now().Unix())+".sock")
+
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to create update socket: %w", err)
+	}
+
+	// Set socket permissions
+	if err := os.Chmod(socketPath, 0660); err != nil {
+		listener.Close()
+		return fmt.Errorf("failed to set socket permissions: %w", err)
+	}
+
+	// Create update session
+	updateSession := &secretSession{
+		socketPath:  socketPath,
+		credential:  cred,
+		ready:      make(chan struct{}),
+		expiresAt:  time.Now().Add(SecretSocketTimeout),
+		server:     listener,
+		closed:     false,
+	}
+
+	// Add to tracking (use special key to avoid conflict)
+	si.sockets[containerName+".update"] = updateSession
+
+	// Start handler in background
+	si.wg.Add(1)
+	go si.handleSecretUpdate(updateSession)
+
+	// Wait for connection with timeout
+	select {
+	case <-updateSession.ready:
+		// Socket ready for connection
+	case <-time.After(SecretSocketTimeout):
+		si.cleanupSession(updateSession)
+		return fmt.Errorf("container did not connect to update socket: %s", containerName)
+	}
+
+	// Get connection and deliver secrets
+	conn, err := updateSession.server.Accept()
+	if err != nil {
+		si.cleanupSession(updateSession)
+		return err
+	}
+	defer conn.Close()
+
+	if err := si.deliverSecrets(updateSession, conn); err != nil {
+		return err
+	}
+
+	// Log the update
+	si.securityLog.LogSecretInject(si.ctx, containerName, cred.ID,
+		slog.String("method", "send_secret"),
+		slog.String("reason", "credential_update"),
+	)
+
+	// Cleanup update session immediately after delivery
+	si.cleanupSession(updateSession)
+
+	return nil
+}
+
+// handleSecretUpdate handles update socket connection and delivery
+func (si *SecretInjector) handleSecretUpdate(session *secretSession) {
+	defer si.cleanupSession(session)
+
+	// Accept connection or timeout
+	connChan := make(chan net.Conn, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		conn, err := session.server.Accept()
+		if err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				errChan <- err
+			}
+			return
+		}
+		connChan <- conn
+	}()
+
+	select {
+	case conn := <-connChan:
+		// Connection established
+		if err := si.deliverSecrets(session, conn); err != nil {
+			slog.LogAttrs(si.ctx, "update_secret_failed",
+				slog.String("container", filepath.Base(session.socketPath)),
+				slog.String("error", err.Error()),
+			)
+		}
+	case err := <-errChan:
+		if !errors.Is(err, net.ErrClosed) {
+			slog.LogAttrs(si.ctx, "update_socket_error",
+				slog.String("error", err.Error()),
+			)
+		}
+	case <-time.After(SecretSocketTimeout):
+		// Timeout
+		slog.LogAttrs(si.ctx, "update_timeout",
+			slog.String("container", filepath.Base(session.socketPath)),
+		)
+	}
+}
+
 // Stop stops the secret injector and cleans up all sessions
 func (si *SecretInjector) Stop() {
 	si.cancel()

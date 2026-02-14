@@ -445,6 +445,8 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleMatrixLogin(req)
 	case "attach_config":
 		return s.handleAttachConfig(req)
+	case "send_secret":
+		return s.handleSendSecret(req)
 	case "webrtc.start":
 		return s.handleWebRTCStart(req)
 	case "webrtc.ice_candidate":
@@ -1871,6 +1873,135 @@ func (s *Server) handleListConfigs(req *Request) *Response {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result:  configs,
+	}
+}
+
+// handleSendSecret sends secrets to a running container (P0-CRIT-3)
+func (s *Server) handleSendSecret(req *Request) *Response {
+	var params struct {
+		ContainerID string `json:"container_id"`
+		KeyID      string `json:"key_id"`
+	}
+
+	if len(req.Params) == 0 {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "container_id and key_id are required",
+			},
+		}
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	// Validate parameters
+	if params.ContainerID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "container_id is required",
+			},
+		}
+	}
+
+	if params.KeyID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "key_id is required",
+			},
+		}
+	}
+
+	// Check if container exists and is running
+	s.mu.RLock()
+	container, exists := s.containers[params.ContainerID]
+	s.mu.RUnlock()
+
+	if !exists || exists.State != "running" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    ContainerStopped,
+				Message: "container not found or not running",
+			},
+		}
+	}
+
+	// Retrieve credentials
+	if s.keystore == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "keystore not initialized",
+			},
+		}
+	}
+
+	cred, err := s.keystore.Retrieve(params.KeyID)
+	if err != nil {
+		s.securityLog.LogSecretAccess(s.ctx, params.KeyID, "unknown", slog.String("status", "failed"))
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: getHelpfulError(KeyNotFound, fmt.Sprintf("Key '%s' not found", params.KeyID)),
+			},
+		}
+	}
+
+	s.securityLog.LogSecretAccess(s.ctx, params.KeyID, string(cred.Provider), slog.String("status", "success"))
+
+	// Inject secrets into running container via new socket
+csecretSocketPath, err := s.secretInjector.UpdateSecrets(container.ID, cred)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to create secret socket: %v", err),
+			},
+		}
+	}
+
+	// Wait a moment for socket to be ready and container to connect
+	// In production, we would verify the container received the secrets
+	// For now, we assume success if socket creation succeeded
+
+	// Log the secret re-injection
+	s.securityLog.LogSecretInject(s.ctx, container.ID, params.KeyID,
+		slog.String("method", "send_secret"),
+		slog.String("reason", "credential_update"),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status": "secrets_sent",
+			"container_id":   params.ContainerID,
+			"key_id":        params.KeyID,
+		},
 	}
 }
 
