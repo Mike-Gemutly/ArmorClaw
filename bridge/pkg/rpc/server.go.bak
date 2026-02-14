@@ -605,53 +605,174 @@ func (s *Server) handleStart(req *Request) *Response {
 	}
 
 	// Generate container name and socket path
+	containerName := fmt.Sprintf("armorclaw-%s-%d", params.AgentType, time.Now().Unix())
 
-	// P0-CRIT-3: Use socket-based secret injection (memory-only, no files)
-	secretSocketPath, err := s.secretInjector.InjectSecrets(containerName, cred)
+	// Check for container name collision
+	if s.checkContainerNameExists(containerName) {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("container name collision detected: %s", containerName),
+			},
+		}
+	}
+
+	socketPath := filepath.Join(s.containerDir, containerName+".sock")
+
+	// 3. Create secrets file for injection
+	// The container will mount this file and read secrets from it
+	// Using a file instead of named pipe for cross-platform compatibility
+	secretsDir := DefaultSecretsDir
+	secretsPath := filepath.Join(secretsDir, containerName+".json")
+
+	// Create secrets directory
+	if err := os.MkdirAll(secretsDir, 0750); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to create secrets directory: %v", err),
+			},
+		}
+	}
+
+	// Prepare secrets JSON
+	secretsJSON := map[string]interface{}{
+		"provider":     cred.Provider,
+		"token":        cred.Token,
+		"display_name": cred.DisplayName,
+	}
+	secretsData, err := json.Marshal(secretsJSON)
 	if err != nil {
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Error: &ErrorObj{
 				Code:    InternalError,
-				Message: fmt.Sprintf("failed to create secret socket: %v", err),
+				Message: fmt.Sprintf("failed to marshal secrets: %v", err),
 			},
 		}
 	}
 
-	// Create control socket path for container communication
-	socketPath := filepath.Join(s.containerDir, containerName+".sock")
+	// Write secrets to file
+	if err := os.WriteFile(secretsPath, secretsData, 0640); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to write secrets file: %v", err),
+			},
+		}
+	}
 
-	// 4. Create container config with secret socket mount and proxy support
+	// Log secret injection
+	s.securityLog.LogSecretInject(s.ctx, containerName, params.KeyID,
+		slog.String("secrets_path", secretsPath),
+		slog.String("image", params.Image),
+	)
+
+	// 4. Create container config with secrets injection and proxy support
 	// Check for HTTP_PROXY environment variable for SDTW adapter egress support
 	httpProxy := os.Getenv("HTTP_PROXY")
 	envVars := []string{
 		fmt.Sprintf("ARMORCLAW_KEY_ID=%s", params.KeyID),
 		fmt.Sprintf("ARMORCLAW_ENDPOINT=%s", socketPath),
-		fmt.Sprintf("ARMORCLAW_SECRET_SOCKET=%s", secretSocketPath), // P0-CRIT-3: Socket path
+		"ARMORCLAW_SECRETS_PATH=/run/secrets",
 	}
 
 	// Add HTTP_PROXY to container environment if configured (for SDTW adapter egress)
 	if httpProxy != "" {
 		envVars = append(envVars, fmt.Sprintf("HTTP_PROXY=%s", httpProxy))
 		// Log proxy configuration
-		s.securityLog.LogContainerStart(s.ctx, containerName, "", params.Image,
+		s.securityLog.LogSecurityEvent("container_start_with_proxy",
 			slog.String("proxy", httpProxy),
+			slog.String("container", containerName),
 		)
 	}
 
 	containerConfig := &container.Config{
 		Image: params.Image,
-		Env:   envVars,
+		Env:  envVars,
 	}
 
-	// Mount secret socket into container (read-only, no file exposure)
+	// Mount secrets file into container at /run/secrets (fixed location)
 	hostConfig := &container.HostConfig{
 		Binds: []string{
-			fmt.Sprintf("%s:/run/secrets/socket:ro", secretSocketPath),
+			fmt.Sprintf("%s:/run/secrets:ro", secretsPath),
 		},
 		AutoRemove: true, // Auto-remove on exit
 	}
+
+	// 5. Start the container with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultContainerTimeout)
+	defer cancel()
+
+	containerID, err := s.docker.CreateAndStartContainer(
+		ctx,
+		containerConfig,
+		hostConfig,
+		nil, // networkingConfig
+		nil, // platform
+	)
+	if err != nil {
+		// Rollback: clean up secrets file and socket path
+		s.rollbackContainerStart(containerName, secretsPath, socketPath)
+
+		// Check if timeout occurred
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Log container timeout
+			s.securityLog.LogContainerError(s.ctx, containerName, "", "timeout", "container start timed out",
+				slog.String("key_id", params.KeyID),
+			)
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InternalError,
+					Message: "container start timed out",
+				},
+			}
+		}
+
+		// Log container error
+		s.securityLog.LogContainerError(s.ctx, containerName, "", "start_failed", err.Error(),
+			slog.String("key_id", params.KeyID),
+		)
+
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to start container: %v", err),
+			},
+		}
+	}
+
+	// 6. Track container
+	s.mu.Lock()
+	s.containers[containerID] = &ContainerInfo{
+		ID:       containerID,
+		Name:     containerName,
+		State:    "running",
+		Created:  time.Now().Unix(),
+		Endpoint: socketPath,
+	}
+	s.mu.Unlock()
+
+	// Log container start success
+	s.securityLog.LogContainerStart(s.ctx, containerName, containerID, params.Image,
+		slog.String("key_id", params.KeyID),
+		slog.String("socket_path", socketPath),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
 		Result: map[string]interface{}{
 			"container_id":   containerID,
 			"container_name": containerName,

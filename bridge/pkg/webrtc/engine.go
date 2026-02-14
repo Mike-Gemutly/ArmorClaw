@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -20,7 +19,6 @@ type Engine struct {
 	connections  map[string]*PeerConnectionWrapper
 	stopChan     chan struct{}
 	wg           sync.WaitGroup
-	turnManager  *turn.Manager // TURN credential manager
 }
 
 // EngineConfig holds configuration for the WebRTC engine

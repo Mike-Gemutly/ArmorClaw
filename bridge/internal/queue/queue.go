@@ -139,6 +139,8 @@ type CircuitBreaker struct {
 	lastFailureTime  time.Time
 	timeout          time.Duration
 	openUntil        time.Time
+	lastStateChange  time.Time  // NEW: Track when state last changed
+	db               *sql.DB  // NEW: Database handle for state persistence
 }
 
 // MessageQueue manages persistent message queue
@@ -258,12 +260,19 @@ func NewMessageQueue(ctx context.Context, config QueueConfig) (*MessageQueue, er
 		state:    CircuitClosed,
 		threshold: config.CircuitBreakerThreshold,
 		timeout:   config.CircuitBreakerTimeout,
+		db:        db,  // NEW: Set database for state persistence
+	}
+
+	// NEW: Load circuit breaker state from database if available
+	if err := cb.loadState(ctx); err != nil {
+		// Log error but don't fail queue initialization
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to load circuit breaker state: %v\n", err)
 	}
 
 	mq := &MessageQueue{
 		config:         config,
 		db:             db,
-		metrics:        NewQueueMetrics(),
+		metrics:        NewQueueMetrics(config.Platform),
 		shutdownChan:   make(chan struct{}),
 		closed:         false,
 		circuitBreaker: cb,
@@ -347,6 +356,9 @@ func (mq *MessageQueue) Enqueue(ctx context.Context, msg Message) (*EnqueueResul
 	mq.circuitBreaker.recordSuccess()
 	mq.metrics.RecordEnqueued()
 	mq.metrics.RecordBatch(1)
+
+	// Update Prometheus gauges
+	mq.metrics.UpdateGauges(stats.PendingDepth+1, stats.InflightCount, stats.FailedCount)
 
 	return &EnqueueResult{
 		ID:      msg.ID,
@@ -438,6 +450,9 @@ func (mq *MessageQueue) Dequeue(ctx context.Context) (*DequeueResult, error) {
 	mq.metrics.RecordDequeued()
 
 	stats, _ := mq.Stats(ctx)
+	// Update Prometheus gauges
+	mq.metrics.UpdateGauges(stats.PendingDepth, stats.InflightCount, stats.FailedCount)
+
 	return &DequeueResult{
 		Message: &msg,
 		Found:   true,
@@ -681,7 +696,12 @@ func (mq *MessageQueue) DequeueBatch(ctx context.Context, batchSize int) ([]*Mes
 
 	mq.circuitBreaker.recordSuccess()
 	mq.metrics.RecordBatch(len(messages))
-	mq.metrics.RecordDequeued()
+	for range messages {
+		mq.metrics.RecordDequeued()
+	}
+
+	stats, _ := mq.Stats(ctx)
+	mq.metrics.UpdateGauges(stats.PendingDepth, stats.InflightCount, stats.FailedCount)
 
 	return messages, nil
 }
@@ -744,6 +764,9 @@ func (mq *MessageQueue) Health(ctx context.Context) (*HealthStatus, error) {
 	if err != nil {
 		return &HealthStatus{Healthy: false, Status: "error"}, err
 	}
+
+	// Update Prometheus gauges
+	mq.metrics.UpdateGauges(stats.PendingDepth, stats.InflightCount, stats.FailedCount)
 
 	// Determine circuit breaker state
 	cbState := mq.circuitBreaker.state.String()
@@ -819,10 +842,16 @@ func (cb *CircuitBreaker) canProceed() bool {
 
 	// Check if we're in open state and timeout has passed
 	if cb.state == CircuitOpen && time.Now().After(cb.openUntil) {
-		// Transition to half-open
+		// Transition to half-open for recovery
 		cb.state = CircuitHalfOpen
 		cb.halfOpenAttempts = 0
 		return true
+	}
+
+	// Check if we're in half-open state and timeout has passed
+	if cb.state == CircuitHalfOpen && time.Now().After(cb.openUntil) {
+		// Transition to closed after timeout expires
+		cb.state = CircuitClosed
 	}
 
 	return cb.state != CircuitOpen
@@ -841,6 +870,12 @@ func (cb *CircuitBreaker) recordSuccess() {
 			cb.state = CircuitClosed
 		}
 	}
+
+	// NEW: Persist state change to queue_meta
+	if err := cb.saveState(context.Background()); err != nil {
+		// Log error but don't fail operation
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to persist circuit breaker state: %v\n", err)
+	}
 }
 
 // recordFailure records a failed operation
@@ -856,6 +891,93 @@ func (cb *CircuitBreaker) recordFailure() {
 		cb.state = CircuitOpen
 		cb.openUntil = time.Now().Add(cb.timeout)
 	}
+
+	// Persist state change
+	if err := cb.saveState(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] Failed to persist circuit breaker state: %v\n", err)
+	}
+
+	// saveState persists circuit breaker state to queue_meta table
+func (cb *CircuitBreaker) saveState(ctx context.Context) error {
+	// Serialize state as JSON for storage
+	stateJSON, err := json.Marshal(map[string]interface{}{
+		"state":       cb.state.String(),
+		"open_until":  cb.openUntil.Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal state: %w", err)
+	}
+
+	// Store in queue_meta table
+	_, err = cb.db.ExecContext(ctx,
+		"INSERT OR REPLACE INTO queue_meta (key, value) VALUES (?, ?)",
+		"circuit_breaker_state", // key
+		cb.openUntil.Format(time.RFC3339), // value
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	// Update lastStateChange timestamp
+	cb.lastStateChange = time.Now()
+
+	return nil
+}
+
+// loadState loads circuit breaker state from queue_meta table
+func (cb *CircuitBreaker) loadState(ctx context.Context) error {
+	// Query state from queue_meta
+	var stateStr, openUntilStr, lastChangeStr string
+	var state CircuitBreakerState
+	var openUntil time.Time
+
+	err := cb.db.QueryRowContext(ctx,
+		"SELECT value FROM queue_meta WHERE key = 'circuit_breaker_state'",
+	).Scan(
+		&stateStr,  // value: open_until timestamp
+	)
+
+	if err != nil {
+		// If no state exists, start with Closed state (default)
+		if errors.Is(err, sql.ErrNoRows) {
+			state = CircuitClosed
+			openUntil = time.Time{}
+			cb.lastStateChange = time.Now()
+			return nil
+		}
+		// Parse state
+		switch stateStr {
+		case "closed":
+			state = CircuitClosed
+		case "open":
+			state = CircuitOpen
+		case "half_open":
+			state = CircuitHalfOpen
+		default:
+			state = CircuitClosed // Default to closed on parse error
+		}
+
+	// Parse openUntil timestamp
+	if openUntilStr != "" {
+		openUntil, err = time.Parse(time.RFC3339, openUntilStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse open_until: %w", err)
+		}
+	}
+
+	// Parse lastStateChange timestamp
+	if lastChangeStr != "" {
+		cb.lastStateChange, err = time.Parse(time.RFC3339, lastChangeStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse last_state_change: %w", err)
+		}
+	}
+
+	// Update circuit breaker fields
+	cb.state = state
+	cb.openUntil = openUntil
+
+	return nil
 }
 
 // String returns string representation of circuit state
