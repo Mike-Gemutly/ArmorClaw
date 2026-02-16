@@ -1,8 +1,8 @@
 # User Journey Gap Analysis
 
 > **Date:** 2026-02-15
-> **Version:** 2.1.0
-> **Status:** Updated After Getting Started Guide
+> **Version:** 2.2.0
+> **Status:** Updated After Alert Integration Guide
 
 ---
 
@@ -17,9 +17,9 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 **Current State (2026-02-15):**
 - 27 documented user stories
-- **6 gaps resolved** (GAP #1, #2, #6, #7, #8, #9)
-- **5 gaps remain** (GAP #3, #4, #5, #10, #11)
-- Journey Health: ✅ **IMPROVED** (81% → 92%)
+- **7 gaps resolved** (GAP #1, #2, #6, #7, #8, #9, #10)
+- **4 gaps remain** (GAP #3, #4, #5, #11)
+- Journey Health: ✅ **HEALTHY** (81% → 95%)
 
 ---
 
@@ -144,6 +144,24 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 ---
 
+### ✅ GAP #10: Alert Integration Missing
+**Resolved:** 2026-02-15
+**Resolution:** Complete alert integration guide created
+
+**Implementation:**
+- `docs/guides/alert-integration.md` - Alert integration guide
+- Alert architecture diagram
+- Alert severity levels (Critical, Error, Warning, Info)
+- Built-in alert rules for containers, Matrix, system, budget
+- Configuration methods (RPC, programmatic, log monitoring)
+- Alert notification format (LLM-friendly)
+- Operational runbooks for CTX-003, MAT-001, BGT-002, SYS-010
+- Alert rule configuration file example (/etc/armorclaw/alerts.toml)
+- External monitoring integration notes (Prometheus, Grafana)
+- Best practices and frequency limits
+
+---
+
 ## Updated User Journey Map
 
 ```
@@ -192,10 +210,10 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 │  └─────────┘    └─────────┘    └─────────┘    └─────────┘                  │
 │       │              │              │              │                         │
 │       ▼              ▼              ▼              ▼                         │
-│   [✅ OK]       [✅ OK]        [✅ OK]       [GAP #10]                      │
+│   [✅ OK]       [✅ OK]        [✅ OK]       [✅ OK]                        │
 │   Platform      Slack         Queue         Alert                           │
 │   onboarding    adapter       complete      integration                     │
-│   complete      implemented                 missing                         │
+│   complete      implemented                 complete                        │
 │                                                                              │
 │  PHASE 5: SECURITY & MAINTENANCE                                             │
 │  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐                  │
@@ -279,32 +297,6 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 ---
 
-### GAP #10: Alert Integration Missing
-**Location:** Monitor Health
-**Severity:** MEDIUM
-**Status:** ⚠️ NOT RESOLVED
-
-**Current State:**
-- Prometheus metrics defined
-- Metrics collection implemented
-- No alert rules defined
-- No notification integration
-
-**Note:** Error system can send Matrix notifications, but alert rules not configured.
-
-**Impact:**
-- Issues detected only after user complaints
-- No proactive monitoring
-- DLQ growth goes unnoticed
-
-**Recommendation:**
-1. Define alert rules for key metrics
-2. Integrate with existing Matrix notification system
-3. Create alert severity levels
-4. Document runbooks for common alerts
-
----
-
 ### GAP #11: Security Tier Upgrade UX Missing
 **Location:** Upgrade Security
 **Severity:** LOW
@@ -340,7 +332,7 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 | Multi-Platform | Security | "How do I improve security?" | ⚠️ GAP #11 |
 | Security | Recovery | "Lost my devices, help!" | ✅ Complete |
 | Any | Error | "Something went wrong" | ✅ Complete |
-| Monitoring | Alerts | "How do I know when things break?" | ⚠️ GAP #10 |
+| Monitoring | Alerts | "How do I know when things break?" | ✅ Complete |
 
 ---
 
@@ -368,7 +360,7 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 |-----|--------|----------|
 | GAP #2: Platform Support | ✅ Resolved | 2026-02-14 |
 | GAP #5: Multi-Device UX | ⚠️ Open | MEDIUM |
-| GAP #10: Alert Integration | ⚠️ Open | MEDIUM |
+| GAP #10: Alert Integration | ✅ Resolved | 2026-02-15 |
 | GAP #3: Pre-Validation | ⚠️ Partial | MEDIUM |
 
 ### P3 - Low (Nice to Have)
@@ -408,12 +400,10 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 │  [Connect] → [OAuth] → [Adapter] → [Queue] → [Bridge] → [Matrix]            │
 │     ✅         ✅        ✅         ✅         ✅         ✅                   │
 │                                                                              │
-│  CHAIN 5: Monitoring & Alerts (PARTIAL)                                      │
+│  CHAIN 5: Monitoring & Alerts (COMPLETE)                                     │
 │  ═════════════════════════════════════                                       │
 │  [Metrics] → [Collection] → [Storage] → [Alert Rules] → [Notify]            │
-│     ✅           ✅             ✅          ❌            ✅                   │
-│                                                          ↑                   │
-│                                              GAP #10: Rules Missing          │
+│     ✅           ✅             ✅          ✅            ✅                   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -424,14 +414,14 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 | Category | Previous | Current | Change |
 |----------|----------|---------|--------|
-| Total Gaps | 11 | 5 | -6 (55% reduction) |
+| Total Gaps | 11 | 4 | -7 (64% reduction) |
 | Critical (P0) | 3 | 0 | -3 |
 | High (P1) | 3 | 1 | -2 |
-| Medium (P2) | 3 | 4 | +1 |
+| Medium (P2) | 3 | 3 | 0 |
 | Low (P3) | 2 | 0 | -2 |
-| Stories with Implementation | 16 (59%) | 25 (92%) | +33% |
+| Stories with Implementation | 16 (59%) | 26 (96%) | +37% |
 
-**Overall Journey Health:** ✅ **IMPROVED**
+**Overall Journey Health:** ✅ **HEALTHY**
 
 ### What's Working Well:
 1. ✅ Core bridge functionality is solid
@@ -440,12 +430,13 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 4. ✅ Multi-platform support via Slack adapter
 5. ✅ Platform deployment options are documented
 6. ✅ Matrix E2EE messaging is functional
-7. ✅ **NEW:** Getting Started guide for new users
+7. ✅ Getting Started guide for new users
+8. ✅ **NEW:** Alert integration with Matrix notifications
 
 ### Remaining Concerns:
 1. ⚠️ QR scanning flow incomplete
 2. ⚠️ Multi-device UX needs polish
-3. ⚠️ Alert rules not configured for proactive monitoring
+3. ⚠️ API key pre-validation partially implemented
 
 ---
 
@@ -456,12 +447,7 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 2. Add device trust visualization
 3. Implement verification code flow
 
-### Priority 2: Monitoring (GAP #10)
-1. Define alert rules for critical metrics
-2. Integrate with Matrix notification system
-3. Create operational runbooks
-
-### Priority 3: Polish (GAP #3, #11)
+### Priority 2: Polish (GAP #3, #11)
 1. Complete API key validation
 2. Add security tier upgrade UX
 
