@@ -3,7 +3,8 @@
 > **Protocol:** JSON-RPC 2.0
 > **Transport:** Unix Domain Socket
 > **Socket:** `/run/armorclaw/bridge.sock`
-> **Version:** 1.2.0
+> **Version:** 1.7.0
+> **Last Updated:** 2026-02-15
 
 ---
 
@@ -402,6 +403,42 @@ Login to Matrix homeserver (optional if credentials in config).
   }
 }
 ```
+---
+### matrix.refresh_token
+
+Manually refresh the Matrix access token using a stored refresh token. This is useful when a token is nearing expiry or has already expired.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "matrix.refresh_token"
+}
+```
+
+**Parameters:**
+None required. Uses the stored refresh token from the Matrix adapter.
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "result": {
+    "status": "refreshed"
+  }
+}
+```
+
+**Error Codes:**
+- `-32601` (InvalidParams) - No refresh token available
+- `-32603` (InternalError) - Token refresh failed
+
+**Notes:**
+- P1-HIGH-1: This method enables manual token refresh without requiring re-login
+- Tokens are automatically refreshed before API calls when nearing 7-day expiry
+- Refresh tokens are encrypted and stored in the keystore
 
 ---
 
@@ -1140,6 +1177,569 @@ echo '{"jsonrpc":"2.0","id":5,"method":"webrtc.get_audit_log","params":{"limit":
 
 ---
 
+## Recovery Methods (v1.6.0)
+
+Account recovery methods for GAP #6 - allows users to recover access when all devices are lost.
+
+### recovery.generate_phrase
+
+Generate a new 12-word recovery phrase (BIP39-style).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "recovery.generate_phrase"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "phrase": "abandon ability able about above absent absorb abstract absurd abuse access accident",
+    "word_count": 12,
+    "warning": "Store this phrase securely. It will never be shown again.",
+    "recovery_window_hours": 48
+  }
+}
+```
+
+---
+
+### recovery.store_phrase
+
+Store an encrypted recovery phrase in the keystore.
+
+**Parameters:**
+- `phrase` (string, required) - The 12-word recovery phrase
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "recovery.store_phrase",
+  "params": {
+    "phrase": "abandon ability able about above absent absorb abstract absurd abuse access accident"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "message": "Recovery phrase stored successfully"
+  }
+}
+```
+
+---
+
+### recovery.verify
+
+Verify a recovery phrase and start the recovery process.
+
+**Parameters:**
+- `phrase` (string, required) - The 12-word recovery phrase
+- `new_device_id` (string, required) - ID of the new device being recovered
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "recovery.verify",
+  "params": {
+    "phrase": "abandon ability able about above absent absorb abstract absurd abuse access accident",
+    "new_device_id": "device-abc123"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "recovery_id": "recovery-xyz789",
+    "status": "active",
+    "started_at": "2026-02-14T15:30:00Z",
+    "expires_at": "2026-02-16T15:30:00Z",
+    "read_only_mode": true,
+    "message": "Recovery started. Full access will be restored after the recovery window."
+  }
+}
+```
+
+---
+
+### recovery.status
+
+Check the status of a recovery attempt.
+
+**Parameters:**
+- `recovery_id` (string, required) - The recovery session ID
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "recovery.status",
+  "params": {
+    "recovery_id": "recovery-xyz789"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "recovery_id": "recovery-xyz789",
+    "status": "active",
+    "started_at": "2026-02-14T15:30:00Z",
+    "expires_at": "2026-02-16T15:30:00Z",
+    "attempts": 1,
+    "read_only_mode": true
+  }
+}
+```
+
+---
+
+### recovery.complete
+
+Complete the recovery process and invalidate old devices.
+
+**Parameters:**
+- `recovery_id` (string, required) - The recovery session ID
+- `old_devices` (array of strings, optional) - List of old device IDs to invalidate
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "recovery.complete",
+  "params": {
+    "recovery_id": "recovery-xyz789",
+    "old_devices": ["device-old1", "device-old2"]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "message": "Recovery completed. Full access restored.",
+    "invalidated_count": 2
+  }
+}
+```
+
+---
+
+### recovery.is_device_valid
+
+Check if a device is valid (not invalidated by recovery).
+
+**Parameters:**
+- `device_id` (string, required) - The device ID to check
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "recovery.is_device_valid",
+  "params": {
+    "device_id": "device-abc123"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "device_id": "device-abc123",
+    "valid": true
+  }
+}
+```
+
+---
+
+## Platform Methods (v1.6.0)
+
+Platform connection methods for GAP #8 - SDTW (Slack, Discord, Teams, WhatsApp) integration.
+
+### platform.connect
+
+Connect an external platform.
+
+**Parameters:**
+- `platform` (string, required) - Platform type: "slack", "discord", "teams", "whatsapp"
+- `matrix_room` (string, required) - Matrix room ID for this connection
+- `workspace_id` (string) - Workspace/team ID (Slack, Teams)
+- `access_token` (string) - OAuth access token (Slack, WhatsApp)
+- `bot_token` (string) - Bot token (Discord)
+- `client_id` (string) - OAuth client ID (Teams)
+- `client_secret` (string) - OAuth client secret (Teams)
+- `tenant_id` (string) - Azure tenant ID (Teams)
+- `phone_number_id` (string) - WhatsApp Business phone number ID
+- `verify_token` (string) - Webhook verify token (WhatsApp)
+- `channels` (array of strings) - Channels to connect
+
+**Request (Slack):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "platform.connect",
+  "params": {
+    "platform": "slack",
+    "workspace_id": "T0XXXXXXXX",
+    "access_token": "xoxb-xxxxxxxxxxxx",
+    "matrix_room": "!abc123:matrix.example.com",
+    "channels": ["C0XXXXXXXX"]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "platform_id": "slack-abc12345",
+    "platform": "slack",
+    "status": "connected",
+    "matrix_room": "!abc123:matrix.example.com",
+    "channels": ["C0XXXXXXXX"],
+    "message": "slack connected successfully"
+  }
+}
+```
+
+---
+
+### platform.disconnect
+
+Disconnect a platform.
+
+**Parameters:**
+- `platform_id` (string, required) - The platform connection ID
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "platform.disconnect",
+  "params": {
+    "platform_id": "slack-abc12345"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "message": "slack disconnected successfully"
+  }
+}
+```
+
+---
+
+### platform.list
+
+List all connected platforms.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "platform.list"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "connections": [
+      {
+        "platform_id": "slack-abc12345",
+        "platform": "slack",
+        "name": "slack (T0XXXXXXXX)",
+        "workspace_id": "T0XXXXXXXX",
+        "matrix_room": "!abc123:matrix.example.com",
+        "channels": ["C0XXXXXXXX"],
+        "status": "connected",
+        "connected_at": "2026-02-14T15:30:00Z"
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+---
+
+### platform.status
+
+Get status of a platform connection.
+
+**Parameters:**
+- `platform_id` (string, required) - The platform connection ID
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "platform.status",
+  "params": {
+    "platform_id": "slack-abc12345"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "platform_id": "slack-abc12345",
+    "platform": "slack",
+    "name": "slack (T0XXXXXXXX)",
+    "workspace_id": "T0XXXXXXXX",
+    "matrix_room": "!abc123:matrix.example.com",
+    "channels": ["C0XXXXXXXX"],
+    "status": "connected",
+    "connected_at": "2026-02-14T15:30:00Z",
+    "uptime_seconds": 3600
+  }
+}
+```
+
+---
+
+### platform.test
+
+Test a platform connection.
+
+**Parameters:**
+- `platform_id` (string, required) - The platform connection ID
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "platform.test",
+  "params": {
+    "platform_id": "slack-abc12345"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "platform_id": "slack-abc12345",
+    "platform": "slack",
+    "test_passed": true,
+    "latency_ms": 150,
+    "api_status": "ok",
+    "auth_test": "ok",
+    "workspace": "T0XXXXXXXX",
+    "tested_at": "2026-02-14T15:35:00Z"
+  }
+}
+```
+
+---
+
+## Error Management Methods (v1.7.0)
+
+Error management methods for querying and resolving tracked errors. These methods enable LLMs and admins to diagnose issues through structured error codes and traces.
+
+### get_errors
+
+Query tracked errors with optional filters.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "get_errors",
+  "params": {
+    "code": "CTX-001",
+    "category": "container",
+    "severity": "error",
+    "resolved": false,
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| code | string | ❌ No | - | Filter by error code (e.g., "CTX-001") |
+| category | string | ❌ No | - | Filter by category: container, matrix, rpc, system, budget, voice |
+| severity | string | ❌ No | - | Filter by severity: debug, info, warning, error, critical |
+| resolved | boolean | ❌ No | false | Include resolved errors |
+| limit | number | ❌ No | 50 | Maximum results to return |
+| offset | number | ❌ No | 0 | Pagination offset |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "errors": [
+      {
+        "trace_id": "tr_abc123",
+        "code": "CTX-001",
+        "category": "container",
+        "severity": "error",
+        "message": "container start failed",
+        "function": "StartContainer",
+        "inputs": {"container_id": "abc123"},
+        "state": {"status": "exited", "exit_code": 1},
+        "cause": "OCI runtime error",
+        "component_events": [
+          {"component": "docker", "event": "start", "success": false, "timestamp": "2026-02-15T12:00:00Z"}
+        ],
+        "timestamp": "2026-02-15T12:00:00Z",
+        "resolved": false
+      }
+    ],
+    "stats": {
+      "sampling": {
+        "total_codes": 25,
+        "total_errors": 147
+      }
+    },
+    "query": {
+      "code": "CTX-001",
+      "category": "container",
+      "severity": "error",
+      "resolved": false
+    }
+  }
+}
+```
+
+**Error Fields:**
+- `trace_id` (string) - Unique trace identifier for this error
+- `code` (string) - Error code (e.g., CTX-001, MAT-002)
+- `category` (string) - Error category
+- `severity` (string) - Severity level
+- `message` (string) - Human-readable message
+- `function` (string) - Function where error occurred
+- `inputs` (object) - Input parameters (sanitized)
+- `state` (object) - System state at error time
+- `cause` (string) - Root cause message
+- `component_events` (array) - Related component events
+- `timestamp` (string) - ISO 8601 timestamp
+- `resolved` (boolean) - Resolution status
+
+**Example:**
+```bash
+# Get all unresolved container errors
+echo '{"jsonrpc":"2.0","id":1,"method":"get_errors","params":{"category":"container","resolved":false}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### resolve_error
+
+Mark an error as resolved.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "resolve_error",
+  "params": {
+    "trace_id": "tr_abc123",
+    "resolved_by": "@admin:matrix.example.com"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| trace_id | string | ✅ Yes | Trace ID of the error to resolve |
+| resolved_by | string | ❌ No | Matrix user ID or identifier of resolver |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "success": true,
+    "trace_id": "tr_abc123",
+    "timestamp": "2026-02-15T14:30:00Z"
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - trace_id is required
+- `-32603` (InternalError) - Error not found or update failed
+
+**Example:**
+```bash
+# Resolve an error
+echo '{"jsonrpc":"2.0","id":2,"method":"resolve_error","params":{"trace_id":"tr_abc123","resolved_by":"@admin:example.com"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
 ## Appendix A: Provider Values
 
 Valid providers for `list_keys` and credential storage:
@@ -1159,5 +1759,75 @@ Valid `msgtype` values for `matrix.send`:
 
 ---
 
-**API Reference Last Updated:** 2026-02-07
-**Compatible with Bridge Version:** 1.0.0
+## Appendix C: Error Codes Reference
+
+Structured error codes for programmatic error handling. Each code follows the format `CAT-NNN` where CAT is the category prefix.
+
+### Container Errors (CTX-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| CTX-001 | Error | container start failed | Check Docker daemon status, image availability, and resource limits |
+| CTX-002 | Error | container exec failed | Verify container is running and command is valid |
+| CTX-003 | Critical | container health check timeout | Container may be hung; check logs and consider restart |
+| CTX-010 | Critical | permission denied on docker socket | Bridge needs docker group membership or sudo |
+| CTX-011 | Error | container not found | Container may have been removed or ID is incorrect |
+| CTX-012 | Error | container already running | Stop the container first or use a different ID |
+| CTX-020 | Error | image pull failed | Check image name, registry access, and network connectivity |
+| CTX-021 | Error | image not found | Verify image exists in registry and name is correct |
+
+### Matrix Errors (MAT-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| MAT-001 | Error | matrix connection failed | Check homeserver URL and network connectivity |
+| MAT-002 | Error | matrix authentication failed | Verify access token or device credentials |
+| MAT-003 | Warning | matrix sync timeout | Homeserver may be slow; will retry automatically |
+| MAT-010 | Error | E2EE decryption failed | Device keys may be missing or rotated |
+| MAT-011 | Error | E2EE encryption failed | Device keys may be missing; try re-verifying |
+| MAT-020 | Error | room join failed | Check room ID and user permissions |
+| MAT-021 | Error | message send failed | Check room membership and message content |
+| MAT-030 | Critical | voice call failed | Check TURN server configuration and network |
+
+### RPC Errors (RPC-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| RPC-001 | Warning | invalid JSON-RPC request | Check request format matches JSON-RPC 2.0 spec |
+| RPC-002 | Error | method not found | Verify method name against RPC API docs |
+| RPC-003 | Error | invalid params | Check parameter types and required fields |
+| RPC-010 | Error | socket connection failed | Check bridge is running and socket permissions |
+| RPC-011 | Warning | request timeout | Operation took too long; may need retry |
+| RPC-020 | Error | unauthorized | Check authentication credentials and permissions |
+
+### System Errors (SYS-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| SYS-001 | Critical | keystore decryption failed | Master key may be wrong or keystore corrupted |
+| SYS-002 | Error | audit log write failed | Check disk space and permissions on /var/lib/armorclaw |
+| SYS-003 | Error | configuration load failed | Check config file syntax and file permissions |
+| SYS-010 | Critical | secret injection failed | Check secrets file format and permissions |
+| SYS-011 | Error | secret cleanup failed | Secrets may persist; manual cleanup may be needed |
+| SYS-020 | Critical | out of memory | Increase system memory or reduce concurrent operations |
+| SYS-021 | Critical | disk full | Free up disk space or increase storage |
+
+### Budget Errors (BGT-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| BGT-001 | Warning | budget warning threshold reached | Monitor usage; consider adjusting limits |
+| BGT-002 | Critical | budget exceeded | Operation blocked; increase budget or wait for reset |
+
+### Voice/WebRTC Errors (VOX-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| VOX-001 | Error | WebRTC connection failed | Check ICE/TURN configuration and network connectivity |
+| VOX-002 | Error | audio capture failed | Check microphone permissions and device availability |
+| VOX-003 | Error | audio playback failed | Check speaker configuration and permissions |
+
+---
+
+**API Reference Last Updated:** 2026-02-15
+**Compatible with Bridge Version:** 1.7.0

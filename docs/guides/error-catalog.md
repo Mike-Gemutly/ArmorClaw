@@ -1,8 +1,76 @@
 # ArmorClaw Error Message Catalog
 
-> **Last Updated:** 2026-02-07
+> **Last Updated:** 2026-02-15
 > **Purpose:** Enable LLMs and users to work backwards from any error to a solution
-> **How to Use:** Search this page for the exact error message text
+> **How to Use:** Search this page for the exact error message text or error code
+
+---
+
+## Structured Error Codes (v1.7.0)
+
+ArmorClaw uses structured error codes for programmatic error handling. Each error has:
+- **Code**: `CAT-NNN` format (e.g., `CTX-001`)
+- **Category**: container, matrix, rpc, system, budget, voice
+- **Severity**: debug, info, warning, error, critical
+- **Trace ID**: Unique identifier for the error instance
+
+### Querying Errors via RPC
+
+```bash
+# Get all unresolved errors
+echo '{"jsonrpc":"2.0","id":1,"method":"get_errors"}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+
+# Get specific error code
+echo '{"jsonrpc":"2.0","id":1,"method":"get_errors","params":{"code":"CTX-001"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+
+# Resolve an error
+echo '{"jsonrpc":"2.0","id":1,"method":"resolve_error","params":{"trace_id":"tr_abc123"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+### Error Code Quick Reference
+
+| Prefix | Category | Examples |
+|--------|----------|----------|
+| CTX-XXX | Container | CTX-001 (start failed), CTX-010 (permission denied) |
+| MAT-XXX | Matrix | MAT-001 (connection), MAT-002 (auth), MAT-021 (send failed) |
+| RPC-XXX | RPC/API | RPC-001 (invalid request), RPC-010 (socket failed) |
+| SYS-XXX | System | SYS-001 (keystore), SYS-010 (secret injection) |
+| BGT-XXX | Budget | BGT-001 (warning), BGT-002 (exceeded) |
+| VOX-XXX | Voice | VOX-001 (WebRTC), VOX-002 (audio capture) |
+
+### LLM-Friendly Error Trace Format
+
+When an error occurs, the system generates a trace that can be copied to an LLM:
+
+```
+[ArmorClaw Error Trace]
+Code: CTX-001
+Category: container
+Severity: error
+Trace ID: tr_abc123def456
+Function: StartContainer
+Timestamp: 2026-02-15T12:00:00Z
+
+Message: container start failed
+Help: Check Docker daemon status, image availability, and resource limits
+
+Inputs:
+  container_id: abc123
+  image: armorclaw/agent:v1
+
+State:
+  status: exited
+  exit_code: 1
+
+Cause: OCI runtime error: container_linux.go:380: starting container process caused: exec: "python": executable file not found in $PATH
+
+Component Events:
+  [docker] start - FAILED at 2026-02-15T12:00:00Z
+[/ArmorClaw Error Trace]
+```
 
 ---
 
@@ -754,5 +822,5 @@ chmod 700 ~/.armorclaw
 
 ---
 
-**Error Catalog Last Updated:** 2026-02-07
+**Error Catalog Last Updated:** 2026-02-15
 **For additional help:** https://github.com/armorclaw/armorclaw/issues
