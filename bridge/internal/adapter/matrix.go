@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/pii"
 )
@@ -27,6 +28,7 @@ type MatrixAdapter struct {
 	homeserverURL   string
 	userID           string
 	accessToken     string
+	refreshToken     string           // P1-HIGH-1: Refresh token for long-lived sessions
 	deviceID         string
 	syncToken        string
 	trustedSenders   []string
@@ -39,6 +41,7 @@ type MatrixAdapter struct {
 	cancel           context.CancelFunc
 	piiScrubber      *pii.Scrubber
 	eventPublisher   EventPublisher // Event bus for real-time event publishing
+	lastExpiryCheck  time.Time          // P1-HIGH-1: Track last token expiry check
 }
 
 // MatrixEvent represents a Matrix event
@@ -88,6 +91,7 @@ type Config struct {
 	TrustedSenders []string // Allowed Matrix user IDs (@user:domain.com, *@trusted.domain, *:domain)
 	TrustedRooms   []string // Allowed room IDs (!roomid:domain.com)
 	RejectUntrusted bool   // If true, return error to sender; if false, drop silently
+	RefreshToken    string   // P1-HIGH-1: Encrypted refresh token from login
 }
 
 // New creates a new Matrix adapter
@@ -100,6 +104,7 @@ func New(cfg Config) (*MatrixAdapter, error) {
 		trustedSenders:  cfg.TrustedSenders,
 		trustedRooms:    cfg.TrustedRooms,
 		rejectUntrusted: cfg.RejectUntrusted,
+		refreshToken:    cfg.RefreshToken,    // P1-HIGH-1: Initialize refresh token
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -148,9 +153,10 @@ func (m *MatrixAdapter) Login(username, password string) error {
 	}
 
 	var result struct {
-		AccessToken string `json:"access_token"`
+		AccessToken  string `json:"access_token"`
 		DeviceID    string `json:"device_id"`
 		UserID      string `json:"user_id"`
+		RefreshToken string `json:"refresh_token"` // P1-HIGH-1: Capture refresh token
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -160,6 +166,7 @@ func (m *MatrixAdapter) Login(username, password string) error {
 	m.mu.Lock()
 	m.accessToken = result.AccessToken
 	m.userID = result.UserID
+	m.refreshToken = result.RefreshToken // P1-HIGH-1: Store refresh token for long-lived sessions
 	m.mu.Unlock()
 
 	return nil
@@ -167,6 +174,11 @@ func (m *MatrixAdapter) Login(username, password string) error {
 
 // SendMessage sends a message to a Matrix room
 func (m *MatrixAdapter) SendMessage(roomID, message, msgType string) (string, error) {
+	// P1-HIGH-1: Ensure token is valid before sending
+	if err := m.ensureValidToken(); err != nil {
+		return "", fmt.Errorf("token validation failed: %w", err)
+	}
+
 	m.mu.RLock()
 	token := m.accessToken
 	m.mu.RUnlock()
@@ -242,6 +254,11 @@ func (m *MatrixAdapter) SendMessage(roomID, message, msgType string) (string, er
 
 // Sync performs a long-poll sync with the homeserver
 func (m *MatrixAdapter) Sync(timeout int) error {
+	// P1-HIGH-1: Ensure token is valid before syncing
+	if err := m.ensureValidToken(); err != nil {
+		return fmt.Errorf("token validation failed: %w", err)
+	}
+
 	m.mu.RLock()
 	token := m.accessToken
 	syncToken := m.syncToken
@@ -540,6 +557,71 @@ func (m *MatrixAdapter) SetEventPublisher(publisher EventPublisher) {
 	m.eventPublisher = publisher
 }
 
+// GetRoomMembers retrieves the list of members in a Matrix room
+// This implements the errors.MatrixAdminAdapter interface
+func (m *MatrixAdapter) GetRoomMembers(ctx context.Context, roomID string) ([]errors.RoomMember, error) {
+	// P1-HIGH-1: Ensure token is valid before API call
+	if err := m.ensureValidToken(); err != nil {
+		return nil, fmt.Errorf("token validation failed: %w", err)
+	}
+
+	m.mu.RLock()
+	accessToken := m.accessToken
+	m.mu.RUnlock()
+
+	// Build URL for room members API
+	url := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/members", m.homeserverURL, roomID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get room members: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get room members: %s - %s", resp.Status, string(body))
+	}
+
+	// Parse response
+	var membersResp struct {
+		Chunk []struct {
+			Content struct {
+				Membership  string `json:"membership"`
+				Displayname string `json:"displayname"`
+			} `json:"content"`
+			Sender   string `json:"sender"`
+			StateKey string `json:"state_key"`
+		} `json:"chunk"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&membersResp); err != nil {
+		return nil, fmt.Errorf("failed to parse room members response: %w", err)
+	}
+
+	// Convert to errors.RoomMember slice
+	var members []errors.RoomMember
+	for _, event := range membersResp.Chunk {
+		if event.Content.Membership == "join" {
+			members = append(members, errors.RoomMember{
+				UserID:      event.StateKey,
+				PowerLevel:  0, // Default power level, would need separate state event for actual value
+				Display:     event.Content.Displayname,
+			})
+		}
+	}
+
+	return members, nil
+}
+
 // Close closes the adapter and stops sync
 func (m *MatrixAdapter) Close() error {
 	m.cancel()
@@ -643,13 +725,123 @@ func (m *MatrixAdapter) SyncWithRetry(timeout int) error {
 }
 
 // isTokenExpired checks if the access token might be expired
-// Matrix tokens typically expire after inactivity periods
+// P1-HIGH-1: Tracks token expiry using lastExpiryCheck timestamp
+// Matrix access tokens expire after 7 days of inactivity
 func (m *MatrixAdapter) isTokenExpired() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// If we have a token but no sync token, we haven't successfully synced
-	return m.accessToken != "" && m.syncToken == ""
+	// No token at all means not logged in
+	if m.accessToken == "" {
+		return true
+	}
+
+	// P1-HIGH-1: Check if we have a refresh token to support long-lived sessions
+	if m.refreshToken != "" {
+		// With refresh token support, check if 7 days have passed since last check
+		if m.lastExpiryCheck.IsZero() {
+			// First check - if we have a sync token, we've successfully synced
+			return m.syncToken == ""
+		}
+		// Check if 7 days have passed since last expiry check
+		expiryThreshold := 7 * 24 * time.Hour
+		return time.Since(m.lastExpiryCheck) > expiryThreshold
+	}
+
+	// Without refresh token: if we have a token but no sync token, we haven't successfully synced
+	return m.syncToken == ""
+}
+
+// P1-HIGH-1: RefreshAccessToken uses refresh_token to get a new access token
+// This enables long-lived sessions without requiring re-login with credentials
+func (m *MatrixAdapter) RefreshAccessToken() error {
+	m.mu.RLock()
+	refreshToken := m.refreshToken
+	m.mu.RUnlock()
+
+	if refreshToken == "" {
+		return fmt.Errorf("no refresh token available")
+	}
+
+	// Prepare refresh request according to Matrix spec
+	// https://spec.matrix.org/v1.4/client-server-api/#post_matrixclientv3refresh
+	payload := map[string]interface{}{
+		"refresh_token": refreshToken,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal refresh request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		m.ctx,
+		"POST",
+		m.homeserverURL+"/_matrix/client/v3/refresh",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create refresh request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("token refresh failed: status %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse refresh response
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"` // May be rotated
+		ExpiresIn    int64  `json:"expires_in_ms"`    // Token lifetime in milliseconds
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("failed to decode refresh response: %w", err)
+	}
+
+	// Update tokens and reset expiry check timer
+	m.mu.Lock()
+	m.accessToken = result.AccessToken
+	if result.RefreshToken != "" {
+		m.refreshToken = result.RefreshToken // Update if rotated
+	}
+	m.lastExpiryCheck = time.Now() // Reset expiry check timer
+	m.mu.Unlock()
+
+	logger.Global().Info("Matrix access token refreshed via refresh_token",
+		"expires_in_ms", result.ExpiresIn,
+	)
+
+	return nil
+}
+
+// ensureValidToken checks and refreshes access token if needed
+// P1-HIGH-1: Call this before API operations to ensure valid credentials
+func (m *MatrixAdapter) ensureValidToken() error {
+	if m.isTokenExpired() {
+		// Try to refresh using refresh token if available
+		m.mu.RLock()
+		hasRefreshToken := m.refreshToken != ""
+		m.mu.RUnlock()
+
+		if hasRefreshToken {
+			if err := m.RefreshAccessToken(); err != nil {
+				return fmt.Errorf("failed to refresh expired token: %w", err)
+			}
+		} else {
+			return fmt.Errorf("access token expired and no refresh token available")
+		}
+	}
+	return nil
 }
 
 // containsAny checks if the string contains any of the substrings

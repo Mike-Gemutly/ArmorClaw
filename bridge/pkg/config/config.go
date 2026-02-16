@@ -15,6 +15,9 @@ import (
 	"github.com/armorclaw/bridge/pkg/rpc"
 )
 
+// errors.Config alias for type compatibility (imported in main.go to avoid circular dependency)
+// This is a placeholder - the actual type is in bridge/pkg/errors/init.go
+
 // Helper function to validate directory exists or can be created
 func validateDirectoryWritable(dir string) error {
 	// Check if directory exists
@@ -95,6 +98,9 @@ type Config struct {
 
 	// Event bus configuration
 	EventBus EventBusConfig `toml:"eventbus"`
+
+	// Error system configuration
+	ErrorSystem ErrorSystemConfig `toml:"errors"`
 
 	// Logging configuration
 	Logging LoggingConfig `toml:"logging"`
@@ -374,6 +380,39 @@ type EventBusConfig struct {
 	InactivityTimeout string `toml:"inactivity_timeout" env:"ARMORCLAW_EVENTBUS_INACTIVITY_TIMEOUT"`
 }
 
+// ErrorSystemConfig holds error handling system configuration
+type ErrorSystemConfig struct {
+	// Enabled controls whether the error system is active
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_ERRORS_ENABLED"`
+
+	// StoreEnabled controls whether errors are persisted to SQLite
+	StoreEnabled bool `toml:"store_enabled" env:"ARMORCLAW_ERRORS_STORE_ENABLED"`
+
+	// NotifyEnabled controls whether Matrix notifications are sent
+	NotifyEnabled bool `toml:"notify_enabled" env:"ARMORCLAW_ERRORS_NOTIFY_ENABLED"`
+
+	// StorePath is the path to the SQLite error database
+	StorePath string `toml:"store_path" env:"ARMORCLAW_ERRORS_STORE_PATH"`
+
+	// RetentionDays is how long to keep resolved errors
+	RetentionDays int `toml:"retention_days" env:"ARMORCLAW_ERRORS_RETENTION_DAYS"`
+
+	// RateLimitWindow is the window for rate-limiting notifications (e.g., "5m")
+	RateLimitWindow string `toml:"rate_limit_window" env:"ARMORCLAW_ERRORS_RATE_LIMIT_WINDOW"`
+
+	// RetentionPeriod is how long to keep error counts for sampling
+	RetentionPeriod string `toml:"retention_period" env:"ARMORCLAW_ERRORS_RETENTION_PERIOD"`
+
+	// AdminMXID is the configured admin Matrix ID (highest priority)
+	AdminMXID string `toml:"admin_mxid" env:"ARMORCLAW_ERRORS_ADMIN_MXID"`
+
+	// SetupUserMXID is the MXID of the user who ran setup (second priority)
+	SetupUserMXID string `toml:"setup_user_mxid" env:"ARMORCLAW_ERRORS_SETUP_USER_MXID"`
+
+	// AdminRoomID is the room ID to search for admins (third priority)
+	AdminRoomID string `toml:"admin_room_id" env:"ARMORCLAW_ERRORS_ADMIN_ROOM_ID"`
+}
+
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()
@@ -478,6 +517,18 @@ func DefaultConfig() *Config {
 			WebSocketPath:     "/events",
 			MaxSubscribers:    100,
 			InactivityTimeout: "30m",
+		},
+		ErrorSystem: ErrorSystemConfig{
+			Enabled:         true,
+			StoreEnabled:    true,
+			NotifyEnabled:   true,
+			StorePath:       filepath.Join(homeDir, ".armorclaw", "errors.db"),
+			RetentionDays:   30,
+			RateLimitWindow: "5m",
+			RetentionPeriod: "24h",
+			AdminMXID:       "",
+			SetupUserMXID:   "",
+			AdminRoomID:     "",
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -652,5 +703,38 @@ func (c *Config) ToBudgetConfig() budget.BudgetConfig {
 		AlertThreshold:  c.Budget.AlertThreshold,
 		HardStop:        c.Budget.HardStop,
 		ProviderCosts:   c.Budget.ProviderCosts,
+	}
+}
+
+// ErrorSystemConfigResult holds the converted error system config
+// This mirrors errors.Config to avoid import cycles
+type ErrorSystemConfigResult struct {
+	StorePath       string
+	RetentionDays   int
+	RateLimitWindow string
+	RetentionPeriod string
+	ConfigAdminMXID string
+	SetupUserMXID   string
+	AdminRoomID     string
+	FallbackMXID    string
+	Enabled         bool
+	StoreEnabled    bool
+	NotifyEnabled   bool
+}
+
+// ToErrorSystemConfig converts the Config to error system config
+func (c *Config) ToErrorSystemConfig() ErrorSystemConfigResult {
+	return ErrorSystemConfigResult{
+		StorePath:       c.ErrorSystem.StorePath,
+		RetentionDays:   c.ErrorSystem.RetentionDays,
+		RateLimitWindow: c.ErrorSystem.RateLimitWindow,
+		RetentionPeriod: c.ErrorSystem.RetentionPeriod,
+		ConfigAdminMXID: c.ErrorSystem.AdminMXID,
+		SetupUserMXID:   c.ErrorSystem.SetupUserMXID,
+		AdminRoomID:     c.ErrorSystem.AdminRoomID,
+		FallbackMXID:    "",
+		Enabled:         c.ErrorSystem.Enabled,
+		StoreEnabled:    c.ErrorSystem.StoreEnabled,
+		NotifyEnabled:   c.ErrorSystem.NotifyEnabled,
 	}
 }

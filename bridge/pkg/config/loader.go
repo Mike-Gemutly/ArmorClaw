@@ -3,11 +3,12 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/armorclaw/bridge/pkg/logger"
 )
 
 // Load loads configuration from a file path
@@ -26,13 +27,14 @@ func Load(path string) (*Config, error) {
 
 	// If no config file found, warn and return defaults
 	if path == "" {
-		log.Printf("Warning: No configuration file found in default locations")
-		log.Printf("Default locations checked:")
+		log := logger.Global().WithComponent("config")
+		log.Warn("No configuration file found in default locations")
+		log.Warn("Default locations checked:")
 		for _, p := range ConfigPaths() {
-			log.Printf("  - %s", p)
+			log.Warn("  - " + p)
 		}
-		log.Printf("Using default configuration")
-		log.Printf("Create a config with: armorclaw-bridge init")
+		log.Warn("Using default configuration")
+		log.Warn("Create a config with: armorclaw-bridge init")
 		return cfg, nil
 	}
 
@@ -126,6 +128,41 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("ARMORCLAW_LOG_FILE"); v != "" {
 		cfg.Logging.File = v
+	}
+
+	// Error system overrides
+	if v := os.Getenv("ARMORCLAW_ERRORS_ENABLED"); v != "" {
+		cfg.ErrorSystem.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_STORE_ENABLED"); v != "" {
+		cfg.ErrorSystem.StoreEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_NOTIFY_ENABLED"); v != "" {
+		cfg.ErrorSystem.NotifyEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_STORE_PATH"); v != "" {
+		cfg.ErrorSystem.StorePath = v
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_RETENTION_DAYS"); v != "" {
+		var days int
+		if _, err := fmt.Sscanf(v, "%d", &days); err == nil {
+			cfg.ErrorSystem.RetentionDays = days
+		}
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_RATE_LIMIT_WINDOW"); v != "" {
+		cfg.ErrorSystem.RateLimitWindow = v
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_RETENTION_PERIOD"); v != "" {
+		cfg.ErrorSystem.RetentionPeriod = v
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_ADMIN_MXID"); v != "" {
+		cfg.ErrorSystem.AdminMXID = v
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_SETUP_USER_MXID"); v != "" {
+		cfg.ErrorSystem.SetupUserMXID = v
+	}
+	if v := os.Getenv("ARMORCLAW_ERRORS_ADMIN_ROOM_ID"); v != "" {
+		cfg.ErrorSystem.AdminRoomID = v
 	}
 
 	return nil

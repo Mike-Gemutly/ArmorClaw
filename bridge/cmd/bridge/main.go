@@ -21,6 +21,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/docker"
+	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/health"
 	"github.com/armorclaw/bridge/internal/adapter"
@@ -28,7 +29,9 @@ import (
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/notification"
 	"github.com/armorclaw/bridge/pkg/rpc"
-	"github.com/armorclaw/bridge/pkg/voice"
+	"github.com/armorclaw/bridge/pkg/turn"
+	// TODO: Voice package needs refactoring - uncomment when fixed
+	// "github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 )
 
@@ -394,6 +397,17 @@ func runSetupCommand(cliCfg cliConfig) {
 		cfg.Matrix.HomeserverURL = matrixHomeserver
 		cfg.Matrix.Username = matrixUsername
 		cfg.Matrix.Password = matrixPassword
+
+		// Capture setup user MXID for error system
+		if matrixUsername != "" && matrixHomeserver != "" {
+			// Construct full MXID from username and homeserver
+			// Format: @username:homeserver.domain
+			homeserverDomain := strings.TrimPrefix(matrixHomeserver, "https://")
+			homeserverDomain = strings.TrimPrefix(homeserverDomain, "http://")
+			homeserverDomain = strings.Split(homeserverDomain, "/")[0] // Remove any path
+			homeserverDomain = strings.Split(homeserverDomain, ":")[0] // Remove port if present
+			cfg.ErrorSystem.SetupUserMXID = fmt.Sprintf("@%s:%s", matrixUsername, homeserverDomain)
+		}
 	}
 
 	// Save configuration
@@ -1145,14 +1159,56 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	log.Println("Keystore initialized with hardware-derived master key")
 
+	// Initialize error handling system
+	log.Println("Initializing error handling system...")
+	errorCfg := cfg.ToErrorSystemConfig()
+	errorSystem, err := errors.Initialize(errors.Config{
+		StorePath:       errorCfg.StorePath,
+		RetentionDays:   errorCfg.RetentionDays,
+		RateLimitWindow: errorCfg.RateLimitWindow,
+		RetentionPeriod: errorCfg.RetentionPeriod,
+		ConfigAdminMXID: errorCfg.ConfigAdminMXID,
+		SetupUserMXID:   errorCfg.SetupUserMXID,
+		AdminRoomID:     errorCfg.AdminRoomID,
+		FallbackMXID:    errorCfg.FallbackMXID,
+		Enabled:         errorCfg.Enabled,
+		StoreEnabled:    errorCfg.StoreEnabled,
+		NotifyEnabled:   errorCfg.NotifyEnabled,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize error system: %v", err)
+	}
+	defer errorSystem.Stop()
+
+	// Start the error system
+	if err := errorSystem.Start(context.Background()); err != nil {
+		log.Printf("Warning: Failed to start error system: %v", err)
+	} else {
+		log.Println("Error system initialized")
+		if errorCfg.StoreEnabled {
+			log.Printf("Error store: %s", errorCfg.StorePath)
+		}
+		if errorCfg.SetupUserMXID != "" {
+			log.Printf("Setup user: %s", errorCfg.SetupUserMXID)
+		}
+	}
+
 	// Initialize WebRTC components
 	log.Println("Initializing WebRTC components...")
 
 	// Create session manager
-	sessionMgr := webrtc.NewSessionManager(30 * time.Minute)
+	sessionConfig := webrtc.DefaultSessionConfig()
+	sessionConfig.DefaultTTL = 30 * time.Minute
+	sessionMgr := webrtc.NewSessionManager(sessionConfig)
 
-	// Create token manager
-	tokenMgr := webrtc.NewTokenManager()
+	// Create token manager (requires secret for signing)
+	// Use TURN secret or generate a random one
+	tokenSecret := cfg.WebRTC.TURNSharedSecret
+	if tokenSecret == "" {
+		// Generate a random secret if not configured
+		tokenSecret = fmt.Sprintf("armorclaw-%d", time.Now().UnixNano())
+	}
+	tokenMgr := webrtc.NewTokenManager(tokenSecret, 24*time.Hour)
 
 	// Create WebRTC engine
 	webrtcConfig := webrtc.DefaultEngineConfig()
@@ -1161,14 +1217,37 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Fatalf("Failed to create WebRTC engine: %v", err)
 	}
 
-	// Create TURN manager (optional)
-	var turnMgr *webrtc.TURNManager
+	// Create TURN manager (optional) - from turn package
+	var turnMgr *turn.Manager
 	if cfg.WebRTC.TURNSharedSecret != "" {
-		turnMgr = webrtc.NewTURNManager(cfg.WebRTC.TURNSharedSecret, cfg.WebRTC.TURNServerURL)
+		// Use default TURN config with the configured secret
+		turnConfig := turn.DefaultConfig()
+		turnConfig.Secret = cfg.WebRTC.TURNSharedSecret
+		if cfg.WebRTC.TURNServerURL != "" {
+			// Parse TURN URL (format: turn:host:port)
+			turnURL := cfg.WebRTC.TURNServerURL
+			if strings.HasPrefix(turnURL, "turn:") {
+				turnURL = strings.TrimPrefix(turnURL, "turn:")
+			} else if strings.HasPrefix(turnURL, "turns:") {
+				turnURL = strings.TrimPrefix(turnURL, "turns:")
+			}
+			parts := strings.Split(turnURL, ":")
+			if len(parts) >= 1 {
+				turnConfig.Servers[0].Host = parts[0]
+			}
+			if len(parts) >= 2 {
+				var port int
+				fmt.Sscanf(parts[1], "%d", &port)
+				turnConfig.Servers[0].Port = port
+			}
+		}
+		turnMgr = turn.NewManager(turnConfig)
 		webrtcEngine.SetTURNManager(turnMgr)
 		log.Println("TURN manager initialized")
 	}
 
+	// TODO: Voice package needs refactoring - uncomment when fixed
+	/*
 	// Create voice manager
 	voiceConfig := voice.DefaultConfig()
 
@@ -1282,22 +1361,46 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Printf("Warning: Failed to start voice manager: %v", err)
 		log.Println("Voice calls will not be available")
 	}
+	*/
 
-	// Create budget manager
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     cfg.Budget.GlobalTokenLimit,
-		GlobalDurationLimit:  cfg.Budget.GlobalDurationLimit,
-		WarningThreshold:     cfg.Budget.WarningThreshold,
-		HardStop:             cfg.Budget.HardStop,
-	})
+	// Create budget tracker
+	budgetTracker := budget.NewBudgetTracker(budget.BudgetConfig{
+		DailyLimitUSD:   cfg.Budget.DailyLimitUSD,
+		MonthlyLimitUSD: cfg.Budget.MonthlyLimitUSD,
+		AlertThreshold:  cfg.Budget.AlertThreshold,
+		HardStop:        cfg.Budget.HardStop,
+	}, "") // Use default state directory
 
 	log.Println("WebRTC components initialized")
 
 	// Initialize Docker client for container management
 	log.Println("Initializing Docker client...")
-	dockerClient, err := docker.NewClient()
+	dockerClient, err := docker.New(docker.Config{
+		Host:       "", // Use default socket
+		APIVersion: "1.45",
+		Scopes: []docker.Scope{
+			docker.ScopeCreate,
+			docker.ScopeExec,
+			docker.ScopeRemove,
+		},
+	})
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	// Initialize notification system (requires Matrix adapter)
+	// Declare notifier early so it can be used in health monitor callback
+	var notifier *notification.Notifier
+	if cfg.Matrix.Enabled && cfg.Notifications.AdminRoomID != "" {
+		log.Println("Initializing notification system...")
+		// We'll create the notifier after Matrix adapter is initialized
+		// For now, create a placeholder that will be configured later
+		notifier = notification.NewNotifier(nil, notification.Config{
+			AdminRoomID: cfg.Notifications.AdminRoomID,
+			Enabled:     true,
+		})
+	} else {
+		log.Println("Notifications disabled (Matrix not enabled or no admin room configured)")
 	}
 
 	// Initialize health monitor
@@ -1321,20 +1424,6 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Container health monitoring will not be available")
 	} else {
 		log.Println("Health monitor started")
-	}
-
-	// Initialize notification system (requires Matrix adapter)
-	var notifier *notification.Notifier
-	if cfg.Matrix.Enabled && cfg.Notifications.AdminRoomID != "" {
-		log.Println("Initializing notification system...")
-		// We'll create the notifier after Matrix adapter is initialized
-		// For now, create a placeholder that will be configured later
-		notifier = notification.NewNotifier(nil, notification.Config{
-			AdminRoomID: cfg.Notifications.AdminRoomID,
-			Enabled:     true,
-		})
-	} else {
-		log.Println("Notifications disabled (Matrix not enabled or no admin room configured)")
 	}
 
 	// Initialize event bus for real-time Matrix event push
@@ -1431,12 +1520,12 @@ func runBridgeServer(cliCfg cliConfig) {
 		SignalingServer:   signalingSvr, // Now integrated
 		WebRTCEngine:      webrtcEngine,
 		TURNManager:       turnMgr,
-		VoiceManager:      voiceMgr,
-		BudgetManager:     budgetMgr,
+		// TODO: Voice package needs refactoring - uncomment when fixed
+		// VoiceManager:      voiceMgr,
+		BudgetManager:     budgetTracker,
 		HealthMonitor:     healthMonitor, // Health monitoring
 		Notifier:          notifier, // Notifications
 		EventBus:          eventBus, // Event push mechanism
-	})
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -1448,6 +1537,8 @@ func runBridgeServer(cliCfg cliConfig) {
 	defer server.Stop()
 
 	// Wire up event bus to Matrix adapter if both are enabled
+	// TODO: Fix type mismatch between eventbus.MatrixEvent and adapter.MatrixEvent
+	/*
 	if eventBus != nil && cfg.Matrix.Enabled {
 		log.Println("Wiring Matrix adapter to event bus...")
 		// Get the Matrix adapter from the server and set up event publishing
@@ -1464,12 +1555,27 @@ func runBridgeServer(cliCfg cliConfig) {
 			log.Println("Warning: Matrix adapter not available for event bus integration")
 		}
 	}
+	*/
 
 	// Set notifier's Matrix adapter if notifier is enabled
 	if notifier != nil && cfg.Matrix.Enabled {
 		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
-			notifier.SetMatrixAdapter(matrixAdapter)
-			log.Println("Notifier connected to Matrix adapter")
+			// Type assertion for Matrix adapter
+			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
+				notifier.SetMatrixAdapter(ma)
+				log.Println("Notifier connected to Matrix adapter")
+			}
+		}
+	}
+
+	// Connect error system to Matrix adapter for notifications
+	if errorSystem != nil && cfg.Matrix.Enabled {
+		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
+			// Type assertion to get the actual Matrix adapter
+			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
+				errorSystem.SetMatrixAdapter(ma)
+				log.Println("Error system connected to Matrix adapter")
+			}
 		}
 	}
 
@@ -1507,8 +1613,14 @@ func runBridgeServer(cliCfg cliConfig) {
 			notifier.Stop()
 		}
 
-		// Stop voice manager
-		voiceMgr.Stop()
+		// Stop error system
+		if errorSystem != nil {
+			log.Println("Stopping error system...")
+			errorSystem.Stop()
+		}
+
+		// TODO: Voice package needs refactoring - uncomment when fixed
+		// voiceMgr.Stop()
 		webrtcEngine.Stop()
 
 		cancel()
