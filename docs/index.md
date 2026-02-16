@@ -1,8 +1,8 @@
 # ArmorClaw Documentation Index
 
-> **Last Updated:** 2026-02-12
-> **Version:** 1.2.1
-> **Phase:** SDTW Planning Complete ✅ | Next: SDTW Implementation
+> **Last Updated:** 2026-02-15
+> **Version:** 1.3.0
+> **Phase:** Error Handling Complete ✅ | Journey Health: IMPROVED (89%)
 
 ---
 
@@ -11,9 +11,12 @@
 This index is the central hub for all ArmorClaw documentation. Start here for any AI agent working on this project.
 
 ### 🚀 Getting Started (Read This First)
-1. [Project Overview](#project-overview) - What ArmorClaw does and why
-2. [Current Status](#current-status) - What's implemented and what's next
-3. [Quick Start](#quick-start) - Get up and running in 5 minutes
+
+**New to ArmorClaw?** Start with the **[Getting Started Guide](docs/guides/getting-started.md)** ⭐ - Complete setup in 5 minutes
+
+1. [Getting Started Guide](docs/guides/getting-started.md) ⭐ - **NEW!** Complete onboarding for new users
+2. [Project Overview](#project-overview) - What ArmorClaw does and why
+3. [Current Status](#current-status) - What's implemented and what's next
 4. [Architecture](#architecture) - How the system works
 
 ### 📋 Reference Documentation
