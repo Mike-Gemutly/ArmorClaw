@@ -2,6 +2,7 @@
 package voice
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -415,8 +416,8 @@ func TestListCalls(t *testing.T) {
 	}
 }
 
-// TestGetStats tests getting voice statistics
-func TestGetStats(t *testing.T) {
+// TestMatrixManagerGetStats tests getting voice statistics
+func TestMatrixManagerGetStats(t *testing.T) {
 	config := DefaultConfig()
 	config.RequireMembership = false
 	matrix := NewMockMatrixAdapter("@bridge:example.com")
@@ -469,8 +470,8 @@ func TestRequireMembership(t *testing.T) {
 	}
 }
 
-// TestBlockedRooms tests room blocking
-func TestBlockedRooms(t *testing.T) {
+// TestMatrixManagerBlockedRooms tests room blocking
+func TestMatrixManagerBlockedRooms(t *testing.T) {
 	config := DefaultConfig()
 	config.RequireMembership = false
 	config.BlockedRooms = make(map[string]bool)
@@ -495,8 +496,8 @@ func TestBlockedRooms(t *testing.T) {
 	}
 }
 
-// TestAllowedRooms tests allowed room filtering
-func TestAllowedRooms(t *testing.T) {
+// TestMatrixManagerAllowedRooms tests allowed room filtering
+func TestMatrixManagerAllowedRooms(t *testing.T) {
 	config := DefaultConfig()
 	config.RequireMembership = false
 	config.AllowedRooms = make(map[string]bool)

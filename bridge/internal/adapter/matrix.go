@@ -869,6 +869,99 @@ func (m *MatrixAdapter) SendMessageWithRetry(roomID, message, msgType string) (s
 	return "", err
 }
 
+// SendEvent sends a custom event type to a Matrix room
+// This is used for sending non-message events like call signaling (m.call.invite, etc.)
+func (m *MatrixAdapter) SendEvent(roomID, eventType string, content []byte) error {
+	matrixTracker.Event("send_event", map[string]any{"room_id": roomID, "event_type": eventType})
+
+	// P1-HIGH-1: Ensure token is valid before sending
+	if err := m.ensureValidToken(); err != nil {
+		err := errsys.NewBuilder("MAT-002").
+			Wrap(fmt.Errorf("token validation failed: %w", err)).
+			WithFunction("SendEvent").
+			WithInputs(map[string]any{"room_id": roomID, "event_type": eventType}).
+			Build()
+		matrixTracker.Failure("send_event", err, map[string]any{"reason": "token_validation_failed"})
+		return err
+	}
+
+	m.mu.RLock()
+	token := m.accessToken
+	m.mu.RUnlock()
+
+	if token == "" {
+		err := errsys.NewBuilder("MAT-002").
+			Wrap(fmt.Errorf("not logged in")).
+			WithFunction("SendEvent").
+			WithInputs(map[string]any{"room_id": roomID, "event_type": eventType}).
+			Build()
+		matrixTracker.Failure("send_event", err, map[string]any{"reason": "not_authenticated"})
+		return err
+	}
+
+	// Generate transaction ID
+	txnID := fmt.Sprintf("m%d", time.Now().UnixNano())
+
+	u, err := url.Parse(m.homeserverURL)
+	if err != nil {
+		err := errsys.NewBuilder("MAT-001").
+			Wrap(fmt.Errorf("failed to parse homeserver URL: %w", err)).
+			WithFunction("SendEvent").
+			WithInputs(map[string]any{"room_id": roomID, "event_type": eventType, "homeserver": m.homeserverURL}).
+			Build()
+		matrixTracker.Failure("send_event", err, map[string]any{"reason": "url_parse_failed"})
+		return err
+	}
+
+	u.Path = fmt.Sprintf("/_matrix/client/v3/rooms/%s/send/%s/%s",
+		url.PathEscape(roomID), url.PathEscape(eventType), txnID)
+
+	req, err := http.NewRequestWithContext(
+		m.ctx,
+		"PUT",
+		u.String(),
+		bytes.NewReader(content),
+	)
+	if err != nil {
+		err := errsys.NewBuilder("MAT-021").
+			Wrap(fmt.Errorf("failed to create request: %w", err)).
+			WithFunction("SendEvent").
+			WithInputs(map[string]any{"room_id": roomID, "event_type": eventType}).
+			Build()
+		matrixTracker.Failure("send_event", err, map[string]any{"reason": "request_create_failed"})
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		err := errsys.NewBuilder("MAT-021").
+			Wrap(fmt.Errorf("send request failed: %w", err)).
+			WithFunction("SendEvent").
+			WithInputs(map[string]any{"room_id": roomID, "event_type": eventType}).
+			Build()
+		matrixTracker.Failure("send_event", err, map[string]any{"reason": "request_failed"})
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		err := errsys.NewBuilder("MAT-021").
+			Wrap(fmt.Errorf("send failed: status %d, response: %s", resp.StatusCode, string(body))).
+			WithFunction("SendEvent").
+			WithInputs(map[string]any{"room_id": roomID, "event_type": eventType, "status": resp.StatusCode}).
+			Build()
+		matrixTracker.Failure("send_event", err, map[string]any{"reason": "send_failed", "status": resp.StatusCode})
+		return err
+	}
+
+	matrixTracker.Success("send_event", map[string]any{"room_id": roomID, "event_type": eventType})
+	return nil
+}
+
 // SyncWithRetry performs sync with retry logic
 func (m *MatrixAdapter) SyncWithRetry(timeout int) error {
 	const maxAttempts = 3

@@ -99,34 +99,30 @@ func (se *SecurityEnforcer) CheckStartCall(userID, roomID string) error {
 	})
 
 	if activeCount >= se.policy.MaxConcurrentCalls {
-		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
+		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "max_concurrent_calls_exceeded",
 			slog.String("user_id", userID),
-			slog.String("reason", "max_concurrent_calls_exceeded"),
 			slog.Int("max_calls", se.policy.MaxConcurrentCalls))
 		return ErrMaxConcurrentCallsExceeded
 	}
 
 	// Check user blocklist
 	if se.policy.BlockedUsers[userID] {
-		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
-			slog.String("user_id", userID),
-			slog.String("reason", "user_blocked"))
+		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "user_blocked",
+			slog.String("user_id", userID))
 		return ErrUserBlocked
 	}
 
 	// Check room blocklist
 	if se.policy.BlockedRooms[roomID] {
-		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
-			slog.String("user_id", userID),
-			slog.String("reason", "room_blocked"))
+		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "room_blocked",
+			slog.String("user_id", userID))
 		return ErrRoomBlocked
 	}
 
 	// Check rate limit
 	if !se.checkRateLimit(userID) {
-		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
+		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "rate_limit_exceeded",
 			slog.String("user_id", userID),
-			slog.String("reason", "rate_limit_exceeded"),
 			slog.Int("calls_per_window", se.policy.RateLimitCalls),
 			slog.String("window", se.policy.RateLimitWindow.String()))
 		return ErrRateLimitExceeded
@@ -134,16 +130,14 @@ func (se *SecurityEnforcer) CheckStartCall(userID, roomID string) error {
 
 	// If allowlist is configured, check it
 	if len(se.policy.AllowedUsers) > 0 && !se.policy.AllowedUsers[userID] {
-		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
-			slog.String("user_id", userID),
-			slog.String("reason", "user_not_in_allowlist"))
+		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "user_not_in_allowlist",
+			slog.String("user_id", userID))
 		return ErrUserNotAllowed
 	}
 
 	if len(se.policy.AllowedRooms) > 0 && !se.policy.AllowedRooms[roomID] {
-		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
-			slog.String("user_id", userID),
-			slog.String("reason", "room_not_in_allowlist"))
+		se.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "room_not_in_allowlist",
+			slog.String("user_id", userID))
 		return ErrRoomNotAllowed
 	}
 
@@ -432,7 +426,11 @@ func (sa *SecurityAudit) GenerateReport() *SecurityReport {
 	if len(sa.auditLog) > recentCount {
 		start = len(sa.auditLog) - recentCount
 	}
-	report.RecentCalls = sa.auditLog[start:]
+	// Convert slice to pointers
+	for i := start; i < len(sa.auditLog); i++ {
+		record := sa.auditLog[i]
+		report.RecentCalls = append(report.RecentCalls, &record)
+	}
 
 	return report
 }
@@ -516,17 +514,11 @@ func (tm *TTLManager) EnforceTTL(ctx context.Context) error {
 
 		if ttlPercentage < tm.config.WarningThreshold {
 			warning = append(warning, session.ID)
-		}
-	}
-
-	// Log warnings
-	for _, sessionID := range warning {
-		sess, ok := tm.sessions.Get(sessionID)
-		if ok {
+			// Log warning immediately with session-specific values
 			tm.securityLog.LogSecurityEvent("voice_session_ttl_warning",
-				slog.String("session_id", sessionID),
-				slog.String("container_id", sess.ContainerID),
-				slog.String("room_id", sess.RoomID),
+				slog.String("session_id", session.ID),
+				slog.String("container_id", session.ContainerID),
+				slog.String("room_id", session.RoomID),
 				slog.Float64("ttl_remaining_percent", ttlPercentage*100),
 				slog.Duration("ttl_remaining", remaining))
 		}
@@ -620,9 +612,6 @@ var (
 
 	// ErrUserBlocked is returned when a user is blocked
 	ErrUserBlocked = fmt.Errorf("user is blocked")
-
-	// ErrRoomBlocked is returned when a room is blocked
-	ErrRoomBlocked = fmt.Errorf("room is blocked")
 
 	// ErrRateLimitExceeded is returned when rate limit is exceeded
 	ErrRateLimitExceeded = fmt.Errorf("rate limit exceeded")

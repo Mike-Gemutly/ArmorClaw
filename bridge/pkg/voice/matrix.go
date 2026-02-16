@@ -41,7 +41,6 @@ type CallEvent struct {
 	CallID    string       `json:"call_id"`
 	PartyID   string       `json:"party_id"`
 	Version   string       `json:"version"`
-	SDP       string       `json:"sdp,omitempty"`
 	SDP       json.RawMessage `json:"sdp,omitempty"`
 	Candidates []Candidate  `json:"candidates,omitempty"`
 	Answer    CallAnswer   `json:"answer,omitempty"`
@@ -151,6 +150,7 @@ type MatrixCall struct {
 	CallEvents    []CallEvent
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	AnsweredAt    time.Time
 	ExpiresAt     time.Time
 	SDPOffer      string
 	SDPAnswer     string
@@ -161,8 +161,8 @@ type MatrixCall struct {
 	closeChan     chan struct{}
 }
 
-// Manager manages Matrix voice calls
-type Manager struct {
+// MatrixManager manages Matrix voice calls
+type MatrixManager struct {
 	matrix          *adapter.MatrixAdapter
 	sessions        *webrtc.SessionManager
 	calls           sync.Map // map[callID]*MatrixCall
@@ -173,8 +173,8 @@ type Manager struct {
 	securityLog     *logger.SecurityLogger
 }
 
-// Config holds configuration for Matrix voice calls
-type Config struct {
+// MatrixConfig holds configuration for Matrix voice calls
+type MatrixConfig struct {
 	// Default call lifetime
 	DefaultLifetime time.Duration
 
@@ -212,13 +212,13 @@ type Config struct {
 	HardStop bool
 }
 
-// DefaultConfig returns default voice manager configuration
-func DefaultConfig() Config {
+// DefaultMatrixConfig returns default voice manager configuration
+func DefaultMatrixConfig() MatrixConfig {
 	securityPolicy := DefaultSecurityPolicy()
 	budgetConfig := DefaultConfig()
 	ttlConfig := DefaultTTLConfig()
 
-	return Config{
+	return MatrixConfig{
 		DefaultLifetime:      30 * time.Minute,
 		MaxLifetime:          2 * time.Hour,
 		AutoAnswer:           false,
@@ -236,9 +236,9 @@ func DefaultConfig() Config {
 	}
 }
 
-// NewManager creates a new Matrix voice call manager
-func NewManager(matrix *adapter.MatrixAdapter, sessions *webrtc.SessionManager, config Config) *Manager {
-	return &Manager{
+// NewMatrixManager creates a new Matrix voice call manager
+func NewMatrixManager(matrix *adapter.MatrixAdapter, sessions *webrtc.SessionManager, config Config) *MatrixManager {
+	return &MatrixManager{
 		matrix:       matrix,
 		sessions:     sessions,
 		config:       config,
@@ -249,7 +249,7 @@ func NewManager(matrix *adapter.MatrixAdapter, sessions *webrtc.SessionManager, 
 }
 
 // Start starts the voice call manager
-func (m *Manager) Start() error {
+func (m *MatrixManager) Start() error {
 	if m.matrix == nil {
 		return fmt.Errorf("Matrix adapter not configured")
 	}
@@ -262,7 +262,7 @@ func (m *Manager) Start() error {
 }
 
 // Stop stops the voice call manager
-func (m *Manager) Stop() {
+func (m *MatrixManager) Stop() {
 	close(m.stopChan)
 	m.wg.Wait()
 
@@ -275,7 +275,7 @@ func (m *Manager) Stop() {
 }
 
 // HandleCallEvent handles an incoming Matrix call event
-func (m *Manager) HandleCallEvent(roomID, eventID, senderID string, event *CallEvent) error {
+func (m *MatrixManager) HandleCallEvent(roomID, eventID, senderID string, event *CallEvent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -288,8 +288,7 @@ func (m *Manager) HandleCallEvent(roomID, eventID, senderID string, event *CallE
 
 	// Check if room is blocked
 	if m.isRoomBlocked(roomID) {
-		m.securityLog.LogAccessDenied(context.Background(), "voice_call", roomID,
-			slog.String("reason", "room_blocked"),
+		m.securityLog.LogAccessDenied(context.Background(), "voice_call", roomID, "room_blocked",
 			slog.String("sender", senderID))
 		return fmt.Errorf("room %s is blocked", roomID)
 	}
@@ -317,7 +316,7 @@ func (m *Manager) HandleCallEvent(roomID, eventID, senderID string, event *CallE
 }
 
 // handleInvite handles an incoming call invite
-func (m *Manager) handleInvite(roomID, eventID, senderID string, event *CallEvent) error {
+func (m *MatrixManager) handleInvite(roomID, eventID, senderID string, event *CallEvent) error {
 	// Check if call already exists
 	if _, exists := m.calls.Load(event.CallID); exists {
 		return fmt.Errorf("call %s already exists", event.CallID)
@@ -328,7 +327,7 @@ func (m *Manager) handleInvite(roomID, eventID, senderID string, event *CallEven
 		ID:         event.CallID,
 		RoomID:     roomID,
 		CallerID:   senderID,
-		CalleeID:   m.matrix.UserID(),
+		CalleeID:   m.matrix.GetUserID(),
 		State:      CallStateInvite,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -364,7 +363,7 @@ func (m *Manager) handleInvite(roomID, eventID, senderID string, event *CallEven
 }
 
 // handleAnswer handles a call answer
-func (m *Manager) handleAnswer(roomID, eventID, senderID string, event *CallEvent) error {
+func (m *MatrixManager) handleAnswer(roomID, eventID, senderID string, event *CallEvent) error {
 	// Get call
 	value, exists := m.calls.Load(event.CallID)
 	if !exists {
@@ -395,7 +394,7 @@ func (m *Manager) handleAnswer(roomID, eventID, senderID string, event *CallEven
 }
 
 // handleHangup handles a call hangup
-func (m *Manager) handleHangup(roomID, eventID, senderID string, event *CallEvent) error {
+func (m *MatrixManager) handleHangup(roomID, eventID, senderID string, event *CallEvent) error {
 	value, exists := m.calls.Load(event.CallID)
 	if !exists {
 		return fmt.Errorf("call %s not found", event.CallID)
@@ -432,7 +431,7 @@ func (m *Manager) handleHangup(roomID, eventID, senderID string, event *CallEven
 }
 
 // handleReject handles a call reject
-func (m *Manager) handleReject(roomID, eventID, senderID string, event *CallEvent) error {
+func (m *MatrixManager) handleReject(roomID, eventID, senderID string, event *CallEvent) error {
 	value, exists := m.calls.Load(event.CallID)
 	if !exists {
 		return fmt.Errorf("call %s not found", event.CallID)
@@ -468,7 +467,7 @@ func (m *Manager) handleReject(roomID, eventID, senderID string, event *CallEven
 }
 
 // handleCandidates handles ICE candidates
-func (m *Manager) handleCandidates(roomID, eventID, senderID string, event *CallEvent) error {
+func (m *MatrixManager) handleCandidates(roomID, eventID, senderID string, event *CallEvent) error {
 	value, exists := m.calls.Load(event.CallID)
 	if !exists {
 		return fmt.Errorf("call %s not found", event.CallID)
@@ -492,21 +491,20 @@ func (m *Manager) handleCandidates(roomID, eventID, senderID string, event *Call
 }
 
 // StartCall initiates a new voice call from the bridge
-func (m *Manager) StartCall(roomID string, offerSDP string) (*MatrixCall, error) {
+func (m *MatrixManager) StartCall(roomID string, offerSDP string) (*MatrixCall, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Verify bridge is member of the room
 	if m.config.RequireMembership {
-		if !m.isMember(roomID, m.matrix.UserID()) {
+		if !m.isMember(roomID, m.matrix.GetUserID()) {
 			return nil, fmt.Errorf("bridge is not a member of room %s", roomID)
 		}
 	}
 
 	// Check if room is blocked
 	if m.isRoomBlocked(roomID) {
-		m.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID,
-			slog.String("reason", "room_blocked"))
+		m.securityLog.LogAccessDenied(context.Background(), "voice_call_start", roomID, "room_blocked")
 		return nil, fmt.Errorf("room %s is blocked", roomID)
 	}
 
@@ -519,7 +517,7 @@ func (m *Manager) StartCall(roomID string, offerSDP string) (*MatrixCall, error)
 		CallID:     callID,
 		Lifetime:   lifetime,
 		Offer:      CallOffer{Type: "offer", SDP: offerSDP},
-		PartyID:    m.matrix.UserID(),
+		PartyID:    m.matrix.GetUserID(),
 		CreateTime: time.Now(),
 	}
 
@@ -527,7 +525,7 @@ func (m *Manager) StartCall(roomID string, offerSDP string) (*MatrixCall, error)
 	call := &MatrixCall{
 		ID:         callID,
 		RoomID:     roomID,
-		CallerID:   m.matrix.UserID(),
+		CallerID:   m.matrix.GetUserID(),
 		State:      CallStateInvite,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -543,7 +541,7 @@ func (m *Manager) StartCall(roomID string, offerSDP string) (*MatrixCall, error)
 	inviteEvent := CallEvent{
 		Type:      EventTypeCallInvite,
 		CallID:    callID,
-		PartyID:   m.matrix.UserID(),
+		PartyID:   m.matrix.GetUserID(),
 		Version:   "0",
 		Invite:    invite,
 		CreateTime: time.Now(),
@@ -573,7 +571,7 @@ func (m *Manager) StartCall(roomID string, offerSDP string) (*MatrixCall, error)
 }
 
 // AnswerCall answers an incoming call
-func (m *Manager) AnswerCall(callID string, answerSDP string) error {
+func (m *MatrixManager) AnswerCall(callID string, answerSDP string) error {
 	value, exists := m.calls.Load(callID)
 	if !exists {
 		return fmt.Errorf("call %s not found", callID)
@@ -590,14 +588,14 @@ func (m *Manager) AnswerCall(callID string, answerSDP string) error {
 	answer := CallAnswer{
 		CallID:  callID,
 		Answer:  CallOffer{Type: "answer", SDP: answerSDP},
-		PartyID: m.matrix.UserID(),
+		PartyID: m.matrix.GetUserID(),
 		Version: "0",
 	}
 
 	answerEvent := CallEvent{
 		Type:    EventTypeCallAnswer,
 		CallID:  callID,
-		PartyID: m.matrix.UserID(),
+		PartyID: m.matrix.GetUserID(),
 		Version: "0",
 		Answer:  answer,
 	}
@@ -628,7 +626,7 @@ func (m *Manager) AnswerCall(callID string, answerSDP string) error {
 }
 
 // EndCall ends an active call
-func (m *Manager) EndCall(callID, reason string) error {
+func (m *MatrixManager) EndCall(callID, reason string) error {
 	value, exists := m.calls.Load(callID)
 	if !exists {
 		return fmt.Errorf("call %s not found", callID)
@@ -639,7 +637,7 @@ func (m *Manager) EndCall(callID, reason string) error {
 	// Create hangup event
 	hangup := CallHangup{
 		CallID:  callID,
-		PartyID: m.matrix.UserID(),
+		PartyID: m.matrix.GetUserID(),
 		Reason:  reason,
 		Version: "0",
 	}
@@ -647,7 +645,7 @@ func (m *Manager) EndCall(callID, reason string) error {
 	hangupEvent := CallEvent{
 		Type:   EventTypeCallHangup,
 		CallID: callID,
-		PartyID: m.matrix.UserID(),
+		PartyID: m.matrix.GetUserID(),
 		Hangup: hangup,
 	}
 
@@ -683,7 +681,7 @@ func (m *Manager) EndCall(callID, reason string) error {
 }
 
 // RejectCall rejects an incoming call
-func (m *Manager) RejectCall(callID, reason string) error {
+func (m *MatrixManager) RejectCall(callID, reason string) error {
 	value, exists := m.calls.Load(callID)
 	if !exists {
 		return fmt.Errorf("call %s not found", callID)
@@ -694,14 +692,14 @@ func (m *Manager) RejectCall(callID, reason string) error {
 	// Create reject event
 	reject := CallReject{
 		CallID: callID,
-		PartyID: m.matrix.UserID(),
+		PartyID: m.matrix.GetUserID(),
 		Reason: reason,
 	}
 
 	rejectEvent := CallEvent{
 		Type:   EventTypeCallReject,
 		CallID: callID,
-		PartyID: m.matrix.UserID(),
+		PartyID: m.matrix.GetUserID(),
 		Reject: reject,
 	}
 
@@ -737,7 +735,7 @@ func (m *Manager) RejectCall(callID, reason string) error {
 }
 
 // SendCandidates sends ICE candidates for a call
-func (m *Manager) SendCandidates(callID string, candidates []Candidate) error {
+func (m *MatrixManager) SendCandidates(callID string, candidates []Candidate) error {
 	value, exists := m.calls.Load(callID)
 	if !exists {
 		return fmt.Errorf("call %s not found", callID)
@@ -749,7 +747,7 @@ func (m *Manager) SendCandidates(callID string, candidates []Candidate) error {
 	candidatesEvent := CallEvent{
 		Type:       EventTypeCallCandidates,
 		CallID:     callID,
-		PartyID:    m.matrix.UserID(),
+		PartyID:    m.matrix.GetUserID(),
 		Version:    "0",
 		Candidates: candidates,
 	}
@@ -774,7 +772,7 @@ func (m *Manager) SendCandidates(callID string, candidates []Candidate) error {
 }
 
 // GetCall retrieves a call by ID
-func (m *Manager) GetCall(callID string) (*MatrixCall, bool) {
+func (m *MatrixManager) GetCall(callID string) (*MatrixCall, bool) {
 	value, exists := m.calls.Load(callID)
 	if !exists {
 		return nil, false
@@ -783,7 +781,7 @@ func (m *Manager) GetCall(callID string) (*MatrixCall, bool) {
 }
 
 // ListCalls returns all active calls
-func (m *Manager) ListCalls() []*MatrixCall {
+func (m *MatrixManager) ListCalls() []*MatrixCall {
 	calls := make([]*MatrixCall, 0)
 
 	m.calls.Range(func(key, value interface{}) bool {
@@ -796,7 +794,7 @@ func (m *Manager) ListCalls() []*MatrixCall {
 }
 
 // GetStats returns statistics about voice calls
-func (m *Manager) GetStats() map[string]interface{} {
+func (m *MatrixManager) GetStats() map[string]interface{} {
 	activeCalls := 0
 	totalCalls := 0
 	expiringSoon := 0
@@ -826,14 +824,14 @@ func (m *Manager) GetStats() map[string]interface{} {
 }
 
 // isMember checks if a user is a member of the room
-func (m *Manager) isMember(roomID, userID string) bool {
+func (m *MatrixManager) isMember(roomID, userID string) bool {
 	// In a full implementation, this would check Matrix room state
 	// For now, return true (assume validation happens elsewhere)
 	return true
 }
 
 // isRoomBlocked checks if a room is blocked for voice calls
-func (m *Manager) isRoomBlocked(roomID string) bool {
+func (m *MatrixManager) isRoomBlocked(roomID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -851,12 +849,12 @@ func (m *Manager) isRoomBlocked(roomID string) bool {
 }
 
 // autoAnswerCall automatically answers a call
-func (m *Manager) autoAnswerCall(callID string) {
+func (m *MatrixManager) autoAnswerCall(callID string) {
 	// Wait a moment before answering
 	time.Sleep(500 * time.Millisecond)
 
-	// Get call
-	call, exists := m.GetCall(callID)
+	// Get call - just check existence
+	_, exists := m.GetCall(callID)
 	if !exists {
 		return
 	}
@@ -868,12 +866,14 @@ func (m *Manager) autoAnswerCall(callID string) {
 	err := m.AnswerCall(callID, answerSDP)
 	if err != nil {
 		// Log error but don't fail
-		logger.Warn("auto-answer failed", "call_id", callID, "error", err)
+		m.securityLog.LogSecurityEvent("auto_answer_failed",
+			slog.String("call_id", callID),
+			slog.String("error", err.Error()))
 	}
 }
 
 // eventLoop processes Matrix events for voice calls
-func (m *Manager) eventLoop() {
+func (m *MatrixManager) eventLoop() {
 	defer m.wg.Done()
 
 	ticker := time.NewTicker(5 * time.Second)
@@ -892,7 +892,7 @@ func (m *Manager) eventLoop() {
 }
 
 // cleanupExpiredCalls removes expired calls
-func (m *Manager) cleanupExpiredCalls() {
+func (m *MatrixManager) cleanupExpiredCalls() {
 	now := time.Now()
 
 	m.calls.Range(func(key, value interface{}) bool {

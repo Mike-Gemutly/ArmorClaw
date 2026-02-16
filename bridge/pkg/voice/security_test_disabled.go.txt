@@ -73,8 +73,8 @@ func TestBlockedUsers(t *testing.T) {
 	}
 }
 
-// TestBlockedRooms tests room blocklist
-func TestBlockedRooms(t *testing.T) {
+// TestSecurityEnforcerBlockedRooms tests room blocklist
+func TestSecurityEnforcerBlockedRooms(t *testing.T) {
 	policy := DefaultSecurityPolicy()
 	policy.BlockedRooms = make(map[string]bool)
 	policy.BlockedRooms["!blocked:example.com"] = true
@@ -113,8 +113,8 @@ func TestAllowedUsers(t *testing.T) {
 	}
 }
 
-// TestAllowedRooms tests room allowlist
-func TestAllowedRooms(t *testing.T) {
+// TestSecurityEnforcerAllowedRooms tests room allowlist
+func TestSecurityEnforcerAllowedRooms(t *testing.T) {
 	policy := DefaultSecurityPolicy()
 	policy.AllowedRooms = make(map[string]bool)
 	policy.AllowedRooms["!allowed:example.com"] = true

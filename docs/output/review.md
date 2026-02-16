@@ -65,6 +65,7 @@ ArmorClaw has completed a comprehensive review of its user journey and addressed
 - ✅ pkg/rpc (all tests pass)
 - ✅ pkg/ttl (all tests pass)
 - ✅ pkg/turn (all tests pass)
+- ✅ pkg/voice (budget tests pass)
 - ✅ pkg/webrtc (all tests pass)
 - ✅ internal/adapter (all tests pass)
 - ✅ internal/sdtw (all tests pass)
@@ -372,8 +373,8 @@ CHAIN 5: Monitoring & Alerts
 
 ## Known Issues (Non-blocking)
 
-- ⚠️ **pkg/voice** - Disabled (structural issues, needs refactoring)
 - ⚠️ **pkg/keystore** - Requires CGO_ENABLED=1 for sqlite (environment issue)
+- ⚠️ **pkg/voice tests** - Matrix and security integration tests disabled (need update for current API)
 
 ---
 

@@ -2,23 +2,15 @@
 package voice
 
 import (
+	"context"
 	"testing"
 	"time"
-
-	"github.com/armorclaw/bridge/pkg/budget"
 )
 
 // TestNewBudgetTracker tests creating a budget tracker
 func TestNewBudgetTracker(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-		WarningThreshold:     0.8,
-		HardStop:             true,
-	})
-
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	if tracker == nil {
 		t.Error("Budget tracker should not be nil")
@@ -32,11 +24,7 @@ func TestNewBudgetTracker(t *testing.T) {
 // TestStartSession tests starting a voice session
 func TestStartSession(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	session, err := tracker.StartSession("test-session", "call-123", "room-456", 50000, 10*time.Minute)
 	if err != nil {
@@ -60,11 +48,7 @@ func TestStartSession(t *testing.T) {
 func TestRecordTokenUsage(t *testing.T) {
 	config := DefaultConfig()
 	config.HardStop = false // Don't hard stop in tests
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	_, err := tracker.StartSession("test-session", "call-123", "room-456", 1000, 10*time.Minute)
 	if err != nil {
@@ -97,6 +81,11 @@ func TestRecordTokenUsage(t *testing.T) {
 	if usage.Requests != 1 {
 		t.Errorf("Expected 1 request, got %d", usage.Requests)
 	}
+
+	// Duration should be >= 0 (may be 0 if very fast)
+	if duration < 0 {
+		t.Errorf("Expected non-negative duration, got %v", duration)
+	}
 }
 
 // TestTokenLimitWarning tests token limit warning
@@ -104,11 +93,7 @@ func TestTokenLimitWarning(t *testing.T) {
 	config := DefaultConfig()
 	config.WarningThreshold = 0.8
 	config.HardStop = false
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Set low limit for testing
 	_, err := tracker.StartSession("test-session", "call-123", "room-456", 1000, 10*time.Minute)
@@ -134,11 +119,7 @@ func TestTokenLimitWarning(t *testing.T) {
 func TestTokenLimitExceeded(t *testing.T) {
 	config := DefaultConfig()
 	config.HardStop = true
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Set low limit for testing
 	_, err := tracker.StartSession("test-session", "call-123", "room-456", 1000, 10*time.Minute)
@@ -152,25 +133,20 @@ func TestTokenLimitExceeded(t *testing.T) {
 		t.Errorf("Expected ErrBudgetExceeded, got %v", err)
 	}
 
-	// Session should be ended
-	state, err := tracker.GetSessionState("test-session")
-	if err != nil {
-		t.Fatalf("Failed to get session state: %v", err)
-	}
+	// Wait for async session termination
+	time.Sleep(100 * time.Millisecond)
 
-	if state != SessionStateEnded {
-		t.Errorf("Expected session state %v, got %v", SessionStateEnded, state)
+	// Session should be deleted after async termination
+	_, exists := tracker.GetSession("test-session")
+	if exists {
+		t.Error("Session should be deleted after exceeding budget")
 	}
 }
 
 // TestDurationLimit tests duration limit enforcement
 func TestDurationLimit(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Set very short duration for testing
 	_, err := tracker.StartSession("test-session", "call-123", "room-456", 100000, 100*time.Millisecond)
@@ -191,11 +167,7 @@ func TestDurationLimit(t *testing.T) {
 // TestEndSession tests ending a session
 func TestEndSession(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	_, err := tracker.StartSession("test-session", "call-123", "room-456", 100000, 10*time.Minute)
 	if err != nil {
@@ -211,14 +183,10 @@ func TestEndSession(t *testing.T) {
 		t.Fatalf("Failed to end session: %v", err)
 	}
 
-	// Session should be ended
-	state, err := tracker.GetSessionState("test-session")
-	if err != nil {
-		t.Fatalf("Failed to get session state: %v", err)
-	}
-
-	if state != SessionStateEnded {
-		t.Errorf("Expected session state %v, got %v", SessionStateEnded, state)
+	// Session should be deleted after ending
+	_, exists := tracker.GetSession("test-session")
+	if exists {
+		t.Error("Session should be deleted after ending")
 	}
 
 	// Should not be able to record more usage
@@ -231,11 +199,7 @@ func TestEndSession(t *testing.T) {
 // TestGetAllSessions tests retrieving all active sessions
 func TestGetAllSessions(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Start multiple sessions
 	tracker.StartSession("session-1", "call-1", "room-1", 100000, 10*time.Minute)
@@ -251,14 +215,10 @@ func TestGetAllSessions(t *testing.T) {
 	}
 }
 
-// TestGetStats tests budget tracker statistics
-func TestGetStats(t *testing.T) {
+// TestVoiceBudgetGetStats tests budget tracker statistics
+func TestVoiceBudgetGetStats(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Start sessions and record usage
 	tracker.StartSession("session-1", "call-1", "room-1", 100000, 10*time.Minute)
@@ -284,26 +244,25 @@ func TestGetStats(t *testing.T) {
 func TestEnforceLimits(t *testing.T) {
 	config := DefaultConfig()
 	config.HardStop = true
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Create session with low limit
 	tracker.StartSession("test-session", "call-123", "room-456", 100, 1*time.Hour)
 	tracker.RecordTokenUsage("test-session", 50, 51, "gpt-4")
 
 	// Run enforcement
-	err := tracker.EnforceLimits(nil)
+	err := tracker.EnforceLimits(context.Background())
 	if err != nil {
 		t.Fatalf("EnforceLimits failed: %v", err)
 	}
 
-	// Session should be ended
-	state, _ := tracker.GetSessionState("test-session")
-	if state != SessionStateEnded {
-		t.Errorf("Expected session state %v, got %v", SessionStateEnded, state)
+	// Wait for async session termination
+	time.Sleep(100 * time.Millisecond)
+
+	// Session should be deleted after enforcement
+	_, exists := tracker.GetSession("test-session")
+	if exists {
+		t.Error("Session should be deleted after budget enforcement")
 	}
 }
 
@@ -331,11 +290,7 @@ func TestSessionStateString(t *testing.T) {
 // TestStop tests stopping the budget tracker
 func TestStop(t *testing.T) {
 	config := DefaultConfig()
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     1000000,
-		GlobalDurationLimit:  1 * time.Hour,
-	})
-	tracker := NewBudgetTracker(config, budgetMgr)
+	tracker := NewBudgetTracker(config)
 
 	// Start sessions
 	tracker.StartSession("session-1", "call-1", "room-1", 100000, 10*time.Minute)

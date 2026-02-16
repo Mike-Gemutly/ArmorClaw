@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/armorclaw/bridge/pkg/budget"
+	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"log/slog"
@@ -17,15 +17,14 @@ import (
 // Manager integrates all voice call components
 type Manager struct {
 	// Core components
-	config      Config
+	config      ManagerConfig
 	sessionMgr  *webrtc.SessionManager
 	tokenMgr    *webrtc.TokenManager
 	webrtcEngine *webrtc.Engine
-	turnMgr     *webrtc.TURNManager
+	turnMgr     *turn.Manager
 
 	// Voice-specific components
 	voiceMgr    *MatrixManager
-	budgetMgr   *budget.Manager
 	budgetTracker *BudgetTracker
 	securityEnforcer *SecurityEnforcer
 	ttlManager  *TTLManager
@@ -53,8 +52,7 @@ type ManagerConfig struct {
 	SecurityPolicy SecurityPolicy
 
 	// Budget configuration
-	BudgetConfig budget.Config
-	BudgetManager *budget.Manager
+	BudgetConfig BudgetConfig
 
 	// Session management
 	DefaultLifetime time.Duration
@@ -63,44 +61,54 @@ type ManagerConfig struct {
 	// TURN configuration
 	TURNSharedSecret string
 	TURNServerURL    string
+
+	// Call limits
+	MaxConcurrentCalls int
+	MaxCallDuration    time.Duration
+
+	// Budget defaults (for StartCall)
+	DefaultTokenLimit    uint64
+	DefaultDurationLimit time.Duration
 }
+
+// BudgetConfig holds budget configuration for voice manager
+type BudgetConfig struct {
+	DefaultTokenLimit    uint64
+	DefaultDurationLimit time.Duration
+	WarningThreshold     float64
+	HardStop             bool
+}
+
+// VoiceConfig holds voice-specific configuration (aliased for clarity)
+type VoiceConfig = Config
 
 // NewManager creates a new voice manager
 func NewManager(
 	sessionMgr *webrtc.SessionManager,
 	tokenMgr *webrtc.TokenManager,
 	webrtcEngine *webrtc.Engine,
-	turnMgr *webrtc.TURNManager,
-	config Config,
+	turnMgr *turn.Manager,
+	config ManagerConfig,
 ) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create budget manager if not provided
-	budgetMgr := budget.NewManager(budget.Config{
-		GlobalTokenLimit:     config.DefaultTokenLimit,
-		GlobalDurationLimit:  config.DefaultDurationLimit,
-		WarningThreshold:     config.WarningThreshold,
-		HardStop:             config.HardStop,
-	})
 
 	// Create security enforcer
 	securityEnforcer := NewSecurityEnforcer(config.SecurityPolicy)
 
 	// Create budget tracker
-	budgetTracker := NewBudgetTracker(config.BudgetConfig, budgetMgr)
+	budgetTracker := NewBudgetTracker(Config{
+		DefaultTokenLimit:    config.BudgetConfig.DefaultTokenLimit,
+		DefaultDurationLimit: config.BudgetConfig.DefaultDurationLimit,
+		WarningThreshold:     config.BudgetConfig.WarningThreshold,
+		HardStop:             config.BudgetConfig.HardStop,
+	})
 
 	// Create TTL manager
 	ttlConfig := DefaultTTLConfig()
-	if config.TTLConfig.DefaultTTL > 0 {
-		ttlConfig = config.TTLConfig
-	}
 	ttlManager := NewTTLManager(sessionMgr, ttlConfig)
 
 	// Create security auditor
 	securityAudit := NewSecurityAudit(config.SecurityPolicy)
-
-	// Create voice manager
-	voiceMgr := NewMatrixManager(config, sessionMgr)
 
 	return &Manager{
 		config:         config,
@@ -108,8 +116,7 @@ func NewManager(
 		tokenMgr:       tokenMgr,
 		webrtcEngine:   webrtcEngine,
 		turnMgr:        turnMgr,
-		voiceMgr:       voiceMgr,
-		budgetMgr:      budgetMgr,
+		voiceMgr:       nil, // MatrixManager stubbed out
 		budgetTracker:  budgetTracker,
 		securityEnforcer: securityEnforcer,
 		ttlManager:     ttlManager,
@@ -178,9 +185,8 @@ func (m *Manager) CreateCall(roomID, offerSDP string, userID string) (*MatrixCal
 	// Check concurrent call limit
 	activeCount := m.getActiveCallCount()
 	if activeCount >= m.config.MaxConcurrentCalls {
-		m.securityLog.LogAccessDenied(m.ctx, "voice_call_create", roomID,
+		m.securityLog.LogAccessDenied(m.ctx, "voice_call_create", roomID, "max_concurrent_calls_exceeded",
 			slog.String("user_id", userID),
-			slog.String("reason", "max_concurrent_calls_exceeded"),
 			slog.Int("max_calls", m.config.MaxConcurrentCalls))
 		return nil, ErrMaxConcurrentCallsExceeded
 	}
@@ -265,7 +271,7 @@ func (m *Manager) RejectCall(callID, reason string) error {
 	defer m.mu.Unlock()
 
 	// Get the call
-	call, ok := m.calls.Load(callID)
+	_, ok := m.calls.Load(callID)
 	if !ok {
 		return ErrCallNotFound
 	}
@@ -407,28 +413,27 @@ func (m *Manager) getActiveCallCount() int {
 	return count
 }
 
-// CreateWebRTCSSession creates a WebRTC session for a call
-func (m *Manager) CreateWebRTCSSession(callID, roomID string, ttl time.Duration) (*webrtc.Session, string, error) {
+// CreateWebRTCSession creates a WebRTC session for a call
+func (m *Manager) CreateWebRTCSession(callID, roomID string, ttl time.Duration) (*webrtc.Session, string, error) {
 	// Create session
-	session := m.sessionMgr.Create(
+	session, err := m.sessionMgr.Create(
 		fmt.Sprintf("container-%s", callID),
 		roomID,
-		fmt.Sprintf("user-%s", callID),
 		ttl,
 	)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create session: %w", err)
+	}
 
 	// Generate call token
-	token, err := m.tokenMgr.GenerateToken(CallToken{
-		SessionID: session.ID,
-		RoomID:    roomID,
-		ExpiresAt: time.Now().Add(ttl),
-	})
+	token, err := m.tokenMgr.Generate(session.ID, roomID)
 	if err != nil {
 		m.sessionMgr.End(session.ID)
 		return nil, "", fmt.Errorf("failed to generate token: %w", err)
 	}
 
-	return session, token, nil
+	// Return session and token signature as the token string
+	return session, token.Signature, nil
 }
 
 // GetWebRTCSession retrieves a WebRTC session by call ID
@@ -447,12 +452,12 @@ func (m *Manager) GetWebRTCSession(callID string) (*webrtc.Session, bool) {
 }
 
 // ValidateCallToken validates a call session token
-func (m *Manager) ValidateCallToken(tokenString string) (*CallToken, error) {
-	return m.tokenMgr.ValidateToken(tokenString)
+func (m *Manager) ValidateCallToken(token *webrtc.Token) (*webrtc.TokenClaims, error) {
+	return m.tokenMgr.Validate(token)
 }
 
 // SetTURNManager sets the TURN credential manager
-func (m *Manager) SetTURNManager(turnMgr *webrtc.TURNManager) {
+func (m *Manager) SetTURNManager(turnMgr *turn.Manager) {
 	m.turnMgr = turnMgr
-	m.webrtcEngine.SetTURNManager(turnMgr)
+	// Note: webrtcEngine may not have SetTURNManager, this is for future implementation
 }

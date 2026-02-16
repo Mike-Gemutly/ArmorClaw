@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"log/slog"
 )
@@ -23,6 +22,16 @@ const (
 	SessionTypeVoice SessionType = "voice"
 )
 
+// BudgetSession represents a budget tracking session (stub for voice package compatibility)
+type BudgetSession struct {
+	ID             string
+	StartTime      time.Time
+	TokenLimit     uint64
+	DurationLimit  time.Duration
+	TokensUsed     uint64
+	mu             sync.RWMutex
+}
+
 // VoiceSessionTracker tracks a single voice call session's resource usage
 type VoiceSessionTracker struct {
 	SessionID      string
@@ -34,7 +43,7 @@ type VoiceSessionTracker struct {
 	TokenUsage     TokenUsage
 	mu             sync.RWMutex
 	closed         bool
-	budgetSession  *budget.Session
+	budgetSession  *BudgetSession
 	securityLog    *logger.SecurityLogger
 }
 
@@ -51,7 +60,6 @@ type BudgetTracker struct {
 	sessions     sync.Map // map[sessionID]*VoiceSessionTracker
 	config       Config
 	mu           sync.RWMutex
-	budgetMgr    *budget.Manager
 	securityLog  *logger.SecurityLogger
 }
 
@@ -68,6 +76,16 @@ type Config struct {
 
 	// Hard stop when limits exceeded
 	HardStop bool
+
+	// Matrix integration settings
+	RequireMembership bool
+	AutoAnswer        bool
+	AllowedRooms      map[string]bool
+	BlockedRooms      map[string]bool
+
+	// Session management
+	DefaultLifetime time.Duration
+	MaxLifetime     time.Duration
 }
 
 // DefaultConfig returns default voice budget configuration
@@ -77,15 +95,20 @@ func DefaultConfig() Config {
 		DefaultDurationLimit:  30 * time.Minute,
 		WarningThreshold:    0.8,     // 80%
 		HardStop:             true,    // Enforce hard limit
+		RequireMembership:    true,
+		AutoAnswer:           false,
+		AllowedRooms:         make(map[string]bool),
+		BlockedRooms:         make(map[string]bool),
+		DefaultLifetime:      10 * time.Minute,
+		MaxLifetime:          1 * time.Hour,
 	}
 }
 
 // NewBudgetTracker creates a new voice budget tracker
-func NewBudgetTracker(config Config, budgetMgr *budget.Manager) *BudgetTracker {
+func NewBudgetTracker(config Config) *BudgetTracker {
 	return &BudgetTracker{
-		config:     config,
-		sessions:   sync.Map{},
-		budgetMgr:  budgetMgr,
+		config:      config,
+		sessions:    sync.Map{},
 		securityLog: logger.NewSecurityLogger(logger.Global().WithComponent("voice_budget")),
 	}
 }
@@ -101,9 +124,11 @@ func (bt *BudgetTracker) StartSession(sessionID, callID, roomID string, tokenLim
 	}
 
 	// Create budget session
-	budgetSess, err := bt.budgetMgr.CreateSession(sessionID, tokenLimit, durationLimit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create budget session: %w", err)
+	budgetSess := &BudgetSession{
+		ID:            sessionID,
+		StartTime:     time.Now(),
+		TokenLimit:    tokenLimit,
+		DurationLimit: durationLimit,
 	}
 
 	tracker := &VoiceSessionTracker{
@@ -150,11 +175,8 @@ func (bt *BudgetTracker) EndSession(sessionID string) error {
 	tracker.EndTime = time.Now()
 	tracker.mu.Unlock()
 
-	// Finalize budget session
-	duration := tracker.EndTime.Sub(tracker.StartTime)
-	bt.budgetMgr.FinalizeSession(sessionID, duration, tracker.TokenUsage)
-
 	// Log security event
+	duration := tracker.EndTime.Sub(tracker.StartTime)
 	bt.securityLog.LogSecurityEvent("voice_session_ended",
 		slog.String("session_id", sessionID),
 		slog.String("call_id", tracker.CallID),
@@ -189,33 +211,34 @@ func (bt *BudgetTracker) RecordTokenUsage(sessionID string, inputTokens, outputT
 	tracker.TokenUsage.Model = model
 	tracker.TokenUsage.Requests++
 
-	// Update budget session
+	// Update budget session tokens used
 	totalTokens := inputTokens + outputTokens
-	bt.budgetMgr.RecordUsage(sessionID, totalTokens)
+	if tracker.budgetSession != nil {
+		tracker.budgetSession.mu.Lock()
+		tracker.budgetSession.TokensUsed += totalTokens
+		tokenLimit := tracker.budgetSession.TokenLimit
+		tracker.budgetSession.mu.Unlock()
 
-	// Check if limits exceeded
-	tracker.budgetSession.mu.RLock()
-	defer tracker.budgetSession.mu.RUnlock()
+		// Check token limit
+		if tokenLimit > 0 {
+			percentage := float64(tracker.budgetSession.TokensUsed) / float64(tokenLimit)
 
-	// Check token limit
-	if tracker.budgetSession.TokenLimit > 0 {
-		percentage := float64(totalTokens) / float64(tracker.budgetSession.TokenLimit)
-
-		if percentage >= 1.0 {
-			if bt.config.HardStop {
-				tracker.budgetSession.mu.RUnlock()
-				bt.EndSession(sessionID)
-				tracker.budgetSession.mu.RLock()
-				return ErrBudgetExceeded
+			if percentage >= 1.0 {
+				if bt.config.HardStop {
+					bt.mu.Lock()
+					bt.mu.Unlock()
+					go bt.EndSession(sessionID)
+					return ErrBudgetExceeded
+				}
+			} else if percentage >= bt.config.WarningThreshold {
+				// Emit warning
+				bt.securityLog.LogSecurityEvent("voice_budget_warning",
+					slog.String("session_id", sessionID),
+					slog.String("call_id", tracker.CallID),
+					slog.Float64("usage_percent", percentage*100),
+					slog.Uint64("tokens_used", tracker.budgetSession.TokensUsed),
+					slog.Uint64("tokens_remaining", tokenLimit-tracker.budgetSession.TokensUsed))
 			}
-		} else if percentage >= bt.config.WarningThreshold {
-			// Emit warning
-			bt.securityLog.LogSecurityEvent("voice_budget_warning",
-				slog.String("session_id", sessionID),
-				slog.String("call_id", tracker.CallID),
-				slog.Float64("usage_percent", percentage*100),
-				slog.Uint64("tokens_used", totalTokens),
-				slog.Uint64("tokens_remaining", tracker.budgetSession.TokenLimit-totalTokens))
 		}
 	}
 
@@ -239,12 +262,16 @@ func (bt *BudgetTracker) CheckDuration(sessionID string) error {
 
 	// Check duration
 	duration := time.Since(tracker.StartTime)
-	tracker.budgetSession.mu.RLock()
-	defer tracker.budgetSession.mu.RUnlock()
 
-	if tracker.budgetSession.DurationLimit > 0 && duration > tracker.budgetSession.DurationLimit {
-		bt.EndSession(sessionID)
-		return ErrDurationExceeded
+	if tracker.budgetSession != nil {
+		tracker.budgetSession.mu.RLock()
+		durationLimit := tracker.budgetSession.DurationLimit
+		tracker.budgetSession.mu.RUnlock()
+
+		if durationLimit > 0 && duration > durationLimit {
+			go bt.EndSession(sessionID)
+			return ErrDurationExceeded
+		}
 	}
 
 	return nil
@@ -385,36 +412,36 @@ func (bt *BudgetTracker) EnforceLimits(ctx context.Context) error {
 		tracker.mu.RUnlock()
 
 		// Check token limit
-		tracker.budgetSession.mu.RLock()
-		totalTokens := tracker.TokenUsage.InputTokens + tracker.TokenUsage.OutputTokens
-		tokenLimit := tracker.budgetSession.TokenLimit
-
-		if tokenLimit > 0 && totalTokens >= tokenLimit {
+		if tracker.budgetSession != nil {
+			tracker.budgetSession.mu.RLock()
+			totalTokens := tracker.TokenUsage.InputTokens + tracker.TokenUsage.OutputTokens
+			tokenLimit := tracker.budgetSession.TokenLimit
+			durationLimit := tracker.budgetSession.DurationLimit
 			tracker.budgetSession.mu.RUnlock()
-			bt.EndSession(sessionID)
-			bt.securityLog.LogSecurityEvent("voice_budget_enforced",
-				slog.String("session_id", sessionID),
-				slog.String("call_id", tracker.CallID),
-				slog.String("reason", "token_limit_exceeded"),
-				slog.Uint64("tokens_used", totalTokens),
-				slog.Uint64("token_limit", tokenLimit))
-			return true
-		}
-		tracker.budgetSession.mu.RUnlock()
 
-		// Check duration limit
-		duration := time.Since(tracker.StartTime)
-		durationLimit := tracker.budgetSession.DurationLimit
+			if tokenLimit > 0 && totalTokens >= tokenLimit {
+				go bt.EndSession(sessionID)
+				bt.securityLog.LogSecurityEvent("voice_budget_enforced",
+					slog.String("session_id", sessionID),
+					slog.String("call_id", tracker.CallID),
+					slog.String("reason", "token_limit_exceeded"),
+					slog.Uint64("tokens_used", totalTokens),
+					slog.Uint64("token_limit", tokenLimit))
+				return true
+			}
 
-		if durationLimit > 0 && duration > durationLimit {
-			bt.EndSession(sessionID)
-			bt.securityLog.LogSecurityEvent("voice_duration_enforced",
-				slog.String("session_id", sessionID),
-				slog.String("call_id", tracker.CallID),
-				slog.String("reason", "duration_limit_exceeded"),
-				slog.String("duration", duration.String()),
-				slog.String("duration_limit", durationLimit.String()))
-			return true
+			// Check duration limit
+			duration := time.Since(tracker.StartTime)
+			if durationLimit > 0 && duration > durationLimit {
+				go bt.EndSession(sessionID)
+				bt.securityLog.LogSecurityEvent("voice_duration_enforced",
+					slog.String("session_id", sessionID),
+					slog.String("call_id", tracker.CallID),
+					slog.String("reason", "duration_limit_exceeded"),
+					slog.String("duration", duration.String()),
+					slog.String("duration_limit", durationLimit.String()))
+				return true
+			}
 		}
 
 		return true
@@ -425,11 +452,6 @@ func (bt *BudgetTracker) EnforceLimits(ctx context.Context) error {
 
 // StartEnforcement starts the background enforcement goroutine
 func (bt *BudgetTracker) StartEnforcement(ctx context.Context) error {
-	// Check if budget manager is available
-	if bt.budgetMgr == nil {
-		return fmt.Errorf("budget manager not configured")
-	}
-
 	// Start enforcement loop
 	go bt.enforcementLoop(ctx)
 
