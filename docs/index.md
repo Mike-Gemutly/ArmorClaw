@@ -1,8 +1,8 @@
 # ArmorClaw Documentation Index
 
 > **Last Updated:** 2026-02-15
-> **Version:** 1.7.0
-> **Phase:** Documentation Complete ✅ | Journey Health: 100%
+> **Version:** 1.8.0
+> **Phase:** Documentation Complete ✅ | All Gaps Resolved
 
 ---
 
@@ -27,6 +27,7 @@ This index is the central hub for all ArmorClaw documentation. Start here for an
 - [🔑 API Key Validation](docs/guides/api-key-validation.md) 🆕 - Pre-validation, quota checking, expiry detection
 - [📱 Multi-Device UX](docs/guides/multi-device-ux.md) 🆕 - Device trust, verification flows, recovery scenarios
 - [📷 QR Scanning Flow](docs/guides/qr-scanning-flow.md) 🆕 - Device pairing via QR code, camera handling, fallbacks
+- [🔐 Security Tier Upgrade](docs/guides/security-tier-upgrade.md) 🆕 - Progressive security tiers, upgrade flows, notifications
 - [Element X Quick Start](docs/guides/element-x-quickstart.md) ⭐ - Connect to agents via Element X in 5 minutes
 - [WebRTC Voice Guide](docs/guides/webrtc-voice-guide.md) 🆕 - Secure voice calls with Matrix authorization
 - [WebRTC Voice Hardening](docs/guides/webrtc-voice-hardening.md) 🆕 - Security hardening for voice calls
