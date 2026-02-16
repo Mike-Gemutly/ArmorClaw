@@ -11,6 +11,7 @@ import (
 	"io"
 	"time"
 
+	errsys "github.com/armorclaw/bridge/pkg/errors"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
@@ -19,6 +20,9 @@ import (
 	"github.com/docker/docker/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
+
+// Component tracker for docker operations
+var dockerTracker = errsys.GetComponentTracker("docker")
 
 var (
 	ErrContainerNotFound = errors.New("container not found")
@@ -149,18 +153,44 @@ func (c *Client) hasScope(required Scope) bool {
 // CreateContainer creates a new container with the given configuration
 // Scope required: ScopeCreate
 func (c *Client) CreateContainer(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform) (string, error) {
+	// Track operation start
+	imageName := ""
+	if config != nil && config.Image != "" {
+		imageName = config.Image
+	}
+	dockerTracker.Event("create_container", map[string]any{"image": imageName})
+
 	if c.client == nil {
-		return "", fmt.Errorf("docker client not initialized")
+		err := errsys.NewBuilder("CTX-010").
+			Wrap(fmt.Errorf("docker client not initialized")).
+			WithFunction("CreateContainer").
+			WithInputs(map[string]any{"image": imageName}).
+			Build()
+		dockerTracker.Failure("create_container", err, map[string]any{"reason": "client_not_initialized"})
+		return "", err
 	}
 	if !c.hasScope(ScopeCreate) {
-		return "", ErrInvalidOperation
+		err := errsys.NewBuilder("CTX-001").
+			Wrap(ErrInvalidOperation).
+			WithFunction("CreateContainer").
+			WithInputs(map[string]any{"image": imageName}).
+			Build()
+		dockerTracker.Failure("create_container", err, map[string]any{"reason": "invalid_scope"})
+		return "", err
 	}
 
 	// Apply seccomp profile
 	profile := DefaultArmorClawProfile
 	profileJSON, err := json.Marshal(profile)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal seccomp profile: %w", err)
+		wrappedErr := errsys.NewBuilder("SYS-001").
+			Wrap(err).
+			WithFunction("CreateContainer").
+			WithInputs(map[string]any{"image": imageName}).
+			WithState(map[string]any{"operation": "marshal_seccomp"}).
+			Build()
+		dockerTracker.Failure("create_container", wrappedErr, map[string]any{"reason": "seccomp_marshal_failed"})
+		return "", wrappedErr
 	}
 
 	if hostConfig.SecurityOpt == nil {
@@ -189,36 +219,114 @@ func (c *Client) CreateContainer(ctx context.Context, config *container.Config, 
 
 	resp, err := c.client.ContainerCreate(ctx, config, hostConfig, networkingConfig, platform, "")
 	if err != nil {
-		return "", fmt.Errorf("container create failed: %w", err)
+		// Determine error code based on error type
+		code := "CTX-001" // Default: container start failed
+		errStr := err.Error()
+		if containsAny(errStr, "permission denied", "access denied") {
+			code = "CTX-010"
+		} else if containsAny(errStr, "not found", "no such") {
+			code = "CTX-011"
+		} else if containsAny(errStr, "already exists", "already running") {
+			code = "CTX-012"
+		} else if containsAny(errStr, "image", "pull") {
+			code = "CTX-020"
+		}
+
+		wrappedErr := errsys.NewBuilder(code).
+			Wrap(err).
+			WithFunction("CreateContainer").
+			WithInputs(map[string]any{"image": imageName}).
+			WithState(map[string]any{"container_name": config != nil && len(config.Cmd) > 0}).
+			Build()
+		dockerTracker.Failure("create_container", wrappedErr, map[string]any{"reason": "docker_api_error", "code": code})
+		return "", wrappedErr
 	}
 
+	// Track success
+	dockerTracker.Success("create_container", map[string]any{"container_id": resp.ID[:12]})
 	return resp.ID, nil
 }
 
 // StartContainer starts a container
 // Scope required: ScopeCreate
 func (c *Client) StartContainer(ctx context.Context, containerID string) error {
+	dockerTracker.Event("start_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+
 	if c.client == nil {
-		return fmt.Errorf("docker client not initialized")
+		err := errsys.NewBuilder("CTX-010").
+			Wrap(fmt.Errorf("docker client not initialized")).
+			WithFunction("StartContainer").
+			WithInputs(map[string]any{"container_id": containerID}).
+			Build()
+		dockerTracker.Failure("start_container", err, map[string]any{"reason": "client_not_initialized"})
+		return err
 	}
 	if !c.hasScope(ScopeCreate) {
-		return ErrInvalidOperation
+		err := errsys.NewBuilder("CTX-001").
+			Wrap(ErrInvalidOperation).
+			WithFunction("StartContainer").
+			WithInputs(map[string]any{"container_id": containerID}).
+			Build()
+		dockerTracker.Failure("start_container", err, map[string]any{"reason": "invalid_scope"})
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.latencyTarget)
 	defer cancel()
 
-	return c.client.ContainerStart(ctx, containerID, container.StartOptions{})
+	err := c.client.ContainerStart(ctx, containerID, container.StartOptions{})
+	if err != nil {
+		code := "CTX-001"
+		errStr := err.Error()
+		if containsAny(errStr, "not found", "no such") {
+			code = "CTX-011"
+		} else if containsAny(errStr, "already running") {
+			code = "CTX-012"
+		}
+
+		wrappedErr := errsys.NewBuilder(code).
+			Wrap(err).
+			WithFunction("StartContainer").
+			WithInputs(map[string]any{"container_id": containerID}).
+			Build()
+		dockerTracker.Failure("start_container", wrappedErr, map[string]any{"reason": "docker_api_error", "code": code})
+		return wrappedErr
+	}
+
+	dockerTracker.Success("start_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+	return nil
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // RemoveContainer removes a container with force option
 // Scope required: ScopeRemove
 func (c *Client) RemoveContainer(ctx context.Context, containerID string, force bool) error {
+	dockerTracker.Event("remove_container", map[string]any{"container_id": containerID[:min(12, len(containerID))], "force": force})
+
 	if c.client == nil {
-		return fmt.Errorf("docker client not initialized")
+		err := errsys.NewBuilder("CTX-010").
+			Wrap(fmt.Errorf("docker client not initialized")).
+			WithFunction("RemoveContainer").
+			WithInputs(map[string]any{"container_id": containerID, "force": force}).
+			Build()
+		dockerTracker.Failure("remove_container", err, map[string]any{"reason": "client_not_initialized"})
+		return err
 	}
 	if !c.hasScope(ScopeRemove) {
-		return ErrInvalidOperation
+		err := errsys.NewBuilder("CTX-001").
+			Wrap(ErrInvalidOperation).
+			WithFunction("RemoveContainer").
+			WithInputs(map[string]any{"container_id": containerID, "force": force}).
+			Build()
+		dockerTracker.Failure("remove_container", err, map[string]any{"reason": "invalid_scope"})
+		return err
 	}
 
 	options := container.RemoveOptions{
@@ -226,7 +334,25 @@ func (c *Client) RemoveContainer(ctx context.Context, containerID string, force 
 		RemoveVolumes: true,
 	}
 
-	return c.client.ContainerRemove(ctx, containerID, options)
+	err := c.client.ContainerRemove(ctx, containerID, options)
+	if err != nil {
+		code := "CTX-001"
+		errStr := err.Error()
+		if containsAny(errStr, "not found", "no such") {
+			code = "CTX-011"
+		}
+
+		wrappedErr := errsys.NewBuilder(code).
+			Wrap(err).
+			WithFunction("RemoveContainer").
+			WithInputs(map[string]any{"container_id": containerID, "force": force}).
+			Build()
+		dockerTracker.Failure("remove_container", wrappedErr, map[string]any{"reason": "docker_api_error", "code": code})
+		return wrappedErr
+	}
+
+	dockerTracker.Success("remove_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+	return nil
 }
 
 // ExecCreate creates an exec instance in a container
@@ -313,6 +439,8 @@ func (c *Client) Close() error {
 
 // IsAvailable checks if Docker daemon is available and running
 func IsAvailable() bool {
+	dockerTracker.Event("availability_check", nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -321,17 +449,26 @@ func IsAvailable() bool {
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
+		dockerTracker.Failure("availability_check", err, map[string]any{"reason": "client_create_failed"})
 		return false
 	}
 	defer cli.Close()
 
 	_, err = cli.Ping(ctx)
-	return err == nil
+	if err != nil {
+		dockerTracker.Failure("availability_check", err, map[string]any{"reason": "ping_failed"})
+		return false
+	}
+
+	dockerTracker.Success("availability_check", nil)
+	return true
 }
 
 // ExecInContainer executes a command in a container and returns the output
 // This is a convenience method that combines ExecCreate, ExecStart, and inspection
 func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []string) (int, string, error) {
+	dockerTracker.Event("exec_container", map[string]any{"container_id": containerID[:min(12, len(containerID))], "cmd": cmd})
+
 	// Create exec instance
 	execConfig := container.ExecOptions{
 		Cmd:          cmd,
@@ -341,12 +478,26 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 
 	execID, err := c.ExecCreate(ctx, containerID, execConfig)
 	if err != nil {
-		return 0, "", fmt.Errorf("exec create failed: %w", err)
+		wrappedErr := errsys.NewBuilder("CTX-002").
+			Wrap(err).
+			WithFunction("ExecInContainer").
+			WithInputs(map[string]any{"container_id": containerID, "cmd": cmd}).
+			WithState(map[string]any{"phase": "exec_create"}).
+			Build()
+		dockerTracker.Failure("exec_container", wrappedErr, map[string]any{"reason": "exec_create_failed"})
+		return 0, "", wrappedErr
 	}
 
 	// Start exec
 	if err := c.ExecStart(ctx, execID); err != nil {
-		return 0, "", fmt.Errorf("exec start failed: %w", err)
+		wrappedErr := errsys.NewBuilder("CTX-002").
+			Wrap(err).
+			WithFunction("ExecInContainer").
+			WithInputs(map[string]any{"container_id": containerID, "cmd": cmd, "exec_id": execID}).
+			WithState(map[string]any{"phase": "exec_start"}).
+			Build()
+		dockerTracker.Failure("exec_container", wrappedErr, map[string]any{"reason": "exec_start_failed"})
+		return 0, "", wrappedErr
 	}
 
 	// Inspect exec to get exit code
@@ -355,18 +506,39 @@ func (c *Client) ExecInContainer(ctx context.Context, containerID string, cmd []
 
 	info, err := c.client.ContainerExecInspect(ctx, execID)
 	if err != nil {
-		return 0, "", fmt.Errorf("exec inspect failed: %w", err)
+		wrappedErr := errsys.NewBuilder("CTX-002").
+			Wrap(err).
+			WithFunction("ExecInContainer").
+			WithInputs(map[string]any{"container_id": containerID, "cmd": cmd, "exec_id": execID}).
+			WithState(map[string]any{"phase": "exec_inspect"}).
+			Build()
+		dockerTracker.Failure("exec_container", wrappedErr, map[string]any{"reason": "exec_inspect_failed"})
+		return 0, "", wrappedErr
 	}
 
+	dockerTracker.Success("exec_container", map[string]any{"container_id": containerID[:min(12, len(containerID))], "exit_code": info.ExitCode})
 	return info.ExitCode, "", nil
 }
 
 // CreateAndStartContainer creates and starts a container in one operation
 // This is optimized for low-latency container startup
 func (c *Client) CreateAndStartContainer(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform) (string, error) {
-	if c.client == nil {
-		return "", fmt.Errorf("docker client not initialized")
+	imageName := ""
+	if config != nil && config.Image != "" {
+		imageName = config.Image
 	}
+	dockerTracker.Event("create_and_start", map[string]any{"image": imageName})
+
+	if c.client == nil {
+		err := errsys.NewBuilder("CTX-010").
+			Wrap(fmt.Errorf("docker client not initialized")).
+			WithFunction("CreateAndStartContainer").
+			WithInputs(map[string]any{"image": imageName}).
+			Build()
+		dockerTracker.Failure("create_and_start", err, map[string]any{"reason": "client_not_initialized"})
+		return "", err
+	}
+
 	containerID, err := c.CreateContainer(ctx, config, hostConfig, networkingConfig, platform)
 	if err != nil {
 		return "", err
@@ -377,9 +549,18 @@ func (c *Client) CreateAndStartContainer(ctx context.Context, config *container.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cleanupCancel()
 		_ = c.RemoveContainer(cleanupCtx, containerID, true)
-		return "", fmt.Errorf("failed to start container: %w", err)
+
+		wrappedErr := errsys.NewBuilder("CTX-001").
+			Wrap(err).
+			WithFunction("CreateAndStartContainer").
+			WithInputs(map[string]any{"image": imageName, "container_id": containerID}).
+			WithState(map[string]any{"phase": "start_failed", "cleaned_up": true}).
+			Build()
+		dockerTracker.Failure("create_and_start", wrappedErr, map[string]any{"reason": "start_failed", "container_id": containerID[:min(12, len(containerID))]})
+		return "", wrappedErr
 	}
 
+	dockerTracker.Success("create_and_start", map[string]any{"container_id": containerID[:min(12, len(containerID))], "image": imageName})
 	return containerID, nil
 }
 
@@ -425,17 +606,35 @@ func (c *Client) StreamContainerLogs(ctx context.Context, containerID string, lo
 // ImageExists checks if a container image exists locally
 // Returns true if the image exists, false if it doesn't, or error if unable to check
 func (c *Client) ImageExists(ctx context.Context, image string) (bool, error) {
+	dockerTracker.Event("image_check", map[string]any{"image": image})
+
 	if c.client == nil {
-		return false, fmt.Errorf("docker client not initialized")
+		err := errsys.NewBuilder("CTX-010").
+			Wrap(fmt.Errorf("docker client not initialized")).
+			WithFunction("ImageExists").
+			WithInputs(map[string]any{"image": image}).
+			Build()
+		dockerTracker.Failure("image_check", err, map[string]any{"reason": "client_not_initialized"})
+		return false, err
 	}
+
 	_, _, err := c.client.ImageInspectWithRaw(ctx, image)
 	if err == nil {
+		dockerTracker.Success("image_check", map[string]any{"image": image, "exists": true})
 		return true, nil
 	}
 	if client.IsErrNotFound(err) {
+		dockerTracker.Success("image_check", map[string]any{"image": image, "exists": false})
 		return false, nil
 	}
-	return false, fmt.Errorf("failed to inspect image: %w", err)
+
+	wrappedErr := errsys.NewBuilder("CTX-021").
+		Wrap(err).
+		WithFunction("ImageExists").
+		WithInputs(map[string]any{"image": image}).
+		Build()
+	dockerTracker.Failure("image_check", wrappedErr, map[string]any{"reason": "inspect_failed"})
+	return false, wrappedErr
 }
 
 // isRetryableError checks if an error is retryable (transient network issues, temporary daemon issues)
@@ -495,6 +694,12 @@ func indexOfSubstring(s, substr string) int {
 
 // CreateContainerWithRetry creates a container with retry logic for transient failures
 func (c *Client) CreateContainerWithRetry(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform) (string, error) {
+	imageName := ""
+	if config != nil && config.Image != "" {
+		imageName = config.Image
+	}
+	dockerTracker.Event("create_with_retry", map[string]any{"image": imageName, "max_attempts": 3})
+
 	maxAttempts := 3
 	baseDelay := 100 * time.Millisecond
 
@@ -502,11 +707,21 @@ func (c *Client) CreateContainerWithRetry(ctx context.Context, config *container
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		containerID, err := c.CreateContainer(ctx, config, hostConfig, networkingConfig, platform)
 		if err == nil {
+			dockerTracker.Success("create_with_retry", map[string]any{
+				"image":        imageName,
+				"container_id": containerID[:min(12, len(containerID))],
+				"attempts":     attempt + 1,
+			})
 			return containerID, nil
 		}
 
 		// Check if error is retryable
 		if !isRetryableError(err) {
+			dockerTracker.Failure("create_with_retry", err, map[string]any{
+				"image":    imageName,
+				"attempt":  attempt + 1,
+				"retryable": false,
+			})
 			return "", err // Non-retryable error
 		}
 
@@ -518,20 +733,63 @@ func (c *Client) CreateContainerWithRetry(ctx context.Context, config *container
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
-				return "", ctx.Err()
+				wrappedErr := errsys.NewBuilder("CTX-001").
+					Wrap(ctx.Err()).
+					WithFunction("CreateContainerWithRetry").
+					WithInputs(map[string]any{"image": imageName}).
+					WithState(map[string]any{"attempts": attempt + 1, "cancelled": true}).
+					Build()
+				dockerTracker.Failure("create_with_retry", wrappedErr, map[string]any{"reason": "context_cancelled"})
+				return "", wrappedErr
 			}
 		}
 	}
 
-	return "", fmt.Errorf("container create failed after %d attempts: %w", maxAttempts, lastErr)
+	wrappedErr := errsys.NewBuilder("CTX-001").
+		Wrap(lastErr).
+		WithFunction("CreateContainerWithRetry").
+		WithInputs(map[string]any{"image": imageName}).
+		WithState(map[string]any{"attempts": maxAttempts, "exhausted": true}).
+		Build()
+	dockerTracker.Failure("create_with_retry", wrappedErr, map[string]any{
+		"image":     imageName,
+		"attempts":  maxAttempts,
+		"exhausted": true,
+	})
+	return "", wrappedErr
 }
 
 // HealthCheck performs a health check on the Docker daemon
 // Returns true if the daemon is healthy, false otherwise
 func (c *Client) HealthCheck(ctx context.Context) error {
+	dockerTracker.Event("health_check", nil)
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	_, err := c.Ping(ctx)
-	return err
+	if err != nil {
+		wrappedErr := errsys.NewBuilder("CTX-003").
+			Wrap(err).
+			WithFunction("HealthCheck").
+			Build()
+		dockerTracker.Failure("health_check", wrappedErr, nil)
+		return wrappedErr
+	}
+
+	dockerTracker.Success("health_check", nil)
+	return nil
+}
+
+// IsRunning checks if a container is currently running
+func (c *Client) IsRunning(containerID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	containerJSON, err := c.InspectContainer(ctx, containerID)
+	if err != nil {
+		return false, err
+	}
+
+	return containerJSON.State != nil && containerJSON.State.Running, nil
 }
