@@ -4,7 +4,9 @@ package rpc
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,10 +21,14 @@ import (
 	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/docker"
+	errsys "github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
+	"github.com/armorclaw/bridge/pkg/recovery"
 	"github.com/armorclaw/bridge/pkg/secrets"
+	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/armorclaw/bridge/pkg/webrtc"
+	pionwebrtc "github.com/pion/webrtc/v3"
 	"github.com/docker/docker/api/types/container"
 )
 
@@ -145,12 +151,16 @@ type Server struct {
 	wg           sync.WaitGroup
 	containerDir string // Directory for container-specific sockets
 	secretInjector *secrets.SecretInjector // P0-CRIT-3: Memory-only socket injection
+
+	// Recovery manager - GAP #6
+	recoveryMgr  *recovery.Manager
+
 	// WebRTC components
 	sessionMgr   *webrtc.SessionManager
 	tokenMgr     *webrtc.TokenManager
 	signalingSvr *webrtc.SignalingServer
 	webrtcEngine *webrtc.Engine
-	turnMgr      *webrtc.TURNManager
+	turnMgr      *turn.Manager
 	voiceMgr     interface{} // *voice.Manager
 	budgetMgr    interface{} // *budget.Manager
 
@@ -158,6 +168,9 @@ type Server struct {
 	healthMonitor interface{} // *health.Monitor
 	notifier      interface{} // *notification.Notifier
 	eventBus      interface{} // *eventbus.EventBus
+
+	// Error handling system
+	errorSystem *errsys.System
 
 	// Audit logging
 	auditLog *audit.AuditLog
@@ -186,7 +199,7 @@ type Config struct {
 	TokenManager    *webrtc.TokenManager
 	SignalingServer *webrtc.SignalingServer
 	WebRTCEngine    *webrtc.Engine
-	TURNManager     *webrtc.TURNManager
+	TURNManager     *turn.Manager
 	VoiceManager    interface{} // *voice.Manager
 	BudgetManager   interface{} // *budget.Manager
 
@@ -194,6 +207,9 @@ type Config struct {
 	HealthMonitor interface{} // *health.Monitor
 	Notifier      interface{} // *notification.Notifier
 	EventBus      interface{} // *eventbus.EventBus
+
+	// Error handling system
+	ErrorSystem *errsys.System
 
 	// Audit logging
 	AuditLog *audit.AuditLog
@@ -252,6 +268,8 @@ func New(cfg Config) (*Server, error) {
 		healthMonitor: cfg.HealthMonitor,
 		notifier:      cfg.Notifier,
 		eventBus:      cfg.EventBus,
+		// Error handling system
+		errorSystem: cfg.ErrorSystem,
 		// Audit logging
 		auditLog: cfg.AuditLog,
 	}
@@ -443,6 +461,8 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleMatrixStatus(req)
 	case "matrix.login":
 		return s.handleMatrixLogin(req)
+	case "matrix.refresh_token":
+		return s.handleMatrixRefreshToken(req) // P1-HIGH-1: Refresh Matrix access token
 	case "attach_config":
 		return s.handleAttachConfig(req)
 	case "send_secret":
@@ -461,6 +481,39 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleListConfigs(req)
 	case "webrtc.get_audit_log":
 		return s.handleWebRTCGetAuditLog(req)
+
+	// Recovery methods - GAP #6
+	case "recovery.generate_phrase":
+		return s.handleRecoveryGeneratePhrase(req)
+	case "recovery.store_phrase":
+		return s.handleRecoveryStorePhrase(req)
+	case "recovery.verify":
+		return s.handleRecoveryVerify(req)
+	case "recovery.status":
+		return s.handleRecoveryStatus(req)
+	case "recovery.complete":
+		return s.handleRecoveryComplete(req)
+	case "recovery.is_device_valid":
+		return s.handleRecoveryIsDeviceValid(req)
+
+	// Error system methods
+	case "get_errors":
+		return s.handleGetErrors(req)
+	case "resolve_error":
+		return s.handleResolveError(req)
+
+	// Platform methods - GAP #8
+	case "platform.connect":
+		return s.handlePlatformConnect(req)
+	case "platform.disconnect":
+		return s.handlePlatformDisconnect(req)
+	case "platform.list":
+		return s.handlePlatformList(req)
+	case "platform.status":
+		return s.handlePlatformStatus(req)
+	case "platform.test":
+		return s.handlePlatformTest(req)
+
 	default:
 		return &Response{
 			JSONRPC: "2.0",
@@ -471,6 +524,13 @@ func (s *Server) handleRequest(req *Request) *Response {
 			},
 		}
 	}
+}
+
+// generateID generates a random ID string
+func generateID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // handleStatus returns bridge status
@@ -607,9 +667,10 @@ func (s *Server) handleStart(req *Request) *Response {
 	}
 
 	// Generate container name and socket path
+	containerName := fmt.Sprintf("armorclaw-%s-%d", params.KeyID, time.Now().UnixNano())
 
 	// P0-CRIT-3: Use socket-based secret injection (memory-only, no files)
-	secretSocketPath, err := s.secretInjector.InjectSecrets(containerName, cred)
+	secretSocketPath, err := s.secretInjector.InjectSecrets(containerName, *cred)
 	if err != nil {
 		return &Response{
 			JSONRPC: "2.0",
@@ -654,6 +715,26 @@ func (s *Server) handleStart(req *Request) *Response {
 		},
 		AutoRemove: true, // Auto-remove on exit
 	}
+
+	// Create and start container
+	containerID, err := s.docker.CreateAndStartContainer(s.ctx, containerConfig, hostConfig, nil, nil)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to create container: %v", err),
+			},
+		}
+	}
+
+	// Log container creation
+	s.securityLog.LogContainerStart(s.ctx, containerName, containerID, params.Image)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
 		Result: map[string]interface{}{
 			"container_id":   containerID,
 			"container_name": containerName,
@@ -1115,6 +1196,41 @@ func (s *Server) handleMatrixLogin(req *Request) *Response {
 	}
 }
 
+// P1-HIGH-1: handleMatrixRefreshToken manually refreshes the Matrix access token
+// This is useful when the token is nearing expiry or has already expired
+func (s *Server) handleMatrixRefreshToken(req *Request) *Response {
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not configured",
+			},
+		}
+	}
+
+	// Call the adapter's RefreshAccessToken method directly
+	if err := s.matrix.RefreshAccessToken(); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("token refresh failed: %s", err.Error()),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status": "refreshed",
+		},
+	}
+}
+
 // handleAttachConfig attaches a configuration file for use in containers
 // This allows sending configs via Matrix that can be injected into containers
 func (s *Server) handleAttachConfig(req *Request) *Response {
@@ -1352,7 +1468,7 @@ type WebRTCStartParams struct {
 type WebRTCStartResult struct {
 	SessionID       string                  `json:"session_id"`
 	SDPAnswer       string                  `json:"sdp_answer"`
-	TURNCredentials *webrtc.TURNCredentials `json:"turn_credentials"`
+	TURNCredentials *turn.TURNCredentials `json:"turn_credentials"`
 	SignalingURL    string                  `json:"signaling_url"`
 	Token           string                  `json:"token"` // Call session token
 }
@@ -1401,7 +1517,7 @@ func (s *Server) handleWebRTCStart(req *Request) *Response {
 	// Zero-trust validation: Check if caller is authorized for this room
 	// In production, this would validate against zero-trust sender/room allowlist
 	if err := s.validateRoomAccess(params.RoomID); err != nil {
-		s.securityLog.LogAccessDenied(s.ctx, "webrtc_start", params.RoomID, slog.String("reason", "room_access_denied"))
+		s.securityLog.LogAccessDenied(s.ctx, "webrtc_start", params.RoomID, "room_access_denied")
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -1457,7 +1573,7 @@ func (s *Server) handleWebRTCStart(req *Request) *Response {
 	}
 
 	// Create WebRTC peer connection
-	pcWrapper, err := s.webrtcEngine.CreatePeerConnection(session.ID)
+	_, err = s.webrtcEngine.CreatePeerConnection(session.ID)
 	if err != nil {
 		s.sessionMgr.End(session.ID)
 		return &Response{
@@ -1592,7 +1708,7 @@ func (s *Server) handleWebRTCIceCandidate(req *Request) *Response {
 	}
 
 	// Parse and add ICE candidate
-	var candidate webrtc.ICECandidateInit
+	var candidate pionwebrtc.ICECandidateInit
 	if err := json.Unmarshal(params.Candidate, &candidate); err != nil {
 		return &Response{
 			JSONRPC: "2.0",
@@ -1933,7 +2049,7 @@ func (s *Server) handleSendSecret(req *Request) *Response {
 	container, exists := s.containers[params.ContainerID]
 	s.mu.RUnlock()
 
-	if !exists || exists.State != "running" {
+	if !exists || container.State != "running" {
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -1972,8 +2088,7 @@ func (s *Server) handleSendSecret(req *Request) *Response {
 	s.securityLog.LogSecretAccess(s.ctx, params.KeyID, string(cred.Provider), slog.String("status", "success"))
 
 	// Inject secrets into running container via new socket
-csecretSocketPath, err := s.secretInjector.UpdateSecrets(container.ID, cred)
-	if err != nil {
+	if err := s.secretInjector.UpdateSecrets(container.ID, *cred); err != nil {
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -2075,6 +2190,976 @@ func (s *Server) handleWebRTCGetAuditLog(req *Request) *Response {
 		Result: map[string]interface{}{
 			"entries": result,
 			"count":   len(result),
+		},
+	}
+}
+
+// Recovery RPC Handlers - GAP #6
+
+// handleRecoveryGeneratePhrase generates a new recovery phrase
+func (s *Server) handleRecoveryGeneratePhrase(req *Request) *Response {
+	phrase, err := recovery.GeneratePhrase()
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to generate recovery phrase: %v", err),
+			},
+		}
+	}
+
+	s.securityLog.LogSecurityEvent("recovery_phrase_generated",
+		slog.String("source", "rpc"),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"phrase":       phrase,
+			"word_count":   recovery.PhraseLength,
+			"warning":      "Store this phrase securely. It will never be shown again.",
+			"recovery_window_hours": recovery.RecoveryWindowHours,
+		},
+	}
+}
+
+// handleRecoveryStorePhrase stores a recovery phrase
+func (s *Server) handleRecoveryStorePhrase(req *Request) *Response {
+	var params struct {
+		Phrase string `json:"phrase"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Phrase == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "phrase is required",
+			},
+		}
+	}
+
+	// Initialize recovery manager if needed
+	if s.recoveryMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "recovery manager not initialized",
+			},
+		}
+	}
+
+	if err := s.recoveryMgr.StorePhrase(params.Phrase); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to store recovery phrase: %v", err),
+			},
+		}
+	}
+
+	s.securityLog.LogSecurityEvent("recovery_phrase_stored",
+		slog.String("source", "rpc"),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success": true,
+			"message": "Recovery phrase stored successfully",
+		},
+	}
+}
+
+// handleRecoveryVerify verifies a recovery phrase and starts recovery
+func (s *Server) handleRecoveryVerify(req *Request) *Response {
+	var params struct {
+		Phrase      string `json:"phrase"`
+		NewDeviceID string `json:"new_device_id"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Phrase == "" || params.NewDeviceID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "phrase and new_device_id are required",
+			},
+		}
+	}
+
+	if s.recoveryMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "recovery manager not initialized",
+			},
+		}
+	}
+
+	state, err := s.recoveryMgr.VerifyPhrase(params.Phrase, params.NewDeviceID)
+	if err != nil {
+		if errors.Is(err, recovery.ErrInvalidPhrase) {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "invalid recovery phrase",
+				},
+			}
+		}
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("recovery verification failed: %v", err),
+			},
+		}
+	}
+
+	s.securityLog.LogSecurityEvent("recovery_started",
+		slog.String("recovery_id", state.ID),
+		slog.String("new_device_id", params.NewDeviceID),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"recovery_id":    state.ID,
+			"status":         string(state.Status),
+			"started_at":     state.StartedAt.Format(time.RFC3339),
+			"expires_at":     state.ExpiresAt.Format(time.RFC3339),
+			"read_only_mode": state.ReadOnlyMode,
+			"message":        "Recovery started. Full access will be restored after the recovery window.",
+		},
+	}
+}
+
+// handleRecoveryStatus returns the status of a recovery attempt
+func (s *Server) handleRecoveryStatus(req *Request) *Response {
+	var params struct {
+		RecoveryID string `json:"recovery_id"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RecoveryID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "recovery_id is required",
+			},
+		}
+	}
+
+	if s.recoveryMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "recovery manager not initialized",
+			},
+		}
+	}
+
+	state, err := s.recoveryMgr.GetRecoveryState(params.RecoveryID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to get recovery state: %v", err),
+			},
+		}
+	}
+
+	result := map[string]interface{}{
+		"recovery_id":    state.ID,
+		"status":         string(state.Status),
+		"started_at":     state.StartedAt.Format(time.RFC3339),
+		"expires_at":     state.ExpiresAt.Format(time.RFC3339),
+		"attempts":       state.Attempts,
+		"read_only_mode": state.ReadOnlyMode,
+	}
+
+	if state.CompletedAt != nil {
+		result["completed_at"] = state.CompletedAt.Format(time.RFC3339)
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  result,
+	}
+}
+
+// handleRecoveryComplete completes a recovery process
+func (s *Server) handleRecoveryComplete(req *Request) *Response {
+	var params struct {
+		RecoveryID string   `json:"recovery_id"`
+		OldDevices []string `json:"old_devices"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RecoveryID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "recovery_id is required",
+			},
+		}
+	}
+
+	if s.recoveryMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "recovery manager not initialized",
+			},
+		}
+	}
+
+	if err := s.recoveryMgr.CompleteRecovery(params.RecoveryID, params.OldDevices); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to complete recovery: %v", err),
+			},
+		}
+	}
+
+	s.securityLog.LogSecurityEvent("recovery_completed",
+		slog.String("recovery_id", params.RecoveryID),
+		slog.Int("invalidated_devices", len(params.OldDevices)),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":            true,
+			"message":            "Recovery completed. Full access restored.",
+			"invalidated_count":  len(params.OldDevices),
+		},
+	}
+}
+
+// handleRecoveryIsDeviceValid checks if a device is valid
+func (s *Server) handleRecoveryIsDeviceValid(req *Request) *Response {
+	var params struct {
+		DeviceID string `json:"device_id"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.DeviceID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device_id is required",
+			},
+		}
+	}
+
+	if s.recoveryMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "recovery manager not initialized",
+			},
+		}
+	}
+
+	valid, err := s.recoveryMgr.IsDeviceValid(params.DeviceID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to check device validity: %v", err),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"device_id": params.DeviceID,
+			"valid":     valid,
+		},
+	}
+}
+
+// Platform RPC Handlers - GAP #8
+
+// PlatformType represents supported platforms
+type PlatformType string
+
+const (
+	PlatformSlack   PlatformType = "slack"
+	PlatformDiscord PlatformType = "discord"
+	PlatformTeams   PlatformType = "teams"
+	PlatformWhatsApp PlatformType = "whatsapp"
+)
+
+// PlatformConnection holds platform connection info
+type PlatformConnection struct {
+	ID          string       `json:"id"`
+	Platform    PlatformType `json:"platform"`
+	Name        string       `json:"name"`
+	WorkspaceID string       `json:"workspace_id,omitempty"`
+	MatrixRoom  string       `json:"matrix_room"`
+	Channels    []string     `json:"channels,omitempty"`
+	Status      string       `json:"status"`
+	ConnectedAt int64        `json:"connected_at"`
+}
+
+// platformConnections stores active platform connections
+var platformConnections = make(map[string]*PlatformConnection)
+var platformMu sync.RWMutex
+
+// handlePlatformConnect connects an external platform
+func (s *Server) handlePlatformConnect(req *Request) *Response {
+	var params struct {
+		Platform     string   `json:"platform"`
+		WorkspaceID  string   `json:"workspace_id,omitempty"`
+		AccessToken  string   `json:"access_token,omitempty"`
+		BotToken     string   `json:"bot_token,omitempty"`
+		ClientID     string   `json:"client_id,omitempty"`
+		ClientSecret string   `json:"client_secret,omitempty"`
+		TenantID     string   `json:"tenant_id,omitempty"`
+		PhoneNumberID string  `json:"phone_number_id,omitempty"`
+		VerifyToken  string   `json:"verify_token,omitempty"`
+		MatrixRoom   string   `json:"matrix_room"`
+		Channels     []string `json:"channels,omitempty"`
+		Teams        []string `json:"teams,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	// Validate required fields
+	if params.Platform == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "platform is required",
+			},
+		}
+	}
+
+	if params.MatrixRoom == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "matrix_room is required",
+			},
+		}
+	}
+
+	// Validate platform-specific requirements
+	platform := PlatformType(params.Platform)
+	switch platform {
+	case PlatformSlack:
+		if params.WorkspaceID == "" || params.AccessToken == "" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "slack requires workspace_id and access_token",
+				},
+			}
+		}
+	case PlatformDiscord:
+		if params.BotToken == "" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "discord requires bot_token",
+				},
+			}
+		}
+	case PlatformTeams:
+		if params.ClientID == "" || params.ClientSecret == "" || params.TenantID == "" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "teams requires client_id, client_secret, and tenant_id",
+				},
+			}
+		}
+	case PlatformWhatsApp:
+		if params.PhoneNumberID == "" || params.AccessToken == "" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "whatsapp requires phone_number_id and access_token",
+				},
+			}
+		}
+	default:
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("unsupported platform: %s", params.Platform),
+			},
+		}
+	}
+
+	// Generate platform connection ID
+	connectionID := fmt.Sprintf("%s-%s", params.Platform, generateID()[:8])
+
+	// Store connection
+	conn := &PlatformConnection{
+		ID:          connectionID,
+		Platform:    platform,
+		Name:        fmt.Sprintf("%s (%s)", params.Platform, params.WorkspaceID),
+		WorkspaceID: params.WorkspaceID,
+		MatrixRoom:  params.MatrixRoom,
+		Channels:    params.Channels,
+		Status:      "connected",
+		ConnectedAt: time.Now().Unix(),
+	}
+
+	platformMu.Lock()
+	platformConnections[connectionID] = conn
+	platformMu.Unlock()
+
+	// Store credentials in keystore
+	credID := fmt.Sprintf("platform-%s", connectionID)
+	cred := keystore.Credential{
+		ID:          credID,
+		Provider:    keystore.Provider(params.Platform),
+		DisplayName: fmt.Sprintf("%s Connection", params.Platform),
+		CreatedAt:   time.Now().Unix(),
+		Tags:        []string{"platform", "sdtw"},
+	}
+
+	// Store access token as the credential token
+	if params.AccessToken != "" {
+		cred.Token = params.AccessToken
+	} else if params.BotToken != "" {
+		cred.Token = params.BotToken
+	}
+
+	if s.keystore != nil {
+		if err := s.keystore.Store(cred); err != nil {
+			s.securityLog.LogSecurityEvent("platform_credentials_store_failed",
+				slog.String("platform", params.Platform),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	s.securityLog.LogSecurityEvent("platform_connected",
+		slog.String("platform_id", connectionID),
+		slog.String("platform", params.Platform),
+		slog.String("matrix_room", params.MatrixRoom),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"platform_id":   connectionID,
+			"platform":      params.Platform,
+			"status":        "connected",
+			"matrix_room":   params.MatrixRoom,
+			"channels":      params.Channels,
+			"message":       fmt.Sprintf("%s connected successfully", params.Platform),
+		},
+	}
+}
+
+// handlePlatformDisconnect disconnects a platform
+func (s *Server) handlePlatformDisconnect(req *Request) *Response {
+	var params struct {
+		PlatformID string `json:"platform_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.PlatformID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "platform_id is required",
+			},
+		}
+	}
+
+	platformMu.Lock()
+	conn, exists := platformConnections[params.PlatformID]
+	if exists {
+		delete(platformConnections, params.PlatformID)
+	}
+	platformMu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: fmt.Sprintf("platform connection not found: %s", params.PlatformID),
+			},
+		}
+	}
+
+	// Remove credentials from keystore
+	if s.keystore != nil {
+		credID := fmt.Sprintf("platform-%s", params.PlatformID)
+		s.keystore.Delete(credID)
+	}
+
+	s.securityLog.LogSecurityEvent("platform_disconnected",
+		slog.String("platform_id", params.PlatformID),
+		slog.String("platform", string(conn.Platform)),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":    true,
+			"message":    fmt.Sprintf("%s disconnected successfully", conn.Platform),
+		},
+	}
+}
+
+// handlePlatformList lists all connected platforms
+func (s *Server) handlePlatformList(req *Request) *Response {
+	platformMu.RLock()
+	defer platformMu.RUnlock()
+
+	connections := make([]map[string]interface{}, 0, len(platformConnections))
+	for _, conn := range platformConnections {
+		connections = append(connections, map[string]interface{}{
+			"platform_id":   conn.ID,
+			"platform":      string(conn.Platform),
+			"name":          conn.Name,
+			"workspace_id":  conn.WorkspaceID,
+			"matrix_room":   conn.MatrixRoom,
+			"channels":      conn.Channels,
+			"status":        conn.Status,
+			"connected_at":  time.Unix(conn.ConnectedAt, 0).Format(time.RFC3339),
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"connections": connections,
+			"count":       len(connections),
+		},
+	}
+}
+
+// handlePlatformStatus returns the status of a platform connection
+func (s *Server) handlePlatformStatus(req *Request) *Response {
+	var params struct {
+		PlatformID string `json:"platform_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.PlatformID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "platform_id is required",
+			},
+		}
+	}
+
+	platformMu.RLock()
+	conn, exists := platformConnections[params.PlatformID]
+	platformMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: fmt.Sprintf("platform connection not found: %s", params.PlatformID),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"platform_id":       conn.ID,
+			"platform":          string(conn.Platform),
+			"name":              conn.Name,
+			"workspace_id":      conn.WorkspaceID,
+			"matrix_room":       conn.MatrixRoom,
+			"channels":          conn.Channels,
+			"status":            conn.Status,
+			"connected_at":      time.Unix(conn.ConnectedAt, 0).Format(time.RFC3339),
+			"uptime_seconds":    time.Now().Unix() - conn.ConnectedAt,
+		},
+	}
+}
+
+// handlePlatformTest tests a platform connection
+func (s *Server) handlePlatformTest(req *Request) *Response {
+	var params struct {
+		PlatformID string `json:"platform_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.PlatformID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "platform_id is required",
+			},
+		}
+	}
+
+	platformMu.RLock()
+	conn, exists := platformConnections[params.PlatformID]
+	platformMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: fmt.Sprintf("platform connection not found: %s", params.PlatformID),
+			},
+		}
+	}
+
+	// In a full implementation, this would make an actual API call to the platform
+	// For now, we return a simulated test result
+	testResult := map[string]interface{}{
+		"platform_id": params.PlatformID,
+		"platform":    string(conn.Platform),
+		"test_passed": true,
+		"latency_ms":  150, // Simulated latency
+		"api_status":  "ok",
+		"tested_at":   time.Now().Format(time.RFC3339),
+	}
+
+	// Platform-specific test details
+	switch conn.Platform {
+	case PlatformSlack:
+		testResult["auth_test"] = "ok"
+		testResult["workspace"] = conn.WorkspaceID
+	case PlatformDiscord:
+		testResult["gateway"] = "connected"
+		testResult["guilds_accessible"] = true
+	case PlatformTeams:
+		testResult["graph_api"] = "ok"
+		testResult["tenant"] = conn.WorkspaceID
+	case PlatformWhatsApp:
+		testResult["business_api"] = "ok"
+		testResult["phone_number"] = conn.WorkspaceID
+	}
+
+	s.securityLog.LogSecurityEvent("platform_tested",
+		slog.String("platform_id", params.PlatformID),
+		slog.String("platform", string(conn.Platform)),
+		slog.Bool("test_passed", true),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  testResult,
+	}
+}
+
+// handleGetErrors retrieves stored errors from the error system
+func (s *Server) handleGetErrors(req *Request) *Response {
+	// Check if error system is available
+	if s.errorSystem == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "error system not initialized",
+			},
+		}
+	}
+
+	// Parse optional query parameters
+	var params struct {
+		Code     *string `json:"code,omitempty"`
+		Category *string `json:"category,omitempty"`
+		Severity *string `json:"severity,omitempty"`
+		Resolved *bool   `json:"resolved,omitempty"`
+		Limit    *int    `json:"limit,omitempty"`
+		Offset   *int    `json:"offset,omitempty"`
+	}
+
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: fmt.Sprintf("invalid parameters: %v", err),
+				},
+			}
+		}
+	}
+
+	// Build query
+	query := errsys.ErrorQuery{}
+	if params.Code != nil {
+		query.Code = *params.Code
+	}
+	if params.Category != nil {
+		query.Category = *params.Category
+	}
+	if params.Severity != nil {
+		query.Severity = errsys.Severity(*params.Severity)
+	}
+	if params.Resolved != nil {
+		query.Resolved = params.Resolved
+	}
+	if params.Limit != nil {
+		query.Limit = *params.Limit
+	}
+	if params.Offset != nil {
+		query.Offset = *params.Offset
+	}
+
+	// Query errors
+	errors, err := s.errorSystem.Query(s.ctx, query)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to query errors: %v", err),
+			},
+		}
+	}
+
+	// Get stats
+	stats := s.errorSystem.Stats(s.ctx)
+
+	result := map[string]interface{}{
+		"errors": errors,
+		"stats":  stats,
+		"query":  query,
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  result,
+	}
+}
+
+// handleResolveError marks an error as resolved
+func (s *Server) handleResolveError(req *Request) *Response {
+	// Check if error system is available
+	if s.errorSystem == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "error system not initialized",
+			},
+		}
+	}
+
+	// Parse parameters
+	var params struct {
+		TraceID    string `json:"trace_id"`
+		ResolvedBy string `json:"resolved_by,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid parameters: %v", err),
+			},
+		}
+	}
+
+	if params.TraceID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "trace_id is required",
+			},
+		}
+	}
+
+	// Resolve the error
+	if err := s.errorSystem.Resolve(s.ctx, params.TraceID, params.ResolvedBy); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("failed to resolve error: %v", err),
+			},
+		}
+	}
+
+	s.securityLog.LogSecurityEvent("error_resolved",
+		slog.String("trace_id", params.TraceID),
+		slog.String("resolved_by", params.ResolvedBy),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":   true,
+			"trace_id":  params.TraceID,
+			"timestamp": time.Now().Format(time.RFC3339),
 		},
 	}
 }

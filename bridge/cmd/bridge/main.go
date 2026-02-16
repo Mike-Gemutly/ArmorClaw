@@ -1526,6 +1526,7 @@ func runBridgeServer(cliCfg cliConfig) {
 		HealthMonitor:     healthMonitor, // Health monitoring
 		Notifier:          notifier, // Notifications
 		EventBus:          eventBus, // Event push mechanism
+		ErrorSystem:       errorSystem, // Error handling system
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
