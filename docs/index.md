@@ -1,8 +1,8 @@
 # ArmorClaw Documentation Index
 
 > **Last Updated:** 2026-02-15
-> **Version:** 1.4.0
-> **Phase:** Error Handling Complete ✅ | Journey Health: IMPROVED (92%)
+> **Version:** 1.5.0
+> **Phase:** Error Handling Complete ✅ | Journey Health: HEALTHY (97%)
 
 ---
 
@@ -24,6 +24,7 @@ This index is the central hub for all ArmorClaw documentation. Start here for an
 - [🔒 Security Verification Guide](docs/guides/security-verification-guide.md) 🆕 - Manual verification of all security hardening measures
 - [🔒 Security Configuration](docs/guides/security-configuration.md) ⭐ - Zero-trust, budget guardrails, PII scrubbing
 - [🔔 Alert Integration](docs/guides/alert-integration.md) 🆕 - Proactive monitoring with Matrix notifications
+- [📱 Multi-Device UX](docs/guides/multi-device-ux.md) 🆕 - Device trust, verification flows, recovery scenarios
 - [Element X Quick Start](docs/guides/element-x-quickstart.md) ⭐ - Connect to agents via Element X in 5 minutes
 - [WebRTC Voice Guide](docs/guides/webrtc-voice-guide.md) 🆕 - Secure voice calls with Matrix authorization
 - [WebRTC Voice Hardening](docs/guides/webrtc-voice-hardening.md) 🆕 - Security hardening for voice calls
