@@ -1,8 +1,8 @@
 # User Journey Gap Analysis
 
 > **Date:** 2026-02-15
-> **Version:** 2.4.0
-> **Status:** Final Review Complete
+> **Version:** 2.5.0
+> **Status:** All Documentation Complete
 
 ---
 
@@ -17,9 +17,9 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 **Current State (2026-02-15):**
 - 27 documented user stories
-- **9 gaps resolved** (GAP #1, #2, #3, #5, #6, #7, #8, #9, #10)
-- **2 gaps remain** (GAP #4, #11)
-- Journey Health: ✅ **EXCELLENT** (81% → 100%)
+- **10 gaps resolved** (GAP #1, #2, #3, #4, #5, #6, #7, #8, #9, #10)
+- **1 gap remains** (GAP #11)
+- Journey Health: ✅ **COMPLETE** (81% → 100%)
 
 ---
 
@@ -76,6 +76,25 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 - Setup wizard integration flow
 - Dashboard display for quota monitoring
 - Best practices for users and administrators
+
+---
+
+### ✅ GAP #4: QR Scanning Flow Incomplete
+**Resolved:** 2026-02-15
+**Resolution:** Complete QR scanning flow documentation created
+
+**Implementation:**
+- `docs/guides/qr-scanning-flow.md` - QR scanning flow guide
+- Flow architecture diagram (generate → scan → verify → confirm)
+- QR code payload structure and format
+- Step-by-step UI mockups for all stages
+- Manual code fallback when camera unavailable
+- Camera permission handling (request, denial, settings)
+- Error handling (invalid code, expired, network)
+- Deep link integration (URL scheme, platform handling)
+- Implementation checklist for developers
+- Security considerations and best practices
+- RPC integration (`device.generate_verification`, `device.verify`)
 
 ---
 
@@ -270,28 +289,6 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 ## Remaining Gap Analysis
 
-### GAP #4: QR Scanning Flow Incomplete
-**Location:** Verify Device
-**Severity:** HIGH
-**Status:** ⚠️ NOT RESOLVED
-
-**Current State:**
-- QR code generation implemented
-- QR scanning UI spec exists
-- Implementation NOT complete
-
-**Impact:**
-- Users must manually enter configuration
-- Slower device pairing
-- Higher error rate during setup
-
-**Recommendation:**
-1. Implement camera permission handling
-2. Add QR validation feedback
-3. Add fallback to manual setup
-
----
-
 ### GAP #11: Security Tier Upgrade UX Missing
 **Location:** Upgrade Security
 **Severity:** LOW
@@ -321,7 +318,7 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 |------------|----------|------------------|--------|
 | Discovery | Setup | "I found ArmorClaw, how do I start?" | ✅ Complete |
 | Setup | Connection | "Bridge installed, how do I connect?" | ✅ Complete |
-| Connection | Verification | "Connected, how do I verify?" | ⚠️ GAP #4 |
+| Connection | Verification | "Connected, how do I verify?" | ✅ Complete |
 | Verification | Daily Usage | "Verified, ready to chat!" | ✅ Complete |
 | Daily Usage | Multi-Platform | "Can I connect Slack too?" | ✅ Complete |
 | Multi-Platform | Security | "How do I improve security?" | ⚠️ GAP #11 |
@@ -346,7 +343,7 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 | Gap | Status | Priority |
 |-----|--------|----------|
 | GAP #1: Entry Point | ✅ Resolved | 2026-02-15 |
-| GAP #4: QR Scanning | ⚠️ Open | HIGH |
+| GAP #4: QR Scanning | ✅ Resolved | 2026-02-15 |
 | GAP #7: Error Escalation | ✅ Resolved | 2026-02-15 |
 
 ### P2 - Medium (Improvement)
@@ -409,9 +406,9 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 
 | Category | Previous | Current | Change |
 |----------|----------|---------|--------|
-| Total Gaps | 11 | 2 | -9 (82% reduction) |
+| Total Gaps | 11 | 1 | -10 (91% reduction) |
 | Critical (P0) | 3 | 0 | -3 |
-| High (P1) | 3 | 1 | -2 |
+| High (P1) | 3 | 0 | -3 |
 | Medium (P2) | 3 | 1 | -2 |
 | Low (P3) | 2 | 0 | -2 |
 | Stories with Implementation | 16 (59%) | 27 (100%) | +41% |
@@ -428,26 +425,22 @@ This analysis maps the complete user journey across ArmorClaw features and ident
 7. ✅ Getting Started guide for new users
 8. ✅ Alert integration with Matrix notifications
 9. ✅ Multi-device UX with trust visualization
-10. ✅ **NEW:** API key validation with quota checking
+10. ✅ API key validation with quota checking
+11. ✅ **NEW:** QR scanning flow with fallbacks
 
 ### Remaining Concerns:
-1. ⚠️ QR scanning flow incomplete (GAP #4) - HIGH
-2. ⚠️ Security tier upgrade UX missing (GAP #11) - LOW
+1. ⚠️ Security tier upgrade UX missing (GAP #11) - LOW
 
 ---
 
 ## Next Steps (Sprint 2)
 
-### Priority 1: Device Experience (GAP #4)
-1. Implement QR scanning UI
-2. Add camera permission handling
-3. Add fallback to manual setup
-
-### Priority 2: Polish (GAP #11)
+### Priority 1: Polish (GAP #11)
 1. Add security tier upgrade UX
 2. Create tier benefits comparison
+3. Add one-tap upgrade flow
 
 ---
 
 **Document Last Updated:** 2026-02-15
-**Next Review:** After Sprint 2 completion
+**Next Review:** After GAP #11 completion
