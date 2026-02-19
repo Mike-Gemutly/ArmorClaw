@@ -1,0 +1,49 @@
+[package]
+name = "vodozemac-android"
+version = "0.1.0"
+edition = "2021"
+description = "Android JNI bindings for vodozemac (Matrix E2EE)"
+authors = ["ArmorClaw Team"]
+license = "Apache-2.0"
+
+[lib]
+name = "vodozemac_android"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Matrix Rust SDK crypto (vodozemac)
+vodozemac = { version = "0.8", features = ["default"] }
+
+# Olm for compatibility layer
+olm-rs = "2.2"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Base64 encoding
+base64 = "0.22"
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+log = "0.4"
+android_logger = "0.14"
+
+# Async runtime (for some operations)
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+# JNI for Android
+jni = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true

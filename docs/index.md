@@ -1,8 +1,8 @@
 # ArmorClaw Documentation Index
 
-> **Last Updated:** 2026-02-15
-> **Version:** 1.8.0
-> **Phase:** Documentation Complete ✅ | All Gaps Resolved
+> **Last Updated:** 2026-02-18
+> **Version:** 1.9.0
+> **Phase:** Documentation Complete ✅ | Matrix Infrastructure (Step 1) ✅
 
 ---
 
@@ -28,6 +28,7 @@ This index is the central hub for all ArmorClaw documentation. Start here for an
 - [📱 Multi-Device UX](docs/guides/multi-device-ux.md) 🆕 - Device trust, verification flows, recovery scenarios
 - [📷 QR Scanning Flow](docs/guides/qr-scanning-flow.md) 🆕 - Device pairing via QR code, camera handling, fallbacks
 - [🔐 Security Tier Upgrade](docs/guides/security-tier-upgrade.md) 🆕 - Progressive security tiers, upgrade flows, notifications
+- [👥 Onboarding User Stories](docs/guides/onboarding-user-stories.md) 🆕 - ArmorChat vs Element X flows, gap analysis
 - [Element X Quick Start](docs/guides/element-x-quickstart.md) ⭐ - Connect to agents via Element X in 5 minutes
 - [WebRTC Voice Guide](docs/guides/webrtc-voice-guide.md) 🆕 - Secure voice calls with Matrix authorization
 - [WebRTC Voice Hardening](docs/guides/webrtc-voice-hardening.md) 🆕 - Security hardening for voice calls
@@ -64,6 +65,7 @@ This index is the central hub for all ArmorClaw documentation. Start here for an
 - [Local Development Guide](docs/guides/local-development.md) - Docker Desktop setup for local development
 
 ### Infrastructure Deployment
+- [Matrix Homeserver Deployment](docs/guides/matrix-homeserver-deployment.md) ⭐ - **NEW!** Step 1: Standard Matrix infrastructure (Conduit/Synapse)
 - [Infrastructure Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md) - General infrastructure setup
 
 ### 📐 Planning Documents
@@ -71,6 +73,9 @@ This index is the central hub for all ArmorClaw documentation. Start here for an
 - [Business Model](docs/plans/2026-02-05-business-model-architecture.md) - Product tiers and revenue
 - [ArmorClaw Evolution Design](docs/plans/2026-02-07-armorclaw-evolution-design.md) - Multi-agent collaboration platform 🆓
 - [Security Enhancements](docs/plans/2026-02-07-security-enhancements.md) 🆕 - Zero-trust middleware, guardrails, hardening
+- **NEW:** [First Boot Security Configuration](docs/plans/2026-02-16-first-boot-security-configuration.md) ⭐ - 9-phase security setup flow for VPS deployment
+- **NEW:** [First Boot Quick Reference](docs/guides/first-boot-quick-reference.md) - Quick reference for security configuration
+- **NEW:** [Onboarding & Admin Gap Analysis v2](docs/guides/onboarding-gap-analysis-v2.md) 🔴 - Critical gaps found in onboarding flow
 - **NEW:** [SDTW Adapter Implementation Plan v2.0](docs/plans/SDTW_Adapter_Implementation_Plan_v2.0.md) 🆓 - Slack, Discord, Teams, WhatsApp integration
 - **NEW:** [SDTW Message Queue Specification](docs/plans/SDTW_MessageQueue_Specification.md) 🆓 - SQLite-based persistent queue
 

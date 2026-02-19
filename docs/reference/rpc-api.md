@@ -3,8 +3,8 @@
 > **Protocol:** JSON-RPC 2.0
 > **Transport:** Unix Domain Socket
 > **Socket:** `/run/armorclaw/bridge.sock`
-> **Version:** 1.7.0
-> **Last Updated:** 2026-02-15
+> **Version:** 1.9.0
+> **Last Updated:** 2026-02-17
 
 ---
 
@@ -1593,6 +1593,544 @@ Test a platform connection.
 
 ---
 
+## Plugin Methods (v1.8.0)
+
+Plugin methods for managing external adapter plugins. These methods enable dynamic loading of platform adapters without modifying the bridge core.
+
+### plugin.discover
+
+Discover available plugins in the plugin directory.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.discover"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "plugins": [
+      {
+        "name": "telegram-adapter",
+        "version": "1.0.0",
+        "api_version": "1.0.0",
+        "type": "adapter",
+        "description": "Telegram Bot API adapter for ArmorClaw",
+        "platform": "telegram",
+        "capabilities": {
+          "read": true,
+          "write": true,
+          "media": true,
+          "reactions": true
+        }
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+---
+
+### plugin.load
+
+Load a plugin from a shared library file.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| library_path | string | ✅ Yes | Path to the .so plugin file |
+| metadata_path | string | ❌ No | Path to metadata.json file |
+| enabled | boolean | ❌ No | Enable plugin after loading (default: false) |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.load",
+  "params": {
+    "library_path": "/var/lib/armorclaw/plugins/telegram-adapter/telegram.so",
+    "metadata_path": "/var/lib/armorclaw/plugins/telegram-adapter/metadata.json",
+    "enabled": true
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "loaded",
+    "library_path": "/var/lib/armorclaw/plugins/telegram-adapter/telegram.so"
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - library_path is required
+- `-32603` (InternalError) - Plugin load failed (missing symbol, API mismatch, etc.)
+
+---
+
+### plugin.initialize
+
+Initialize a loaded plugin with configuration and credentials.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | ✅ Yes | Plugin name |
+| config | object | ❌ No | Plugin-specific configuration |
+| credentials | object | ❌ No | Credentials (supports `@keystore:` prefix) |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.initialize",
+  "params": {
+    "name": "telegram-adapter",
+    "config": {
+      "webhook_url": "https://example.com/webhook"
+    },
+    "credentials": {
+      "bot_token": "@keystore:telegram-bot-token"
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "initialized",
+    "name": "telegram-adapter"
+  }
+}
+```
+
+**Notes:**
+- Credentials with `@keystore:` prefix are resolved from the encrypted keystore
+- Plugin must be in "loaded" state before initialization
+
+---
+
+### plugin.start
+
+Start an initialized plugin.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | ✅ Yes | Plugin name |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.start",
+  "params": {
+    "name": "telegram-adapter"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "running",
+    "name": "telegram-adapter"
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - name is required
+- `-32603` (InternalError) - Plugin not initialized or start failed
+
+---
+
+### plugin.stop
+
+Stop a running plugin.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | ✅ Yes | Plugin name |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.stop",
+  "params": {
+    "name": "telegram-adapter"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "stopped",
+    "name": "telegram-adapter"
+  }
+}
+```
+
+---
+
+### plugin.unload
+
+Unload a plugin completely.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | ✅ Yes | Plugin name |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.unload",
+  "params": {
+    "name": "telegram-adapter"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "unloaded",
+    "name": "telegram-adapter"
+  }
+}
+```
+
+---
+
+### plugin.list
+
+List all loaded plugins with their status.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.list"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "plugins": [
+      {
+        "metadata": {
+          "name": "telegram-adapter",
+          "version": "1.0.0",
+          "api_version": "1.0.0",
+          "type": "adapter",
+          "description": "Telegram Bot API adapter"
+        },
+        "state": "running",
+        "load_time": "2026-02-17T12:00:00Z",
+        "start_time": "2026-02-17T12:01:00Z"
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+**Plugin States:**
+- `unloaded` - Plugin not loaded
+- `loaded` - Plugin loaded but not initialized
+- `initialized` - Plugin initialized with config
+- `running` - Plugin is running
+- `error` - Plugin encountered error
+- `disabled` - Plugin is disabled
+
+---
+
+### plugin.status
+
+Get detailed status of a specific plugin.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | ✅ Yes | Plugin name |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.status",
+  "params": {
+    "name": "telegram-adapter"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "metadata": {
+      "name": "telegram-adapter",
+      "version": "1.0.0",
+      "api_version": "1.0.0",
+      "type": "adapter",
+      "platform": "telegram"
+    },
+    "state": "running",
+    "load_time": "2026-02-17T12:00:00Z",
+    "start_time": "2026-02-17T12:01:00Z"
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - name is required
+- `-32603` (InternalError) - Plugin not found
+
+---
+
+### plugin.health
+
+Check health of all running plugins.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "plugin.health"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "plugins": {
+      "telegram-adapter": {
+        "healthy": true
+      },
+      "discord-adapter": {
+        "healthy": false,
+        "error": "connection timeout"
+      }
+    },
+    "count": 2
+  }
+}
+```
+
+---
+
+## License Methods (v1.9.0)
+
+License validation methods for ArmorClaw premium features. These methods enable feature-gating based on license tiers.
+
+### license.validate
+
+Validate license and check feature access.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| feature | string | ❌ No | Feature to validate (default: "default") |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "license.validate",
+  "params": {
+    "feature": "slack-adapter"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "valid": true,
+    "feature": "slack-adapter",
+    "tier": "pro",
+    "instance_id": "550e8400e29b41d4a716446655440000",
+    "expires_at": "2026-03-05T00:00:00Z",
+    "grace_until": "2026-03-08T00:00:00Z",
+    "features": ["slack-adapter", "discord-adapter", "pii-scrubber"]
+  }
+}
+```
+
+**Fields:**
+- `valid` (boolean) - Whether the license is valid for the feature
+- `feature` (string) - Feature that was validated
+- `tier` (string) - License tier: "free", "pro", "ent"
+- `instance_id` (string) - Unique instance identifier
+- `expires_at` (string) - License expiration timestamp
+- `grace_until` (string) - End of grace period for offline use
+- `features` (array) - List of available features
+
+---
+
+### license.status
+
+Get current license status and tier.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "license.status"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tier": "pro",
+    "features": ["slack-adapter", "discord-adapter", "pii-scrubber"],
+    "instance_id": "550e8400e29b41d4a716446655440000"
+  }
+}
+```
+
+---
+
+### license.features
+
+Get list of all available features for the current license.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "license.features"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "features": [
+      "slack-adapter",
+      "discord-adapter",
+      "pii-scrubber"
+    ],
+    "count": 3
+  }
+}
+```
+
+---
+
+### license.set_key
+
+Set or update the license key.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| license_key | string | ✅ Yes | License key in format SCLW-TIER-XXXXXXXXXXXXXXXX |
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "license.set_key",
+  "params": {
+    "license_key": "SCLW-PRO-A1B2C3D4E5F67890"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "valid": true,
+    "tier": "pro",
+    "features": ["slack-adapter", "discord-adapter", "pii-scrubber"],
+    "instance_id": "550e8400e29b41d4a716446655440000"
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - license_key is required
+- `-32603` (InternalError) - License validation failed
+
+---
+
+### License Tiers
+
+| Tier | Features |
+|------|----------|
+| `free` | matrix-adapter, keystore, basic-validation, offline-queue |
+| `pro` | slack-adapter, discord-adapter, pii-scrubber, audit-log, priority-support |
+| `ent` | All Pro features + whatsapp-adapter, teams-adapter, pii-scrubber-hipaa, sso-integration |
+
+---
+
 ## Error Management Methods (v1.7.0)
 
 Error management methods for querying and resolving tracked errors. These methods enable LLMs and admins to diagnose issues through structured error codes and traces.
@@ -1829,5 +2367,5 @@ Structured error codes for programmatic error handling. Each code follows the fo
 
 ---
 
-**API Reference Last Updated:** 2026-02-15
-**Compatible with Bridge Version:** 1.7.0
+**API Reference Last Updated:** 2026-02-17
+**Compatible with Bridge Version:** 1.9.0
