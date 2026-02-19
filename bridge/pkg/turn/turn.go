@@ -4,6 +4,7 @@ package turn
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -13,9 +14,16 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/armorclaw/bridge/pkg/webrtc"
 )
+
+// TURNCredentials represents ephemeral TURN credentials for a session
+type TURNCredentials struct {
+	Username   string    // Format: <expiry>:<session_id>
+	Password   string    // HMAC(secret, username)
+	Expires    time.Time // When these credentials expire
+	TURNServer string    // TURN server address (host:port)
+	STUNServer string    // STUN server address (host:port)
+}
 
 // Config holds TURN server configuration
 type Config struct {
@@ -85,7 +93,7 @@ func NewManager(config Config) *Manager {
 
 // GenerateTURNCredentials creates ephemeral TURN credentials for a session
 // Format: username = <expiry>:<session_id>, password = HMAC(secret, username)
-func (m *Manager) GenerateTURNCredentials(sessionID string, ttl time.Duration) ([]webrtc.TURNCredentials, error) {
+func (m *Manager) GenerateTURNCredentials(sessionID string, ttl time.Duration) ([]TURNCredentials, error) {
 	// Validate TTL
 	if ttl <= 0 {
 		ttl = m.config.DefaultTTL
@@ -99,7 +107,7 @@ func (m *Manager) GenerateTURNCredentials(sessionID string, ttl time.Duration) (
 	expiryTimestamp := expiresAt.Unix()
 
 	// Generate credentials for each server
-	creds := make([]webrtc.TURNCredentials, 0, len(m.config.Servers))
+	creds := make([]TURNCredentials, 0, len(m.config.Servers))
 
 	for _, server := range m.config.Servers {
 		// Create username: <expiry>:<session_id>
@@ -110,14 +118,16 @@ func (m *Manager) GenerateTURNCredentials(sessionID string, ttl time.Duration) (
 
 		// Create TURN server URL
 		turnURL := fmt.Sprintf("turn:%s:%d", server.Host, server.Port)
-		if server.Protocol != "udp" {
+		if server.Protocol == "tcp" {
+			turnURL = fmt.Sprintf("turn:%s:%d?transport=tcp", server.Host, server.Port)
+		} else if server.Protocol == "tls" {
 			turnURL = fmt.Sprintf("turns:%s:%d", server.Host, server.Port)
 		}
 
 		// Create STUN server URL
 		stunURL := fmt.Sprintf("stun:%s:%d", server.Host, server.Port)
 
-		cred := webrtc.TURNCredentials{
+		cred := TURNCredentials{
 			Username:   username,
 			Password:   password,
 			Expires:    expiresAt,
@@ -459,7 +469,7 @@ func CreateICEServers(config Config, sessionID string, ttl time.Duration) ([]ICE
 }
 
 // createTurnCreds creates TURN credentials for all servers
-func createTurnCreds(config Config, sessionID string, ttl time.Duration) ([]webrtc.TURNCredentials, error) {
+func createTurnCreds(config Config, sessionID string, ttl time.Duration) ([]TURNCredentials, error) {
 	if ttl <= 0 {
 		ttl = config.DefaultTTL
 	}
@@ -470,7 +480,7 @@ func createTurnCreds(config Config, sessionID string, ttl time.Duration) ([]webr
 	expiresAt := time.Now().Add(ttl)
 	expiryTimestamp := expiresAt.Unix()
 
-	creds := make([]webrtc.TURNCredentials, 0, len(config.Servers))
+	creds := make([]TURNCredentials, 0, len(config.Servers))
 
 	for _, server := range config.Servers {
 		// Create username: <expiry>:<session_id>
@@ -489,7 +499,7 @@ func createTurnCreds(config Config, sessionID string, ttl time.Duration) ([]webr
 
 		stunURL := fmt.Sprintf("stun:%s:%d", server.Host, server.Port)
 
-		cred := webrtc.TURNCredentials{
+		cred := TURNCredentials{
 			Username:   username,
 			Password:   password,
 			Expires:    expiresAt,
@@ -514,26 +524,49 @@ func hmacString(secret, input string) string {
 func ParseICECandidate(candidateStr string) (*ICECandidate, error) {
 	// ICE candidate format:
 	// candidate:foundation component_id transport priority connection-address port typ [raddr] [rport] [related-extensions]
+	// Note: The format may have "candidate:" prefix attached to foundation
+
+	// Handle "candidate:" prefix - it may be attached to the first field
+	candidateStr = strings.TrimSpace(candidateStr)
+	if !strings.HasPrefix(candidateStr, "candidate:") && !strings.HasPrefix(candidateStr, "candidate ") {
+		return nil, fmt.Errorf("invalid ICE candidate format: must start with 'candidate:'")
+	}
+
+	// Remove "candidate:" prefix and normalize
+	candidateStr = strings.TrimPrefix(candidateStr, "candidate:")
+	candidateStr = strings.TrimPrefix(candidateStr, "candidate ")
+	candidateStr = strings.TrimSpace(candidateStr)
 
 	parts := strings.Split(candidateStr, " ")
-	if len(parts) < 8 || parts[0] != "candidate" {
-		return nil, fmt.Errorf("invalid ICE candidate format")
+	if len(parts) < 7 {
+		return nil, fmt.Errorf("invalid ICE candidate format: not enough fields")
+	}
+
+	// Handle "typ" keyword before the type
+	typeIdx := 6
+	if len(parts) > 6 && parts[6] == "typ" {
+		typeIdx = 7
+	}
+
+	if len(parts) <= typeIdx {
+		return nil, fmt.Errorf("invalid ICE candidate format: missing type")
 	}
 
 	candidate := &ICECandidate{
-		Foundation:  parts[1],
-		ComponentID: parseInt(parts[2]),
-		Transport:   parts[3],
-		Priority:    parseInt(parts[4]),
-		Address:     parts[5],
-		Port:        parseInt(parts[6]),
-		Type:        parts[7],
+		Foundation:  parts[0],
+		ComponentID: parseInt(parts[1]),
+		Transport:   parts[2],
+		Priority:    parseInt(parts[3]),
+		Address:     parts[4],
+		Port:        parseInt(parts[5]),
+		Type:        parts[typeIdx],
 		Protocol:    "udp", // Assume UDP
 	}
 
 	// Parse related address/port if present
-	if len(parts) > 8 {
-		for i := 8; i < len(parts); i++ {
+	startIdx := typeIdx + 1
+	if len(parts) > startIdx {
+		for i := startIdx; i < len(parts); i++ {
 			if parts[i] == "raddr" && i+1 < len(parts) {
 				candidate.RelatedAddress = parts[i+1]
 				i++
@@ -683,7 +716,7 @@ func (m *STUNMessage) Serialize() []byte {
 	attrLength := 0
 	for _, attr := range m.Attributes {
 		// Add padding to 4-byte boundary
-		attrLen := attr.Length
+		attrLen := int(attr.Length)
 		if attrLen%4 != 0 {
 			attrLen += 4 - (attrLen % 4)
 		}
@@ -775,16 +808,14 @@ func ParseSTUNMessage(data []byte) (*STUNMessage, error) {
 // GenerateTransactionID generates a random STUN transaction ID
 func GenerateTransactionID() [12]byte {
 	var id [12]byte
-	// Use timestamp for uniqueness (simple approach)
-	timestamp := time.Now().UnixNano()
-	binary.BigEndian.PutUint64(id[0:8], uint64(timestamp))
-
-	// Add some randomness
-	id[8] = byte(timestamp >> 56)
-	id[9] = byte(timestamp >> 48)
-	id[10] = byte(timestamp >> 40)
-	id[11] = byte(timestamp >> 32)
-
+	// Use crypto/rand for secure random generation
+	_, err := rand.Read(id[:])
+	if err != nil {
+		// Fallback to timestamp-based if crypto/rand fails
+		timestamp := time.Now().UnixNano()
+		binary.BigEndian.PutUint64(id[0:8], uint64(timestamp))
+		binary.BigEndian.PutUint32(id[8:12], uint32(timestamp>>32))
+	}
 	return id
 }
 

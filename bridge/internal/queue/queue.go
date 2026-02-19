@@ -5,10 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -896,20 +898,12 @@ func (cb *CircuitBreaker) recordFailure() {
 	if err := cb.saveState(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "[WARN] Failed to persist circuit breaker state: %v\n", err)
 	}
+}
 
-	// saveState persists circuit breaker state to queue_meta table
+// saveState persists circuit breaker state to queue_meta table
 func (cb *CircuitBreaker) saveState(ctx context.Context) error {
-	// Serialize state as JSON for storage
-	stateJSON, err := json.Marshal(map[string]interface{}{
-		"state":       cb.state.String(),
-		"open_until":  cb.openUntil.Format(time.RFC3339),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
-	}
-
 	// Store in queue_meta table
-	_, err = cb.db.ExecContext(ctx,
+	_, err := cb.db.ExecContext(ctx,
 		"INSERT OR REPLACE INTO queue_meta (key, value) VALUES (?, ?)",
 		"circuit_breaker_state", // key
 		cb.openUntil.Format(time.RFC3339), // value
@@ -945,17 +939,20 @@ func (cb *CircuitBreaker) loadState(ctx context.Context) error {
 			cb.lastStateChange = time.Now()
 			return nil
 		}
-		// Parse state
-		switch stateStr {
-		case "closed":
-			state = CircuitClosed
-		case "open":
-			state = CircuitOpen
-		case "half_open":
-			state = CircuitHalfOpen
-		default:
-			state = CircuitClosed // Default to closed on parse error
-		}
+		return fmt.Errorf("failed to load circuit breaker state: %w", err)
+	}
+
+	// Parse state
+	switch stateStr {
+	case "closed":
+		state = CircuitClosed
+	case "open":
+		state = CircuitOpen
+	case "half_open":
+		state = CircuitHalfOpen
+	default:
+		state = CircuitClosed // Default to closed on parse error
+	}
 
 	// Parse openUntil timestamp
 	if openUntilStr != "" {

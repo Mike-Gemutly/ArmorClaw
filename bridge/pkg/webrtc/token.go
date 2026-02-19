@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/turn"
 )
 
 // Token represents a short-lived call session token used for:
@@ -104,14 +106,14 @@ func (tm *TokenManager) Validate(token *Token) (*TokenClaims, error) {
 
 // GenerateTURNCredentials creates ephemeral TURN credentials from a token
 // Format: username = <expiry>:<session_id>, password = HMAC(secret, username)
-func (tm *TokenManager) GenerateTURNCredentials(token *Token, turnServer, stunServer string) *TURNCredentials {
+func (tm *TokenManager) GenerateTURNCredentials(token *Token, turnServer, stunServer string) *turn.TURNCredentials {
 	// Create username in format: <expiry>:<session_id>
 	username := fmt.Sprintf("%d:%s", token.ExpiresAt.Unix(), token.SessionID)
 
 	// Generate password as HMAC of username
 	password := tm.hmac(username)
 
-	return &TURNCredentials{
+	return &turn.TURNCredentials{
 		Username:  username,
 		Password:  password,
 		Expires:   token.ExpiresAt,

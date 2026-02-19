@@ -38,6 +38,20 @@ type ContainerHealth struct {
 	mu           sync.RWMutex
 }
 
+// Copy returns a copy of the ContainerHealth without the mutex
+func (h *ContainerHealth) Copy() *ContainerHealth {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return &ContainerHealth{
+		ID:           h.ID,
+		Name:         h.Name,
+		State:        h.State,
+		FailureCount: h.FailureCount,
+		LastCheck:    h.LastCheck,
+		LastHealthy:  h.LastHealthy,
+	}
+}
+
 // FailureHandler is called when a container fails
 type FailureHandler func(containerID, containerName, reason string)
 
@@ -179,12 +193,8 @@ func (m *Monitor) GetHealth(containerID string) (*ContainerHealth, bool) {
 		return nil, false
 	}
 
-	health.mu.RLock()
-	defer health.mu.RUnlock()
-
 	// Return a copy to avoid race conditions
-	healthCopy := *health
-	return &healthCopy, true
+	return health.Copy(), true
 }
 
 // ListHealth returns health status for all monitored containers
@@ -194,10 +204,7 @@ func (m *Monitor) ListHealth() []*ContainerHealth {
 
 	healthList := make([]*ContainerHealth, 0, len(m.containers))
 	for _, health := range m.containers {
-		health.mu.RLock()
-		healthCopy := *health
-		health.mu.RUnlock()
-		healthList = append(healthList, &healthCopy)
+		healthList = append(healthList, health.Copy())
 	}
 
 	return healthList

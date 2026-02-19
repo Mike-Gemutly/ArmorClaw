@@ -102,6 +102,9 @@ type Config struct {
 	// Error system configuration
 	ErrorSystem ErrorSystemConfig `toml:"errors"`
 
+	// Compliance configuration (PII/PHI scrubbing)
+	Compliance ComplianceConfig `toml:"compliance"`
+
 	// Logging configuration
 	Logging LoggingConfig `toml:"logging"`
 }
@@ -380,6 +383,222 @@ type EventBusConfig struct {
 	InactivityTimeout string `toml:"inactivity_timeout" env:"ARMORCLAW_EVENTBUS_INACTIVITY_TIMEOUT"`
 }
 
+// ComplianceConfig holds PII/PHI compliance settings
+type ComplianceConfig struct {
+	// Enabled controls whether PII/PHI scrubbing is active
+	// When enabled, switches from streaming to buffered responses for full scrubbing
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_COMPLIANCE_ENABLED"`
+
+	// StreamingMode allows partial streaming with chunk-level scrubbing
+	// WARNING: May miss cross-chunk patterns. Not recommended for HIPAA compliance.
+	// Default: false (buffered mode when compliance enabled)
+	StreamingMode bool `toml:"streaming_mode" env:"ARMORCLAW_COMPLIANCE_STREAMING"`
+
+	// QuarantineEnabled blocks messages containing critical PHI for admin review
+	QuarantineEnabled bool `toml:"quarantine_enabled" env:"ARMORCLAW_COMPLIANCE_QUARANTINE"`
+
+	// NotifyOnQuarantine sends notification to user when their message is quarantined
+	NotifyOnQuarantine bool `toml:"notify_on_quarantine" env:"ARMORCLAW_COMPLIANCE_NOTIFY_QUARANTINE"`
+
+	// AuditEnabled logs all PII/PHI detections for compliance auditing
+	AuditEnabled bool `toml:"audit_enabled" env:"ARMORCLAW_COMPLIANCE_AUDIT"`
+
+	// AuditRetentionDays is how long to keep compliance audit logs
+	AuditRetentionDays int `toml:"audit_retention_days" env:"ARMORCLAW_COMPLIANCE_AUDIT_DAYS"`
+
+	// Tier is the compliance tier (basic, standard, full)
+	Tier string `toml:"tier" env:"ARMORCLAW_COMPLIANCE_TIER"`
+
+	// Patterns controls which patterns to check
+	Patterns PIIPatternConfig `toml:"patterns"`
+}
+
+// PIIPatternConfig controls individual PII pattern detection
+type PIIPatternConfig struct {
+	// SSN detection (US Social Security Numbers)
+	SSN bool `toml:"ssn" env:"ARMORCLAW_PII_SSN"`
+
+	// CreditCard detection with Luhn validation
+	CreditCard bool `toml:"credit_card" env:"ARMORCLAW_PII_CREDIT_CARD"`
+
+	// MedicalRecord detection (MRN, Patient ID)
+	MedicalRecord bool `toml:"medical_record" env:"ARMORCLAW_PII_MEDICAL_RECORD"`
+
+	// HealthPlan detection (Medicare, Medicaid numbers)
+	HealthPlan bool `toml:"health_plan" env:"ARMORCLAW_PII_HEALTH_PLAN"`
+
+	// DeviceID detection (Medical device identifiers)
+	DeviceID bool `toml:"device_id" env:"ARMORCLAW_PII_DEVICE_ID"`
+
+	// Biometric detection
+	Biometric bool `toml:"biometric" env:"ARMORCLAW_PII_BIOMETRIC"`
+
+	// LabResult detection
+	LabResult bool `toml:"lab_result" env:"ARMORCLAW_PII_LAB_RESULT"`
+
+	// Diagnosis detection (ICD codes)
+	Diagnosis bool `toml:"diagnosis" env:"ARMORCLAW_PII_DIAGNOSIS"`
+
+	// Prescription detection
+	Prescription bool `toml:"prescription" env:"ARMORCLAW_PII_PRESCRIPTION"`
+
+	// Email detection
+	Email bool `toml:"email" env:"ARMORCLAW_PII_EMAIL"`
+
+	// Phone detection
+	Phone bool `toml:"phone" env:"ARMORCLAW_PII_PHONE"`
+
+	// IPAddress detection
+	IPAddress bool `toml:"ip_address" env:"ARMORCLAW_PII_IP"`
+
+	// APIToken detection
+	APIToken bool `toml:"api_token" env:"ARMORCLAW_PII_API_TOKEN"`
+}
+
+// ComplianceMode represents the response processing mode
+type ComplianceMode string
+
+const (
+	// ComplianceModeStreaming processes chunks as they arrive (may miss patterns)
+	ComplianceModeStreaming ComplianceMode = "streaming"
+	// ComplianceModeBuffered collects full response before scrubbing (recommended)
+	ComplianceModeBuffered ComplianceMode = "buffered"
+)
+
+// GetMode returns the compliance processing mode
+func (c *ComplianceConfig) GetMode() ComplianceMode {
+	if !c.Enabled {
+		return ComplianceModeStreaming // No scrubbing needed, streaming OK
+	}
+	if c.StreamingMode {
+		return ComplianceModeStreaming
+	}
+	return ComplianceModeBuffered
+}
+
+// IsHIPAAEnabled returns true if HIPAA-compliant patterns are enabled
+func (c *ComplianceConfig) IsHIPAAEnabled() bool {
+	return c.Enabled && (c.Tier == "full" || c.Tier == "standard")
+}
+
+// IsStrictMode returns true if strict (quarantine) mode is enabled
+func (c *ComplianceConfig) IsStrictMode() bool {
+	return c.Enabled && c.QuarantineEnabled
+}
+
+// GetEnabledPatterns returns a list of enabled pattern names
+func (c *ComplianceConfig) GetEnabledPatterns() []string {
+	patterns := []string{}
+
+	// Standard PII patterns
+	if c.Patterns.SSN {
+		patterns = append(patterns, "ssn")
+	}
+	if c.Patterns.CreditCard {
+		patterns = append(patterns, "credit_card")
+	}
+	if c.Patterns.Email {
+		patterns = append(patterns, "email")
+	}
+	if c.Patterns.Phone {
+		patterns = append(patterns, "phone")
+	}
+	if c.Patterns.IPAddress {
+		patterns = append(patterns, "ip_address")
+	}
+	if c.Patterns.APIToken {
+		patterns = append(patterns, "api_token")
+	}
+
+	// HIPAA/PHI patterns
+	if c.Patterns.MedicalRecord {
+		patterns = append(patterns, "medical_record")
+	}
+	if c.Patterns.HealthPlan {
+		patterns = append(patterns, "health_plan")
+	}
+	if c.Patterns.DeviceID {
+		patterns = append(patterns, "device_id")
+	}
+	if c.Patterns.Biometric {
+		patterns = append(patterns, "biometric")
+	}
+	if c.Patterns.LabResult {
+		patterns = append(patterns, "lab_result")
+	}
+	if c.Patterns.Diagnosis {
+		patterns = append(patterns, "diagnosis")
+	}
+	if c.Patterns.Prescription {
+		patterns = append(patterns, "prescription")
+	}
+
+	return patterns
+}
+
+// ComplianceTierDefaults returns default compliance settings for a license tier
+func ComplianceTierDefaults(tier string) ComplianceConfig {
+	switch tier {
+	case "ent", "enterprise", "maximum":
+		// Enterprise/Maximum: Full HIPAA compliance, buffered mode, quarantine
+		return ComplianceConfig{
+			Enabled:            true,
+			StreamingMode:      false, // Buffered for full compliance
+			QuarantineEnabled:  true,
+			NotifyOnQuarantine: true,
+			AuditEnabled:       true,
+			AuditRetentionDays: 90,
+			Tier:               "full",
+			Patterns: PIIPatternConfig{
+				SSN:           true,
+				CreditCard:    true,
+				MedicalRecord: true,
+				HealthPlan:    true,
+				DeviceID:      true,
+				Biometric:     true,
+				LabResult:     true,
+				Diagnosis:     true,
+				Prescription:  true,
+				Email:         true,
+				Phone:         true,
+				IPAddress:     true,
+				APIToken:      true,
+			},
+		}
+	case "pro", "professional":
+		// Professional: Basic PII only, streaming mode, no quarantine
+		return ComplianceConfig{
+			Enabled:            false, // Disabled by default for performance
+			StreamingMode:      true,
+			QuarantineEnabled:  false,
+			NotifyOnQuarantine: false,
+			AuditEnabled:       false,
+			AuditRetentionDays: 30,
+			Tier:               "basic",
+			Patterns: PIIPatternConfig{
+				SSN:        true,
+				CreditCard: true,
+				Email:      false,
+				Phone:      false,
+				IPAddress:  false,
+				APIToken:   true,
+			},
+		}
+	default:
+		// Essential/Free: Disabled for maximum performance
+		return ComplianceConfig{
+			Enabled:            false,
+			StreamingMode:      true,
+			QuarantineEnabled:  false,
+			NotifyOnQuarantine: false,
+			AuditEnabled:       false,
+			AuditRetentionDays: 7,
+			Tier:               "basic",
+			Patterns:           PIIPatternConfig{},
+		}
+	}
+}
+
 // ErrorSystemConfig holds error handling system configuration
 type ErrorSystemConfig struct {
 	// Enabled controls whether the error system is active
@@ -529,6 +748,32 @@ func DefaultConfig() *Config {
 			AdminMXID:       "",
 			SetupUserMXID:   "",
 			AdminRoomID:     "",
+		},
+		Compliance: ComplianceConfig{
+			Enabled:            false, // Disabled by default for performance
+			StreamingMode:      true,  // Allow streaming when disabled
+			QuarantineEnabled:  false,
+			NotifyOnQuarantine: false,
+			AuditEnabled:       false,
+			AuditRetentionDays: 30,
+			Tier:               "basic",
+			Patterns: PIIPatternConfig{
+				// Basic PII patterns enabled by default
+				SSN:        true,
+				CreditCard: true,
+				APIToken:   true,
+				// PHI patterns disabled by default (enable for Enterprise)
+				MedicalRecord: false,
+				HealthPlan:    false,
+				DeviceID:      false,
+				Biometric:     false,
+				LabResult:     false,
+				Diagnosis:     false,
+				Prescription:  false,
+				Email:         false,
+				Phone:         false,
+				IPAddress:     false,
+			},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",

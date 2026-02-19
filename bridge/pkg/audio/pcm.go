@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media"
 )
 
 // AudioConfig holds audio configuration
@@ -472,7 +473,7 @@ func (r *WebRTCTrackReader) readLoop() {
 		case <-r.stopChan:
 			return
 		default:
-			n, err := r.track.Read(buf)
+			n, _, err := r.track.Read(buf)
 			if err != nil {
 				if err == io.EOF {
 					return
@@ -511,7 +512,7 @@ func NewWebRTCTrackWriter(track *webrtc.TrackLocalStaticSample, config AudioConf
 
 // Write writes audio data to the track
 func (w *WebRTCTrackWriter) Write(data []byte) (int, error) {
-	sample := webrtc.Sample{
+	sample := media.Sample{
 		Data:     data,
 		Duration: w.config.FrameDuration,
 	}

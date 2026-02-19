@@ -2,6 +2,7 @@
 package turn
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -298,8 +299,8 @@ func TestICECandidatePriority(t *testing.T) {
 		expected      uint32
 	}{
 		{ICECandidateHost, 65535, 1, 2130706431},
-		{ICECandidateSRFLX, 65535, 1, 1694498871},
-		{ICECandidatePRFLX, 65535, 1, 1865465391},
+		{ICECandidateSRFLX, 65535, 1, 1694498815},
+		{ICECandidatePRFLX, 65535, 1, 1862270975},
 		{ICECandidateRelay, 65535, 1, 16777215},
 	}
 

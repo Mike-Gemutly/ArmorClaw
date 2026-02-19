@@ -256,3 +256,12 @@ func (sl *SecurityLogger) LogHITLTimeout(ctx context.Context, confirmationID, to
 	}
 	sl.logger.SecurityEvent(ctx, string(HITLTimeout), append(baseAttrs, attrs...)...)
 }
+
+// LogSecurityEvent logs a generic security event with custom event type
+// This provides flexibility for events that don't fit the predefined categories
+func (sl *SecurityLogger) LogSecurityEvent(eventType string, attrs ...slog.Attr) {
+	baseAttrs := []slog.Attr{
+		slog.String("event_type", eventType),
+	}
+	sl.logger.SecurityEvent(context.Background(), eventType, append(baseAttrs, attrs...)...)
+}

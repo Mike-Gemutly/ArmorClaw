@@ -5,13 +5,28 @@ package websocket
 
 import (
 	"fmt"
+	"time"
 )
+
+// MessageHandler handles incoming WebSocket messages
+type MessageHandler func(connID string, message []byte) error
+
+// ConnectHandler handles new WebSocket connections
+type ConnectHandler func(connID string, conn interface{}) error
+
+// DisconnectHandler handles WebSocket disconnections
+type DisconnectHandler func(connID string)
 
 // Config holds WebSocket server configuration
 type Config struct {
-	Addr           string
-	Path           string
-	AllowedOrigins []string
+	Addr              string
+	Path              string
+	AllowedOrigins    []string
+	MaxConnections    int
+	InactivityTimeout time.Duration
+	MessageHandler    MessageHandler
+	ConnectHandler    ConnectHandler
+	DisconnectHandler DisconnectHandler
 }
 
 // Server represents a WebSocket server

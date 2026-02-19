@@ -1,13 +1,14 @@
 package webrtc
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media"
 )
 
 // Engine manages WebRTC peer connections and media handling
@@ -19,6 +20,7 @@ type Engine struct {
 	connections  map[string]*PeerConnectionWrapper
 	stopChan     chan struct{}
 	wg           sync.WaitGroup
+	turnManager  *turn.Manager
 }
 
 // EngineConfig holds configuration for the WebRTC engine
@@ -38,10 +40,10 @@ type EngineConfig struct {
 
 // MediaConfig holds media-related configuration
 type MediaConfig struct {
-	SampleRate     uint32 // Audio sample rate (e.g., 48000)
-	Channels       uint8  // Number of audio channels (1 = mono, 2 = stereo)
-	Bitrate        uint32 // Target bitrate in bps
-	PayloadType    uint8  // RTP payload type for audio
+	SampleRate     uint32            // Audio sample rate (e.g., 48000)
+	Channels       uint16            // Number of audio channels (1 = mono, 2 = stereo)
+	Bitrate        uint32            // Target bitrate in bps
+	PayloadType    webrtc.PayloadType // RTP payload type for audio
 }
 
 // DefaultEngineConfig returns the default engine configuration
@@ -148,7 +150,7 @@ func (e *Engine) CreatePeerConnection(sessionID string) (*PeerConnectionWrapper,
 	}
 
 	// Add track to peer connection
-	rtpSender, err := peerConnection.AddTrack(audioTrack)
+	_, err = peerConnection.AddTrack(audioTrack)
 	if err != nil {
 		peerConnection.Close()
 		return nil, fmt.Errorf("failed to add track: %w", err)
@@ -173,6 +175,12 @@ func (e *Engine) CreatePeerConnection(sessionID string) (*PeerConnectionWrapper,
 		if wrapper.onTrack != nil {
 			wrapper.onTrack(track)
 		}
+		// Read RTP from the track in a goroutine
+		e.wg.Add(1)
+		go func() {
+			defer e.wg.Done()
+			e.readRTP(track)
+		}()
 	})
 
 	// Set up data channel handler
@@ -182,13 +190,6 @@ func (e *Engine) CreatePeerConnection(sessionID string) (*PeerConnectionWrapper,
 		}
 	})
 
-	// Read RTP from the track to avoid blocking
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		e.readRTP(rtpSender, track)
-	}()
-
 	// Store connection
 	e.connections[sessionID] = wrapper
 
@@ -196,14 +197,14 @@ func (e *Engine) CreatePeerConnection(sessionID string) (*PeerConnectionWrapper,
 }
 
 // readRTP reads RTP packets from the track
-func (e *Engine) readRTP(rtpSender *webrtc.RTPSender, track *webrtc.TrackRemote) {
+func (e *Engine) readRTP(track *webrtc.TrackRemote) {
 	buf := make([]byte, 1500)
 	for {
 		select {
 		case <-e.stopChan:
 			return
 		default:
-			_, _, err := rtpSender.Read(buf, nil)
+			_, _, err := track.Read(buf)
 			if err != nil {
 				if err == io.EOF {
 					return
@@ -315,16 +316,16 @@ func (pcw *PeerConnectionWrapper) AddICECandidate(candidate webrtc.ICECandidateI
 }
 
 // WriteAudio writes audio samples to the audio track (sends to client)
-func (pcw *PeerConnectionWrapper) WriteAudio(sample []byte, sampleRate uint32) error {
+func (pcw *PeerConnectionWrapper) WriteAudio(audioData []byte, sampleRate uint32) error {
 	if pcw.closed {
 		return fmt.Errorf("peer connection is closed")
 	}
 
 	// Create audio sample from raw PCM data
 	// In a full implementation, this would encode to Opus first
-	sample := webrtc.Sample{
-		Data:    sample,
-		Duration: time.Duration(len(sample)) * time.Second / time.Duration(sampleRate),
+	sample := media.Sample{
+		Data:    audioData,
+		Duration: time.Duration(len(audioData)) * time.Second / time.Duration(sampleRate),
 	}
 
 	return pcw.audioTrack.WriteSample(sample)
@@ -363,7 +364,7 @@ func (e *Engine) Stop() {
 	defer e.mu.Unlock()
 
 	// Close all peer connections
-	for sessionID, wrapper := range e.connections {
+	for sessionID := range e.connections {
 		e.ClosePeerConnection(sessionID)
 	}
 

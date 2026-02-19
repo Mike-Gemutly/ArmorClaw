@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -209,5 +208,3 @@ func (al *AuditLog) ImportJSON(data []byte) error {
 	al.events = events
 	return al.saveToFile()
 }
-
-var _ sql.Scanner = (*Entry)(nil)

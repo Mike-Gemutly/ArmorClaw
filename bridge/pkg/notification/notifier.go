@@ -19,6 +19,7 @@ type Notifier struct {
 	enabled       bool
 	mu            sync.RWMutex
 	ctx           context.Context
+	cancel        context.CancelFunc
 	securityLog   *logger.SecurityLogger
 }
 
@@ -90,7 +91,7 @@ func (n *Notifier) SendBudgetAlert(alertType string, sessionID string, current, 
 		"Action may be required if this is not expected.",
 		alertType, sessionID, current, limit, percentage)
 
-	err := n.matrixAdapter.SendMessage(n.adminRoomID, message, "m.notice")
+	_, err := n.matrixAdapter.SendMessage(n.adminRoomID, message, "m.notice")
 	if err != nil {
 		n.securityLog.LogSecurityEvent("budget_alert_failed",
 			slog.String("error", err.Error()),
@@ -130,7 +131,7 @@ func (n *Notifier) SendSecurityAlert(eventType, message string, metadata map[str
 		}
 	}
 
-	err := n.matrixAdapter.SendMessage(n.adminRoomID, msgText, "m.notice")
+	_, err := n.matrixAdapter.SendMessage(n.adminRoomID, msgText, "m.notice")
 	if err != nil {
 		n.securityLog.LogSecurityEvent("security_alert_failed",
 			slog.String("error", err.Error()),
@@ -180,7 +181,7 @@ func (n *Notifier) SendContainerAlert(eventType, containerID, containerName, rea
 		"**Reason:** %s",
 		emoji, eventType, containerName, containerID, reason)
 
-	err := n.matrixAdapter.SendMessage(n.adminRoomID, message, "m.notice")
+	_, err := n.matrixAdapter.SendMessage(n.adminRoomID, message, "m.notice")
 	if err != nil {
 		n.securityLog.LogSecurityEvent("container_alert_failed",
 			slog.String("error", err.Error()),
@@ -211,7 +212,7 @@ func (n *Notifier) SendSystemAlert(eventType, message string) error {
 
 	msgText := fmt.Sprintf("⚠️ **System Alert**\n\n**Type:** %s\n\n%s", eventType, message)
 
-	err := n.matrixAdapter.SendMessage(n.adminRoomID, msgText, "m.notice")
+	_, err := n.matrixAdapter.SendMessage(n.adminRoomID, msgText, "m.notice")
 	if err != nil {
 		n.securityLog.LogSecurityEvent("system_alert_failed",
 			slog.String("error", err.Error()),

@@ -2,10 +2,7 @@
 package budget
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -44,25 +41,41 @@ type BudgetConfig struct {
 }
 
 // BudgetTracker monitors and enforces token budgets
+// Thread-safe with Write-Ahead Log persistence for crash recovery
 type BudgetTracker struct {
-	config         BudgetConfig         `json:"config"`
-	usageHistory   []UsageRecord        `json:"usage_history"`
-	dailyUsage     map[string]float64   `json:"daily_usage"`
-	monthlyUsage   map[string]float64   `json:"monthly_usage"`
-	sessionUsage   map[string]float64   `json:"session_usage"`
-	mutex          sync.RWMutex         `json:"-"`
-	stateFilePath  string               `json:"-"`
-	costs          map[string]float64   `json:"costs"`
-	notifier       *notification.Notifier `json:"-"`
+	config        BudgetConfig
+	usageHistory  []UsageRecord
+	dailyUsage    map[string]float64
+	monthlyUsage  map[string]float64
+	sessionUsage  map[string]float64
+	mutex         sync.RWMutex
+	costs         map[string]float64
+	notifier      *notification.Notifier
+
+	// Persistence layer (WAL-based)
+	persistence   *persistentStore
+	persistConfig PersistenceConfig
 }
 
-// NewBudgetTracker creates a new budget tracker
-func NewBudgetTracker(config BudgetConfig, stateDir string) *BudgetTracker {
-	// Initialize state directory
-	if stateDir == "" {
-		stateDir = "/var/lib/armorclaw"
-	}
+// BudgetTrackerOption configures the budget tracker
+type BudgetTrackerOption func(*BudgetTracker)
 
+// WithPersistence sets the persistence configuration
+func WithPersistence(config PersistenceConfig) BudgetTrackerOption {
+	return func(b *BudgetTracker) {
+		b.persistConfig = config
+	}
+}
+
+// WithNotifier sets the notification system
+func WithNotifier(notifier *notification.Notifier) BudgetTrackerOption {
+	return func(b *BudgetTracker) {
+		b.notifier = notifier
+	}
+}
+
+// NewBudgetTracker creates a new budget tracker with optional persistence
+func NewBudgetTracker(config BudgetConfig, opts ...BudgetTrackerOption) (*BudgetTracker, error) {
 	// Merge custom provider costs with defaults
 	costs := make(map[string]float64)
 	for k, v := range TokenCosts {
@@ -74,18 +87,87 @@ func NewBudgetTracker(config BudgetConfig, stateDir string) *BudgetTracker {
 		}
 	}
 
-	return &BudgetTracker{
+	// Default persistence config (disabled for backward compatibility)
+	persistConfig := PersistenceConfig{
+		Mode:     PersistenceDisabled,
+		StateDir: "/var/lib/armorclaw",
+	}
+
+	b := &BudgetTracker{
 		config:        config,
 		usageHistory:  make([]UsageRecord, 0),
 		dailyUsage:    make(map[string]float64),
 		monthlyUsage:  make(map[string]float64),
 		sessionUsage:  make(map[string]float64),
-		stateFilePath: filepath.Join(stateDir, "budget_state.json"),
 		costs:         costs,
+		persistConfig: persistConfig,
 	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(b)
+	}
+
+	// Initialize persistence if enabled
+	if b.persistConfig.Mode != PersistenceDisabled {
+		ps, err := newPersistentStore(b.persistConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize persistence: %w", err)
+		}
+		b.persistence = ps
+
+		// Recover state from WAL/snapshot
+		if err := b.recoverFromPersistence(); err != nil {
+			return nil, fmt.Errorf("failed to recover state: %w", err)
+		}
+	}
+
+	return b, nil
+}
+
+// recoverFromPersistence replays WAL and restores state
+func (b *BudgetTracker) recoverFromPersistence() error {
+	if b.persistence == nil {
+		return nil
+	}
+
+	// Load snapshot first
+	state, err := b.persistence.loadSnapshot()
+	if err == nil && state != nil {
+		b.config = state.Config
+		b.usageHistory = state.UsageHistory
+		b.dailyUsage = state.DailyUsage
+		b.monthlyUsage = state.MonthlyUsage
+		b.sessionUsage = state.SessionUsage
+	}
+
+	// Replay any WAL entries after snapshot
+	records, err := b.persistence.replayWAL()
+	if err != nil {
+		return err
+	}
+
+	// Apply replayed records
+	for _, record := range records {
+		b.applyRecord(record)
+	}
+
+	return nil
+}
+
+// applyRecord applies a usage record to the in-memory state (without persistence)
+func (b *BudgetTracker) applyRecord(record UsageRecord) {
+	date := record.Timestamp.Format("2006-01-02")
+	month := record.Timestamp.Format("2006-01")
+	b.dailyUsage[date] += record.CostUSD
+	b.monthlyUsage[month] += record.CostUSD
+	b.sessionUsage[record.SessionID] += record.CostUSD
+	b.usageHistory = append(b.usageHistory, record)
 }
 
 // RecordUsage records token usage for a session
+// With synchronous persistence enabled, this writes to WAL before returning
+// to guarantee no data loss on crash
 func (b *BudgetTracker) RecordUsage(record UsageRecord) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
@@ -100,7 +182,15 @@ func (b *BudgetTracker) RecordUsage(record UsageRecord) error {
 	record.CostUSD = float64(totalTokens) / 1000000.0 * costPer1M
 	record.Timestamp = time.Now()
 
-	// Add to history
+	// Persist to WAL FIRST (before memory update) for durability
+	// If persistence fails, we don't update memory state
+	if b.persistence != nil {
+		if err := b.persistence.AppendUsage(record); err != nil {
+			return fmt.Errorf("failed to persist usage record: %w", err)
+		}
+	}
+
+	// Now update in-memory state
 	b.usageHistory = append(b.usageHistory, record)
 
 	// Update tracking maps
@@ -256,89 +346,71 @@ func (b *BudgetTracker) SetNotifier(notifier *notification.Notifier) {
 	b.notifier = notifier
 }
 
-// jsonState is used for JSON serialization
-type jsonState struct {
-	Config       BudgetConfig           `json:"config"`
-	UsageHistory []UsageRecord          `json:"usage_history"`
-	DailyUsage   map[string]float64     `json:"daily_usage"`
-	MonthlyUsage map[string]float64     `json:"monthly_usage"`
-	SessionUsage map[string]float64     `json:"session_usage"`
-	Costs        map[string]float64     `json:"costs"`
-}
-
-// SaveState persists budget state to disk
-func (b *BudgetTracker) SaveState() error {
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
-
-	// Ensure directory exists
-	dir := filepath.Dir(b.stateFilePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	// Create JSON-serializable state
-	state := jsonState{
-		Config:       b.config,
-		UsageHistory: b.usageHistory,
-		DailyUsage:   b.dailyUsage,
-		MonthlyUsage: b.monthlyUsage,
-		SessionUsage: b.sessionUsage,
-		Costs:        b.costs,
-	}
-
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
-	}
-
-	if err := os.WriteFile(b.stateFilePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write state file: %w", err)
-	}
-
-	return nil
-}
-
-// LoadState restores budget state from disk
-func (b *BudgetTracker) LoadState() error {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
-	data, err := os.ReadFile(b.stateFilePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// First run, no state yet
-			return nil
-		}
-		return fmt.Errorf("failed to read state file: %w", err)
-	}
-
-	// Unmarshal into jsonState struct
-	var state jsonState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return fmt.Errorf("failed to unmarshal state: %w", err)
-	}
-
-	// Copy data back to the tracker
-	b.config = state.Config
-	b.usageHistory = state.UsageHistory
-	b.dailyUsage = state.DailyUsage
-	b.monthlyUsage = state.MonthlyUsage
-	b.sessionUsage = state.SessionUsage
-	b.costs = state.Costs
-
-	return nil
-}
-
 // Reset clears all usage data
-func (b *BudgetTracker) Reset() {
+// Persists the reset to WAL for crash recovery
+func (b *BudgetTracker) Reset() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+
+	// Persist reset to WAL first
+	if b.persistence != nil {
+		if err := b.persistence.AppendReset(); err != nil {
+			return fmt.Errorf("failed to persist reset: %w", err)
+		}
+	}
 
 	b.usageHistory = make([]UsageRecord, 0)
 	b.dailyUsage = make(map[string]float64)
 	b.monthlyUsage = make(map[string]float64)
 	b.sessionUsage = make(map[string]float64)
+
+	return nil
+}
+
+// Close flushes pending writes and closes the tracker
+// MUST be called for graceful shutdown to ensure all data is persisted
+func (b *BudgetTracker) Close() error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	if b.persistence != nil {
+		// Save final snapshot
+		if err := b.persistence.SaveSnapshot(b); err != nil {
+			return fmt.Errorf("failed to save final snapshot: %w", err)
+		}
+		// Close persistence layer
+		if err := b.persistence.Close(); err != nil {
+			return fmt.Errorf("failed to close persistence: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// SaveState persists budget state to disk (creates a snapshot)
+// This creates a full snapshot and compacts the WAL
+func (b *BudgetTracker) SaveState() error {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+
+	if b.persistence == nil {
+		return fmt.Errorf("persistence not enabled")
+	}
+
+	return b.persistence.SaveSnapshot(b)
+}
+
+// LoadState restores budget state from disk
+// Note: State is automatically loaded on NewBudgetTracker when persistence is enabled
+func (b *BudgetTracker) LoadState() error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	if b.persistence == nil {
+		return fmt.Errorf("persistence not enabled")
+	}
+
+	return b.recoverFromPersistence()
 }
 
 // GetUsageHistory returns the usage history
@@ -369,4 +441,14 @@ func (b *BudgetTracker) GetCost(model string) float64 {
 		return cost
 	}
 	return 0.001 // Default fallback
+}
+
+// GetPersistenceMode returns the current persistence mode
+func (b *BudgetTracker) GetPersistenceMode() PersistenceMode {
+	return b.persistConfig.Mode
+}
+
+// IsPersistent returns true if persistence is enabled
+func (b *BudgetTracker) IsPersistent() bool {
+	return b.persistConfig.Mode != PersistenceDisabled
 }

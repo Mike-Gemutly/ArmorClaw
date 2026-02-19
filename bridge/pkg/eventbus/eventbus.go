@@ -145,7 +145,7 @@ func (b *EventBus) Stop() {
 	defer b.mu.Unlock()
 
 	// Close all subscriber channels
-	for id, sub := range b.subscribers {
+	for _, sub := range b.subscribers {
 		sub.cancel()
 		close(sub.EventChannel)
 	}

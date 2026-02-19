@@ -3,8 +3,12 @@
 package webrtc
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/turn"
 )
 
 // SessionState represents the current state of a voice call session
@@ -60,20 +64,11 @@ type Session struct {
 	RemoteSDP        string     // Remote SDP (offer or answer)
 
 	// TURN allocation
-	TURNCredentials *TURNCredentials // TURN credentials for this session
+	TURNCredentials *turn.TURNCredentials // TURN credentials for this session
 
 	// Close channel for graceful shutdown
 	closeOnce sync.Once
 	closeChan chan struct{}
-}
-
-// TURNCredentials represents ephemeral TURN credentials for a session
-type TURNCredentials struct {
-	Username string    // Format: <expiry>:<session_id>
-	Password string    // HMAC(secret, username)
-	Expires  time.Time // When these credentials expire
-	TURNServer string  // TURN server address (host:port)
-	STUNServer string  // STUN server address (host:port)
 }
 
 // IsActive returns true if the session is in an active state
@@ -344,7 +339,7 @@ func (sm *SessionManager) List() []*Session {
 // Count returns the number of active sessions
 func (sm *SessionManager) Count() int {
 	count := 0
-	sm.sessions.Range(func(_, _) interface{} bool {
+	sm.sessions.Range(func(_, _ interface{}) bool {
 		count++
 		return true
 	})
@@ -357,15 +352,14 @@ func generateSessionID() string {
 	return "sess_" + randomString(16)
 }
 
-// randomString generates a random hex string
+// randomString generates a random hex string using crypto/rand
 func randomString(length int) string {
-	// Simple implementation - in production use crypto/rand
-	const charset = "0123456789abcdef"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+	b := make([]byte, (length+1)/2) // Need half as many bytes for hex encoding
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based if crypto/rand fails
+		return hex.EncodeToString([]byte(time.Now().String()))[:length]
 	}
-	return string(b)
+	return hex.EncodeToString(b)[:length]
 }
 
 // Errors

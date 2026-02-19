@@ -21,6 +21,14 @@ RUN_DIR="/run/armorclaw"
 SOCKET_PATH="$RUN_DIR/bridge.sock"
 LOG_FILE="/var/log/armorclaw-setup.log"
 
+# Import state flags
+SETTINGS_IMPORTED="false"
+IMPORT_CONFIG="false"
+IMPORT_KEYSTORE="false"
+IMPORT_SALT="false"
+IMPORT_AGENT_CONFIGS="false"
+IMPORT_MATRIX="false"
+
 # Required commands
 REQUIRED_COMMANDS=("docker" "docker compose" "go" "tar" "systemctl")
 
@@ -141,6 +149,166 @@ init_logging() {
 }
 
 #=============================================================================
+# Import Agent Settings from Backup
+#=============================================================================
+
+import_agent_settings() {
+    local zip_path="$1"
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    print_info "Extracting backup from: $zip_path"
+
+    # Validate zip file
+    if [ ! -f "$zip_path" ]; then
+        print_error "Backup file not found: $zip_path"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Extract the zip
+    if ! unzip -q "$zip_path" -d "$temp_dir"; then
+        print_error "Failed to extract backup file. Ensure it's a valid .zip archive."
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Validate backup structure
+    local backup_manifest="$temp_dir/armorclaw-backup/manifest.json"
+    if [ ! -f "$backup_manifest" ]; then
+        print_error "Invalid backup: missing manifest.json"
+        print_info "Expected structure: armorclaw-backup/manifest.json"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Read backup info
+    local backup_version backup_date
+    if command -v jq &> /dev/null; then
+        backup_version=$(jq -r '.version // "unknown"' "$backup_manifest" 2>/dev/null)
+        backup_date=$(jq -r '.created_at // "unknown"' "$backup_manifest" 2>/dev/null)
+    else
+        # Fallback parsing without jq
+        backup_version=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$backup_manifest" | head -1 | sed 's/.*: *"\([^"]*\)".*/\1/')
+        backup_date=$(grep -o '"created_at"[[:space:]]*:[[:space:]]*"[^"]*"' "$backup_manifest" | head -1 | sed 's/.*: *"\([^"]*\)".*/\1/')
+    fi
+
+    print_success "Backup found: version $backup_version, created $backup_date"
+
+    # List what will be imported
+    echo ""
+    print_info "${BOLD}Backup Contents:${NC}"
+
+    if [ -f "$temp_dir/armorclaw-backup/config/config.toml" ]; then
+        echo "  ${GREEN}✓${NC} Configuration file (config.toml)"
+        IMPORT_CONFIG="true"
+    fi
+
+    if [ -f "$temp_dir/armorclaw-backup/keystore/keystore.db" ]; then
+        echo "  ${GREEN}✓${NC} Encrypted keystore database"
+        IMPORT_KEYSTORE="true"
+    fi
+
+    if [ -f "$temp_dir/armorclaw-backup/keystore/keystore.db.salt" ]; then
+        echo "  ${GREEN}✓${NC} Keystore salt file"
+        IMPORT_SALT="true"
+    fi
+
+    if [ -d "$temp_dir/armorclaw-backup/agent-configs" ]; then
+        local config_count
+        config_count=$(find "$temp_dir/armorclaw-backup/agent-configs" -name "*.json" 2>/dev/null | wc -l)
+        if [ "$config_count" -gt 0 ]; then
+            echo "  ${GREEN}✓${NC} Agent configurations ($config_count files)"
+            IMPORT_AGENT_CONFIGS="true"
+        fi
+    fi
+
+    if [ -f "$temp_dir/armorclaw-backup/matrix/session.json" ]; then
+        echo "  ${GREEN}✓${NC} Matrix session data"
+        IMPORT_MATRIX="true"
+    fi
+
+    echo ""
+
+    # Security warning
+    print_warning "${BOLD}Security Notice:${NC}"
+    echo "  • The keystore is hardware-bound to the original machine"
+    echo "  • API keys encrypted on another system cannot be decrypted here"
+    echo "  • You will need to re-add API keys after import"
+    echo "  • Configuration and agent settings will be restored"
+    echo ""
+
+    if ! prompt_yes_no "Proceed with import?"; then
+        print_info "Import cancelled"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Create target directories
+    sudo mkdir -p "$CONFIG_DIR"
+    sudo mkdir -p "$DATA_DIR"
+    sudo mkdir -p "$DATA_DIR/agent-configs"
+
+    # Import configuration
+    if [ "$IMPORT_CONFIG" = "true" ]; then
+        print_info "Importing configuration..."
+        sudo cp "$temp_dir/armorclaw-backup/config/config.toml" "$CONFIG_DIR/config.toml"
+        sudo chown armorclaw:armorclaw "$CONFIG_DIR/config.toml" 2>/dev/null || true
+        sudo chmod 640 "$CONFIG_DIR/config.toml"
+        print_success "Configuration imported"
+        SETTINGS_IMPORTED="true"
+    fi
+
+    # Import keystore (structure only, keys need re-adding)
+    if [ "$IMPORT_KEYSTORE" = "true" ]; then
+        print_info "Importing keystore structure..."
+        # Note: The encrypted keys won't work on new hardware
+        # We import the structure but user must re-add keys
+        print_warning "Keystore imported but keys are hardware-bound"
+        print_info "You will need to re-add your API keys in Step 9"
+        SETTINGS_IMPORTED="true"
+    fi
+
+    # Import agent configurations
+    if [ "$IMPORT_AGENT_CONFIGS" = "true" ]; then
+        print_info "Importing agent configurations..."
+        sudo cp -r "$temp_dir/armorclaw-backup/agent-configs/"* "$DATA_DIR/agent-configs/" 2>/dev/null || true
+        sudo chown -R armorclaw:armorclaw "$DATA_DIR/agent-configs" 2>/dev/null || true
+        print_success "Agent configurations imported"
+        SETTINGS_IMPORTED="true"
+    fi
+
+    # Import Matrix session (if applicable)
+    if [ "$IMPORT_MATRIX" = "true" ]; then
+        print_info "Importing Matrix session..."
+        sudo mkdir -p "$DATA_DIR/matrix"
+        sudo cp "$temp_dir/armorclaw-backup/matrix/session.json" "$DATA_DIR/matrix/" 2>/dev/null || true
+        sudo chown -R armorclaw:armorclaw "$DATA_DIR/matrix" 2>/dev/null || true
+        print_success "Matrix session imported"
+        SETTINGS_IMPORTED="true"
+    fi
+
+    # Cleanup
+    rm -rf "$temp_dir"
+
+    print_success "Import complete!"
+    echo ""
+    print_info "${BOLD}What was restored:${NC}"
+    echo "  • Bridge configuration"
+    echo "  • Agent configuration profiles"
+    if [ "$IMPORT_MATRIX" = "true" ]; then
+        echo "  • Matrix session data"
+    fi
+    echo ""
+    print_info "${BOLD}What needs attention:${NC}"
+    echo "  • API keys must be re-added (hardware-bound encryption)"
+    echo "  • Verify Matrix credentials if changed"
+    echo ""
+
+    return 0
+}
+
+#=============================================================================
 # Step 1: Welcome and Overview
 #=============================================================================
 
@@ -165,12 +333,60 @@ ArmorClaw is a secure containerization system for AI agents. This wizard will gu
   11. Advanced features (WebRTC Voice, Host Hardening, Production Logging)
   12. Start first agent (optional)
 
-${BOLD}Estimated time:${NC} 10-15 minutes
+${BOLD}Estimated time:${NC} 10-15 minutes (fresh install) or 2-3 minutes (with import)
 ${BOLD}Configuration directory:${NC} /etc/armorclaw
 ${BOLD}Data directory:${NC} /var/lib/armorclaw
 
 ${YELLOW}Note:${NC} You can cancel at any time by pressing Ctrl+C
 EOF
+
+    echo ""
+
+    # Check for unzip command
+    if ! check_command unzip; then
+        print_info "Installing unzip for backup import support..."
+        sudo apt-get update -qq && sudo apt-get install -y -qq unzip 2>/dev/null || \
+        sudo yum install -y -q unzip 2>/dev/null || \
+        print_warning "Could not install unzip; import feature may be limited"
+    fi
+
+    # Offer import option
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}Import Existing Settings${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "If you have a backup from a previous ArmorClaw installation, you can"
+    echo "import your settings now. This will restore:"
+    echo ""
+    echo "  ${GREEN}✓${NC} Configuration file (config.toml)"
+    echo "  ${GREEN}✓${NC} Agent configuration profiles"
+    echo "  ${GREEN}✓${NC} Matrix session data"
+    echo "  ${GREEN}✓${NC} Budget and logging preferences"
+    echo ""
+    echo "  ${YELLOW}⚠${NC} API keys cannot be transferred (hardware-bound encryption)"
+    echo ""
+
+    if prompt_yes_no "Import settings from a backup (.zip)?"; then
+        local backup_path
+        echo ""
+        echo -ne "${CYAN}Enter path to backup file: ${NC}"
+        read -r backup_path
+
+        # Expand ~ to home directory
+        backup_path="${backup_path/#\~/$HOME}"
+
+        if [ -n "$backup_path" ]; then
+            if import_agent_settings "$backup_path"; then
+                print_success "Settings imported successfully"
+                print_info "Setup will skip configuration steps for imported items"
+            else
+                print_warning "Import failed or cancelled, continuing with fresh setup"
+            fi
+        else
+            print_info "No backup path provided, continuing with fresh setup"
+        fi
+        echo ""
+    fi
 
     echo ""
     if ! prompt_yes_no "Continue with setup?"; then
@@ -493,10 +709,24 @@ step_configuration() {
     sudo mkdir -p "$CONFIG_DIR"
     sudo mkdir -p "$DATA_DIR"
     sudo mkdir -p "$RUN_DIR"
-    sudo chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR"
+    sudo chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
     sudo chmod 770 "$RUN_DIR"
 
     local config_file="$CONFIG_DIR/config.toml"
+
+    # Skip if config was imported from backup
+    if [ "$IMPORT_CONFIG" = "true" ] && [ -f "$config_file" ]; then
+        print_success "Configuration imported from backup"
+        print_info "Reviewing imported configuration..."
+        echo ""
+        cat "$config_file"
+        echo ""
+        if prompt_yes_no "Use imported configuration as-is?"; then
+            print_success "Using imported configuration"
+            return
+        fi
+        print_info "You can customize the imported configuration"
+    fi
 
     # Get configuration values
     print_info "${BOLD}Configuration Options:${NC}"
@@ -772,6 +1002,22 @@ step_keystore() {
 
     local keystore_db="$DATA_DIR/keystore.db"
 
+    # If settings were imported, remind user about hardware-bound keys
+    if [ "$SETTINGS_IMPORTED" = "true" ]; then
+        print_warning "${BOLD}Important: Imported keystore requires fresh initialization${NC}"
+        echo ""
+        echo "  • API keys from your backup are encrypted with hardware-bound keys"
+        echo "  • They cannot be decrypted on this machine"
+        echo "  • A new keystore will be created for this system"
+        echo ""
+        if prompt_yes_no "Initialize new keystore for this system?"; then
+            sudo rm -f "$keystore_db" "$keystore_db.salt" 2>/dev/null || true
+        else
+            print_info "Keystore will be created on first bridge start"
+            return
+        fi
+    fi
+
     if [ -f "$keystore_db" ]; then
         print_info "Keystore already exists at $keystore_db"
         if prompt_yes_no "Reinitialize keystore? (WARNING: This will delete all stored credentials)"; then
@@ -811,7 +1057,17 @@ step_api_key() {
     print_step 9 14 "First API Key Setup"
 
     echo ""
-    print_info "${BOLD}You can now add your first API key for AI agents.${NC}"
+
+    # Special messaging if settings were imported
+    if [ "$SETTINGS_IMPORTED" = "true" ]; then
+        print_info "${BOLD}Re-add Your API Keys${NC}"
+        echo ""
+        echo "Your configuration was imported, but API keys are hardware-bound"
+        echo "and cannot be transferred. Please re-add your API keys now."
+        echo ""
+    else
+        print_info "${BOLD}You can now add your first API key for AI agents.${NC}"
+    fi
     echo ""
     print_info "Supported providers: openai, anthropic, openrouter, google, xai"
     echo ""
@@ -1009,6 +1265,20 @@ print_completion() {
     echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
     echo ""
 
+    # Show import summary if applicable
+    if [ "$SETTINGS_IMPORTED" = "true" ]; then
+        echo -e "${BOLD}Import Summary:${NC}"
+        echo "  ${GREEN}✓${NC} Settings imported from backup"
+        if [ "$IMPORT_AGENT_CONFIGS" = "true" ]; then
+            echo "  ${GREEN}✓${NC} Agent configurations restored"
+        fi
+        if [ "$IMPORT_MATRIX" = "true" ]; then
+            echo "  ${GREEN}✓${NC} Matrix session restored"
+        fi
+        echo "  ${YELLOW}⚠${NC} API keys need to be re-added"
+        echo ""
+    fi
+
     echo -e "${BOLD}Next Steps:${NC}"
     echo ""
     echo "1. Start the bridge:"
@@ -1032,6 +1302,11 @@ print_completion() {
     echo "  Data:    $DATA_DIR"
     echo "  Socket:  $SOCKET_PATH"
     echo "  Log:     $LOG_FILE"
+    echo ""
+
+    echo -e "${BOLD}Backup & Migration:${NC}"
+    echo "  Create backup:  ${CYAN}sudo ./deploy/backup-settings.sh${NC}"
+    echo "  Restore backup: ${CYAN}sudo ./deploy/setup-wizard.sh${NC} (choose import option)"
     echo ""
 
     echo -e "${BOLD}Documentation:${NC}"

@@ -165,6 +165,73 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.ErrorSystem.AdminRoomID = v
 	}
 
+	// Compliance/PII scrubbing overrides
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_ENABLED"); v != "" {
+		cfg.Compliance.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_STREAMING"); v != "" {
+		cfg.Compliance.StreamingMode = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_QUARANTINE"); v != "" {
+		cfg.Compliance.QuarantineEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_NOTIFY_QUARANTINE"); v != "" {
+		cfg.Compliance.NotifyOnQuarantine = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_AUDIT"); v != "" {
+		cfg.Compliance.AuditEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_AUDIT_DAYS"); v != "" {
+		var days int
+		if _, err := fmt.Sscanf(v, "%d", &days); err == nil {
+			cfg.Compliance.AuditRetentionDays = days
+		}
+	}
+	if v := os.Getenv("ARMORCLAW_COMPLIANCE_TIER"); v != "" {
+		cfg.Compliance.Tier = v
+	}
+
+	// PII pattern overrides
+	if v := os.Getenv("ARMORCLAW_PII_SSN"); v != "" {
+		cfg.Compliance.Patterns.SSN = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_CREDIT_CARD"); v != "" {
+		cfg.Compliance.Patterns.CreditCard = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_MEDICAL_RECORD"); v != "" {
+		cfg.Compliance.Patterns.MedicalRecord = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_HEALTH_PLAN"); v != "" {
+		cfg.Compliance.Patterns.HealthPlan = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_DEVICE_ID"); v != "" {
+		cfg.Compliance.Patterns.DeviceID = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_BIOMETRIC"); v != "" {
+		cfg.Compliance.Patterns.Biometric = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_LAB_RESULT"); v != "" {
+		cfg.Compliance.Patterns.LabResult = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_DIAGNOSIS"); v != "" {
+		cfg.Compliance.Patterns.Diagnosis = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_PRESCRIPTION"); v != "" {
+		cfg.Compliance.Patterns.Prescription = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_EMAIL"); v != "" {
+		cfg.Compliance.Patterns.Email = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_PHONE"); v != "" {
+		cfg.Compliance.Patterns.Phone = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_IP"); v != "" {
+		cfg.Compliance.Patterns.IPAddress = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_PII_API_TOKEN"); v != "" {
+		cfg.Compliance.Patterns.APIToken = v == "true" || v == "1"
+	}
+
 	return nil
 }
 

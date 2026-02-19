@@ -215,12 +215,27 @@ func TestSessionManager_List(t *testing.T) {
 	}
 
 	// Create some sessions
-	session1, _ := sm.Create("container1", "!room1:example.com", 5*time.Minute)
-	session2, _ := sm.Create("container2", "!room2:example.com", 5*time.Minute)
+	session1, err1 := sm.Create("container1", "!room1:example.com", 5*time.Minute)
+	if err1 != nil {
+		t.Fatalf("Failed to create session1: %v", err1)
+	}
+
+	// Small delay to ensure different session IDs
+	time.Sleep(time.Millisecond)
+
+	session2, err2 := sm.Create("container2", "!room2:example.com", 5*time.Minute)
+	if err2 != nil {
+		t.Fatalf("Failed to create session2: %v", err2)
+	}
+
+	// Debug: Check if session IDs are different
+	if session1.ID == session2.ID {
+		t.Fatalf("Session IDs are the same: %s", session1.ID)
+	}
 
 	sessions = sm.List()
 	if len(sessions) != 2 {
-		t.Errorf("Expected 2 sessions, got %d", len(sessions))
+		t.Errorf("Expected 2 sessions, got %d (IDs: %s, %s)", len(sessions), session1.ID, session2.ID)
 	}
 
 	// Verify sessions

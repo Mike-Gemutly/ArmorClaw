@@ -16,7 +16,10 @@ func TestNewBudgetTracker(t *testing.T) {
 		HardStop:        true,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	if tracker == nil {
 		t.Fatal("NewBudgetTracker returned nil")
@@ -38,7 +41,10 @@ func TestRecordUsage(t *testing.T) {
 		HardStop:        false,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	record := UsageRecord{
 		SessionID:    "test-session-1",
@@ -48,7 +54,7 @@ func TestRecordUsage(t *testing.T) {
 		OutputTokens: 500,
 	}
 
-	err := tracker.RecordUsage(record)
+	err = tracker.RecordUsage(record)
 	if err != nil {
 		t.Errorf("RecordUsage failed: %v", err)
 	}
@@ -72,7 +78,10 @@ func TestDailyLimitEnforcement(t *testing.T) {
 		HardStop:        true,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// First record should succeed (cost: 1500/1M * $0.50 = $0.00075)
 	record1 := UsageRecord{
@@ -83,7 +92,7 @@ func TestDailyLimitEnforcement(t *testing.T) {
 		OutputTokens: 500,
 	}
 
-	err := tracker.RecordUsage(record1)
+	err = tracker.RecordUsage(record1)
 	if err != nil {
 		t.Errorf("First record should succeed: %v", err)
 	}
@@ -110,7 +119,10 @@ func TestMonthlyLimitEnforcement(t *testing.T) {
 		HardStop:        true,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	record := UsageRecord{
 		SessionID:    "test-session-1",
@@ -120,7 +132,7 @@ func TestMonthlyLimitEnforcement(t *testing.T) {
 		OutputTokens: 10000,
 	}
 
-	err := tracker.RecordUsage(record)
+	err = tracker.RecordUsage(record)
 	if err == nil {
 		t.Error("Record should fail due to monthly limit")
 	}
@@ -133,10 +145,13 @@ func TestCanStartSession(t *testing.T) {
 		HardStop:        true,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Should be able to start initially
-	err := tracker.CanStartSession()
+	err = tracker.CanStartSession()
 	if err != nil {
 		t.Errorf("Should be able to start session: %v", err)
 	}
@@ -166,7 +181,10 @@ func TestUsageTracking(t *testing.T) {
 		HardStop:        false,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Record multiple sessions
 	records := []UsageRecord{
@@ -211,7 +229,10 @@ func TestUsageTracking(t *testing.T) {
 }
 
 func TestGetCost(t *testing.T) {
-	tracker := NewBudgetTracker(BudgetConfig{}, "")
+	tracker, err := NewBudgetTracker(BudgetConfig{})
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Test default costs
 	gpt35Cost := tracker.GetCost("gpt-3.5-turbo")
@@ -227,7 +248,10 @@ func TestGetCost(t *testing.T) {
 }
 
 func TestSetCost(t *testing.T) {
-	tracker := NewBudgetTracker(BudgetConfig{}, "")
+	tracker, err := NewBudgetTracker(BudgetConfig{})
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Set custom cost
 	tracker.SetCost("custom-model", 5.00)
@@ -245,7 +269,10 @@ func TestReset(t *testing.T) {
 		HardStop:        false,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Record some usage
 	record := UsageRecord{
@@ -286,7 +313,10 @@ func TestGetUsageHistory(t *testing.T) {
 		HardStop:        false,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Record multiple usage events
 	for i := 0; i < 5; i++ {
@@ -323,7 +353,14 @@ func TestSaveAndLoadState(t *testing.T) {
 	// Create temp directory for state
 	tempDir := t.TempDir()
 
-	tracker := NewBudgetTracker(config, tempDir)
+	// Create tracker with persistence enabled
+	tracker, err := NewBudgetTracker(config, WithPersistence(PersistenceConfig{
+		Mode:     PersistenceSync,
+		StateDir: tempDir,
+	}))
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Record some usage
 	record := UsageRecord{
@@ -338,13 +375,24 @@ func TestSaveAndLoadState(t *testing.T) {
 	expectedDailyUsage := tracker.GetDailyUsage()
 
 	// Save state
-	err := tracker.SaveState()
+	err = tracker.SaveState()
 	if err != nil {
 		t.Errorf("SaveState failed: %v", err)
 	}
 
+	// Close first tracker before creating second one
+	tracker.Close()
+
 	// Create new tracker and load state
-	tracker2 := NewBudgetTracker(config, tempDir)
+	tracker2, err := NewBudgetTracker(config, WithPersistence(PersistenceConfig{
+		Mode:     PersistenceSync,
+		StateDir: tempDir,
+	}))
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
+	defer tracker2.Close()
+
 	err = tracker2.LoadState()
 	if err != nil {
 		t.Errorf("LoadState failed: %v", err)
@@ -362,6 +410,39 @@ func TestSaveAndLoadState(t *testing.T) {
 	}
 }
 
+func TestPersistenceDisabled(t *testing.T) {
+	config := BudgetConfig{
+		DailyLimitUSD:   10.00,
+		MonthlyLimitUSD: 100.00,
+	}
+
+	// Create tracker without persistence (default)
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
+
+	// Record some usage
+	record := UsageRecord{
+		SessionID:    "test-session",
+		Provider:     "openai",
+		Model:        "gpt-3.5-turbo",
+		InputTokens:  1000,
+		OutputTokens: 500,
+	}
+
+	err = tracker.RecordUsage(record)
+	if err != nil {
+		t.Errorf("RecordUsage failed: %v", err)
+	}
+
+	// SaveState should fail when persistence is disabled
+	err = tracker.SaveState()
+	if err == nil {
+		t.Error("SaveState should fail when persistence is disabled")
+	}
+}
+
 func TestSaveStateCreatesDirectory(t *testing.T) {
 	config := BudgetConfig{
 		DailyLimitUSD:   10.00,
@@ -372,7 +453,13 @@ func TestSaveStateCreatesDirectory(t *testing.T) {
 	// Use a path that doesn't exist
 	tempDir := filepath.Join(os.TempDir(), "armorclaw-test", time.Now().Format("20060102-150405"))
 
-	tracker := NewBudgetTracker(config, tempDir)
+	tracker, err := NewBudgetTracker(config, WithPersistence(PersistenceConfig{
+		Mode:     PersistenceSync,
+		StateDir: tempDir,
+	}))
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Record some usage
 	record := UsageRecord{
@@ -386,7 +473,7 @@ func TestSaveStateCreatesDirectory(t *testing.T) {
 	tracker.RecordUsage(record)
 
 	// Save should create directory
-	err := tracker.SaveState()
+	err = tracker.SaveState()
 	if err != nil {
 		t.Errorf("SaveState failed: %v", err)
 	}
@@ -396,6 +483,9 @@ func TestSaveStateCreatesDirectory(t *testing.T) {
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		t.Error("State file was not created")
 	}
+
+	// Close tracker before cleanup
+	tracker.Close()
 
 	// Cleanup
 	os.RemoveAll(tempDir)
@@ -411,7 +501,10 @@ func TestCustomProviderCosts(t *testing.T) {
 		},
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	// Check custom cost was applied
 	cost := tracker.GetCost("custom-model")
@@ -433,7 +526,10 @@ func TestConcurrentUsageRecording(t *testing.T) {
 		HardStop:        false,
 	}
 
-	tracker := NewBudgetTracker(config, "")
+	tracker, err := NewBudgetTracker(config)
+	if err != nil {
+		t.Fatalf("NewBudgetTracker returned error: %v", err)
+	}
 
 	done := make(chan bool)
 
