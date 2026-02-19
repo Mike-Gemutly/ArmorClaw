@@ -1,0 +1,68 @@
+# Matrix Application Service Registration
+# ArmorClaw Bridge AppService (Step 2 Preparation)
+#
+# This file is used to register the Bridge as an Application Service
+# with the Matrix Homeserver. The Bridge will be able to create
+# "ghost users" for external platform users (Slack, Discord, etc.)
+#
+# Installation:
+#   1. Copy this file to the Synapse data directory
+#   2. Add to homeserver.yaml:
+#      app_service_config_files:
+#        - /data/appservices/bridge.yaml
+#   3. Restart Synapse
+
+id: "armorclaw-bridge"
+url: "http://bridge:9999"
+as_token: "${AS_TOKEN}"
+hs_token: "${HS_TOKEN}"
+sender_localpart: "_bridge"
+
+# Namespaces for ghost users
+namespaces:
+  users:
+    # Slack users: @slack_<id>:armorclaw.com
+    - exclusive: true
+      regex: "@slack_.+:${MATRIX_SERVER_NAME}"
+    # Discord users: @discord_<id>:armorclaw.com
+    - exclusive: true
+      regex: "@discord_.+:${MATRIX_SERVER_NAME}"
+    # Teams users: @teams_<id>:armorclaw.com
+    - exclusive: true
+      regex: "@teams_.+:${MATRIX_SERVER_NAME}"
+    # WhatsApp users: @whatsapp_<id>:armorclaw.com
+    - exclusive: true
+      regex: "@whatsapp_.+:${MATRIX_SERVER_NAME}"
+    # Bridge bot
+    - exclusive: true
+      regex: "@bridge:${MATRIX_SERVER_NAME}"
+
+  # Rooms created by the bridge
+  rooms:
+    - exclusive: false
+      regex: "#_bridge_.+:${MATRIX_SERVER_NAME}"
+
+  # Aliases for bridged channels
+  aliases:
+    # Slack channels: #slack_<channel>:armorclaw.com
+    - exclusive: true
+      regex: "#slack_.+:${MATRIX_SERVER_NAME}"
+    # Discord channels: #discord_<channel>:armorclaw.com
+    - exclusive: true
+      regex: "#discord_.+:${MATRIX_SERVER_NAME}"
+    # Teams channels: #teams_<channel>:armorclaw.com
+    - exclusive: true
+      regex: "#teams_.+:${MATRIX_SERVER_NAME}"
+    # WhatsApp groups: #whatsapp_<group>:armorclaw.com
+    - exclusive: true
+      regex: "#whatsapp_.+:${MATRIX_SERVER_NAME}"
+
+# Rate limiting exemption
+rate_limited: false
+
+# Protocol for third-party networks (for future Matrix 1.7+)
+protocols:
+  - slack
+  - discord
+  - teams
+  - whatsapp

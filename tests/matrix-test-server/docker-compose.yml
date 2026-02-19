@@ -1,0 +1,73 @@
+# ArmorClaw Matrix Test Server
+#
+# Docker Compose configuration for running a local Matrix server
+# for E2EE cross-client testing.
+#
+# Usage:
+#   docker-compose up -d
+#   # Wait for server to start
+#   # Access at http://localhost:8008
+#
+# Based on Conduit (lightweight Matrix server)
+
+version: '3.8'
+
+services:
+  # Conduit Matrix Server
+  conduit:
+    image: girlbossceo/conduit:latest
+    container_name: armorclaw-conduit
+    restart: unless-stopped
+    ports:
+      - "6167:6167"  # Matrix federation
+      - "8008:8008"  # Client API
+    volumes:
+      - conduit_data:/data
+      - ./conduit.toml:/data/conduit.toml:ro
+    environment:
+      - CONDUIT_CONFIG=/data/conduit.toml
+    networks:
+      - matrix_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/_matrix/client/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # TURN Server (for VoIP)
+  coturn:
+    image: coturn/coturn:latest
+    container_name: armorclaw-coturn
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49160
+      - --max-port=49200
+      - --realm=armorclaw.test
+      - --use-auth-secret
+      - --static-auth-secret=armorclaw-test-turn-secret
+    volumes:
+      - turn_data:/var/lib/turn
+
+  # Well-Known Server (for federation discovery)
+  wellknown:
+    image: nginx:alpine
+    container_name: armorclaw-wellknown
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./wellknown:/usr/share/nginx/html/.well-known:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - matrix_net
+
+volumes:
+  conduit_data:
+  turn_data:
+
+networks:
+  matrix_net:
+    driver: bridge

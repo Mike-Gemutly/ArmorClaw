@@ -1,0 +1,308 @@
+# Docker Compose: ArmorClaw Matrix Homeserver Stack (Production)
+# Step 1: Standard Matrix Infrastructure
+# Supports both Conduit (lightweight) and Synapse (full-featured)
+
+version: "3.8"
+
+# ========================================
+# COMMON CONFIGURATION
+# ========================================
+x-common-env: &common-env
+  TZ: UTC
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+x-security-defaults: &security-defaults
+  no_new_privileges: true
+  read_only: false  # Databases need write access
+
+services:
+  # ========================================
+  # PostgreSQL Database (Shared)
+  # ========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: armorclaw-postgres
+    restart: unless-stopped
+
+    environment:
+      <<: *common-env
+      POSTGRES_USER: ${POSTGRES_USER:-armorclaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: ${POSTGRES_DB:-matrix}
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./configs/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./configs/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+    networks:
+      - matrix-internal
+
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-armorclaw} -d ${POSTGRES_DB:-matrix}"]
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    security_opt:
+      <<: *security-defaults
+
+  # ========================================
+  # Matrix Conduit (Lightweight Option)
+  # ~50MB RAM, Rust-based, Good for small/medium deployments
+  # ========================================
+  conduit:
+    image: matrixconduit/matrix-conduit:latest
+    container_name: armorclaw-conduit
+    restart: unless-stopped
+    profiles:
+      - conduit
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      <<: *common-env
+      # Server configuration
+      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:?MATRIX_SERVER_NAME required}"
+      CONDUIT_ADDRESS: "0.0.0.0"
+      CONDUIT_PORT: "6167"
+
+      # PostgreSQL backend (production)
+      CONDUIT_DATABASE_BACKEND: "postgresql"
+      CONDUIT_DATABASE_PATH: "postgresql://${POSTGRES_USER:-armorclaw}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-matrix}"
+
+      # Security - E2EE enforced by default
+      CONDUIT_ALLOW_ENCRYPTION: "true"
+      CONDUIT_ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-false}"
+      CONDUIT_REGISTRATION_TOKEN: "${REGISTRATION_TOKEN:-}"
+      CONDUIT_ALLOW_FEDERATION: "${ALLOW_FEDERATION:-true}"
+      CONDUIT_ALLOW_PUBLIC_ROOMS: "${ALLOW_PUBLIC_ROOMS:-true}"
+      CONDUIT_ALLOW_CHECK_FOR_UPDATES: "false"  # Privacy
+
+      # Performance
+      CONDUIT_MAX_REQUEST_SIZE: "52428800"  # 50 MB
+      CONDUIT_MAX_CONCURRENT_REQUESTS: "200"
+      CONDUIT_MAX_FETCH_PREVIOUS_EVENTS: "100"
+
+      # Logging
+      CONDUIT_LOG: "${LOG_LEVEL:-warn}"
+
+    volumes:
+      - conduit_media:/var/lib/matrix-conduit/media
+
+    networks:
+      - matrix-internal
+      - matrix-public
+
+    ports:
+      - "6167:6167"
+
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:6167/_matrix/client/versions"]
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    security_opt:
+      <<: *security-defaults
+
+  # ========================================
+  # Matrix Synapse (Full-Featured Option)
+  # ~500MB RAM, Python-based, Full Matrix spec
+  # ========================================
+  synapse:
+    image: matrixorg/synapse:latest
+    container_name: armorclaw-synapse
+    restart: unless-stopped
+    profiles:
+      - synapse
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      <<: *common-env
+      SYNAPSE_SERVER_NAME: "${MATRIX_SERVER_NAME:?MATRIX_SERVER_NAME required}"
+      SYNAPSE_REPORT_STATS: "no"
+      SYNAPSE_LOG_LEVEL: "${LOG_LEVEL:-WARNING}"
+
+      # PostgreSQL connection
+      POSTGRES_DB: ${POSTGRES_DB:-matrix}
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-armorclaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+
+    volumes:
+      - synapse_data:/data
+      - ./configs/synapse/homeserver.yaml:/data/homeserver.yaml:ro
+      - ./configs/synapse/log.config:/data/log.config:ro
+
+    networks:
+      - matrix-internal
+      - matrix-public
+
+    ports:
+      - "8008:8008"   # Client API
+      - "8448:8448"   # Federation
+
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:8008/_matrix/client/versions"]
+
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+    security_opt:
+      <<: *security-defaults
+
+  # ========================================
+  # Nginx Reverse Proxy (TLS Termination)
+  # ========================================
+  nginx:
+    image: nginx:alpine
+    container_name: armorclaw-nginx
+    restart: unless-stopped
+
+    depends_on:
+      - conduit
+      - synapse
+
+    volumes:
+      - ./configs/nginx/matrix.conf:/etc/nginx/nginx.conf:ro
+      - ./configs/nginx/ssl:/etc/nginx/ssl:ro
+      - ./configs/nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_data:/var/www/certbot:ro
+      - certbot_etc:/etc/letsencrypt:ro
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    networks:
+      - matrix-public
+
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
+
+    security_opt:
+      <<: *security-defaults
+
+  # ========================================
+  # Certbot (Let's Encrypt)
+  # ========================================
+  certbot:
+    image: certbot/certbot:latest
+    container_name: armorclaw-certbot
+    restart: unless-stopped
+
+    volumes:
+      - certbot_data:/var/www/certbot
+      - certbot_etc:/etc/letsencrypt
+      - certbot_log:/var/log/letsencrypt
+
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+    networks:
+      - matrix-public
+
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
+  # ========================================
+  # Coturn STUN/TURN Server
+  # ========================================
+  coturn:
+    image: coturn/coturn:latest
+    container_name: armorclaw-coturn
+    restart: unless-stopped
+
+    network_mode: "host"
+
+    volumes:
+      - ./configs/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - certbot_etc:/etc/letsencrypt:ro
+
+    command:
+      - --log-file=stdout
+      - -n
+      - --no-cli
+      - --realm=${MATRIX_SERVER_NAME:?MATRIX_SERVER_NAME required}
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?TURN_SECRET required}
+
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  matrix-internal:
+    driver: bridge
+    internal: true  # No external access
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+  matrix-public:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+
+# ========================================
+# Volumes
+# ========================================
+volumes:
+  postgres_data:
+    driver: local
+  conduit_media:
+    driver: local
+  synapse_data:
+    driver: local
+  certbot_data:
+    driver: local
+  certbot_etc:
+    driver: local
+  certbot_log:
+    driver: local

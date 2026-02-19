@@ -1,0 +1,129 @@
+# Sygnal Configuration for ArmorClaw Push Notifications
+# https://github.com/matrix-org/sygnal
+
+# Database configuration (SQLite for simplicity)
+db:
+  name: /data/sygnal.db
+
+# HTTP server configuration
+http:
+  bind: '0.0.0.0:5000'
+  # TLS configuration (optional)
+  # tls:
+  #   cert: /etc/sygnal/cert.pem
+  #   key: /etc/sygnal/key.pem
+
+# Logging configuration
+log:
+  setup:
+    version: 1
+    formatters:
+      precise:
+        format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: precise
+        stream: 'ext://sys.stdout'
+    loggers:
+      sygnal:
+        handlers: [console]
+        propagate: false
+        level: INFO
+    root:
+      handlers: [console]
+      level: INFO
+
+# Push gateway configuration
+# This is the endpoint where Matrix homeservers send push notifications
+push:
+  # FCM (Firebase Cloud Messaging) configuration
+  fcm:
+    # FCM project ID
+    project_id: armorclaw-push
+    # Service account credentials file (JSON)
+    service_account_file: /etc/sygnal/fcm-credentials.json
+    # Maximum retries for failed pushes
+    max_retries: 3
+    # Timeout for API calls (seconds)
+    timeout: 30
+    # Priority for notifications (normal or high)
+    default_priority: high
+
+  # APNS (Apple Push Notification Service) configuration
+  apns:
+    # Certificate type: 'cert' or 'token'
+    certfile: /etc/sygnal/apns_cert.pem
+    # or use token-based authentication:
+    # cert_key: /etc/sygnal/AuthKey.p8
+    # cert_topic: com.armorclaw.bridge
+    # key_id: YOUR_KEY_ID
+    # team_id: YOUR_TEAM_ID
+    # Environment: 'production' or 'sandbox'
+    environment: production
+    # Topic (bundle ID)
+    topic: com.armorclaw.bridge
+    # Maximum retries
+    max_retries: 3
+
+  # Web Push configuration
+  webpush:
+    # VAPID subject (contact email or URL)
+    subject: mailto:admin@armorclaw.com
+    # VAPID private key (base64-encoded)
+    # Generate with: npx web-push generate-vapid-keys
+    private_key: YOUR_VAPID_PRIVATE_KEY
+    # VAPID public key (base64-encoded)
+    public_key: YOUR_VAPID_PUBLIC_KEY
+
+# Application definitions
+# These map Matrix app_ids to push configurations
+apps:
+  # iOS app
+  - name: com.armorclaw.ios
+    type: apns
+    certfile: /etc/sygnal/ios_push_cert.pem
+    topic: com.armorclaw.ios
+    environment: production
+
+  # Android app
+  - name: com.armorclaw.android
+    type: gcm
+    api_version: v1
+    project_id: armorclaw-android
+    service_account_file: /etc/sygnal/android-fcm-credentials.json
+
+  # Web app
+  - name: com.armorclaw.web
+    type: webpush
+    vapid:
+      subject: mailto:admin@armorclaw.com
+      private_key: YOUR_VAPID_PRIVATE_KEY
+      public_key: YOUR_VAPID_PUBLIC_KEY
+
+# Statsd metrics (optional)
+# statsd:
+#   host: localhost
+#   port: 8125
+#   prefix: sygnal
+
+# Prometheus metrics endpoint (optional)
+# prometheus:
+#   bind: '0.0.0.0:9091'
+#   path: /metrics
+
+# Rate limiting
+rate_limit:
+  # Maximum notifications per device per minute
+  per_device_per_minute: 60
+  # Maximum notifications per user per minute
+  per_user_per_minute: 600
+  # Burst multiplier
+  burst_multiplier: 2
+
+# Health check endpoint
+health:
+  # Path for health checks
+  path: /health
+  # Cache duration for health status
+  cache_duration_seconds: 10

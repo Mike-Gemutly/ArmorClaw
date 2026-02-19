@@ -1,0 +1,59 @@
+# Conduit Configuration for ArmorClaw Testing
+#
+# This is a minimal configuration for local testing.
+# NOT for production use!
+
+[global]
+# Server name (domain)
+server_name = "armorclaw.test"
+
+# Database path
+database_path = "/data/conduit_db"
+
+# Database backend: "rocksdb" or "sqlite"
+database_backend = "sqlite"
+
+# Port to listen on
+port = 6167
+
+# Address to listen on (0.0.0.0 for all interfaces)
+address = "0.0.0.0"
+
+# Maximum request size (bytes)
+max_request_size = 20_000_000
+
+# Whether to allow registration (true for testing)
+allow_registration = true
+
+# Registration token (set to allow registration with token)
+# registration_token = "armorclaw-test-token"
+
+# Whether to allow federating with other servers
+allow_federation = false
+
+# Whether to enable the homeserver's public room directory
+allow_public_room_directory_over_federation = false
+
+# Whether to allow public room directory without authentication
+allow_public_room_directory_without_auth = true
+
+# Whether to allow device name lookup
+allow_device_name_lookup = true
+
+# Log level
+log = "info"
+
+# OpenID Connect (disabled for local testing)
+trusted_servers = ["matrix.org"]
+
+# TURN server configuration
+[global.turn]
+turn_uris = ["turn:localhost:3478?transport=udp", "turn:localhost:3478?transport=tcp"]
+turn_secret = "armorclaw-test-turn-secret"
+turn_username = "armorclaw"
+turn_password = "test-password"
+
+# CORS settings for web clients
+[global.well_known]
+server = "http://localhost:8008"
+client = "http://localhost:8008"
