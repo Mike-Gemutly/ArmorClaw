@@ -1,9 +1,9 @@
 # ArmorClaw Architecture Review - Complete
 
-> **Date:** 2026-02-18
-> **Version:** 3.5.0
-> **Milestone:** Phase 4 Complete - Enterprise Ready + Matrix Infrastructure + AppService + Enforcement + Push
-> **Status:** PRODUCTION READY - Full Enterprise Feature Set + Bug Fixes + Steps 1-4 Complete
+> **Date:** 2026-02-19
+> **Version:** 4.0.0
+> **Milestone:** Phase 5 Complete - Full Zero-Trust Integration + Audit Hardening
+> **Status:** PRODUCTION READY - Enterprise Security with Zero-Trust Enforcement
 
 ---
 
@@ -1881,7 +1881,7 @@ CHAIN 5: Monitoring & Alerts
 
 ## Conclusion
 
-ArmorClaw has achieved complete production readiness with all 11 identified user journey gaps resolved, Phase 4 Enterprise features implemented, **5 critical bugs fixed** (v3.1.0), **Matrix Infrastructure deployed** (v3.2.0 - Step 1), **Bridge AppService implemented** (v3.3.0 - Step 2), **Enterprise Enforcement Layer complete** (v3.4.0 - Step 3), and **Push Notification Gateway operational** (v3.5.0 - Step 4). The system is enterprise-ready with:
+ArmorClaw has achieved complete production readiness with all 11 identified user journey gaps resolved, Phase 4 Enterprise features implemented, **5 critical bugs fixed** (v3.1.0), **Matrix Infrastructure deployed** (v3.2.0 - Step 1), **Bridge AppService implemented** (v3.3.0 - Step 2), **Enterprise Enforcement Layer complete** (v3.4.0 - Step 3), **Push Notification Gateway operational** (v3.5.0 - Step 4), and **Zero-Trust Hardening complete** (v4.0.0 - Step 5). The system is enterprise-ready with:
 
 ### Core Capabilities (Phase 1-3)
 1. **Comprehensive Guides** - From getting started to advanced security
@@ -1938,18 +1938,158 @@ ArmorClaw has achieved complete production readiness with all 11 identified user
 40. **Sygnal Integration** - Matrix push gateway client
 41. **15 Tests** - Full push notification coverage
 
+### Zero-Trust Hardening (v4.0.0 - Step 5 Complete)
+42. **ZeroTrustManager** - Device fingerprinting and trust scoring
+43. **TrustVerifier** - Matrix adapter integration with event verification
+44. **TrustMiddleware** - Operation-level enforcement with policies
+45. **CriticalOperationLogger** - Centralized audit logging helper
+46. **TamperEvidentLog** - Hash-chain integrity verification
+47. **Device Fingerprinting** - Platform, user agent, canvas, WebGL tracking
+48. **Anomaly Detection** - IP changes, impossible travel, sensitive access
+49. **Session Lockout** - Automatic lockout after failed verification attempts
+50. **Default Policies** - Pre-configured trust requirements for all operations
+51. **43 Tests** - Full trust (15) and audit (28) coverage
+
 ### Build Artifacts
 - **armorclaw-bridge.exe**: 31MB (static binary, Windows)
 - **license-server.exe**: 10MB (PostgreSQL backend)
-- **Test Coverage**: 193+ tests passing across all packages
+- **Test Coverage**: 236+ tests passing across all packages
 
-### Next Steps (Step 5)
-- **Step 5**: Audit & Zero-Trust hardening
+---
+
+## Phase 5: Audit & Zero-Trust Hardening (v4.0.0): 2026-02-19
+
+### Overview
+Completed comprehensive integration of audit logging and zero-trust verification across all critical components.
+
+**Goal:** Establish enterprise-grade security with continuous verification and complete audit trails.
+
+### Components Created
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **ZeroTrustManager** | `bridge/pkg/trust/zero_trust.go` | Core trust verification engine |
+| **Device Fingerprinting** | `bridge/pkg/trust/device.go` | Device identification and tracking |
+| **Trust Middleware** | `bridge/pkg/trust/middleware.go` | Operation-level enforcement |
+| **Trust Integration** | `bridge/internal/adapter/trust_integration.go` | Matrix adapter integration |
+| **Tamper-Evident Log** | `bridge/pkg/audit/tamper_evident.go` | Hash-chain audit logging |
+| **Compliance Reporting** | `bridge/pkg/audit/compliance.go` | 90-day retention, exports |
+| **Critical Ops Logger** | `bridge/pkg/audit/audit_helper.go` | Centralized logging helper |
+
+### Zero-Trust Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    ZERO-TRUST VERIFICATION FLOW                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                      │
+│   │   Matrix    │     │    RPC      │     │   Docker    │                      │
+│   │   Event     │     │   Request   │     │   Command   │                      │
+│   └──────┬──────┘     └──────┬──────┘     └──────┬──────┘                      │
+│          │                   │                   │                              │
+│          └───────────────────┼───────────────────┘                              │
+│                              │                                                   │
+│                              ▼                                                   │
+│   ┌───────────────────────────────────────────────────────────────────┐         │
+│   │                    TRUST MIDDLEWARE                                │         │
+│   │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐   │         │
+│   │  │  Get Policy     │→│ Verify Request  │→│ Check Anomalies │   │         │
+│   │  │  (by operation) │  │ (trust level)   │  │ (risk score)    │   │         │
+│   │  └─────────────────┘  └─────────────────┘  └─────────────────┘   │         │
+│   │                              │                   │                │         │
+│   │                              ▼                   ▼                │         │
+│   │                    ┌───────────────────────────────────┐         │         │
+│   │                    │         ENFORCEMENT RESULT         │         │         │
+│   │                    │  ├─ Allowed/Denied                 │         │         │
+│   │                    │  ├─ Trust Level (0-4)              │         │         │
+│   │                    │  ├─ Risk Score (0-100)             │         │         │
+│   │                    │  ├─ Required Actions               │         │         │
+│   │                    │  └─ Anomaly Flags                  │         │         │
+│   │                    └───────────────────────────────────┘         │         │
+│   └───────────────────────────────────────────────────────────────────┘         │
+│                              │                                                   │
+│                              ▼                                                   │
+│   ┌───────────────────────────────────────────────────────────────────┐         │
+│   │                    AUDIT LOGGING                                   │         │
+│   │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐   │         │
+│   │  │ Tamper-Evident  │  │ Critical Ops    │  │ Compliance      │   │         │
+│   │  │ (Hash Chain)    │  │ (Centralized)   │  │ (90-day Ret.)   │   │         │
+│   │  └─────────────────┘  └─────────────────┘  └─────────────────┘   │         │
+│   └───────────────────────────────────────────────────────────────────┘         │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Trust Score Levels
+
+| Level | Name | Description | Risk Score |
+|-------|------|-------------|------------|
+| 0 | Untrusted | Blocked by default | 60-100 |
+| 1 | Low | New/unverified devices | 40-59 |
+| 2 | Medium | Known devices, normal usage | 20-39 |
+| 3 | High | Verified devices, consistent behavior | 0-19 |
+| 4 | Verified | MFA + hardware key verified | 0 |
+
+### Default Enforcement Policies
+
+| Operation | Min Trust | Max Risk | MFA Required | Verified Device |
+|-----------|-----------|----------|--------------|-----------------|
+| container_create | Medium | 40 | No | No |
+| container_exec | High | 30 | No | Yes |
+| secret_access | High | 25 | Yes | Yes |
+| key_management | Verified | 20 | Yes | Yes |
+| config_change | High | 30 | No | Yes |
+| admin_access | Verified | 15 | Yes | Yes |
+| message_send | Low | 60 | No | No |
+| message_receive | Low | 70 | No | No |
+
+### Anomaly Detection
+
+| Flag | Trigger | Risk Impact |
+|------|---------|-------------|
+| ip_change | IP differs from session | +20 risk |
+| impossible_travel | Location change too fast | +25 risk |
+| new_device_sensitive_access | New device accessing admin | +15 risk |
+| multiple_failed_verifications | 3+ failed attempts | +25 risk |
+
+### Audit Log Categories
+
+| Category | Events | Retention |
+|----------|--------|-----------|
+| container_lifecycle | start, stop, error | 90 days |
+| key_access | access, create, delete | 90 days |
+| secret_management | injection, cleanup | 90 days |
+| configuration | changes | 90 days |
+| authentication | login, logout, failure | 90 days |
+| trust_verification | verify, deny, lockout | 90 days |
+| phi_access | read, write | 6 years (HIPAA) |
+| budget | warnings, exceeded | 30 days |
+
+### Integration Points
+
+| Component | Trust Integration | Audit Logging |
+|-----------|-------------------|---------------|
+| Matrix Adapter | ✅ Event verification | ✅ Trust decisions |
+| Docker Client | - | ✅ Container lifecycle |
+| Keystore | - | ✅ Key access |
+| Secrets Injector | - | ✅ Injection events |
+| RPC Server | ✅ Middleware | ✅ Enforcement decisions |
+
+### Test Summary
+
+| Package | Tests | Status |
+|---------|-------|--------|
+| `pkg/trust` | 15 | ✅ PASS |
+| `pkg/audit` | 28 | ✅ PASS |
+| **Phase 5 Total** | **43** | **✅ ALL PASS** |
+
+---
 
 The documentation index (`docs/index.md`) version 1.8.0 provides navigation to all resources.
 
 ---
 
-**Review Last Updated:** 2026-02-18
-**Status:** ✅ PHASE 4 COMPLETE + STEPS 1-4 (v3.5.0)
-**Next Milestone:** Step 5 - Audit & Zero-Trust Hardening
+**Review Last Updated:** 2026-02-19
+**Status:** ✅ PHASE 5 COMPLETE (v4.0.0)
+**Next Milestone:** Production Deployment - Infrastructure Testing

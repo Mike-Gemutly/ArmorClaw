@@ -1,8 +1,8 @@
 # ArmorClaw Documentation Index
 
-> **Last Updated:** 2026-02-18
-> **Version:** 1.9.0
-> **Phase:** Documentation Complete ✅ | Matrix Infrastructure (Step 1) ✅
+> **Last Updated:** 2026-02-19
+> **Version:** 2.0.0
+> **Phase:** Phase 5 Complete ✅ | Zero-Trust Hardening ✅ | Enterprise Ready ✅
 
 ---
 
