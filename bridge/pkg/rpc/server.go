@@ -19,13 +19,17 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/internal/adapter"
+	"github.com/armorclaw/bridge/pkg/appservice"
 	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/docker"
 	errsys "github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/keystore"
+	"github.com/armorclaw/bridge/pkg/license"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/recovery"
 	"github.com/armorclaw/bridge/pkg/secrets"
+	"github.com/armorclaw/bridge/pkg/plugin"
+	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 	pionwebrtc "github.com/pion/webrtc/v3"
@@ -174,6 +178,19 @@ type Server struct {
 
 	// Audit logging
 	auditLog *audit.AuditLog
+
+	// Trust enforcement middleware
+	trustMiddleware *trust.TrustMiddleware
+
+	// Plugin manager for external adapters
+	pluginMgr *plugin.PluginManager
+
+	// License client for premium feature validation
+	licenseClient *license.Client
+
+	// AppService components for SDTW bridging
+	appService *appservice.AppService
+	bridgeMgr  *appservice.BridgeManager
 }
 
 // ContainerInfo holds information about a running container
@@ -213,6 +230,17 @@ type Config struct {
 
 	// Audit logging
 	AuditLog *audit.AuditLog
+
+	// Plugin configuration
+	PluginDir string
+
+	// License configuration
+	LicenseKey     string
+	LicenseServer  string
+	OfflineMode    bool
+
+	// AppService configuration (for SDTW bridging)
+	AppServiceConfig *appservice.Config
 }
 
 // New creates a new JSON-RPC server
@@ -272,7 +300,27 @@ func New(cfg Config) (*Server, error) {
 		errorSystem: cfg.ErrorSystem,
 		// Audit logging
 		auditLog: cfg.AuditLog,
+		// Plugin manager
+		pluginMgr: plugin.NewPluginManager(plugin.ManagerConfig{
+			PluginDir:      cfg.PluginDir,
+			AutoDiscover:   true,
+			SearchPatterns: []string{"*.so", "*.plugin"},
+		}),
 	}
+
+	// Initialize license client
+	licenseClient, err := license.NewClient(license.ClientConfig{
+		LicenseKey:  cfg.LicenseKey,
+		ServerURL:   cfg.LicenseServer,
+		OfflineMode: cfg.OfflineMode,
+		Version:     "1.0.0",
+		Logger:      logger.Global().WithComponent("license").Logger,
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create license client: %w", err)
+	}
+	server.licenseClient = licenseClient
 
 	// Initialize Matrix adapter if homeserver is configured
 	if cfg.MatrixHomeserver != "" {
@@ -364,6 +412,47 @@ func (s *Server) Stop() error {
 // This allows other components (like event bus) to wire up Matrix event publishing
 func (s *Server) GetMatrixAdapter() interface{} {
 	return s.matrix
+}
+
+// SetTrustMiddleware sets the trust enforcement middleware
+func (s *Server) SetTrustMiddleware(middleware *trust.TrustMiddleware) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trustMiddleware = middleware
+}
+
+// GetTrustMiddleware returns the trust middleware
+func (s *Server) GetTrustMiddleware() *trust.TrustMiddleware {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.trustMiddleware
+}
+
+// enforceTrust performs trust enforcement for an operation
+// Returns nil if allowed, error with reason if denied
+func (s *Server) enforceTrust(ctx context.Context, operation, userID, ipAddress string, fingerprint trust.DeviceFingerprintInput) error {
+	s.mu.RLock()
+	middleware := s.trustMiddleware
+	s.mu.RUnlock()
+
+	if middleware == nil {
+		// No middleware configured, allow all
+		return nil
+	}
+
+	result, err := middleware.Enforce(ctx, operation, &trust.ZeroTrustRequest{
+		UserID:            userID,
+		IPAddress:         ipAddress,
+		DeviceFingerprint: fingerprint,
+		Action:            operation,
+	})
+	if err != nil {
+		return fmt.Errorf("trust verification error: %w", err)
+	}
+	if !result.Allowed {
+		return fmt.Errorf("trust denied: %s", result.DenialReason)
+	}
+	return nil
 }
 
 // acceptConnections accepts incoming connections
@@ -514,6 +603,78 @@ func (s *Server) handleRequest(req *Request) *Response {
 	case "platform.test":
 		return s.handlePlatformTest(req)
 
+	// Device registration methods (ArmorTerminal pairing)
+	case "device.register":
+		return s.handleDeviceRegister(req)
+	case "device.wait_for_approval":
+		return s.handleDeviceWaitForApproval(req)
+	case "device.list":
+		return s.handleDeviceList(req)
+	case "device.approve":
+		return s.handleDeviceApprove(req)
+	case "device.reject":
+		return s.handleDeviceReject(req)
+
+	// Push notification methods
+	case "push.register_token":
+		return s.handlePushRegisterToken(req)
+	case "push.unregister_token":
+		return s.handlePushUnregisterToken(req)
+
+	// Bridge discovery methods
+	case "bridge.discover":
+		return s.handleBridgeDiscover(req)
+	case "bridge.get_local_info":
+		return s.handleBridgeGetLocalInfo(req)
+
+	// Plugin methods
+	case "plugin.discover":
+		return s.handlePluginDiscover(req)
+	case "plugin.load":
+		return s.handlePluginLoad(req)
+	case "plugin.initialize":
+		return s.handlePluginInitialize(req)
+	case "plugin.start":
+		return s.handlePluginStart(req)
+	case "plugin.stop":
+		return s.handlePluginStop(req)
+	case "plugin.unload":
+		return s.handlePluginUnload(req)
+	case "plugin.list":
+		return s.handlePluginList(req)
+	case "plugin.status":
+		return s.handlePluginStatus(req)
+	case "plugin.health":
+		return s.handlePluginHealth(req)
+
+	// License methods
+	case "license.validate":
+		return s.handleLicenseValidate(req)
+	case "license.status":
+		return s.handleLicenseStatus(req)
+	case "license.features":
+		return s.handleLicenseFeatures(req)
+	case "license.set_key":
+		return s.handleLicenseSetKey(req)
+
+	// Bridge management methods (AppService mode)
+	case "bridge.start":
+		return s.handleBridgeStart(req)
+	case "bridge.stop":
+		return s.handleBridgeStop(req)
+	case "bridge.status":
+		return s.handleBridgeStatus(req)
+	case "bridge.channel":
+		return s.handleBridgeChannel(req)
+	case "bridge.unbridge":
+		return s.handleUnbridgeChannel(req)
+	case "bridge.list_channels":
+		return s.handleListBridgedChannels(req)
+	case "bridge.list_ghost_users":
+		return s.handleGhostUserList(req)
+	case "appservice.status":
+		return s.handleAppServiceStatus(req)
+
 	default:
 		return &Response{
 			JSONRPC: "2.0",
@@ -524,6 +685,43 @@ func (s *Server) handleRequest(req *Request) *Response {
 			},
 		}
 	}
+}
+
+// HandleRequest is the public entry point for handling JSON-RPC requests.
+// It accepts a JSON-encoded request body and returns a JSON-encoded response.
+// This is used by the HTTP server for remote bridge access.
+func (s *Server) HandleRequest(ctx context.Context, body []byte) []byte {
+	var req Request
+	if err := json.Unmarshal(body, &req); err != nil {
+		response := &Response{
+			JSONRPC: "2.0",
+			ID:      nil,
+			Error: &ErrorObj{
+				Code:    ParseError,
+				Message: "parse error: " + err.Error(),
+			},
+		}
+		data, _ := json.Marshal(response)
+		return data
+	}
+
+	resp := s.handleRequest(&req)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		// If we can't marshal the response, return a generic error
+		errorResp := &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to marshal response",
+			},
+		}
+		data, _ := json.Marshal(errorResp)
+		return data
+	}
+
+	return data
 }
 
 // generateID generates a random ID string
@@ -1089,6 +1287,8 @@ func (s *Server) handleMatrixReceive(req *Request) *Response {
 }
 
 // handleMatrixStatus returns Matrix connection status
+// DEPRECATED: Users should connect directly to the Matrix homeserver.
+// This method is kept for backward compatibility.
 func (s *Server) handleMatrixStatus(req *Request) *Response {
 	if s.matrix == nil {
 		return &Response{
@@ -1097,6 +1297,8 @@ func (s *Server) handleMatrixStatus(req *Request) *Response {
 			Result: map[string]interface{}{
 				"enabled": false,
 				"status":  "not_configured",
+				"deprecated": true,
+				"migration_note": "Use AppService bridge methods (bridge.*) for SDTW bridging",
 			},
 		}
 	}
@@ -1117,6 +1319,8 @@ func (s *Server) handleMatrixStatus(req *Request) *Response {
 			"status":    status,
 			"user_id":   userID,
 			"logged_in": token != "",
+			"deprecated": true,
+			"migration_note": "Users should connect directly to the Matrix homeserver for chat. Use bridge.* methods for SDTW platform bridging.",
 		},
 	}
 }
@@ -3160,6 +3364,1282 @@ func (s *Server) handleResolveError(req *Request) *Response {
 			"success":   true,
 			"trace_id":  params.TraceID,
 			"timestamp": time.Now().Format(time.RFC3339),
+		},
+	}
+}
+
+// ============================================================================
+// Device Registration Methods (ArmorTerminal pairing)
+// ============================================================================
+
+// Device registration params
+type DeviceRegisterParams struct {
+	PairingToken string            `json:"pairing_token"`
+	DeviceName   string            `json:"device_name"`
+	DeviceType   string            `json:"device_type"`
+	PublicKey    string            `json:"public_key"`
+	FCMToken     string            `json:"fcm_token,omitempty"`
+	UserAgent    string            `json:"user_agent"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+// Pending device registrations
+var (
+	pendingDevices   = make(map[string]*PendingDevice)
+	pairingTokens    = make(map[string]*PairingToken)
+	pushTokens       = make(map[string]string) // device_id -> fcm_token
+	pendingDevicesMu sync.RWMutex
+)
+
+// PendingDevice represents a device awaiting approval
+type PendingDevice struct {
+	ID           string
+	Name         string
+	Type         string
+	PublicKey    string
+	UserAgent    string
+	Status       string // "pending", "approved", "rejected"
+	CreatedAt    time.Time
+	ApprovedAt   *time.Time
+	RejectedAt   *time.Time
+	RejectionReason string
+	SessionToken string
+}
+
+// PairingToken represents a pairing token for device registration
+type PairingToken struct {
+	Token           string
+	UserID          string
+	UserDisplayName string
+	BridgeID        string
+	CreatedAt       time.Time
+	ExpiresAt       time.Time
+}
+
+// handleDeviceRegister handles device.register RPC method
+func (s *Server) handleDeviceRegister(req *Request) *Response {
+	var params DeviceRegisterParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid params: %v", err),
+			},
+		}
+	}
+
+	// Validate required fields
+	if params.PairingToken == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "pairing_token is required",
+			},
+		}
+	}
+	if params.DeviceName == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device_name is required",
+			},
+		}
+	}
+	if params.PublicKey == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "public_key is required",
+			},
+		}
+	}
+
+	// Validate pairing token
+	pendingDevicesMu.Lock()
+	defer pendingDevicesMu.Unlock()
+
+	tokenInfo, exists := pairingTokens[params.PairingToken]
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid pairing token",
+			},
+		}
+	}
+
+	// Check token expiration
+	if time.Now().After(tokenInfo.ExpiresAt) {
+		delete(pairingTokens, params.PairingToken)
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "pairing token has expired",
+			},
+		}
+	}
+
+	// Create device
+	deviceID := generateID()
+	sessionToken := deviceID + "_" + generateID()
+
+	device := &PendingDevice{
+		ID:           deviceID,
+		Name:         params.DeviceName,
+		Type:         params.DeviceType,
+		PublicKey:    params.PublicKey,
+		UserAgent:    params.UserAgent,
+		Status:       "pending",
+		CreatedAt:    time.Now(),
+		SessionToken: sessionToken,
+	}
+
+	pendingDevices[deviceID] = device
+
+	// Store FCM token if provided
+	if params.FCMToken != "" {
+		pushTokens[deviceID] = params.FCMToken
+	}
+
+	// Consume the pairing token (one-time use)
+	delete(pairingTokens, params.PairingToken)
+
+	s.securityLog.LogSecurityEvent("device_registered",
+		slog.String("device_id", deviceID),
+		slog.String("device_name", params.DeviceName),
+		slog.String("device_type", params.DeviceType),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"device_id":     deviceID,
+			"device_name":   params.DeviceName,
+			"trust_state":   "pending_approval",
+			"session_token": sessionToken,
+			"next_step":     "awaiting_approval",
+		},
+	}
+}
+
+// handleDeviceWaitForApproval handles device.wait_for_approval RPC method
+func (s *Server) handleDeviceWaitForApproval(req *Request) *Response {
+	var params struct {
+		DeviceID     string `json:"device_id"`
+		SessionToken string `json:"session_token"`
+		Timeout      int    `json:"timeout"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid params: %v", err),
+			},
+		}
+	}
+
+	if params.DeviceID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device_id is required",
+			},
+		}
+	}
+
+	pendingDevicesMu.RLock()
+	device, exists := pendingDevices[params.DeviceID]
+	pendingDevicesMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device not found",
+			},
+		}
+	}
+
+	// Validate session token
+	if device.SessionToken != params.SessionToken {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid session token",
+			},
+		}
+	}
+
+	// Return current status
+	result := map[string]interface{}{
+		"status":    device.Status,
+		"device_id": device.ID,
+	}
+
+	if device.Status == "approved" && device.ApprovedAt != nil {
+		result["verified_at"] = device.ApprovedAt.Format(time.RFC3339)
+	} else if device.Status == "rejected" {
+		result["rejection_reason"] = device.RejectionReason
+	} else if device.Status == "pending" {
+		result["message"] = "Connect to WebSocket for real-time approval notifications"
+		result["ws_endpoint"] = "/ws"
+		if params.Timeout > 0 {
+			result["timeout"] = params.Timeout
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  result,
+	}
+}
+
+// handleDeviceList handles device.list RPC method
+func (s *Server) handleDeviceList(req *Request) *Response {
+	pendingDevicesMu.RLock()
+	defer pendingDevicesMu.RUnlock()
+
+	devices := make([]map[string]interface{}, 0, len(pendingDevices))
+	for _, device := range pendingDevices {
+		devices = append(devices, map[string]interface{}{
+			"id":           device.ID,
+			"name":         device.Name,
+			"type":         device.Type,
+			"status":       device.Status,
+			"created_at":   device.CreatedAt.Format(time.RFC3339),
+			"approved_at":  formatTime(device.ApprovedAt),
+			"rejected_at":  formatTime(device.RejectedAt),
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  devices,
+	}
+}
+
+// handleDeviceApprove handles device.approve RPC method
+func (s *Server) handleDeviceApprove(req *Request) *Response {
+	var params struct {
+		DeviceID   string `json:"device_id"`
+		ApprovedBy string `json:"approved_by"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid params: %v", err),
+			},
+		}
+	}
+
+	pendingDevicesMu.Lock()
+	defer pendingDevicesMu.Unlock()
+
+	device, exists := pendingDevices[params.DeviceID]
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device not found",
+			},
+		}
+	}
+
+	now := time.Now()
+	device.Status = "approved"
+	device.ApprovedAt = &now
+
+	s.securityLog.LogSecurityEvent("device_approved",
+		slog.String("device_id", params.DeviceID),
+		slog.String("approved_by", params.ApprovedBy),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"device_id":   params.DeviceID,
+			"approved_at": now.Format(time.RFC3339),
+		},
+	}
+}
+
+// handleDeviceReject handles device.reject RPC method
+func (s *Server) handleDeviceReject(req *Request) *Response {
+	var params struct {
+		DeviceID   string `json:"device_id"`
+		RejectedBy string `json:"rejected_by"`
+		Reason     string `json:"reason"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid params: %v", err),
+			},
+		}
+	}
+
+	pendingDevicesMu.Lock()
+	defer pendingDevicesMu.Unlock()
+
+	device, exists := pendingDevices[params.DeviceID]
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device not found",
+			},
+		}
+	}
+
+	now := time.Now()
+	device.Status = "rejected"
+	device.RejectedAt = &now
+	device.RejectionReason = params.Reason
+
+	s.securityLog.LogSecurityEvent("device_rejected",
+		slog.String("device_id", params.DeviceID),
+		slog.String("rejected_by", params.RejectedBy),
+		slog.String("reason", params.Reason),
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"device_id":   params.DeviceID,
+			"rejected_at": now.Format(time.RFC3339),
+		},
+	}
+}
+
+// handlePushRegisterToken handles push.register_token RPC method
+func (s *Server) handlePushRegisterToken(req *Request) *Response {
+	var params struct {
+		DeviceID string `json:"device_id"`
+		Token    string `json:"token"`
+		Platform string `json:"platform"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid params: %v", err),
+			},
+		}
+	}
+
+	if params.Token == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "token is required",
+			},
+		}
+	}
+
+	pendingDevicesMu.Lock()
+	pushTokens[params.DeviceID] = params.Token
+	pendingDevicesMu.Unlock()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":   true,
+			"message":   "Push token registered successfully",
+			"device_id": params.DeviceID,
+		},
+	}
+}
+
+// handlePushUnregisterToken handles push.unregister_token RPC method
+func (s *Server) handlePushUnregisterToken(req *Request) *Response {
+	var params struct {
+		DeviceID string `json:"device_id"`
+		Token    string `json:"token"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: fmt.Sprintf("invalid params: %v", err),
+			},
+		}
+	}
+
+	pendingDevicesMu.Lock()
+	delete(pushTokens, params.DeviceID)
+	pendingDevicesMu.Unlock()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success": true,
+			"message": "Push token unregistered successfully",
+		},
+	}
+}
+
+// handleBridgeDiscover handles bridge.discover RPC method
+func (s *Server) handleBridgeDiscover(req *Request) *Response {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "armorclaw-bridge"
+	}
+
+	ips, err := getLocalIPs()
+	if err != nil {
+		ips = []string{"127.0.0.1"}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"bridges": []map[string]interface{}{
+				{
+					"name":    hostname,
+					"host":    ips[0],
+					"port":    8443,
+					"ips":     ips,
+					"version": "1.0.0",
+				},
+			},
+		},
+	}
+}
+
+// handleBridgeGetLocalInfo handles bridge.get_local_info RPC method
+func (s *Server) handleBridgeGetLocalInfo(req *Request) *Response {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "armorclaw-bridge"
+	}
+
+	ips, err := getLocalIPs()
+	if err != nil {
+		ips = []string{"127.0.0.1"}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"name":            hostname,
+			"host":            ips[0],
+			"port":            8443,
+			"ips":             ips,
+			"version":         "1.0.0",
+			"socket":          s.socketPath,
+			"containers":      len(s.containers),
+		},
+	}
+}
+
+// getLocalIPs returns all local IP addresses
+func getLocalIPs() ([]string, error) {
+	var ips []string
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+
+			ips = append(ips, ip.String())
+		}
+	}
+
+	if len(ips) == 0 {
+		ips = append(ips, "127.0.0.1")
+	}
+
+	return ips, nil
+}
+
+// formatTime safely formats a time pointer
+func formatTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+// CreatePairingToken creates a new pairing token (for QR generation)
+func CreatePairingToken(userID, userDisplayName, bridgeID string, ttl time.Duration) string {
+	token := generateID()
+	pendingDevicesMu.Lock()
+	pairingTokens[token] = &PairingToken{
+		Token:           token,
+		UserID:          userID,
+		UserDisplayName: userDisplayName,
+		BridgeID:        bridgeID,
+		CreatedAt:       time.Now(),
+		ExpiresAt:       time.Now().Add(ttl),
+	}
+	pendingDevicesMu.Unlock()
+	return token
+}
+
+// ============================================================================
+// Plugin RPC Handlers
+// ============================================================================
+
+// handlePluginDiscover handles plugin.discover RPC method
+func (s *Server) handlePluginDiscover(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	plugins, err := s.pluginMgr.DiscoverPlugins()
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to discover plugins: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"plugins": plugins,
+			"count":   len(plugins),
+		},
+	}
+}
+
+// handlePluginLoad handles plugin.load RPC method
+func (s *Server) handlePluginLoad(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		LibraryPath  string `json:"library_path"`
+		MetadataPath string `json:"metadata_path"`
+		Enabled      bool   `json:"enabled"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.LibraryPath == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "library_path is required",
+			},
+		}
+	}
+
+	config := plugin.PluginConfig{
+		LibraryPath:  params.LibraryPath,
+		MetadataPath: params.MetadataPath,
+		Enabled:      params.Enabled,
+	}
+
+	if err := s.pluginMgr.LoadPlugin(config); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to load plugin: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status":      "loaded",
+			"library_path": params.LibraryPath,
+		},
+	}
+}
+
+// handlePluginInitialize handles plugin.initialize RPC method
+func (s *Server) handlePluginInitialize(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		Name        string                 `json:"name"`
+		Config      map[string]interface{} `json:"config"`
+		Credentials map[string]string      `json:"credentials"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "name is required",
+			},
+		}
+	}
+
+	// Resolve credential references from keystore
+	resolvedCreds := make(map[string]string)
+	for key, value := range params.Credentials {
+		if len(value) > 10 && value[:10] == "@keystore:" {
+			// Resolve from keystore
+			keyID := value[10:]
+			cred, err := s.keystore.Retrieve(keyID)
+			if err != nil {
+				return &Response{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error: &ErrorObj{
+						Code:    KeyNotFound,
+						Message: fmt.Sprintf("credential '%s' not found in keystore", keyID),
+					},
+				}
+			}
+			resolvedCreds[key] = cred.Token
+		} else {
+			resolvedCreds[key] = value
+		}
+	}
+
+	config := plugin.PluginConfig{
+		Config:      params.Config,
+		Credentials: resolvedCreds,
+	}
+
+	if err := s.pluginMgr.InitializePlugin(params.Name, config); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to initialize plugin: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status": "initialized",
+			"name":   params.Name,
+		},
+	}
+}
+
+// handlePluginStart handles plugin.start RPC method
+func (s *Server) handlePluginStart(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "name is required",
+			},
+		}
+	}
+
+	if err := s.pluginMgr.StartPlugin(params.Name); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to start plugin: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status": "running",
+			"name":   params.Name,
+		},
+	}
+}
+
+// handlePluginStop handles plugin.stop RPC method
+func (s *Server) handlePluginStop(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "name is required",
+			},
+		}
+	}
+
+	if err := s.pluginMgr.StopPlugin(params.Name); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to stop plugin: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status": "stopped",
+			"name":   params.Name,
+		},
+	}
+}
+
+// handlePluginUnload handles plugin.unload RPC method
+func (s *Server) handlePluginUnload(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "name is required",
+			},
+		}
+	}
+
+	if err := s.pluginMgr.UnloadPlugin(params.Name); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to unload plugin: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status": "unloaded",
+			"name":   params.Name,
+		},
+	}
+}
+
+// handlePluginList handles plugin.list RPC method
+func (s *Server) handlePluginList(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	plugins := s.pluginMgr.ListPlugins()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"plugins": plugins,
+			"count":   len(plugins),
+		},
+	}
+}
+
+// handlePluginStatus handles plugin.status RPC method
+func (s *Server) handlePluginStatus(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "name is required",
+			},
+		}
+	}
+
+	info, err := s.pluginMgr.GetPlugin(params.Name)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to get plugin status: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  info,
+	}
+}
+
+// handlePluginHealth handles plugin.health RPC method
+func (s *Server) handlePluginHealth(req *Request) *Response {
+	if s.pluginMgr == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "plugin system not initialized",
+			},
+		}
+	}
+
+	results := s.pluginMgr.HealthCheck()
+
+	// Convert errors to strings for JSON serialization
+	healthStatus := make(map[string]interface{})
+	for name, err := range results {
+		if err != nil {
+			healthStatus[name] = map[string]interface{}{
+				"healthy": false,
+				"error":   err.Error(),
+			}
+		} else {
+			healthStatus[name] = map[string]interface{}{
+				"healthy": true,
+			}
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"plugins": healthStatus,
+			"count":   len(healthStatus),
+		},
+	}
+}
+
+// ============================================================================
+// License RPC Handlers
+// ============================================================================
+
+// handleLicenseValidate handles license.validate RPC method
+func (s *Server) handleLicenseValidate(req *Request) *Response {
+	if s.licenseClient == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "license system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		Feature string `json:"feature"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Feature == "" {
+		params.Feature = "default"
+	}
+
+	valid, err := s.licenseClient.Validate(s.ctx, params.Feature)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "license validation failed: " + err.Error(),
+			},
+		}
+	}
+
+	// Get cached info
+	cached := s.licenseClient.GetCached(params.Feature)
+
+	result := map[string]interface{}{
+		"valid":       valid,
+		"feature":     params.Feature,
+		"instance_id": s.licenseClient.GetInstanceID(),
+	}
+
+	if cached != nil {
+		result["tier"] = cached.Tier
+		result["expires_at"] = cached.ExpiresAt.Format(time.RFC3339)
+		result["grace_until"] = cached.GraceUntil.Format(time.RFC3339)
+		result["features"] = cached.Features
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  result,
+	}
+}
+
+// handleLicenseStatus handles license.status RPC method
+func (s *Server) handleLicenseStatus(req *Request) *Response {
+	if s.licenseClient == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "license system not initialized",
+			},
+		}
+	}
+
+	tier, err := s.licenseClient.GetTier(s.ctx)
+	if err != nil {
+		tier = license.TierFree
+	}
+
+	features, _ := s.licenseClient.GetFeatures(s.ctx)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"tier":        tier,
+			"features":    features,
+			"instance_id": s.licenseClient.GetInstanceID(),
+		},
+	}
+}
+
+// handleLicenseFeatures handles license.features RPC method
+func (s *Server) handleLicenseFeatures(req *Request) *Response {
+	if s.licenseClient == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "license system not initialized",
+			},
+		}
+	}
+
+	features, err := s.licenseClient.GetFeatures(s.ctx)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to get features: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"features": features,
+			"count":    len(features),
+		},
+	}
+}
+
+// handleLicenseSetKey handles license.set_key RPC method
+func (s *Server) handleLicenseSetKey(req *Request) *Response {
+	if s.licenseClient == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "license system not initialized",
+			},
+		}
+	}
+
+	var params struct {
+		LicenseKey string `json:"license_key"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.LicenseKey == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "license_key is required",
+			},
+		}
+	}
+
+	s.licenseClient.SetLicenseKey(params.LicenseKey)
+
+	// Validate the new key
+	valid, err := s.licenseClient.Validate(s.ctx, "license-info")
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "license validation failed: " + err.Error(),
+			},
+		}
+	}
+
+	tier, _ := s.licenseClient.GetTier(s.ctx)
+	features, _ := s.licenseClient.GetFeatures(s.ctx)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"valid":       valid,
+			"tier":        tier,
+			"features":    features,
+			"instance_id": s.licenseClient.GetInstanceID(),
 		},
 	}
 }

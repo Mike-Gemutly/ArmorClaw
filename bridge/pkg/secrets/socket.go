@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
 )
@@ -37,13 +38,15 @@ var (
 // SecretInjector manages in-memory secret injection via Unix sockets.
 // Secrets are never written to disk - only transmitted through socket.
 type SecretInjector struct {
-	socketDir string           // Directory for secret sockets
-	sockets   map[string]*secretSession // Active socket sessions
-	mu         sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	socketDir   string                    // Directory for secret sockets
+	sockets     map[string]*secretSession // Active socket sessions
+	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 	securityLog *logger.SecurityLogger
+	log         *logger.Logger // Component-scoped operational logger
+	auditLogger *audit.CriticalOperationLogger
 }
 
 // secretSession represents an active secret delivery session
@@ -68,10 +71,18 @@ func NewSecretInjector(socketDir string, secLog *logger.SecurityLogger) (*Secret
 	return &SecretInjector{
 		socketDir:   socketDir,
 		sockets:     make(map[string]*secretSession),
-		ctx:          ctx,
-		cancel:       cancel,
-		securityLog:  secLog,
+		ctx:         ctx,
+		cancel:      cancel,
+		securityLog: secLog,
+		log:         logger.Global().WithComponent("secrets"),
 	}, nil
+}
+
+// SetAuditLogger sets the audit logger for critical operation logging
+func (si *SecretInjector) SetAuditLogger(logger *audit.CriticalOperationLogger) {
+	si.mu.Lock()
+	defer si.mu.Unlock()
+	si.auditLogger = logger
 }
 
 // InjectSecrets prepares a Unix socket for secret delivery and waits for container to connect.
@@ -122,6 +133,11 @@ func (si *SecretInjector) InjectSecrets(containerName string, cred keystore.Cred
 		slog.String("socket_path", socketPath),
 	)
 
+	// Audit logging for secret injection
+	if si.auditLogger != nil {
+		_ = si.auditLogger.LogSecretInjection(si.ctx, containerName, cred.ID, true)
+	}
+
 	return socketPath, nil
 }
 
@@ -154,16 +170,16 @@ func (si *SecretInjector) handleSecretConnection(session *secretSession) {
 
 	case err := <-errChan:
 		if !errors.Is(err, net.ErrClosed) {
-			slog.LogAttrs(si.ctx, "secret_socket_accept_error",
-				slog.String("container", filepath.Base(session.socketPath)),
-				slog.String("error", err.Error()),
+			si.log.Error("secret_socket_accept_error",
+				"container", filepath.Base(session.socketPath),
+				"error", err.Error(),
 			)
 		}
 		return
 
 	case <-time.After(SecretSocketTimeout):
-		slog.LogAttrs(si.ctx, "secret_socket_timeout",
-			slog.String("container", filepath.Base(session.socketPath)),
+		si.log.Error("secret_socket_timeout",
+			"container", filepath.Base(session.socketPath),
 		)
 		return
 
@@ -174,6 +190,15 @@ func (si *SecretInjector) handleSecretConnection(session *secretSession) {
 
 // deliverSecrets sends credential data over the socket connection
 func (si *SecretInjector) deliverSecrets(session *secretSession, conn net.Conn) {
+	containerName := filepath.Base(session.socketPath)
+	success := false
+	defer func() {
+		// Audit logging for secret delivery result
+		if si.auditLogger != nil {
+			_ = si.auditLogger.LogSecretInjection(si.ctx, containerName, session.credential.ID, success)
+		}
+	}()
+
 	// Prepare secrets JSON (same format as file-based for compatibility)
 	secretsJSON := map[string]interface{}{
 		"provider":     session.credential.Provider,
@@ -183,9 +208,9 @@ func (si *SecretInjector) deliverSecrets(session *secretSession, conn net.Conn) 
 
 	secretsData, err := json.Marshal(secretsJSON)
 	if err != nil {
-		slog.LogAttrs(si.ctx, "secret_marshal_failed",
-			slog.String("container", filepath.Base(session.socketPath)),
-			slog.String("error", err.Error()),
+		si.log.Error("secret_marshal_failed",
+			"container", containerName,
+			"error", err.Error(),
 		)
 		return
 	}
@@ -201,9 +226,9 @@ func (si *SecretInjector) deliverSecrets(session *secretSession, conn net.Conn) 
 
 	// Write length prefix
 	if _, err := conn.Write(lengthPrefix); err != nil {
-		slog.LogAttrs(si.ctx, "secret_write_length_failed",
-			slog.String("container", filepath.Base(session.socketPath)),
-			slog.String("error", err.Error()),
+		si.log.Error("secret_write_length_failed",
+			"container", filepath.Base(session.socketPath),
+			"error", err.Error(),
 		)
 		return
 	}
@@ -213,21 +238,24 @@ func (si *SecretInjector) deliverSecrets(session *secretSession, conn net.Conn) 
 	for totalWritten < len(secretsData) {
 		written, err := conn.Write(secretsData[totalWritten:])
 		if err != nil {
-			slog.LogAttrs(si.ctx, "secret_write_data_failed",
-				slog.String("container", filepath.Base(session.socketPath)),
-				slog.Int("written_bytes", totalWritten),
-				slog.String("error", err.Error()),
+			si.log.Error("secret_write_data_failed",
+				"container", filepath.Base(session.socketPath),
+				"written_bytes", totalWritten,
+				"error", err.Error(),
 			)
 			return
 		}
 		totalWritten += written
 	}
 
+	// Mark as successful for audit logging
+	success = true
+
 	// Log successful delivery
-	slog.LogAttrs(si.ctx, "secret_delivered",
-		slog.String("container", filepath.Base(session.socketPath)),
-		slog.Int("bytes_sent", totalWritten+4),
-		slog.String("provider", string(session.credential.Provider)),
+	si.log.Info("secret_delivered",
+		"container", filepath.Base(session.socketPath),
+		"bytes_sent", totalWritten+4,
+		"provider", string(session.credential.Provider),
 	)
 }
 
@@ -270,6 +298,11 @@ func (si *SecretInjector) Cleanup(containerName string) error {
 	// Log cleanup
 	si.securityLog.LogSecretCleanup(si.ctx, containerName, "socket_injection_complete")
 
+	// Audit logging for secret cleanup
+	if si.auditLogger != nil {
+		_ = si.auditLogger.LogSecretCleanup(si.ctx, containerName, true)
+	}
+
 	return nil
 }
 
@@ -279,9 +312,9 @@ func (si *SecretInjector) UpdateSecrets(containerName string, cred keystore.Cred
 	si.mu.Lock()
 	defer si.mu.Unlock()
 
-	// Check if container exists and is running
-	session, exists := si.sockets[containerName]
-	if !exists || exists.State != "running" {
+	// Check if container exists
+	_, exists := si.sockets[containerName]
+	if !exists {
 		return fmt.Errorf("container not found or not running: %s", containerName)
 	}
 
@@ -333,15 +366,18 @@ func (si *SecretInjector) UpdateSecrets(containerName string, cred keystore.Cred
 	}
 	defer conn.Close()
 
-	if err := si.deliverSecrets(updateSession, conn); err != nil {
-		return err
-	}
+	si.deliverSecrets(updateSession, conn)
 
 	// Log the update
 	si.securityLog.LogSecretInject(si.ctx, containerName, cred.ID,
 		slog.String("method", "send_secret"),
 		slog.String("reason", "credential_update"),
 	)
+
+	// Audit logging for secret update
+	if si.auditLogger != nil {
+		_ = si.auditLogger.LogSecretInjection(si.ctx, containerName, cred.ID, true)
+	}
 
 	// Cleanup update session immediately after delivery
 	si.cleanupSession(updateSession)
@@ -371,22 +407,17 @@ func (si *SecretInjector) handleSecretUpdate(session *secretSession) {
 	select {
 	case conn := <-connChan:
 		// Connection established
-		if err := si.deliverSecrets(session, conn); err != nil {
-			slog.LogAttrs(si.ctx, "update_secret_failed",
-				slog.String("container", filepath.Base(session.socketPath)),
-				slog.String("error", err.Error()),
-			)
-		}
+		si.deliverSecrets(session, conn)
 	case err := <-errChan:
 		if !errors.Is(err, net.ErrClosed) {
-			slog.LogAttrs(si.ctx, "update_socket_error",
-				slog.String("error", err.Error()),
+			si.log.Error("update_socket_error",
+				"error", err.Error(),
 			)
 		}
 	case <-time.After(SecretSocketTimeout):
 		// Timeout
-		slog.LogAttrs(si.ctx, "update_timeout",
-			slog.String("container", filepath.Base(session.socketPath)),
+		si.log.Error("update_timeout",
+			"container", filepath.Base(session.socketPath),
 		)
 	}
 }

@@ -13,9 +13,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/audit"
 	errsys "github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/pii"
+	"github.com/armorclaw/bridge/pkg/trust"
 )
 
 // matrixTracker tracks component events for the Matrix adapter
@@ -45,6 +47,10 @@ type MatrixAdapter struct {
 	piiScrubber      *pii.Scrubber
 	eventPublisher   EventPublisher // Event bus for real-time event publishing
 	lastExpiryCheck  time.Time          // P1-HIGH-1: Track last token expiry check
+	commandHandler   *CommandHandler    // Command handler for admin operations
+	trustVerifier    *TrustVerifier     // Zero-trust verification
+	auditLog         *audit.TamperEvidentLog // Audit logging
+	minTrustLevel    trust.TrustScore   // Minimum trust level required
 }
 
 // MatrixEvent represents a Matrix event
@@ -95,11 +101,20 @@ type Config struct {
 	TrustedRooms   []string // Allowed room IDs (!roomid:domain.com)
 	RejectUntrusted bool   // If true, return error to sender; if false, drop silently
 	RefreshToken    string   // P1-HIGH-1: Encrypted refresh token from login
+
+	// Trust verification settings
+	MinTrustLevel   trust.TrustScore // Minimum trust level required for message processing
 }
 
 // New creates a new Matrix adapter
 func New(cfg Config) (*MatrixAdapter, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Set default trust level if not specified
+	minTrustLevel := cfg.MinTrustLevel
+	if minTrustLevel == 0 {
+		minTrustLevel = trust.TrustScoreLow // Default: allow low trust and above
+	}
 
 	return &MatrixAdapter{
 		homeserverURL:   cfg.HomeserverURL,
@@ -108,6 +123,7 @@ func New(cfg Config) (*MatrixAdapter, error) {
 		trustedRooms:    cfg.TrustedRooms,
 		rejectUntrusted: cfg.RejectUntrusted,
 		refreshToken:    cfg.RefreshToken,    // P1-HIGH-1: Initialize refresh token
+		minTrustLevel:   minTrustLevel,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -472,6 +488,11 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) {
 						logger.LogAttr("room_id", roomID),
 					)
 
+					// Log to audit if configured
+					m.logTrustEvent("sender_rejected", event.Sender, roomID, map[string]interface{}{
+						"reason": "sender_not_in_allowlist",
+					})
+
 					// Optionally send rejection back to sender
 					if m.rejectUntrusted {
 						m.sendRejectionMessage(roomID, event.Sender)
@@ -486,7 +507,72 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) {
 						logger.LogAttr("room_id", roomID),
 						logger.LogAttr("event_id", event.EventID),
 					)
+
+					// Log to audit if configured
+					m.logTrustEvent("room_rejected", event.Sender, roomID, map[string]interface{}{
+						"reason":   "room_not_in_allowlist",
+						"event_id": event.EventID,
+					})
 					continue
+				}
+
+				// Perform zero-trust verification if configured
+				m.mu.RLock()
+				trustVerifier := m.trustVerifier
+				minTrustLevel := m.minTrustLevel
+				m.mu.RUnlock()
+
+				if trustVerifier != nil {
+					// Create device fingerprint from event context
+					fingerprint := DeviceFingerprintFromMatrix(event.Sender, "", "matrix")
+
+					// Verify the event
+					result, err := trustVerifier.VerifyEvent(context.Background(), &event, fingerprint, "")
+					if err != nil {
+						logger.Global().Error("trust verification error",
+							"error", err,
+							"event_id", event.EventID,
+							"sender", event.Sender,
+						)
+						continue
+					}
+
+					// Enforce trust level
+					enforcement := trustVerifier.ShouldEnforceTrust(result, minTrustLevel)
+					if !enforcement.Allowed {
+						logger.Global().Warn("event blocked by trust enforcement",
+							"event_id", event.EventID,
+							"sender", event.Sender,
+							"trust_level", enforcement.TrustLevel.String(),
+							"min_required", minTrustLevel.String(),
+							"risk_score", enforcement.RiskScore,
+							"anomaly_flags", enforcement.AnomalyFlags,
+						)
+
+						// Log to audit if configured
+						m.logTrustEvent("trust_blocked", event.Sender, roomID, map[string]interface{}{
+							"trust_level":   enforcement.TrustLevel.String(),
+							"risk_score":    enforcement.RiskScore,
+							"anomaly_flags": enforcement.AnomalyFlags,
+							"message":       enforcement.Message,
+						})
+
+						// Send rejection if configured
+						if m.rejectUntrusted {
+							m.sendTrustRejectionMessage(roomID, event.Sender, enforcement)
+						}
+						continue
+					}
+
+					// Log successful verification with anomalies if any
+					if len(enforcement.AnomalyFlags) > 0 {
+						logger.Global().Info("event passed with anomalies",
+							"event_id", event.EventID,
+							"sender", event.Sender,
+							"trust_level", enforcement.TrustLevel.String(),
+							"anomaly_flags", enforcement.AnomalyFlags,
+						)
+					}
 				}
 
 				// Scrub PII from message content
@@ -535,6 +621,57 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) {
 			}
 		}
 	}
+}
+
+// logTrustEvent logs a trust-related event to the audit log
+func (m *MatrixAdapter) logTrustEvent(eventType, sender, roomID string, details map[string]interface{}) {
+	m.mu.RLock()
+	auditLog := m.auditLog
+	m.mu.RUnlock()
+
+	if auditLog == nil {
+		return
+	}
+
+	actor := audit.Actor{
+		Type: "matrix_user",
+		ID:   sender,
+	}
+	resource := audit.Resource{
+		Type: "matrix_room",
+		ID:   roomID,
+	}
+	compliance := audit.ComplianceFlags{
+		Category:      "trust_verification",
+		Severity:      "medium",
+		AuditRequired: true,
+	}
+
+	_, _ = auditLog.LogEntry(eventType, actor, "verify", resource, details, compliance)
+}
+
+// sendTrustRejectionMessage sends a trust-related rejection message
+func (m *MatrixAdapter) sendTrustRejectionMessage(roomID, sender string, enforcement TrustEnforcementResult) {
+	msg := "🔒 **Message Rejected - Trust Verification Failed**\n\n"
+	msg += "Your message was not processed due to trust verification requirements.\n\n"
+	msg += fmt.Sprintf("**Trust Level:** %s (Required: %s)\n", enforcement.TrustLevel.String(), m.minTrustLevel.String())
+	msg += fmt.Sprintf("**Risk Score:** %d/100\n", enforcement.RiskScore)
+
+	if len(enforcement.AnomalyFlags) > 0 {
+		msg += "**Anomalies Detected:**\n"
+		for _, flag := range enforcement.AnomalyFlags {
+			msg += fmt.Sprintf("- %s\n", flag)
+		}
+	}
+
+	if len(enforcement.RequiredActions) > 0 {
+		msg += "\n**Required Actions:**\n"
+		for _, action := range enforcement.RequiredActions {
+			msg += fmt.Sprintf("- %s\n", action)
+		}
+	}
+
+	m.SendMessageWithRetry(roomID, msg, "m.notice")
 }
 
 // sendRejectionMessage sends a rejection message back to the sender
@@ -1190,4 +1327,11 @@ func findSubstring(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// SetCommandHandler sets the command handler for admin operations via Matrix
+func (m *MatrixAdapter) SetCommandHandler(h *CommandHandler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.commandHandler = h
 }

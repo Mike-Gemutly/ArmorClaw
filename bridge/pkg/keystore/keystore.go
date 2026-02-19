@@ -10,6 +10,7 @@ package keystore
 
 import (
 	"bufio"
+	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha512"
 	"encoding/base64"
@@ -29,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/audit"
 	_ "github.com/mutecomm/go-sqlcipher/v4"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/pbkdf2"
@@ -89,12 +91,13 @@ type KeyInfo struct {
 
 // Keystore manages encrypted credential storage
 type Keystore struct {
-	db        *sql.DB
-	dbPath    string
-	mu        sync.RWMutex
-	masterKey []byte
-	salt      []byte
-	isOpen    bool
+	db          *sql.DB
+	dbPath      string
+	mu          sync.RWMutex
+	masterKey   []byte
+	salt        []byte
+	isOpen      bool
+	auditLogger *audit.CriticalOperationLogger
 }
 
 // Config holds keystore configuration
@@ -301,6 +304,13 @@ func (ks *Keystore) getCPUInfo() (string, error) {
 	return "", errors.New("could not read CPU info")
 }
 
+// SetAuditLogger sets the audit logger for the keystore
+func (ks *Keystore) SetAuditLogger(logger *audit.CriticalOperationLogger) {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	ks.auditLogger = logger
+}
+
 // Open opens and initializes the keystore database with SQLCipher encryption
 func (ks *Keystore) Open() error {
 	ks.mu.Lock()
@@ -373,6 +383,15 @@ func (ks *Keystore) initSchema(db *sql.DB) error {
 		signature_hash TEXT PRIMARY KEY,
 		bound_at INTEGER NOT NULL,
 		entropy_sources TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS matrix_refresh_tokens (
+		id TEXT PRIMARY KEY,
+		token_encrypted BLOB NOT NULL,
+		nonce BLOB NOT NULL,
+		homeserver_url TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		created_at INTEGER NOT NULL
 	);
 
 	INSERT OR IGNORE INTO metadata (key, value) VALUES ('version', '1');
@@ -489,15 +508,25 @@ func (ks *Keystore) Retrieve(id string) (*Credential, error) {
 	)
 
 	if err == sql.ErrNoRows {
+		// Log failed access to audit
+		if ks.auditLogger != nil {
+			ks.auditLogger.LogKeyAccess(context.Background(), id, "system", "retrieve", false)
+		}
 		return nil, ErrKeyNotFound
 	}
 	if err != nil {
+		if ks.auditLogger != nil {
+			ks.auditLogger.LogKeyAccess(context.Background(), id, "system", "retrieve", false)
+		}
 		return nil, fmt.Errorf("database query failed: %w", err)
 	}
 
 	// Check expiration
 	if cred.ExpiresAt > 0 {
 		if time.Now().Unix() > cred.ExpiresAt {
+			if ks.auditLogger != nil {
+				ks.auditLogger.LogKeyAccess(context.Background(), id, "system", "retrieve", false)
+			}
 			return nil, ErrKeyExpired
 		}
 	}
@@ -505,6 +534,9 @@ func (ks *Keystore) Retrieve(id string) (*Credential, error) {
 	// Decrypt token using XChaCha20-Poly1305
 	token, err := ks.decrypt(encryptedToken, nonce)
 	if err != nil {
+		if ks.auditLogger != nil {
+			ks.auditLogger.LogKeyAccess(context.Background(), id, "system", "retrieve", false)
+		}
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
 	cred.Token = string(token)
@@ -512,6 +544,11 @@ func (ks *Keystore) Retrieve(id string) (*Credential, error) {
 	// Parse tags
 	if tagsJSON != "[]" {
 		json.Unmarshal([]byte(tagsJSON), &cred.Tags)
+	}
+
+	// Log successful access to audit
+	if ks.auditLogger != nil {
+		ks.auditLogger.LogKeyAccess(context.Background(), id, "system", "retrieve", true)
 	}
 
 	return &cred, nil
@@ -580,6 +617,16 @@ func (ks *Keystore) Delete(id string) error {
 	}
 
 	_, err := ks.db.Exec("DELETE FROM credentials WHERE id = ?", id)
+
+	// Log deletion to audit
+	if ks.auditLogger != nil {
+		if err != nil {
+			ks.auditLogger.LogKeyDeleted(context.Background(), id, "system")
+		} else {
+			ks.auditLogger.LogKeyDeleted(context.Background(), id, "system")
+		}
+	}
+
 	return err
 }
 
@@ -752,3 +799,114 @@ func (ks *Keystore) loadOrGenerateSaltWithValidation() error {
 
 	return nil
 }
+
+// P1-HIGH-1: MatrixRefreshToken stores encrypted Matrix refresh tokens
+// Matrix refresh tokens enable long-lived sessions without requiring re-login
+type MatrixRefreshToken struct {
+	ID          string   // Unique identifier (e.g., "matrix-refresh-token")
+	Token        string   // Encrypted refresh token
+	HomeserverURL string // The homeserver this token is for
+	UserID       string // The Matrix user ID
+	CreatedAt     int64  // Unix timestamp when token was created
+}
+
+// StoreMatrixRefreshToken stores an encrypted Matrix refresh token
+func (ks *Keystore) StoreMatrixRefreshToken(token MatrixRefreshToken) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	if !ks.isOpen {
+		return errors.New("keystore is not open")
+	}
+
+	// Validate token data
+	if token.ID == "" || token.Token == "" {
+		return errors.New("invalid Matrix refresh token: id and token required")
+	}
+	if token.HomeserverURL == "" {
+		return errors.New("invalid Matrix refresh token: homeserver URL required")
+	}
+
+	// Encrypt the refresh token using XChaCha20-Poly1305
+	encryptedToken, nonce, err := ks.encrypt([]byte(token.Token))
+	if err != nil {
+		return fmt.Errorf("encryption failed: %w", err)
+	}
+
+	// Insert or replace into database
+	query := `
+	INSERT OR REPLACE INTO matrix_refresh_tokens
+	(id, token_encrypted, nonce, homeserver_url, user_id, created_at)
+	VALUES (?, ?, ?, ?, ?, ?)
+	`
+
+	_, err = ks.db.Exec(query,
+		token.ID,
+		encryptedToken,
+		nonce,
+		token.HomeserverURL,
+		token.UserID,
+		token.CreatedAt,
+	)
+
+	return err
+}
+
+// RetrieveMatrixRefreshToken retrieves and decrypts a Matrix refresh token
+func (ks *Keystore) RetrieveMatrixRefreshToken(id string) (*MatrixRefreshToken, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	if !ks.isOpen {
+		return nil, errors.New("keystore is not open")
+	}
+
+	query := `
+	SELECT id, token_encrypted, nonce, homeserver_url, user_id, created_at
+	FROM matrix_refresh_tokens WHERE id = ?
+	`
+
+	row := ks.db.QueryRow(query, id)
+
+	var token MatrixRefreshToken
+	var encryptedTokenData, nonce []byte
+
+	err := row.Scan(
+		&token.ID,
+		&encryptedTokenData,
+		&nonce,
+		&token.HomeserverURL,
+		&token.UserID,
+		&token.CreatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrKeyNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("database query failed: %w", err)
+	}
+
+	// Decrypt the refresh token using XChaCha20-Poly1305
+	decryptedToken, err := ks.decrypt(encryptedTokenData, nonce)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+	token.Token = string(decryptedToken)
+
+	return &token, nil
+}
+
+// DeleteMatrixRefreshToken removes a stored refresh token
+func (ks *Keystore) DeleteMatrixRefreshToken(id string) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	if !ks.isOpen {
+		return errors.New("keystore is not open")
+	}
+
+	_, err := ks.db.Exec("DELETE FROM matrix_refresh_tokens WHERE id = ?", id)
+	return err
+}
+

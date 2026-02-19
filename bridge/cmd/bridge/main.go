@@ -1364,12 +1364,15 @@ func runBridgeServer(cliCfg cliConfig) {
 	*/
 
 	// Create budget tracker
-	budgetTracker := budget.NewBudgetTracker(budget.BudgetConfig{
+	budgetTracker, err := budget.NewBudgetTracker(budget.BudgetConfig{
 		DailyLimitUSD:   cfg.Budget.DailyLimitUSD,
 		MonthlyLimitUSD: cfg.Budget.MonthlyLimitUSD,
 		AlertThreshold:  cfg.Budget.AlertThreshold,
 		HardStop:        cfg.Budget.HardStop,
-	}, "") // Use default state directory
+	})
+	if err != nil {
+		log.Fatalf("Failed to create budget tracker: %v", err)
+	}
 
 	log.Println("WebRTC components initialized")
 

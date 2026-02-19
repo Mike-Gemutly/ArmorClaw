@@ -11,6 +11,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/audit"
 	errsys "github.com/armorclaw/bridge/pkg/errors"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -94,6 +95,7 @@ type Client struct {
 	client        *client.Client
 	scopes        map[Scope]bool
 	latencyTarget time.Duration
+	auditLogger   *audit.CriticalOperationLogger
 }
 
 // Config holds client configuration
@@ -148,6 +150,11 @@ func New(cfg Config) (*Client, error) {
 // hasScope checks if the client has the required scope
 func (c *Client) hasScope(required Scope) bool {
 	return c.scopes[required]
+}
+
+// SetAuditLogger sets the audit logger for the client
+func (c *Client) SetAuditLogger(logger *audit.CriticalOperationLogger) {
+	c.auditLogger = logger
 }
 
 // CreateContainer creates a new container with the given configuration
@@ -342,6 +349,11 @@ func (c *Client) RemoveContainer(ctx context.Context, containerID string, force 
 			code = "CTX-011"
 		}
 
+		// Log container error to audit
+		if c.auditLogger != nil {
+			c.auditLogger.LogContainerError(ctx, containerID, errStr, code)
+		}
+
 		wrappedErr := errsys.NewBuilder(code).
 			Wrap(err).
 			WithFunction("RemoveContainer").
@@ -349,6 +361,15 @@ func (c *Client) RemoveContainer(ctx context.Context, containerID string, force 
 			Build()
 		dockerTracker.Failure("remove_container", wrappedErr, map[string]any{"reason": "docker_api_error", "code": code})
 		return wrappedErr
+	}
+
+	// Log container stop to audit
+	if c.auditLogger != nil {
+		reason := "shutdown"
+		if force {
+			reason = "forced"
+		}
+		c.auditLogger.LogContainerStop(ctx, containerID, reason, 0)
 	}
 
 	dockerTracker.Success("remove_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
@@ -541,6 +562,10 @@ func (c *Client) CreateAndStartContainer(ctx context.Context, config *container.
 
 	containerID, err := c.CreateContainer(ctx, config, hostConfig, networkingConfig, platform)
 	if err != nil {
+		// Log container error to audit
+		if c.auditLogger != nil {
+			c.auditLogger.LogContainerError(ctx, "", err.Error(), "CTX-010")
+		}
 		return "", err
 	}
 
@@ -550,6 +575,11 @@ func (c *Client) CreateAndStartContainer(ctx context.Context, config *container.
 		defer cleanupCancel()
 		_ = c.RemoveContainer(cleanupCtx, containerID, true)
 
+		// Log container error to audit
+		if c.auditLogger != nil {
+			c.auditLogger.LogContainerError(ctx, containerID, err.Error(), "CTX-001")
+		}
+
 		wrappedErr := errsys.NewBuilder("CTX-001").
 			Wrap(err).
 			WithFunction("CreateAndStartContainer").
@@ -558,6 +588,16 @@ func (c *Client) CreateAndStartContainer(ctx context.Context, config *container.
 			Build()
 		dockerTracker.Failure("create_and_start", wrappedErr, map[string]any{"reason": "start_failed", "container_id": containerID[:min(12, len(containerID))]})
 		return "", wrappedErr
+	}
+
+	// Log container start to audit
+	if c.auditLogger != nil {
+		// Extract key_id from labels if available
+		keyID := ""
+		if config != nil && config.Labels != nil {
+			keyID = config.Labels["armorclaw.key_id"]
+		}
+		c.auditLogger.LogContainerStart(ctx, containerID, imageName, keyID, containerID)
 	}
 
 	dockerTracker.Success("create_and_start", map[string]any{"container_id": containerID[:min(12, len(containerID))], "image": imageName})
