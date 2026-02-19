@@ -1,626 +1,310 @@
-# ArmorClaw Documentation Index
+# ArmorClaw Documentation
 
-> **Last Updated:** 2026-02-19
-> **Version:** 2.0.0
-> **Phase:** Phase 5 Complete ✅ | Zero-Trust Hardening ✅ | Enterprise Ready ✅
-
----
-
-## 📚 Quick Navigation
-
-This index is the central hub for all ArmorClaw documentation. Start here for any AI agent working on this project.
-
-### 🚀 Getting Started (Read This First)
-
-**New to ArmorClaw?** Start with the **[Getting Started Guide](docs/guides/getting-started.md)** ⭐ - Complete setup in 5 minutes
-
-1. [Getting Started Guide](docs/guides/getting-started.md) ⭐ - **NEW!** Complete onboarding for new users
-2. [Project Overview](#project-overview) - What ArmorClaw does and why
-3. [Current Status](#current-status) - What's implemented and what's next
-4. [Architecture](#architecture) - How the system works
-
-### 📋 Reference Documentation
-- [🔍 Error Catalog](docs/guides/error-catalog.md) - Every error with solutions (search by error text)
-- [🔒 Security Verification Guide](docs/guides/security-verification-guide.md) 🆕 - Manual verification of all security hardening measures
-- [🔒 Security Configuration](docs/guides/security-configuration.md) ⭐ - Zero-trust, budget guardrails, PII scrubbing
-- [🔔 Alert Integration](docs/guides/alert-integration.md) 🆕 - Proactive monitoring with Matrix notifications
-- [🔑 API Key Validation](docs/guides/api-key-validation.md) 🆕 - Pre-validation, quota checking, expiry detection
-- [📱 Multi-Device UX](docs/guides/multi-device-ux.md) 🆕 - Device trust, verification flows, recovery scenarios
-- [📷 QR Scanning Flow](docs/guides/qr-scanning-flow.md) 🆕 - Device pairing via QR code, camera handling, fallbacks
-- [🔐 Security Tier Upgrade](docs/guides/security-tier-upgrade.md) 🆕 - Progressive security tiers, upgrade flows, notifications
-- [👥 Onboarding User Stories](docs/guides/onboarding-user-stories.md) 🆕 - ArmorChat vs Element X flows, gap analysis
-- [Element X Quick Start](docs/guides/element-x-quickstart.md) ⭐ - Connect to agents via Element X in 5 minutes
-- [WebRTC Voice Guide](docs/guides/webrtc-voice-guide.md) 🆕 - Secure voice calls with Matrix authorization
-- [WebRTC Voice Hardening](docs/guides/webrtc-voice-hardening.md) 🆕 - Security hardening for voice calls
-- [WebSocket Client Guide](docs/guides/websocket-client-guide.md) 🆕 - Real-time Matrix event push via WebSocket
-- [Communication Flow Analysis](docs/output/communication-flow-analysis.md) 🆕 - Complete communication architecture documentation
-- [Setup Guide](docs/guides/setup-guide.md) - Interactive setup wizard and manual setup
-- [Troubleshooting Guide](docs/guides/troubleshooting.md) - Systematic debugging procedures
-- [RPC API Reference](docs/reference/rpc-api.md) - Complete JSON-RPC 2.0 API
-- [Configuration Guide](docs/guides/configuration.md) - TOML config and env vars
-- [Element X Configs](docs/guides/element-x-configs.md) - Sending configs via Element X
-- [Developer Guide](docs/guides/development.md) - Development environment and contribution
-
-### 🚀 Deployment Guides
-
-#### Budget-Friendly Options
-- [Hostinger VPS Deployment](docs/guides/hostinger-vps-deployment.md) 🆓 - Complete VPS setup from $4-8/month (Recommended)
-- [Hostinger Docker Deployment](docs/guides/hostinger-docker-deployment.md) 🆓 - Docker Manager focus with GUI management
-- [DockerHub + Hostinger Deployment](docs/guides/dockerhub-hostinger-deployment.md) 🆓 - Deploy via DockerHub with automatic updates
-- [Vultr Deployment](docs/guides/vultr-deployment.md) - VPS with GPU options from $2.50/month
-
-#### PaaS & Serverless
-- [DigitalOcean App Platform](docs/guides/digitalocean-deployment.md) - Simple PaaS from $5/month
-- [Railway Deployment](docs/guides/railway-deployment.md) - Quick deployment with excellent DX
-- [Render Deployment](docs/guides/render-deployment.md) - Free tier for testing
-
-#### Enterprise & Global
-- [Fly.io Deployment](docs/guides/flyio-deployment.md) - Global edge distribution (35+ regions)
-- [Google Cloud Run Deployment](docs/guides/gcp-cloudrun-deployment.md) - Serverless with free tier (2M requests/month)
-- [AWS Fargate Deployment](docs/guides/aws-fargate-deployment.md) - Enterprise serverless with Spot pricing
-
-#### Additional Options
-- [Linode/Akamai Deployment](docs/guides/linode-deployment.md) - VPS with Akamai integration
-- [Azure Container Instances](docs/guides/azure-deployment.md) - Per-second billing for burstable workloads
-- [Local Development Guide](docs/guides/local-development.md) - Docker Desktop setup for local development
-
-### Infrastructure Deployment
-- [Matrix Homeserver Deployment](docs/guides/matrix-homeserver-deployment.md) ⭐ - **NEW!** Step 1: Standard Matrix infrastructure (Conduit/Synapse)
-- [Infrastructure Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md) - General infrastructure setup
-
-### 📐 Planning Documents
-- [Phase 1 Tasks](docs/plans/2026-02-05-phase1-implementation-tasks.md) - Implementation roadmap
-- [Business Model](docs/plans/2026-02-05-business-model-architecture.md) - Product tiers and revenue
-- [ArmorClaw Evolution Design](docs/plans/2026-02-07-armorclaw-evolution-design.md) - Multi-agent collaboration platform 🆓
-- [Security Enhancements](docs/plans/2026-02-07-security-enhancements.md) 🆕 - Zero-trust middleware, guardrails, hardening
-- **NEW:** [First Boot Security Configuration](docs/plans/2026-02-16-first-boot-security-configuration.md) ⭐ - 9-phase security setup flow for VPS deployment
-- **NEW:** [First Boot Quick Reference](docs/guides/first-boot-quick-reference.md) - Quick reference for security configuration
-- **NEW:** [Onboarding & Admin Gap Analysis v2](docs/guides/onboarding-gap-analysis-v2.md) 🔴 - Critical gaps found in onboarding flow
-- **NEW:** [SDTW Adapter Implementation Plan v2.0](docs/plans/SDTW_Adapter_Implementation_Plan_v2.0.md) 🆓 - Slack, Discord, Teams, WhatsApp integration
-- **NEW:** [SDTW Message Queue Specification](docs/plans/SDTW_MessageQueue_Specification.md) 🆓 - SQLite-based persistent queue
-
-### 📊 Status & Progress
-- [Project Status](docs/status/2026-02-05-status.md) - Detailed status tracking
-- [Milestone Progress](docs/PROGRESS/progress.md) - Completed milestones
-
-### 🔬 Research & Analysis
-- [Hosting Providers Comparison](docs/output/hosting-providers-comparison.md) 🆓 - Comprehensive evaluation of 11+ hosting options (Fly.io, AWS, GCP, DigitalOcean, Vultr, etc.)
-- [Cloudflare Workers Analysis](docs/output/cloudflare-workers-analysis.md) - Platform evaluation for ArmorClaw fit ❌
-
----
-
-## Project Overview
-
-**ArmorClaw** is a local containment system for AI agents that prevents prompt injection from exposing API keys and secrets.
-
-### Core Promise
-> API keys are injected ephemerally via file descriptor passing. They exist only in memory inside the isolated container, are never written to disk, and are not exposed in Docker metadata or container inspection.
-
-### What It Does
-- **Isolates** AI agents in hardened Docker containers (non-root, no shell)
-- **Protects** API keys with hardware-bound encryption (SQLCipher + XChaCha20-Poly1305)
-- **Communicates** via Matrix protocol with E2EE support
-- **Contains** blast radius if agent is compromised
-
-### What It Doesn't Do (v1)
-- Does NOT prevent in-memory misuse during active session
-- Does NOT prevent side-channel attacks (memory scraping)
-- Does NOT prevent host-level compromise
-
----
-
-## Beyond ArmorClaw: ArmorClaw Evolution
-
-**ArmorClaw Evolution** is a planned evolution of ArmorClaw that enables **secure multi-agent collaboration** while maintaining the same security boundaries.
-
-### Key Enhancements
-
-| Feature | ArmorClaw | ArmorClaw Evolution |
-|---------|-----------|-----------|
-| **Agent Communication** | Raw Matrix messages | Agent-to-Agent (A2A) Protocol |
-| **Tool Discovery** | Custom JSON-RPC | Model Context Protocol (MCP) |
-| **Memory** | Agent-local only | Shared encrypted epistemic memory |
-| **Observability** | Minimal logging | Causal dependency graphs (CDG) |
-| **Governance** | Schema validation | Real-time policy engine (OPA) |
-
-### Use Cases
-
-- **Collaborative Problem Solving:** Agents delegate tasks to specialists
-- **Ensemble Decision Making:** Multiple agents analyze and vote
-- **Map-Reduce Processing:** Distribute work across agent swarm
-- **Knowledge Sharing:** Agents learn from each other's discoveries
-
-### Planning Status
-
-🆕 **Design Complete (v2.0):** [ArmorClaw Evolution Design Document](docs/plans/2026-02-07-armorclaw-evolution-design.md)
-
-- ✅ Architecture specification (50+ sections)
-- ✅ Technical modifications detailed (20+ components)
-- ✅ Security analysis completed
-- ✅ Gap analysis addressed (identity, fault tolerance, monitoring, etc.)
-- ✅ Implementation phases defined (10 phases, 24-34 weeks)
-- ⏳ Awaiting stakeholder approval
-
----
-
-## Current Status
-
-### Phase 1: Standard Bridge ✅ COMPLETE
-
-| Component | Status | Binary Location |
-|-----------|--------|-----------------|
-| Encrypted Keystore | ✅ Complete | `bridge/pkg/keystore/` |
-| Docker Client | ✅ Complete | `bridge/pkg/docker/` |
-| Matrix Adapter | ✅ Complete | `bridge/internal/adapter/` |
-| JSON-RPC Server | ✅ Complete | `bridge/pkg/rpc/` |
-| Configuration System | ✅ Complete | `bridge/pkg/config/` |
-| Shell Completion | ✅ Complete | `bridge/completions/` |
-| Daemon Mode | ✅ Complete | `bridge/cmd/bridge/main.go` |
-| Enhanced Help | ✅ Complete | `bridge/cmd/bridge/main.go` |
-
-**Bridge Binary:** `bridge/build/armorclaw-bridge` (11 MB)
-
-### UX Achievement: 8/10 ✅ TARGET REACHED
-
-| Aspect | Rating | Status |
-|--------|--------|--------|
-| First-run experience | 9/10 | ✅ Excellent |
-| Daily use | 9/10 | ✅ Excellent |
-| Error recovery | 7/10 | ✅ Good |
-| Documentation | 9/10 | ✅ Excellent |
-
-**Recent Milestones:**
-- ✅ Milestone 16: Error Documentation for LLMs
-- ✅ Milestone 17: Comprehensive UX Assessment
-- ✅ Milestone 18: P2 Polish Items (shell completion, daemon mode, enhanced help)
-- ✅ Milestone 19: Element X UX Improvements
-
-### Next Steps
-- ✅ Initial integration testing complete (container hardening validated)
-- ⏳ Full integration testing with Matrix Conduit
-- ⏳ End-to-end testing with agent containers
-- ⏳ Infrastructure deployment on Hostinger KVM2
-- ⏳ ArmorClaw Evolution Phase 1 implementation (if approved)
+> **Version:** 4.0.0 | **Last Updated:** 2026-02-19 | **Status:** Production Ready
 
 ---
 
 ## Quick Start
 
-### Method 1: Element X Integration ⭐ NEW (Fastest)
-
-Connect to your AI agents via Element X mobile app in 5 minutes:
-
-```bash
-# 1. Launch the infrastructure stack
-cd armorclaw && ./deploy/launch-element-x.sh
-
-# 2. Scan the QR code with Element X mobile app
-# 3. Start chatting with your agent!
-```
-
-Perfect for mobile users - no local installation required beyond Docker.
-
-**📖 Full Guide:** [Element X Quick Start](docs/guides/element-x-quickstart.md)
+| What | Link | Time |
+|------|------|------|
+| New to ArmorClaw? | [Getting Started Guide](guides/getting-started.md) | 5 min |
+| Deploy to production | [Hostinger VPS Deployment](guides/hostinger-vps-deployment.md) | 15 min |
+| Connect via Element X | [Element X Quickstart](guides/element-x-quickstart.md) | 5 min |
+| Troubleshoot issues | [Error Catalog](guides/error-catalog.md) | - |
 
 ---
 
-### Method 2: Interactive Setup Wizard ⭐ (Recommended)
+## Feature Directory
 
-The setup wizard automates installation and configuration in 10-15 minutes:
+### Core Features
 
-```bash
-cd armorclaw
-./deploy/setup-wizard.sh
-```
+| Feature | Description | Docs | Package |
+|---------|-------------|------|---------|
+| **Encrypted Keystore** | SQLCipher + XChaCha20-Poly1305 credential storage | [Config Guide](guides/configuration.md) | `bridge/pkg/keystore` |
+| **Docker Client** | Scoped container operations (create, exec, remove) | [Development Guide](guides/development.md) | `bridge/pkg/docker` |
+| **Matrix Adapter** | E2EE-capable Matrix bridge | [Matrix Deployment](guides/matrix-homeserver-deployment.md) | `bridge/internal/adapter` |
+| **JSON-RPC Server** | Unix socket API with 24 methods | [RPC API Reference](reference/rpc-api.md) | `bridge/pkg/rpc` |
+| **Configuration System** | TOML + environment variables | [Configuration Guide](guides/configuration.md) | `bridge/pkg/config` |
+| **Secret Injection** | Memory-only, never on disk | [Security Config](guides/security-configuration.md) | `bridge/pkg/secrets` |
 
-The wizard handles:
-- System requirements validation
-- Docker installation/verification
-- Container image building
-- Bridge compilation and installation
-- Keystore initialization (with security best practices)
-- Configuration file generation
-- First API key setup
-- Systemd service setup
-- Post-installation verification
+### Security Features
 
-### Method 3: Interactive CLI Wizard
+| Feature | Description | Docs | Package |
+|---------|-------------|------|---------|
+| **Zero-Trust Verification** | Device fingerprinting, trust scoring | [Security Config](guides/security-configuration.md) | `bridge/pkg/trust` |
+| **Audit Logging** | Tamper-evident hash-chain logs | [Security Config](guides/security-configuration.md) | `bridge/pkg/audit` |
+| **HIPAA Compliance** | PHI detection and scrubbing | [Security Config](guides/security-configuration.md) | `bridge/pkg/pii` |
+| **Budget Guardrails** | Token tracking and cost controls | [Security Config](guides/security-configuration.md) | `bridge/pkg/budget` |
+| **Security Tiers** | Essential → Enhanced → Maximum | [Tier Upgrade Guide](guides/security-tier-upgrade.md) | `bridge/pkg/lockdown` |
 
-For users who prefer to build first, then configure:
+### Communication Features
 
-```bash
-# Build the bridge
-cd bridge && go build -o build/armorclaw-bridge ./cmd/bridge
+| Feature | Description | Docs | Package |
+|---------|-------------|------|---------|
+| **WebRTC Voice** | Real-time voice with TURN relay | [Voice Guide](guides/webrtc-voice-guide.md) | `bridge/pkg/webrtc` |
+| **WebSocket Client** | Real-time Matrix event push | [WebSocket Guide](guides/websocket-client-guide.md) | `bridge/pkg/websocket` |
+| **Push Notifications** | FCM, APNS, WebPush via Sygnal | - | `bridge/pkg/push` |
+| **SDTW Adapters** | Slack, Discord, Teams, WhatsApp bridges | - | `bridge/internal/sdtw` |
 
-# Run the interactive setup wizard
-./build/armorclaw-bridge setup
-```
+### Enterprise Features
 
-This guides you through:
-1. Docker availability check
-2. Configuration location
-3. AI provider selection (OpenAI, Anthropic, etc.)
-4. API key entry (stored securely)
-5. Optional Matrix configuration
-6. Automatic configuration generation
+| Feature | Description | Docs | Package |
+|---------|-------------|------|---------|
+| **License Server** | PostgreSQL-backed license validation | - | `license-server/` |
+| **SSO Integration** | SAML 2.0 and OIDC authentication | - | `bridge/pkg/sso` |
+| **Web Dashboard** | Embedded management interface | - | `bridge/pkg/dashboard` |
+| **Error Handling** | Structured codes, tracking, alerting | [Error Catalog](guides/error-catalog.md) | `bridge/pkg/errors` |
+| **Recovery System** | BIP39 phrase, 48-hour window | [Multi-Device UX](guides/multi-device-ux.md) | `bridge/pkg/recovery` |
 
-### Method 4: Manual Setup (For advanced users)
+---
 
-### 1. Build the Bridge
-```bash
-cd bridge
-go build -o build/armorclaw-bridge ./cmd/bridge
-```
+## Feature Details
 
-### 2. Initialize Configuration
-```bash
-# Option 1: Interactive setup (NEW - Recommended for first-time users)
-./build/armorclaw-bridge setup
+### Keystore (`bridge/pkg/keystore`)
 
-# Option 2: Quick config init
-./build/armorclaw-bridge init
-✓ Example configuration written to: ~/.armorclaw/config.toml
-```
+**Purpose:** Encrypted credential storage with hardware-bound keys
 
-### 3. Add Your API Key (NEW - Much Easier!)
-```bash
-# Option 1: CLI command (recommended)
-./build/armorclaw-bridge add-key --provider openai --token sk-proj-...
+**Key Files:**
+- `keystore.go` - Core keystore implementation
+- `keystore.go` (internal) - SQLCipher database operations
 
-# Option 2: OpenClaw-style (environment variable)
-export ARMORCLAW_API_KEY="sk-proj-..."
-./build/armorclaw-bridge
-```
+**Critical Functions:**
+| Function | Purpose |
+|----------|---------|
+| `NewKeystore()` | Initialize encrypted database |
+| `Store(cred)` | Store encrypted credential |
+| `Retrieve(id)` | Retrieve and decrypt credential |
+| `Delete(id)` | Securely delete credential |
+| `List()` | List all stored credential IDs |
 
-### 4. Start an Agent (NEW - Much Easier!)
-```bash
-# List your keys first
-./build/armorclaw-bridge list-keys
+**Dependencies:**
+- `github.com/mutecomm/go-sqlcipher/v4` - SQLCipher driver
+- Hardware identifiers for key binding
 
-# Start with a specific key
-./build/armorclaw-bridge start --key openai-default
-```
-
-### 5. Check Status
-```bash
-# List all containers
-./build/armorclaw-bridge status
-
-# Or use RPC (advanced)
-echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+**Configuration:**
+```toml
+[keystore]
+path = "~/.armorclaw/keystore.db"
 ```
 
 ---
 
-### Method 5: VPS Deployment 🆓
+### Zero-Trust System (`bridge/pkg/trust`)
 
-Deploy ArmorClaw to a remote VPS (Hostinger, DigitalOcean, etc.):
+**Purpose:** Continuous verification with device fingerprinting
 
-```bash
-# From local machine
-cd armorclaw
-scp deploy/vps-deploy.sh armorclaw-deploy.tar.gz user@your-vps-ip:/tmp/
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `zero_trust.go` | ZeroTrustManager - core verification engine |
+| `device.go` | Device fingerprinting and tracking |
+| `middleware.go` | Operation-level enforcement |
 
-# SSH into VPS
-ssh user@your-vps-ip
+**Critical Types:**
+```go
+type TrustScore int  // 0=Untrusted, 1=Low, 2=Medium, 3=High, 4=Verified
 
-# Run deployment script
-chmod +x /tmp/vps-deploy.sh
-sudo bash /tmp/vps-deploy.sh
+type ZeroTrustRequest struct {
+    SessionID         string
+    UserID            string
+    DeviceFingerprint DeviceFingerprintInput
+    IPAddress         string
+    Action            string
+    Resource          string
+}
+
+type ZeroTrustResult struct {
+    Passed          bool
+    TrustLevel      TrustScore
+    RiskScore       int      // 0-100
+    AnomalyFlags    []string
+    RequiredActions []string
+}
 ```
 
-**The automated script handles:**
-- Pre-flight checks (disk, memory, ports)
-- Docker installation (if needed)
-- Tarball verification and extraction
-- Interactive configuration
-- Automated deployment
-
-**📖 Full Guides:**
-- [Setup Guide - VPS Deployment](docs/guides/setup-guide.md#method-5-vps-deployment-via-tarball-)
-- [Hostinger VPS Deployment](docs/guides/hostinger-deployment.md)
-- [Hostinger Docker Deployment](docs/guides/hostinger-docker-deployment.md)
+**Default Policies:**
+| Operation | Min Trust | Max Risk | MFA | Verified Device |
+|-----------|-----------|----------|-----|-----------------|
+| container_create | Medium (2) | 40 | No | No |
+| secret_access | High (3) | 25 | Yes | Yes |
+| admin_access | Verified (4) | 15 | Yes | Yes |
 
 ---
 
-## 🆕 New Features (v1.1.0)
+### Audit System (`bridge/pkg/audit`)
 
-### Shell Completion
+**Purpose:** Tamper-evident logging with compliance reporting
 
-Tab completion for bash and zsh makes daily usage more efficient:
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `tamper_evident.go` | Hash-chain audit log |
+| `compliance.go` | 90-day retention, exports |
+| `audit_helper.go` | CriticalOperationLogger |
 
-```bash
-# Generate completion
-./build/armorclaw-bridge completion bash > ~/.bash_completion.d/armorclaw-bridge
-source ~/.bash_completion.d/armorclaw-bridge
+**Critical Functions:**
+```go
+// Log an audit entry
+func (l *TamperEvidentLog) LogEntry(eventType string, actor Actor, action string,
+    resource Resource, details map[string]interface{}, compliance ComplianceFlags) (*AuditEntry, error)
 
-# Use completion
-./build/armorclaw-bridge <TAB>              # Show commands
-./build/armorclaw-bridge add-key --<TAB>     # Show flags
-./build/armorclaw-bridge start --key <TAB>   # Show available keys
+// Verify chain integrity
+func (l *TamperEvidentLog) VerifyChain() ([]int, error)
+
+// Export for compliance
+func (l *TamperEvidentLog) ExportJSON(start, end time.Time) ([]byte, error)
 ```
 
-### Daemon Mode
-
-Run the bridge as a background service:
-
-```bash
-./build/armorclaw-bridge daemon start   # Start in background
-./build/armorclaw-bridge daemon status  # Check status
-./build/armorclaw-bridge daemon logs    # View logs
-./build/armorclaw-bridge daemon stop    # Stop daemon
-```
-
-### Enhanced CLI Help
-
-Better help with examples for all commands:
-
-```bash
-./build/armorclaw-bridge --help            # Main help with examples
-./build/armorclaw-bridge add-key --help    # Command-specific help
-```
-
-### Element X Integration
-
-Connect to your agents via Element X mobile app - no local installation required:
-
-```bash
-./deploy/launch-element-x.sh    # Launch Matrix + Caddy + Bridge
-# Scan QR code with Element X mobile app
-```
-
-**📖 Full Guide:** [Element X Quick Start](docs/guides/element-x-quickstart.md)
+**Audit Categories:**
+| Category | Retention | Example Events |
+|----------|-----------|----------------|
+| container_lifecycle | 90 days | start, stop, error |
+| key_access | 90 days | access, create, delete |
+| secret_management | 90 days | injection, cleanup |
+| phi_access | 6 years | read, write (HIPAA) |
 
 ---
 
-## Architecture
+### WebRTC/Voice (`bridge/pkg/webrtc`)
 
-### System Components
+**Purpose:** Real-time voice communication with NAT traversal
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Host Machine                            │
-│                                                               │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  Local Bridge (Go)                                     │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │  │
-│  │  │   Keystore   │  │   Docker     │  │   Matrix  │  │  │
-│  │  │  (SQLCipher) │  │   Client     │  │   Adapter  │  │  │
-│  │  └──────────────┘  └──────────────┘  └───────────┘  │  │
-│  │                                                       │  │
-│  │  JSON-RPC 2.0 Server                                 │  │
-│  │  Socket: /run/armorclaw/bridge.sock                 │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                          ↕ JSON-RPC + FD passing             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  ArmorClaw Container (Hardened Docker)               │  │
-│  │  ┌─────────────────────────────────────────────────┐   │  │
-│  │  │  OpenClaw Agent + Matrix Skill                  │   │  │
-│  │  │  - User: UID 10001 (claw)                       │   │  │
-│  │  │  - No shell, no network tools                   │   │  │
-│  │  │  - Secrets in memory only (FD 3)                │   │  │
-│  │  └─────────────────────────────────────────────────┘   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-                           ↕ Matrix Protocol
-┌─────────────────────────────────────────────────────────────┐
-│              Matrix Conduit (Docker)                         │
-│  - Homeserver: https://matrix.armorclaw.com               │
-│  - Port: 6167 (API), 8448 (Client)                          │
-│  - E2EE: Olm/Megolm                                         │
-└─────────────────────────────────────────────────────────────┘
-```
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `engine.go` | Pion-based WebRTC engine |
+| `session.go` | Session management |
+| `token.go` | Authorization tokens |
 
-### Key Technologies
-- **Container:** Docker with seccomp profiles
-- **Encryption:** SQLCipher + XChaCha20-Poly1305
-- **Communication:** JSON-RPC 2.0 over Unix socket
-- **Protocol:** Matrix (Conduit homeserver)
-- **Language:** Go 1.24+ (Bridge), Python (Agent)
+**Dependencies:**
+- `github.com/pion/webrtc/v3` - WebRTC implementation
+- TURN server (Coturn) for NAT traversal
 
----
-
-## File Structure (LLM-Optimized)
-
-```
-ArmorClaw/
-├── docs/                          # ALL DOCUMENTATION (start here)
-│   ├── index.md                   # THIS FILE - Documentation hub
-│   ├── plans/                     # Architecture & design documents
-│   │   ├── 2026-02-05-armorclaw-v1-design.md
-│   │   ├── 2026-02-05-phase1-implementation-tasks.md
-│   │   ├── 2026-02-05-license-server-api.md
-│   │   └── 2026-02-05-business-model-architecture.md
-│   ├── guides/                    # How-to guides
-│   │   └── 2026-02-05-deployment-quickref.md
-│   ├── reference/                 # Technical specifications (TODO)
-│   │   └── rpc-api.md             # Complete RPC API reference
-│   ├── status/                    # Project status tracking
-│   │   └── 2026-02-05-status.md
-│   ├── PROGRESS/                  # Milestone tracking (TODO)
-│   │   └── progress.md
-│   └── output/                    # Milestone reviews (TODO)
-│       └── review.md
-├── bridge/                        # Go Local Bridge (Phase 1 complete)
-│   ├── cmd/bridge/main.go         # Entry point
-│   ├── pkg/
-│   │   ├── config/                # Configuration system
-│   │   ├── docker/                # Docker client (scoped)
-│   │   ├── keystore/              # Encrypted credential storage
-│   │   ├── logger/                # Structured logging (slog + security events)
-│   │   └── rpc/                   # JSON-RPC 2.0 server
-│   ├── internal/adapter/          # Matrix adapter
-│   ├── build/armorclaw-bridge    # Compiled binary (11 MB)
-│   └── go.mod
-├── container/                     # Container runtime files
-│   └── opt/openclaw/
-├── tests/                         # Test suites
-├── docker-compose.yml             # Infrastructure stack
-├── Dockerfile                      # Hardened container image
-├── CLAUDE.md                       # AI agent guidance
-└── README.md                       # User-facing documentation
+**Configuration:**
+```toml
+[webrtc]
+enabled = true
+stun_servers = ["stun:stun.l.google.com:19302"]
+turn_server = "turn:your-server.com:3478"
 ```
 
 ---
 
-## Documentation for Specific Tasks
+### Error Handling (`bridge/pkg/errors`)
 
-### For AI Agents Working On:
-- **New Features:** Read `docs/plans/2026-02-05-phase1-implementation-tasks.md`
-- **Docker Integration:** Read `bridge/pkg/docker/client.go` source
-- **Matrix Integration:** Read `bridge/internal/adapter/matrix.go` source
-- **Security:** Read security principles in `CLAUDE.md`
-- **Testing:** Read `tests/` directory
+**Purpose:** Structured error tracking with admin alerting
 
-### For Understanding:
-- **Architecture:** `docs/plans/2026-02-05-armorclaw-v1-design.md`
-- **Business Model:** `docs/plans/2026-02-05-business-model-architecture.md`
-- **Communication:** `docs/plans/2026-02-05-communication-server-options.md`
+**Error Codes:**
+| Prefix | Category | Example |
+|--------|----------|---------|
+| CTX-XXX | Container | CTX-003: Health timeout |
+| MAT-XXX | Matrix | MAT-001: Connection failed |
+| RPC-XXX | RPC/API | RPC-010: Socket failed |
+| SYS-XXX | System | SYS-010: Secret inject failed |
+| BGT-XXX | Budget | BGT-002: Budget exceeded |
+| VOX-XXX | Voice | VOX-001: WebRTC failed |
 
----
-
-## Key Decisions (Locked for v1)
-
-| Decision | Rationale | Date |
-|----------|-----------|------|
-| Hybrid Bridge Strategy | Fast time-to-market + premium upsell | 2026-02-05 |
-| Matrix Conduit for comm | E2EE, lightweight, rich ecosystem | 2026-02-05 |
-| SQLCipher for keystore | Encrypted at rest, SQLite simplicity | 2026-02-05 |
-| Unix socket for bridge | No network exposure, minimal overhead | 2026-02-05 |
-| Scoped Docker client | Permission checks + seccomp hardening | 2026-02-05 |
+**RPC Methods:**
+- `get_errors` - Query error history
+- `resolve_error` - Mark error as resolved
 
 ---
 
-## Memory Budget
+## Deployment Options
 
-**Target:** ≤ 2 GB on Hostinger KVM2 (4 GB available)
+### Recommended (Budget-Friendly)
+| Platform | Cost | Guide |
+|----------|------|-------|
+| Hostinger VPS | $4-8/mo | [Deployment Guide](guides/hostinger-vps-deployment.md) |
+| Vultr | $2.50/mo+ | [Deployment Guide](guides/vultr-deployment.md) |
+| DigitalOcean | $5/mo+ | [Deployment Guide](guides/digitalocean-deployment.md) |
 
-| Component | Phase 1 | Phase 4 |
-|-----------|---------|---------|
-| Ubuntu (minimal) | 400 MB | 400 MB |
-| Nginx | 40 MB | 40 MB |
-| Matrix Conduit | 200 MB | 200 MB |
-| Coturn (TURN) | 50 MB | 50 MB |
-| Local Bridge | 50 MB | 250 MB |
-| OpenClaw Agent | 800 MB | 800 MB |
-| **TOTAL** | **~1.54 GB** | **~1.74 GB** |
-| **HEADROOM** | **~460 MB** | **~260 MB** |
+### Enterprise
+| Platform | Features | Guide |
+|----------|----------|-------|
+| Fly.io | Global edge (35+ regions) | [Deployment Guide](guides/flyio-deployment.md) |
+| AWS Fargate | Enterprise serverless | [Deployment Guide](guides/aws-fargate-deployment.md) |
+| GCP Cloud Run | Free tier available | [Deployment Guide](guides/gcp-cloudrun-deployment.md) |
 
-✅ Both phases under 2 GB target
-
----
-
-## Dependencies
-
-### Runtime (Required)
-- Docker Desktop or Docker Daemon
-- Linux or WSL2 (v1 target)
-
-### Build (For Development)
-- Go 1.24+ (for Local Bridge)
-- Python 3.x (for OpenClaw compatibility)
-- CGo-enabled compiler (for SQLCipher)
-
-### Go Dependencies
-- `github.com/docker/docker` - Docker API client
-- `github.com/mutecomm/go-sqlcipher/v4` - Encrypted SQLite
-- `golang.org/x/crypto` - XChaCha20-Poly1305 encryption
+### Development
+| Platform | Purpose | Guide |
+|----------|---------|-------|
+| Docker Desktop | Local development | [Local Dev Guide](guides/local-development.md) |
+| Railway | Quick prototyping | [Deployment Guide](guides/railway-deployment.md) |
+| Render | Free tier testing | [Deployment Guide](guides/render-deployment.md) |
 
 ---
 
-## Security Posture
+## Reference Documentation
 
-### What ArmorClaw Prevents
-- ✅ Secrets persisting to disk
-- ✅ Secrets in Docker metadata
-- ✅ Direct filesystem escape
-- ✅ Long-term secret retention
-
-### What ArmorClaw Does NOT Prevent (v1)
-- ⚠️ In-memory misuse during active session
-- ⚠️ Side-channel attacks (memory scraping)
-- ⚠️ Host-level compromise
-
-**Our containment is blast radius reduction, not perfect secrecy.**
+| Document | Purpose |
+|----------|---------|
+| [RPC API Reference](reference/rpc-api.md) | Complete JSON-RPC 2.0 API (24 methods) |
+| [Error Catalog](guides/error-catalog.md) | Every error with solutions |
+| [Security Configuration](guides/security-configuration.md) | Zero-trust, budget, PII |
+| [Troubleshooting Guide](guides/troubleshooting.md) | Systematic debugging |
+| [Configuration Guide](guides/configuration.md) | TOML config and env vars |
 
 ---
 
-## Quick Reference Commands
+## Architecture Overview
 
-### Bridge Operations
-```bash
-# Build bridge
-cd bridge && go build -o build/armorclaw-bridge ./cmd/bridge
-
-# Initialize config
-./build/armorclaw-bridge init
-
-# Validate config
-./build/armorclaw-bridge validate
-
-# Start bridge
-sudo ./build/armorclaw-bridge
-
-# Start with Matrix
-sudo ./build/armorclaw-bridge -matrix-enabled \
-  -matrix-homeserver https://matrix.armorclaw.com \
-  -matrix-username bridge-bot \
-  -matrix-password secret
 ```
-
-### Shell Completion
-```bash
-# Bash completion
-./build/armorclaw-bridge completion bash > ~/.bash_completion.d/armorclaw-bridge
-source ~/.bash_completion.d/armorclaw-bridge
-
-# Zsh completion
-./build/armorclaw-bridge completion zsh > ~/.zsh/completions/_armorclaw-bridge
-```
-
-### Daemon Mode
-```bash
-# Start as background daemon
-./build/armorclaw-bridge daemon start
-
-# Check daemon status
-./build/armorclaw-bridge daemon status
-
-# View daemon logs
-./build/armorclaw-bridge daemon logs
-
-# Stop daemon
-./build/armorclaw-bridge daemon stop
-```
-
-### Container Operations
-```bash
-# Build container
-docker build -t armorclaw/agent:v1 .
-
-# Run hardening tests
-make test-hardening
-
-# Run all tests
-make test-all
+┌─────────────────────────────────────────────────────────────────┐
+│                      ARMORCLAW ARCHITECTURE                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   External Platforms          Bridge Components                  │
+│   ┌─────────────┐            ┌─────────────────────┐           │
+│   │    Slack    │───────────▶│   SDTW Adapters     │           │
+│   │   Discord   │            │   (Slack/Discord/   │           │
+│   │    Teams    │            │    Teams/WhatsApp)  │           │
+│   │  WhatsApp   │            └──────────┬──────────┘           │
+│   └─────────────┘                       │                       │
+│                                         ▼                       │
+│                              ┌─────────────────────┐           │
+│                              │   Message Queue     │           │
+│                              │   (SQLite + WAL)    │           │
+│                              └──────────┬──────────┘           │
+│                                         │                       │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    BRIDGE BINARY                         │   │
+│   │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌─────────┐ │   │
+│   │  │ Keystore  │ │  Trust    │ │   Audit   │ │  RPC    │ │   │
+│   │  │(Encrypted)│ │ Middleware│ │   Log     │ │ Server  │ │   │
+│   │  └───────────┘ └───────────┘ └───────────┘ └─────────┘ │   │
+│   │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌─────────┐ │   │
+│   │  │  Budget   │ │  WebRTC   │ │  Errors   │ │  Health │ │   │
+│   │  │  Tracker  │ │  Engine   │ │  System   │ │ Monitor │ │   │
+│   │  └───────────┘ └───────────┘ └───────────┘ └─────────┘ │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│              ┌───────────────┼───────────────┐                  │
+│              ▼               ▼               ▼                  │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│   │    Matrix    │  │   Container  │  │    TURN      │         │
+│   │  Homeserver  │  │   Runtime    │  │   Server     │         │
+│   │  (Conduit)   │  │   (Docker)   │  │  (Coturn)    │         │
+│   └──────────────┘  └──────────────┘  └──────────────┘         │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## License
+## Project History
 
-MIT License - See [LICENSE](LICENSE) file
+See [CHANGELOG.md](../CHANGELOG.md) for complete version history with commit references.
 
 ---
 
-## Support & Contribution
+## Support
 
-- **GitHub:** https://github.com/armorclaw/armorclaw
+- **Issues:** https://github.com/armorclaw/armorclaw/issues
 - **Documentation Issues:** Create issue with `docs:` label
 - **Bug Reports:** Create issue with `bug:` label
 
 ---
 
-**Index Last Updated:** 2026-02-07
-**Phase:** Phase 1 Complete - Production Ready
+**Documentation Version:** 2.0.0 | **Last Updated:** 2026-02-19
