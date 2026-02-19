@@ -1,5 +1,8 @@
 # Sygnal Configuration for ArmorClaw Push Notifications
 # https://github.com/matrix-org/sygnal
+#
+# Supports both ArmorTerminal (Android) and ArmorChat (Cross-Platform)
+# Uses event_id_only mode to preserve E2EE
 
 # Database configuration (SQLite for simplicity)
 db:
@@ -37,7 +40,7 @@ log:
 # Push gateway configuration
 # This is the endpoint where Matrix homeservers send push notifications
 push:
-  # FCM (Firebase Cloud Messaging) configuration
+  # FCM (Firebase Cloud Messaging) configuration - Default
   fcm:
     # FCM project ID
     project_id: armorclaw-push
@@ -78,39 +81,93 @@ push:
 
 # Application definitions
 # These map Matrix app_ids to push configurations
+#
+# IMPORTANT: All apps use event_id_only format to preserve E2EE
+# The server never sees message content - only event_id and room_id
+# Client must wake up, sync with Matrix, and decrypt locally
 apps:
-  # iOS app
+  # ============================================================
+  # ArmorTerminal (Android) - FCM/GCM Configuration
+  # ============================================================
+  - name: com.armorclaw.armorterminal.android
+    type: gcm
+    api_version: v1
+    project_id: armorclaw-armorterminal
+    service_account_file: /etc/sygnal/armorterminal-fcm-credentials.json
+    # Event ID only mode - CRITICAL for E2EE
+    # Format: event_id_only means push contains only event_id, room_id
+    # Client must fetch and decrypt message content locally
+    format: event_id_only
+    # Default priority
+    default_payload:
+      priority: high
+    # Collapse key for grouping notifications
+    collapse_key: armorterminal
+
+  # ============================================================
+  # ArmorChat (iOS) - APNS Configuration
+  # ============================================================
+  - name: com.armorclaw.armorchat.ios
+    type: apns
+    certfile: /etc/sygnal/armorchat-ios-cert.pem
+    # Token-based auth (recommended for production)
+    # cert_key: /etc/sygnal/ArmorChat-AuthKey.p8
+    # key_id: YOUR_KEY_ID
+    # team_id: YOUR_TEAM_ID
+    topic: com.armorclaw.armorchat
+    environment: production
+    # Event ID only mode - CRITICAL for E2EE
+    format: event_id_only
+    max_retries: 3
+
+  # ============================================================
+  # ArmorChat (Android) - FCM Configuration (Alternative)
+  # ============================================================
+  - name: com.armorclaw.armorchat.android
+    type: gcm
+    api_version: v1
+    project_id: armorclaw-armorchat
+    service_account_file: /etc/sygnal/armorchat-fcm-credentials.json
+    format: event_id_only
+    default_payload:
+      priority: high
+    collapse_key: armorchat
+
+  # ============================================================
+  # ArmorChat (Web/Desktop) - WebPush Configuration
+  # ============================================================
+  - name: com.armorclaw.armorchat.web
+    type: webpush
+    vapid:
+      subject: mailto:admin@armorclaw.com
+      private_key: YOUR_VAPID_PRIVATE_KEY
+      public_key: YOUR_VAPID_PUBLIC_KEY
+    format: event_id_only
+
+  # ============================================================
+  # Legacy/Development Apps (Backward Compatibility)
+  # ============================================================
   - name: com.armorclaw.ios
     type: apns
     certfile: /etc/sygnal/ios_push_cert.pem
     topic: com.armorclaw.ios
     environment: production
+    format: event_id_only
 
-  # Android app
   - name: com.armorclaw.android
     type: gcm
     api_version: v1
     project_id: armorclaw-android
     service_account_file: /etc/sygnal/android-fcm-credentials.json
+    format: event_id_only
 
-  # Web app
   - name: com.armorclaw.web
     type: webpush
     vapid:
       subject: mailto:admin@armorclaw.com
       private_key: YOUR_VAPID_PRIVATE_KEY
       public_key: YOUR_VAPID_PUBLIC_KEY
-
-# Statsd metrics (optional)
-# statsd:
-#   host: localhost
-#   port: 8125
-#   prefix: sygnal
-
-# Prometheus metrics endpoint (optional)
-# prometheus:
-#   bind: '0.0.0.0:9091'
-#   path: /metrics
+    format: event_id_only
 
 # Rate limiting
 rate_limit:
@@ -127,3 +184,14 @@ health:
   path: /health
   # Cache duration for health status
   cache_duration_seconds: 10
+
+# Statsd metrics (optional)
+# statsd:
+#   host: localhost
+#   port: 8125
+#   prefix: sygnal
+
+# Prometheus metrics endpoint (optional)
+# prometheus:
+#   bind: '0.0.0.0:9091'
+#   path: /metrics
