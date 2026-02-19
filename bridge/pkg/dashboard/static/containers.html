@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Containers - ArmorClaw Dashboard</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #1d4ed8;
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 240px;
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-right: 1px solid var(--border);
+        }
+
+        .sidebar h1 {
+            font-size: 1.25rem;
+            margin-bottom: 2rem;
+            color: var(--primary);
+        }
+
+        .nav { list-style: none; }
+        .nav li { margin-bottom: 0.5rem; }
+        .nav a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+        }
+        .nav a:hover, .nav a.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .main {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-body { padding: 1.5rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-badge.running, .status-badge.healthy {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--success);
+        }
+
+        .status-badge.stopped, .status-badge.error {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+        .btn-danger { background: var(--danger); color: white; }
+
+        .actions { display: flex; gap: 0.5rem; }
+
+        .search-box {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .search-box input {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            color: var(--text);
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h1>🛡️ ArmorClaw</h1>
+        <ul class="nav">
+            <li><a href="/dashboard">📊 Dashboard</a></li>
+            <li><a href="/containers" class="active">🐳 Containers</a></li>
+            <li><a href="/audit">📋 Audit Logs</a></li>
+            <li><a href="/license">🔑 License</a></li>
+            <li><a href="/settings">⚙️ Settings</a></li>
+        </ul>
+    </nav>
+
+    <main class="main">
+        <div class="header">
+            <h2>Containers</h2>
+            <button class="btn btn-primary" onclick="refreshContainers()">🔄 Refresh</button>
+        </div>
+
+        <div class="search-box">
+            <input type="text" id="search" placeholder="Search containers..." onkeyup="filterContainers()">
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>ArmorClaw Containers</h3>
+                <span id="container-count">0 containers</span>
+            </div>
+            <div class="card-body">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Image</th>
+                            <th>Created</th>
+                            <th>Health</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="container-list">
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 2rem;">
+                                Loading containers...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function refreshContainers() {
+            try {
+                const response = await fetch('/api/containers');
+                const containers = await response.json();
+
+                document.getElementById('container-count').textContent =
+                    `${containers.length} containers`;
+
+                const tbody = document.getElementById('container-list');
+                tbody.innerHTML = containers.map(c => `
+                    <tr data-name="${c.name.toLowerCase()}">
+                        <td><strong>${c.name}</strong><br><small style="color: var(--text-muted)">${c.id.substring(0, 12)}</small></td>
+                        <td><span class="status-badge ${c.status}">${c.status}</span></td>
+                        <td>${c.image}</td>
+                        <td>${new Date(c.created).toLocaleDateString()}</td>
+                        <td><span class="status-badge ${c.health}">${c.health}</span></td>
+                        <td class="actions">
+                            <button class="btn btn-secondary btn-sm" onclick="viewLogs('${c.id}')">Logs</button>
+                            <button class="btn btn-secondary btn-sm" onclick="restartContainer('${c.id}')">Restart</button>
+                            <button class="btn btn-danger btn-sm" onclick="stopContainer('${c.id}')">Stop</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to fetch containers:', error);
+            }
+        }
+
+        function filterContainers() {
+            const search = document.getElementById('search').value.toLowerCase();
+            const rows = document.querySelectorAll('#container-list tr');
+            rows.forEach(row => {
+                const name = row.getAttribute('data-name') || '';
+                row.style.display = name.includes(search) ? '' : 'none';
+            });
+        }
+
+        function viewLogs(id) {
+            alert('View logs for container: ' + id);
+        }
+
+        function restartContainer(id) {
+            if (confirm('Restart container ' + id + '?')) {
+                alert('Container restart initiated');
+            }
+        }
+
+        function stopContainer(id) {
+            if (confirm('Stop container ' + id + '?')) {
+                alert('Container stop initiated');
+            }
+        }
+
+        refreshContainers();
+    </script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+# ArmorClaw License Server Stack
+version: "3.8"
+
+services:
+  license-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DATABASE_URL=postgres://armorclaw:${DB_PASSWORD}@postgres:5432/license?sslmode=disable
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - GRACE_PERIOD_DAYS=3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - license-network
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=armorclaw
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=license
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U armorclaw -d license"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - license-network
+
+  # Optional: nginx reverse proxy with TLS
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - license-server
+    restart: unless-stopped
+    networks:
+      - license-network
+    profiles:
+      - production
+
+volumes:
+  postgres-data:
+
+networks:
+  license-network:
+    driver: bridge

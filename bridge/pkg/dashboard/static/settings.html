@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - ArmorClaw Dashboard</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 240px;
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-right: 1px solid var(--border);
+        }
+
+        .sidebar h1 {
+            font-size: 1.25rem;
+            margin-bottom: 2rem;
+            color: var(--primary);
+        }
+
+        .nav { list-style: none; }
+        .nav li { margin-bottom: 0.5rem; }
+        .nav a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+        }
+        .nav a:hover, .nav a.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .main {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-body { padding: 1.5rem; }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .form-group .description {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            color: var(--text);
+            font-size: 1rem;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .toggle {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 2px;
+            bottom: 2px;
+            background-color: var(--text-muted);
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+            background-color: white;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-danger { background: var(--danger); color: white; }
+
+        .btn-group {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+        }
+
+        .alert {
+            padding: 1rem 1.5rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .alert-info {
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid var(--primary);
+        }
+
+        .alert-warning {
+            background: rgba(234, 179, 8, 0.2);
+            border: 1px solid var(--warning);
+        }
+
+        .alert-danger {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid var(--danger);
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h1>🛡️ ArmorClaw</h1>
+        <ul class="nav">
+            <li><a href="/dashboard">📊 Dashboard</a></li>
+            <li><a href="/containers">🐳 Containers</a></li>
+            <li><a href="/audit">📋 Audit Logs</a></li>
+            <li><a href="/license">🔑 License</a></li>
+            <li><a href="/settings" class="active">⚙️ Settings</a></li>
+        </ul>
+    </nav>
+
+    <main class="main">
+        <div class="header">
+            <h2>Settings</h2>
+        </div>
+
+        <div class="alert alert-info">
+            <strong>Note:</strong> Some settings require a service restart to take effect.
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>General Settings</h3>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label>Instance Name</label>
+                    <input type="text" id="instance-name" value="armorclaw-production-1">
+                </div>
+
+                <div class="form-group">
+                    <label>Log Level</label>
+                    <select id="log-level">
+                        <option value="debug">Debug</option>
+                        <option value="info" selected>Info</option>
+                        <option value="warn">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <div class="toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enable-telemetry" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Enable Anonymous Telemetry</span>
+                    </div>
+                    <p class="description">Help improve ArmorClaw by sending anonymous usage data</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Security Settings</h3>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <div class="toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="require-auth" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Require Authentication</span>
+                    </div>
+                    <p class="description">Require authentication for all API and dashboard access</p>
+                </div>
+
+                <div class="form-group">
+                    <div class="toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="audit-logging" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Audit Logging</span>
+                    </div>
+                    <p class="description">Log all administrative actions for compliance</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Session Timeout (minutes)</label>
+                    <input type="number" id="session-timeout" value="60" min="5" max="480">
+                </div>
+
+                <div class="form-group">
+                    <label>Allowed IP Addresses</label>
+                    <textarea id="allowed-ips" placeholder="One IP or CIDR per line, leave empty for all"></textarea>
+                    <p class="description">Restrict dashboard access to specific IP addresses</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Container Settings</h3>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label>Default Container Network</label>
+                    <input type="text" id="default-network" value="armorclaw-net">
+                </div>
+
+                <div class="form-group">
+                    <label>Container Log Retention (days)</label>
+                    <input type="number" id="log-retention" value="7" min="1" max="90">
+                </div>
+
+                <div class="form-group">
+                    <div class="toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-restart" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Auto-restart Containers</span>
+                    </div>
+                    <p class="description">Automatically restart containers on failure</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>License Server</h3>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label>License Server URL</label>
+                    <input type="url" id="license-url" placeholder="https://license.armorclaw.com">
+                </div>
+
+                <div class="form-group">
+                    <div class="toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="offline-mode">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Offline Mode</span>
+                    </div>
+                    <p class="description">Use cached license data without contacting server</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Danger Zone</h3>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning">
+                    <strong>Warning:</strong> These actions are irreversible. Proceed with caution.
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="clearAuditLogs()">Clear Audit Logs</button>
+                    <button class="btn btn-secondary" onclick="resetSettings()">Reset to Defaults</button>
+                    <button class="btn btn-danger" onclick="deactivateLicense()">Deactivate License</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+            <button class="btn btn-secondary" onclick="resetForm()">Cancel</button>
+        </div>
+    </main>
+
+    <script>
+        function saveSettings() {
+            const settings = {
+                instanceName: document.getElementById('instance-name').value,
+                logLevel: document.getElementById('log-level').value,
+                enableTelemetry: document.getElementById('enable-telemetry').checked,
+                requireAuth: document.getElementById('require-auth').checked,
+                auditLogging: document.getElementById('audit-logging').checked,
+                sessionTimeout: parseInt(document.getElementById('session-timeout').value),
+                allowedIps: document.getElementById('allowed-ips').value,
+                defaultNetwork: document.getElementById('default-network').value,
+                logRetention: parseInt(document.getElementById('log-retention').value),
+                autoRestart: document.getElementById('auto-restart').checked,
+                licenseUrl: document.getElementById('license-url').value,
+                offlineMode: document.getElementById('offline-mode').checked,
+            };
+
+            console.log('Saving settings:', settings);
+            alert('Settings saved successfully. Some changes may require a restart.');
+        }
+
+        function resetForm() {
+            if (confirm('Discard all unsaved changes?')) {
+                location.reload();
+            }
+        }
+
+        function clearAuditLogs() {
+            if (confirm('Are you sure you want to clear all audit logs? This cannot be undone.')) {
+                alert('Audit logs cleared.');
+            }
+        }
+
+        function resetSettings() {
+            if (confirm('Reset all settings to default values? This cannot be undone.')) {
+                alert('Settings reset to defaults.');
+                location.reload();
+            }
+        }
+
+        function deactivateLicense() {
+            const confirm = prompt('Type "DEACTIVATE" to confirm license deactivation:');
+            if (confirm === 'DEACTIVATE') {
+                alert('License deactivated. The application will now stop.');
+            }
+        }
+    </script>
+</body>
+</html>

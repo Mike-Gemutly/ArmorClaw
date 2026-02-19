@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License - ArmorClaw Dashboard</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 240px;
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-right: 1px solid var(--border);
+        }
+
+        .sidebar h1 {
+            font-size: 1.25rem;
+            margin-bottom: 2rem;
+            color: var(--primary);
+        }
+
+        .nav { list-style: none; }
+        .nav li { margin-bottom: 0.5rem; }
+        .nav a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+        }
+        .nav a:hover, .nav a.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .main {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .license-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-body { padding: 1.5rem; }
+
+        .license-status {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .status-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+        }
+
+        .status-icon.active { background: rgba(34, 197, 94, 0.2); }
+        .status-icon.expired { background: rgba(239, 68, 68, 0.2); }
+
+        .status-text h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .status-text p {
+            color: var(--text-muted);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .info-item {
+            padding: 1rem;
+            background: var(--bg);
+            border-radius: 0.5rem;
+        }
+
+        .info-item label {
+            display: block;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .info-item .value {
+            font-size: 1.125rem;
+            font-weight: 500;
+        }
+
+        .features-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .feature-tag {
+            padding: 0.5rem 1rem;
+            background: var(--bg);
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            border: 1px solid var(--border);
+        }
+
+        .usage-bar {
+            height: 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .usage-fill {
+            height: 100%;
+            background: var(--primary);
+            transition: width 0.3s;
+        }
+
+        .usage-text {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h1>🛡️ ArmorClaw</h1>
+        <ul class="nav">
+            <li><a href="/dashboard">📊 Dashboard</a></li>
+            <li><a href="/containers">🐳 Containers</a></li>
+            <li><a href="/audit">📋 Audit Logs</a></li>
+            <li><a href="/license" class="active">🔑 License</a></li>
+            <li><a href="/settings">⚙️ Settings</a></li>
+        </ul>
+    </nav>
+
+    <main class="main">
+        <div class="header">
+            <h2>License Management</h2>
+            <button class="btn btn-primary" onclick="refreshLicense()">🔄 Refresh</button>
+        </div>
+
+        <div class="license-header">
+            <div class="card">
+                <div class="card-body">
+                    <div class="license-status">
+                        <div class="status-icon active" id="status-icon">✓</div>
+                        <div class="status-text">
+                            <h3 id="license-tier">Enterprise</h3>
+                            <p id="license-status-text">License is active and valid</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>Instance Usage</h3>
+                </div>
+                <div class="card-body">
+                    <div class="usage-bar">
+                        <div class="usage-fill" id="usage-fill" style="width: 10%"></div>
+                    </div>
+                    <div class="usage-text">
+                        <span id="instances-used">1 instance</span>
+                        <span id="instances-max">of 10 allowed</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>License Details</h3>
+            </div>
+            <div class="card-body">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>License ID</label>
+                        <div class="value" id="license-id">-</div>
+                    </div>
+                    <div class="info-item">
+                        <label>Tier</label>
+                        <div class="value" id="tier">-</div>
+                    </div>
+                    <div class="info-item">
+                        <label>Status</label>
+                        <div class="value" id="status">-</div>
+                    </div>
+                    <div class="info-item">
+                        <label>Expires</label>
+                        <div class="value" id="expires">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Enabled Features</h3>
+            </div>
+            <div class="card-body">
+                <div class="features-list" id="features-list">
+                    <span class="feature-tag">Loading...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>License Actions</h3>
+            </div>
+            <div class="card-body">
+                <div class="actions">
+                    <button class="btn btn-secondary" onclick="validateLicense()">✓ Validate License</button>
+                    <button class="btn btn-secondary" onclick="refreshLicense()">🔄 Refresh Status</button>
+                    <button class="btn btn-primary" onclick="updateLicense()">🔑 Update License Key</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function refreshLicense() {
+            try {
+                const response = await fetch('/api/license');
+                const license = await response.json();
+
+                document.getElementById('license-id').textContent = license.license_id || '-';
+                document.getElementById('tier').textContent = license.tier || '-';
+                document.getElementById('status').textContent = license.status || '-';
+                document.getElementById('license-tier').textContent =
+                    license.tier ? license.tier.charAt(0).toUpperCase() + license.tier.slice(1) : '-';
+
+                if (license.expires_at) {
+                    const expiry = new Date(license.expires_at);
+                    document.getElementById('expires').textContent = expiry.toLocaleDateString();
+                    document.getElementById('license-status-text').textContent =
+                        `Expires on ${expiry.toLocaleDateString()}`;
+                }
+
+                // Update instance usage
+                const percentage = (license.instances / license.max_instances) * 100;
+                document.getElementById('usage-fill').style.width = percentage + '%';
+                document.getElementById('instances-used').textContent = `${license.instances} instance${license.instances !== 1 ? 's' : ''}`;
+                document.getElementById('instances-max').textContent = `of ${license.max_instances} allowed`;
+
+                // Update features
+                const featuresList = document.getElementById('features-list');
+                if (license.features && license.features.length > 0) {
+                    featuresList.innerHTML = license.features.map(f =>
+                        `<span class="feature-tag">${f}</span>`
+                    ).join('');
+                }
+            } catch (error) {
+                console.error('Failed to fetch license:', error);
+            }
+        }
+
+        function validateLicense() {
+            alert('Validating license with server...');
+        }
+
+        function updateLicense() {
+            const key = prompt('Enter new license key:');
+            if (key) {
+                alert('License key updated. Please restart services.');
+            }
+        }
+
+        refreshLicense();
+    </script>
+</body>
+</html>

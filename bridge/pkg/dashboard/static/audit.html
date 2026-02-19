@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Logs - ArmorClaw Dashboard</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 240px;
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-right: 1px solid var(--border);
+        }
+
+        .sidebar h1 {
+            font-size: 1.25rem;
+            margin-bottom: 2rem;
+            color: var(--primary);
+        }
+
+        .nav { list-style: none; }
+        .nav li { margin-bottom: 0.5rem; }
+        .nav a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+        }
+        .nav a:hover, .nav a.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .main {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-body { padding: 1.5rem; }
+
+        .filters {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .filter-group label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .filter-group select,
+        .filter-group input {
+            padding: 0.5rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            color: var(--text);
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-badge.success { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .status-badge.failure { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .pagination button {
+            padding: 0.5rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 0.375rem;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .pagination button:hover {
+            border-color: var(--primary);
+        }
+
+        .pagination button.active {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .event-type {
+            padding: 0.25rem 0.5rem;
+            background: var(--bg);
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h1>🛡️ ArmorClaw</h1>
+        <ul class="nav">
+            <li><a href="/dashboard">📊 Dashboard</a></li>
+            <li><a href="/containers">🐳 Containers</a></li>
+            <li><a href="/audit" class="active">📋 Audit Logs</a></li>
+            <li><a href="/license">🔑 License</a></li>
+            <li><a href="/settings">⚙️ Settings</a></li>
+        </ul>
+    </nav>
+
+    <main class="main">
+        <div class="header">
+            <h2>Audit Logs</h2>
+            <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="exportLogs()">📥 Export CSV</button>
+                <button class="btn btn-primary" onclick="refreshLogs()">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Filters</h3>
+            </div>
+            <div class="card-body">
+                <div class="filters">
+                    <div class="filter-group">
+                        <label>Event Type</label>
+                        <select id="filter-type" onchange="refreshLogs()">
+                            <option value="">All Types</option>
+                            <option value="container">Container</option>
+                            <option value="auth">Authentication</option>
+                            <option value="config">Configuration</option>
+                            <option value="security">Security</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Status</label>
+                        <select id="filter-status" onchange="refreshLogs()">
+                            <option value="">All</option>
+                            <option value="success">Success</option>
+                            <option value="failure">Failure</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Date Range</label>
+                        <input type="date" id="filter-date" onchange="refreshLogs()">
+                    </div>
+                    <div class="filter-group">
+                        <label>User</label>
+                        <input type="text" id="filter-user" placeholder="Search user..." onkeyup="refreshLogs()">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3>Recent Events</h3>
+                <span id="log-count">0 entries</span>
+            </div>
+            <div class="card-body">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Event Type</th>
+                            <th>User</th>
+                            <th>Action</th>
+                            <th>Resource</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="audit-list">
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 2rem;">
+                                Loading audit logs...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="pagination">
+                    <button onclick="prevPage()">← Previous</button>
+                    <button class="active">1</button>
+                    <button>2</button>
+                    <button>3</button>
+                    <button onclick="nextPage()">Next →</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function refreshLogs() {
+            try {
+                const response = await fetch('/api/audit');
+                const entries = await response.json();
+
+                document.getElementById('log-count').textContent =
+                    `${entries.length} entries`;
+
+                const tbody = document.getElementById('audit-list');
+                tbody.innerHTML = entries.map(e => `
+                    <tr>
+                        <td>${new Date(e.timestamp).toLocaleString()}</td>
+                        <td><span class="event-type">${e.event_type}</span></td>
+                        <td>${e.user}</td>
+                        <td>${e.action}</td>
+                        <td>${e.resource}</td>
+                        <td><span class="status-badge ${e.status}">${e.status}</span></td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to fetch audit logs:', error);
+            }
+        }
+
+        function exportLogs() {
+            alert('Exporting logs as CSV...');
+        }
+
+        function prevPage() {
+            alert('Previous page');
+        }
+
+        function nextPage() {
+            alert('Next page');
+        }
+
+        refreshLogs();
+    </script>
+</body>
+</html>
