@@ -480,3 +480,6 @@ Create a GitHub issue with:
 **⚡ ArmorClaw — Run powerful AI safely.**
 
 **🙏 Thank you for helping us make AI safer for everyone!**
+
+© 2026 Gemutly  
+[armorclaw.com](https://armorclaw.com)
