@@ -1,4 +1,8 @@
+//go:build cgo
+
 // Package keystore tests for encrypted credential storage
+// Note: These tests require CGO_ENABLED=1 due to SQLCipher dependency.
+// Run with: CGO_ENABLED=1 go test ./pkg/keystore/...
 package keystore
 
 import (

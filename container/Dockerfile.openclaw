@@ -1,0 +1,101 @@
+# ArmorClaw + OpenClaw Integration Dockerfile
+#
+# This Dockerfile creates a hardened container that runs OpenClaw
+# inside ArmorClaw's security layer with bridge communication.
+#
+# Build: docker build -f container/Dockerfile.openclaw -t armorclaw/openclaw:latest .
+#
+# Security features:
+# - Non-root user (UID 10001)
+# - No shell access (chmod a-x)
+# - Network isolation (no outbound connections)
+# - LD_PRELOAD security hooks
+# - Seccomp syscall filtering
+
+# ============================================================
+# Stage 1: Build OpenClaw
+# ============================================================
+FROM node:22-bookworm-slim AS openclaw-builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy OpenClaw source
+COPY --from=openclaw-src /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+COPY --from=openclaw-src /app/src ./src
+COPY --from=openclaw-src /app/ui ./ui
+COPY --from=openclaw-src /app/patches ./patches
+COPY --from=openclaw-src /app/scripts ./scripts
+COPY --from=openclaw-src /app/tsconfig.json ./
+COPY --from=openclaw-src /app/tsdown.config.ts ./
+
+# Install and build
+RUN corepack enable && pnpm install --frozen-lockfile
+RUN pnpm build
+
+# ============================================================
+# Stage 2: Production Runtime
+# ============================================================
+FROM debian:bookworm-slim AS runtime
+
+# Create non-root user
+RUN groupadd -g 10001 claw && \
+    useradd -u 10001 -g claw -m -d /home/claw -s /usr/sbin/nologin claw
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create directories
+RUN mkdir -p /opt/openclaw /run/armorclaw /run/secrets \
+    && chown -R claw:claw /opt/openclaw /run/armorclaw
+
+WORKDIR /opt/openclaw
+
+# Copy OpenClaw built artifacts
+COPY --from=openclaw-builder --chown=claw:claw /build/dist ./dist
+COPY --from=openclaw-builder --chown=claw:claw /build/node_modules ./node_modules
+COPY --from=openclaw-builder --chown=claw:claw /build/package.json ./
+
+# Copy ArmorClaw integration files
+COPY --chown=claw:claw container/openclaw/bridge-client.ts ./armorclaw/
+COPY --chown=claw:claw container/openclaw/armorclaw-channel.ts ./armorclaw/
+COPY --chown=claw:claw container/openclaw/entrypoint.ts ./armorclaw/
+COPY --chown=claw:claw container/opt/openclaw/health.sh ./health.sh
+
+# Copy security hook library
+COPY --chown=claw:claw container/openclaw/security_hook.c /tmp/
+RUN gcc -shared -fPIC -o /opt/openclaw/lib/libarmorclaw_hook.so /tmp/security_hook.c \
+    && rm /tmp/security_hook.c
+
+# Hardening: Remove shell and dangerous tools
+RUN chmod a-x /bin/bash /bin/sh /bin/dash /bin/zsh 2>/dev/null || true \
+    && chmod a-x /usr/bin/* 2>/dev/null || true \
+    && chmod a-x /bin/* 2>/dev/null || true \
+    && chmod +x /usr/bin/node /bin/cat /bin/ls /bin/mkdir /bin/rm
+
+# Set environment
+ENV NODE_ENV=production
+ENV ARMORCLAW_BRIDGE_SOCKET=/run/armorclaw/bridge.sock
+ENV LD_PRELOAD=/opt/openclaw/lib/libarmorclaw_hook.so
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD ["/opt/openclaw/health.sh"]
+
+# Switch to non-root user
+USER claw
+
+# Expose no ports (bridge communication only)
+# All communication happens via Unix socket
+
+# Entry point
+CMD ["node", "armorclaw/entrypoint.ts"]

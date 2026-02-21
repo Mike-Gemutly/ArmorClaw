@@ -1,7 +1,7 @@
 # ArmorClaw Bridge Configuration Guide
 
 > **Last Updated:** 2026-02-06
-> **Version:** 1.2.0
+> **Version:** 0.2.0
 > **Component:** Local Bridge Configuration
 
 ---

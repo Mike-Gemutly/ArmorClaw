@@ -165,6 +165,11 @@ func NewSlackAdapter(config SlackConfig, msgQueue *queue.MessageQueue) (*SlackAd
 		return nil, errors.New("bot token is required")
 	}
 
+	// Validate bot token format and security
+	if err := validateSlackToken(config.BotToken); err != nil {
+		return nil, fmt.Errorf("invalid bot token: %w", err)
+	}
+
 	if config.WorkspaceID == "" {
 		return nil, errors.New("workspace ID is required")
 	}
@@ -448,7 +453,10 @@ func (s *SlackAdapter) apiCall(ctx context.Context, method string, params map[st
 				formData.Add(k, item)
 			}
 		default:
-			data, _ := json.Marshal(val)
+			data, err := json.Marshal(val)
+			if err != nil {
+				return fmt.Errorf("failed to marshal parameter %q: %w", k, err)
+			}
 			formData.Set(k, string(data))
 		}
 	}
@@ -591,4 +599,40 @@ type PlatformMessage struct {
 	Text      string
 	Timestamp time.Time
 	ThreadID  string
+}
+
+// validateSlackToken validates a Slack bot token format and security
+// Prevents HTTP header injection by rejecting tokens with control characters
+func validateSlackToken(token string) error {
+	if len(token) < 10 {
+		return errors.New("token too short")
+	}
+
+	// Check for valid Slack token prefixes
+	validPrefixes := []string{"xoxb-", "xoxp-", "xapp-"}
+	hasValidPrefix := false
+	for _, prefix := range validPrefixes {
+		if len(token) >= len(prefix) && token[:len(prefix)] == prefix {
+			hasValidPrefix = true
+			break
+		}
+	}
+	if !hasValidPrefix {
+		return errors.New("token must start with xoxb-, xoxp-, or xapp-")
+	}
+
+	// Check for control characters that could cause header injection
+	for i, r := range token {
+		// Reject newlines, carriage returns, and other control characters
+		if r < 0x20 || r == 0x7F {
+			return fmt.Errorf("token contains invalid control character at position %d", i)
+		}
+	}
+
+	// Check for common injection patterns
+	if bytes.ContainsAny([]byte(token), "\r\n") {
+		return errors.New("token contains newline characters")
+	}
+
+	return nil
 }

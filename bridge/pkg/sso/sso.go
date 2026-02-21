@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // ProviderType represents the type of SSO provider
@@ -239,6 +241,25 @@ func NewSSOManager(config SSOConfig) (*SSOManager, error) {
 		}, nil
 	}
 
+	// Validate required configuration
+	if config.ClientID != "" {
+		if err := validateClientID(config.ClientID); err != nil {
+			return nil, fmt.Errorf("invalid client ID: %w", err)
+		}
+	}
+
+	if config.IssuerURL != "" {
+		if err := validateIssuerURL(config.IssuerURL); err != nil {
+			return nil, fmt.Errorf("invalid issuer URL: %w", err)
+		}
+	}
+
+	if config.RedirectURL != "" {
+		if err := validateRedirectURL(config.RedirectURL); err != nil {
+			return nil, fmt.Errorf("invalid redirect URL: %w", err)
+		}
+	}
+
 	var provider SSOProvider
 	var err error
 
@@ -278,6 +299,13 @@ func (m *SSOManager) GetProviderType() ProviderType {
 func (m *SSOManager) BeginAuth(redirect string) (string, string, error) {
 	if !m.config.Enabled {
 		return "", "", fmt.Errorf("SSO is not enabled")
+	}
+
+	// Validate redirect URL to prevent open redirect attacks
+	if redirect != "" {
+		if err := validateRedirectURL(redirect); err != nil {
+			return "", "", fmt.Errorf("invalid redirect URL: %w", err)
+		}
 	}
 
 	// Generate state parameter
@@ -1137,9 +1165,7 @@ func buildSAMLLogoutRequest(entityID, nameID string) *SAMLLogoutRequest {
 }
 
 func generateSAMLID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("_%x", b)
+	return "_" + securerandom.MustID(16)
 }
 
 func decodeSAMLResponse(encoded string) (*SAMLResponse, error) {
@@ -1183,8 +1209,7 @@ func extractAttributes(assertion *SAMLAssertion) map[string]string {
 
 func generatePKCE() (verifier, challenge string) {
 	// Generate random verifier
-	b := make([]byte, 32)
-	rand.Read(b)
+	b := securerandom.MustBytes(32)
 	verifier = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b)
 
 	// Generate challenge (S256)
@@ -1192,5 +1217,100 @@ func generatePKCE() (verifier, challenge string) {
 	challenge = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(h[:])
 
 	return verifier, challenge
+}
+
+// validateRedirectURL validates a redirect URL to prevent open redirect attacks
+func validateRedirectURL(redirect string) error {
+	if redirect == "" {
+		return nil // Empty redirect is allowed
+	}
+
+	// Parse the URL
+	u, err := url.Parse(redirect)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	// Check for dangerous schemes
+	allowedSchemes := map[string]bool{"http": true, "https": true}
+	if u.Scheme != "" && !allowedSchemes[u.Scheme] {
+		return fmt.Errorf("disallowed scheme: %s", u.Scheme)
+	}
+
+	// Check for javascript: and data: schemes (case-insensitive)
+	lowerScheme := strings.ToLower(u.Scheme)
+	if lowerScheme == "javascript" || lowerScheme == "data" || lowerScheme == "vbscript" {
+		return fmt.Errorf("dangerous scheme: %s", u.Scheme)
+	}
+
+	// Check for control characters that could cause injection
+	for i, r := range redirect {
+		if r < 0x20 || r == 0x7F {
+			return fmt.Errorf("control character at position %d", i)
+		}
+	}
+
+	// Check for newline characters that could cause header injection
+	if strings.ContainsAny(redirect, "\r\n") {
+		return fmt.Errorf("redirect URL contains newline characters")
+	}
+
+	return nil
+}
+
+// validateIssuerURL validates an OIDC issuer URL
+func validateIssuerURL(issuerURL string) error {
+	if issuerURL == "" {
+		return fmt.Errorf("issuer URL is required")
+	}
+
+	u, err := url.Parse(issuerURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse issuer URL: %w", err)
+	}
+
+	// Issuer URL must use https in production
+	// Allow http for localhost/127.0.0.1 for testing
+	if u.Scheme != "https" {
+		host := u.Hostname()
+		if host != "localhost" && host != "127.0.0.1" && !strings.HasSuffix(host, ".local") {
+			return fmt.Errorf("issuer URL must use https scheme (http only allowed for localhost)")
+		}
+	}
+
+	// Must have a host
+	if u.Host == "" {
+		return fmt.Errorf("issuer URL must have a host")
+	}
+
+	// Check for control characters
+	for i, r := range issuerURL {
+		if r < 0x20 || r == 0x7F {
+			return fmt.Errorf("control character at position %d", i)
+		}
+	}
+
+	return nil
+}
+
+// validateClientID validates an OAuth/OIDC client ID
+func validateClientID(clientID string) error {
+	if clientID == "" {
+		return fmt.Errorf("client ID is required")
+	}
+
+	// Check for reasonable length
+	if len(clientID) > 256 {
+		return fmt.Errorf("client ID too long")
+	}
+
+	// Check for control characters
+	for i, r := range clientID {
+		if r < 0x20 || r == 0x7F {
+			return fmt.Errorf("control character at position %d", i)
+		}
+	}
+
+	return nil
 }
 

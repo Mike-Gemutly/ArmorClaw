@@ -5,7 +5,6 @@ package admin
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +12,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // ClaimStatus represents the state of an admin claim
@@ -97,8 +98,7 @@ func DefaultClaimConfig() ClaimConfig {
 // NewClaimManager creates a new claim manager
 func NewClaimManager(signingKey []byte, config ClaimConfig) *ClaimManager {
 	if len(signingKey) == 0 {
-		signingKey = make([]byte, 32)
-		rand.Read(signingKey)
+		signingKey = securerandom.MustBytes(32)
 	}
 
 	return &ClaimManager{
@@ -125,18 +125,9 @@ func (m *ClaimManager) InitiateClaim(matrixUserID, deviceID, userAgent, ipAddres
 	}
 
 	// Generate claim ID and token
-	idBytes := make([]byte, 16)
-	rand.Read(idBytes)
-	claimID := "claim_" + hex.EncodeToString(idBytes)
-
-	tokenBytes := make([]byte, 12)
-	rand.Read(tokenBytes)
-	token := hex.EncodeToString(tokenBytes)
-
-	// Generate challenge
-	challengeBytes := make([]byte, 8)
-	rand.Read(challengeBytes)
-	challenge := hex.EncodeToString(challengeBytes)
+	claimID := "claim_" + securerandom.MustID(16)
+	token := securerandom.MustToken(12)
+	challenge := securerandom.MustToken(8)
 
 	now := time.Now()
 	expiresAt := now.Add(m.config.TokenExpiration)

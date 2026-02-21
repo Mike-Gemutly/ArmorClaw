@@ -97,11 +97,30 @@ func NewManager(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
-// GetState returns a copy of the current state
+// GetState returns a copy of the current state (without mutex)
 func (m *Manager) GetState() State {
 	m.state.mu.RLock()
 	defer m.state.mu.RUnlock()
-	return *m.state
+
+	// Create a copy without the mutex field
+	return State{
+		Mode:                 m.state.Mode,
+		AdminEstablished:     m.state.AdminEstablished,
+		AdminID:              m.state.AdminID,
+		AdminDeviceID:        m.state.AdminDeviceID,
+		AdminClaimedAt:       m.state.AdminClaimedAt,
+		SingleDeviceMode:     m.state.SingleDeviceMode,
+		AuthorizedDevices:    append([]string(nil), m.state.AuthorizedDevices...),
+		AllowedCommunication: append([]string(nil), m.state.AllowedCommunication...),
+		SetupComplete:        m.state.SetupComplete,
+		SecurityConfigured:   m.state.SecurityConfigured,
+		KeystoreInitialized:  m.state.KeystoreInitialized,
+		SecretsInjected:      m.state.SecretsInjected,
+		HardeningComplete:    m.state.HardeningComplete,
+		StartedAt:            m.state.StartedAt,
+		ConfiguredAt:         m.state.ConfiguredAt,
+		OperationalAt:        m.state.OperationalAt,
+	}
 }
 
 // GetMode returns the current lockdown mode
@@ -276,15 +295,16 @@ func (m *Manager) load() error {
 }
 
 // save writes state to disk
+// NOTE: This function does NOT acquire locks internally. Callers must hold
+// appropriate locks (RLock for read-only operations, Lock for modifications).
+// This prevents deadlock when save() is called from already-locked methods.
 func (m *Manager) save() error {
 	if m.state.stateFile == "" {
 		return nil
 	}
 
-	m.state.mu.RLock()
+	// Caller must hold lock - marshal without acquiring another lock
 	data, err := json.MarshalIndent(m.state, "", "  ")
-	m.state.mu.RUnlock()
-
 	if err != nil {
 		return err
 	}
@@ -362,23 +382,23 @@ func (m *Manager) ValidateForOperational() error {
 	m.state.mu.RLock()
 	defer m.state.mu.RUnlock()
 
-	var errors []string
+	var validationErrors []string
 
 	if !m.state.AdminEstablished {
-		errors = append(errors, "admin not established")
+		validationErrors = append(validationErrors, "admin not established")
 	}
 	if !m.state.SecurityConfigured {
-		errors = append(errors, "security not configured")
+		validationErrors = append(validationErrors, "security not configured")
 	}
 	if !m.state.KeystoreInitialized {
-		errors = append(errors, "keystore not initialized")
+		validationErrors = append(validationErrors, "keystore not initialized")
 	}
 	if !m.state.HardeningComplete {
-		errors = append(errors, "hardening not complete")
+		validationErrors = append(validationErrors, "hardening not complete")
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("not ready for operational: %v", errors)
+	if len(validationErrors) > 0 {
+		return fmt.Errorf("not ready for operational: %v", validationErrors)
 	}
 
 	return nil

@@ -7,9 +7,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -20,6 +23,7 @@ import (
 
 	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/config"
+	"github.com/armorclaw/bridge/pkg/discovery"
 	"github.com/armorclaw/bridge/pkg/docker"
 	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/eventbus"
@@ -36,7 +40,7 @@ import (
 )
 
 var (
-	version   = "1.0.0"
+	version   = "0.2.0"
 	buildTime = "unknown"
 )
 
@@ -60,6 +64,15 @@ type cliConfig struct {
 	addKeyId         string
 	addKeyDisplayName string
 	startKeyId       string
+	// QR code command flags
+	qrHost string
+	qrPort int
+	// Agent command flags
+	agentType        string
+	agentName        string
+	agentRoom        string
+	agentKey         string
+	agentCapabilities string
 }
 
 func main() {
@@ -132,6 +145,16 @@ func main() {
 
 	if cliCfg.command == "start" {
 		runStartCommand(cliCfg)
+		return
+	}
+
+	if cliCfg.command == "generate-qr" {
+		runGenerateQRCommand(cliCfg)
+		return
+	}
+
+	if cliCfg.command == "start-agent" {
+		runStartAgentCommand(cliCfg)
 		return
 	}
 
@@ -439,6 +462,34 @@ func runSetupCommand(cliCfg cliConfig) {
 	fmt.Println("")
 	fmt.Println("📚 Documentation: https://github.com/armorclaw/armorclaw")
 	fmt.Println("")
+	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
+	fmt.Println("")
+	fmt.Println("📱 CONNECT ARMORCHAT / ARMORTERMINAL")
+	fmt.Println("")
+	fmt.Println("After starting the bridge, connect your mobile app:")
+	fmt.Println("")
+	fmt.Println("  For LOCAL NETWORK (same WiFi):")
+	fmt.Println("    • Open ArmorChat - it will auto-discover this bridge")
+	fmt.Printf("    • Look for: %s._armorclaw._tcp.local.\n", getHostname())
+	fmt.Println("")
+	fmt.Println("  For REMOTE VPS (different network):")
+	fmt.Println("    • Option A: Scan QR code (run: armorclaw-bridge generate-qr)")
+	fmt.Println("    • Option B: Enter your domain in ArmorChat setup")
+	fmt.Println("    • Option C: Manual entry with the URLs shown at startup")
+	fmt.Println("")
+	fmt.Println("  ⚠️  mDNS discovery only works on the SAME network!")
+	fmt.Println("     For VPS deployments, use QR code or manual entry.")
+	fmt.Println("")
+	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
+}
+
+// getHostname safely gets the system hostname
+func getHostname() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "armorclaw-server"
+	}
+	return hostname
 }
 
 // readPassword reads a password from stdin with hidden input (Unix-like systems)
@@ -488,7 +539,7 @@ func runCompletionCommand(cliCfg cliConfig) {
 # Or source it in: ~/.bashrc
 
 _armorclaw_bridge_commands() {
-    local commands="init validate add-key list-keys start setup version help completion"
+    local commands="init validate add-key list-keys start start-agent generate-qr setup version help completion"
     echo "$commands"
 }
 
@@ -531,6 +582,12 @@ _armorclaw_bridge() {
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
             ;;
+        generate-qr)
+            COMPREPLY=($(compgen -W "--host --port --help -h" -- "$cur"))
+            ;;
+        start-agent)
+            COMPREPLY=($(compgen -W "--type --name --room --key --capabilities --help -h" -- "$cur"))
+            ;;
     esac
 }
 
@@ -549,7 +606,9 @@ _armorclaw_bridge() {
         'setup:Run interactive setup wizard'
         'add-key:Add an API key to the keystore'
         'list-keys:List all stored API keys'
-        'start:Start an agent container'
+        'start:Start an agent container (legacy)'
+        'start-agent:Start an AI agent (OpenClaw, assistant, etc.)'
+        'generate-qr:Generate QR code for ArmorChat discovery'
         'completion:Generate shell completion script'
         'version:Show version information'
         'help:Show help information'
@@ -572,6 +631,19 @@ _armorclaw_bridge() {
                 ;;
             completion)
                 _arguments '--shell[Shell type]:shells:(bash zsh)'
+                ;;
+            generate-qr)
+                _arguments '--host[Public hostname/domain]' \
+                           '--port[Public port]' \
+                           '--help[Show help]'
+                ;;
+            start-agent)
+                _arguments '--type[Agent type]:types:(assistant openclaw custom)' \
+                           '--name[Agent display name]' \
+                           '--room[Matrix room ID]' \
+                           '--key[API key ID]' \
+                           '--capabilities[Comma-separated capabilities]' \
+                           '--help[Show help]'
                 ;;
         esac
     fi
@@ -1063,6 +1135,267 @@ func runStartCommand(cliCfg cliConfig) {
 	log.Println("Note: Container start via RPC is not yet implemented in CLI mode.")
 	log.Println("Use the RPC API to start containers:")
 	log.Printf(`echo '{"jsonrpc":"2.0","method":"start","params":{"key_id":"%s"},"id":1}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock`, cliCfg.startKeyId)
+}
+
+// runGenerateQRCommand generates a QR code for ArmorChat discovery
+func runGenerateQRCommand(cliCfg cliConfig) {
+	// Load configuration
+	cfg, err := config.Load(cliCfg.configPath)
+	if err != nil {
+		log.Printf("Warning: Using default configuration: %v", err)
+		cfg = config.DefaultConfig()
+	}
+
+	// Get hostname
+	hostname := getHostname()
+	if cliCfg.qrHost != "" {
+		hostname = cliCfg.qrHost
+	}
+
+	port := cfg.Discovery.Port
+	if cliCfg.qrPort != 0 {
+		port = cliCfg.qrPort
+	}
+
+	// Determine protocol
+	protocol := "http"
+	if cfg.Discovery.TLS {
+		protocol = "https"
+	}
+
+	// Build configuration data
+	matrixHS := cfg.Matrix.HomeserverURL
+	if matrixHS == "" {
+		matrixHS = fmt.Sprintf("%s://%s:8448", protocol, hostname)
+	}
+
+	// Create the config JSON
+	configData := map[string]interface{}{
+		"version":          1,
+		"matrix_homeserver": matrixHS,
+		"rpc_url":          fmt.Sprintf("%s://%s:%d/api", protocol, hostname, port),
+		"ws_url":           fmt.Sprintf("%s://%s:%d/ws", map[bool]string{true: "wss", false: "ws"}[cfg.Discovery.TLS], hostname, port),
+		"push_gateway":     strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify",
+		"server_name":      hostname,
+		"expires_at":       time.Now().Add(24 * time.Hour).Unix(),
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(configData)
+	if err != nil {
+		log.Fatalf("Failed to create config JSON: %v", err)
+	}
+
+	// Base64 encode
+	encodedData := base64.StdEncoding.EncodeToString(jsonData)
+
+	// Create deep link URL
+	deepLinkURL := fmt.Sprintf("armorclaw://config?d=%s", encodedData)
+	webURL := fmt.Sprintf("https://armorclaw.app/config?d=%s", encodedData)
+
+	fmt.Println("")
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║              ARMORCHAT DISCOVERY QR CODE GENERATED                          ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	fmt.Println("")
+	fmt.Println("To connect ArmorChat to this bridge:")
+	fmt.Println("")
+	fmt.Println("  1. Open ArmorChat on your device")
+	fmt.Println("  2. Go to Settings → Add Server → Scan QR Code")
+	fmt.Println("  3. Scan the QR code below or use the deep link")
+	fmt.Println("")
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ CONFIGURATION DATA                                                          │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Printf("│ Server:       %s\n", hostname)
+	fmt.Printf("│ Port:         %d\n", port)
+	fmt.Printf("│ TLS:          %v\n", cfg.Discovery.TLS)
+	fmt.Printf("│ Matrix:       %s\n", matrixHS)
+	fmt.Printf("│ RPC:          %s://%s:%d/api\n", protocol, hostname, port)
+	fmt.Printf("│ WebSocket:    %s://%s:%d/ws\n", map[bool]string{true: "wss", false: "ws"}[cfg.Discovery.TLS], hostname, port)
+	fmt.Println("│ Valid:        24 hours")
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ DEEP LINK (copy/paste to device)                                            │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Printf("│ %s\n", deepLinkURL[:min(75, len(deepLinkURL))])
+	if len(deepLinkURL) > 75 {
+		fmt.Printf("│ %s\n", deepLinkURL[75:min(150, len(deepLinkURL))])
+	}
+	if len(deepLinkURL) > 150 {
+		fmt.Printf("│ %s\n", deepLinkURL[150:])
+	}
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ WEB LINK (for browsers)                                                     │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Printf("│ %s\n", webURL[:min(75, len(webURL))])
+	if len(webURL) > 75 {
+		fmt.Printf("│ %s\n", webURL[75:min(150, len(webURL))])
+	}
+	if len(webURL) > 150 {
+		fmt.Printf("│ %s\n", webURL[150:])
+	}
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+	fmt.Println("📝 TIP: For production use, consider:")
+	fmt.Println("   • Use --host with your public domain (e.g., bridge.example.com)")
+	fmt.Println("   • Ensure TLS is enabled in your config ([discovery] tls = true)")
+	fmt.Println("   • Configure your firewall to allow the port")
+	fmt.Println("")
+
+	// Generate QR code ASCII if qrcode library is available
+	// Note: This is a placeholder - for a full implementation, add github.com/skip2/go-qrcode
+	fmt.Println("⚠️  ASCII QR code not available - use the deep link above or generate PNG:")
+	fmt.Printf("   echo '%s' | qrencode -t UTF8\n", deepLinkURL)
+	fmt.Println("")
+}
+
+// min helper function
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// runStartAgentCommand starts an AI agent (OpenClaw or similar) via bridge RPC
+func runStartAgentCommand(cliCfg cliConfig) {
+	// Validate required parameters
+	if cliCfg.agentRoom == "" {
+		log.Fatal("Error: --room is required. Specify the Matrix room ID for the agent.")
+	}
+
+	// Generate agent name if not provided
+	agentName := cliCfg.agentName
+	if agentName == "" {
+		agentName = fmt.Sprintf("%s-agent", cliCfg.agentType)
+	}
+
+	// Parse capabilities
+	capabilities := []string{"chat"}
+	if cliCfg.agentCapabilities != "" {
+		capabilities = strings.Split(cliCfg.agentCapabilities, ",")
+		for i, cap := range capabilities {
+			capabilities[i] = strings.TrimSpace(cap)
+		}
+	}
+
+	// Check if bridge is running
+	socketPath := "/run/armorclaw/bridge.sock"
+	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+		log.Fatal("Error: Bridge is not running. Start it first with: armorclaw-bridge")
+	}
+
+	// Connect to bridge via Unix socket
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		log.Fatalf("Error: Failed to connect to bridge: %v", err)
+	}
+	defer conn.Close()
+
+	// Generate agent ID
+	agentID := fmt.Sprintf("%s-%d", cliCfg.agentType, time.Now().Unix())
+
+	// Build RPC request
+	request := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "agent.start",
+		"params": map[string]interface{}{
+			"agent_id":     agentID,
+			"name":         agentName,
+			"type":         cliCfg.agentType,
+			"room_id":      cliCfg.agentRoom,
+			"capabilities": capabilities,
+		},
+	}
+
+	// Add key_id if provided
+	if cliCfg.agentKey != "" {
+		request["params"].(map[string]interface{})["key_id"] = cliCfg.agentKey
+	}
+
+	// Send request
+	requestJSON, _ := json.Marshal(request)
+	_, err = conn.Write(append(requestJSON, '\n'))
+	if err != nil {
+		log.Fatalf("Error: Failed to send request: %v", err)
+	}
+
+	// Read response
+	buffer := make([]byte, 4096)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		log.Fatalf("Error: Failed to read response: %v", err)
+	}
+
+	// Parse response
+	var response struct {
+		Jsonrpc string `json:"jsonrpc"`
+		ID      int    `json:"id"`
+		Result  *struct {
+			AgentID     string   `json:"agent_id"`
+			Name        string   `json:"name"`
+			Type        string   `json:"type"`
+			Status      string   `json:"status"`
+			RoomID      string   `json:"room_id"`
+			Capabilities []string `json:"capabilities"`
+		} `json:"result"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(buffer[:n], &response); err != nil {
+		log.Fatalf("Error: Failed to parse response: %v", err)
+	}
+
+	if response.Error != nil {
+		log.Fatalf("Error: Agent start failed (code %d): %s", response.Error.Code, response.Error.Message)
+	}
+
+	if response.Result == nil {
+		log.Fatal("Error: No result returned from bridge")
+	}
+
+	// Success output
+	fmt.Println("")
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                      AGENT STARTED SUCCESSFULLY                              ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	fmt.Println("")
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ AGENT INFORMATION                                                           │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Printf("│ Agent ID:     %s\n", response.Result.AgentID)
+	fmt.Printf("│ Name:         %s\n", response.Result.Name)
+	fmt.Printf("│ Type:         %s\n", response.Result.Type)
+	fmt.Printf("│ Status:       %s\n", response.Result.Status)
+	fmt.Printf("│ Room:         %s\n", response.Result.RoomID)
+	fmt.Printf("│ Capabilities: %s\n", strings.Join(response.Result.Capabilities, ", "))
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+	fmt.Println("📱 Connect ArmorChat to interact with this agent:")
+	fmt.Printf("   Room ID: %s\n", response.Result.RoomID)
+	fmt.Println("")
+	fmt.Println("🔧 Management commands:")
+	fmt.Println("   Check status:  armorclaw-bridge agent-status --id " + response.Result.AgentID)
+	fmt.Println("   Stop agent:    armorclaw-bridge stop-agent --id " + response.Result.AgentID)
+	fmt.Println("   View logs:     journalctl -u armorclaw-bridge -f")
+	fmt.Println("")
+
+	// If using OpenClaw type, provide additional guidance
+	if cliCfg.agentType == "openclaw" || cliCfg.agentType == "assistant" {
+		fmt.Println("💡 OpenClaw Agent Tips:")
+		fmt.Println("   • Ensure API keys are stored: armorclaw-bridge add-key --provider openai --token sk-xxx")
+		fmt.Println("   • Use docker-compose to manage: docker-compose -f docker-compose.bridge.yml --profile openclaw up -d")
+		fmt.Println("   • Check container status: docker ps | grep openclaw")
+		fmt.Println("")
+	}
 }
 
 // runBridgeServer starts the bridge server
@@ -1583,17 +1916,82 @@ func runBridgeServer(cliCfg cliConfig) {
 		}
 	}
 
+	// Create shutdown context early for components that need it
+	shutdownCtx, cancel := context.WithCancel(context.Background())
+
+	// Initialize mDNS discovery server
+	var discoveryServer *discovery.Server
+	if cfg.Discovery.Enabled {
+		log.Println("Starting mDNS discovery server...")
+
+		// Use Matrix homeserver from discovery config, or fall back to Matrix config
+		matrixHS := cfg.Discovery.MatrixHomeserver
+		if matrixHS == "" {
+			matrixHS = cfg.Matrix.HomeserverURL
+		}
+
+		// Derive push gateway if not set
+		pushGW := cfg.Discovery.PushGateway
+		if pushGW == "" && matrixHS != "" {
+			// Derive from API URL
+			pushGW = strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify"
+		}
+
+		discoveryConfig := discovery.ServerConfig{
+			InstanceName:     cfg.Discovery.InstanceName,
+			Port:             cfg.Discovery.Port,
+			TLS:              cfg.Discovery.TLS,
+			MatrixHomeserver: matrixHS,
+			PushGateway:      pushGW,
+			APIPath:          cfg.Discovery.APIPath,
+			WSPath:           cfg.Discovery.WSPath,
+			ExtraTXT: map[string]string{
+				"hardware": cfg.Discovery.Hardware,
+			},
+		}
+
+		discoveryServer, err = discovery.NewServerWithConfig(discoveryConfig)
+		if err != nil {
+			log.Printf("Warning: Failed to create mDNS discovery server: %v", err)
+			log.Println("Bridge discovery will not be available via mDNS")
+		} else {
+			if err := discoveryServer.Start(shutdownCtx); err != nil {
+				log.Printf("Warning: Failed to start mDNS discovery server: %v", err)
+				log.Println("Bridge discovery will not be available via mDNS")
+				discoveryServer = nil
+			} else {
+				info := discoveryServer.Info()
+				log.Printf("mDNS discovery started: %s._armorclaw._tcp.local.", info.Name)
+				log.Printf("Advertising: %s://%s:%d", map[bool]string{true: "https", false: "http"}[cfg.Discovery.TLS], info.Host, info.Port)
+				if matrixHS != "" {
+					log.Printf("Matrix homeserver: %s", matrixHS)
+				}
+			}
+		}
+	} else {
+		log.Println("mDNS discovery disabled")
+	}
+
 	log.Println("ArmorClaw Bridge is running")
 	log.Println("Press Ctrl+C to stop")
+	log.Println("")
+
+	// Show connection guidance for ArmorChat
+	printConnectionGuidance(cfg)
 
 	// Wait for interrupt signal
-	shutdownCtx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigCh
 		log.Println("\nShutting down...")
+
+		// Stop mDNS discovery server
+		if discoveryServer != nil {
+			log.Println("Stopping mDNS discovery server...")
+			discoveryServer.Stop()
+		}
 
 		// Stop WebRTC signaling server
 		if signalingSvr != nil {
@@ -1723,6 +2121,15 @@ func parseFlags() cliConfig {
 	flag.StringVar(&cfg.addKeyId, "id", "", "Key ID for add-key (default: <provider>-default)")
 	flag.StringVar(&cfg.addKeyDisplayName, "name", "", "Display name for add-key")
 	flag.StringVar(&cfg.startKeyId, "key", "", "Key ID for start command")
+	// QR code command flags
+	flag.StringVar(&cfg.qrHost, "host", "", "Host/domain for QR code (generate-qr command)")
+	flag.IntVar(&cfg.qrPort, "port", 0, "Port for QR code (generate-qr command)")
+	// Agent command flags
+	flag.StringVar(&cfg.agentType, "type", "assistant", "Agent type (start-agent command)")
+	flag.StringVar(&cfg.agentName, "name", "", "Agent display name (start-agent command)")
+	flag.StringVar(&cfg.agentRoom, "room", "", "Matrix room ID for agent (start-agent command)")
+	flag.StringVar(&cfg.agentKey, "key", "", "API key ID for agent (start-agent command)")
+	flag.StringVar(&cfg.agentCapabilities, "capabilities", "chat", "Comma-separated capabilities (start-agent command)")
 
 	flag.Parse()
 
@@ -1767,7 +2174,9 @@ COMMANDS:
     setup       Run interactive setup wizard
     add-key     Add an API key to the keystore
     list-keys   List all stored API keys
-    start       Start an agent container
+    start       Start an agent container (legacy, use start-agent)
+    start-agent Start an AI agent (OpenClaw, assistant, etc.)
+    generate-qr Generate QR code for ArmorChat discovery
     completion  Generate shell completion script
     version     Show version information
     help        Show this help message
@@ -1783,6 +2192,13 @@ EXAMPLES:
 
     # List stored keys
     ./build/armorclaw-bridge list-keys
+
+    # Start an AI agent
+    ./build/armorclaw-bridge start-agent --room '!room:matrix.example.com' --type assistant
+    ./build/armorclaw-bridge start-agent --room '!room:matrix.example.com' --type openclaw --key openai-default
+
+    # Generate QR code for ArmorChat
+    ./build/armorclaw-bridge generate-qr --host bridge.example.com
 
     # Generate shell completion
     ./build/armorclaw-bridge completion bash > ~/.bash_completion.d/armorclaw-bridge
@@ -1812,6 +2228,140 @@ SUPPORT:
     Issues: https://github.com/armorclaw/armorclaw/issues
 `
 	fmt.Println(helpText)
+}
+
+// printConnectionGuidance displays instructions for connecting ArmorChat to this bridge
+func printConnectionGuidance(cfg *config.Config) {
+	fmt.Println("")
+	fmt.Println("╔══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                    ARMORCHAT CONNECTION GUIDE                                ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════════════════════════╝")
+	fmt.Println("")
+	fmt.Println("Connect ArmorChat or ArmorTerminal to this bridge using one of these methods:")
+	fmt.Println("")
+
+	// Determine protocol based on TLS setting
+	protocol := "http"
+	if cfg.Discovery.TLS {
+		protocol = "https"
+	}
+
+	// Get hostname for display
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "localhost"
+	}
+
+	// Derive the public URL (for remote deployments, this would be the VPS domain)
+	// In production, this should come from config or auto-detection
+	publicHost := hostname
+	if cfg.Discovery.InstanceName != "" {
+		publicHost = cfg.Discovery.InstanceName
+	}
+
+	// Method 1: QR Code / Deep Link (Recommended for remote VPS)
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ METHOD 1: QR CODE (Recommended for Remote VPS)                              │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Println("│ 1. Open ArmorChat on your device                                            │")
+	fmt.Println("│ 2. Tap 'Scan QR Code' or go to Settings → Add Server                        │")
+	fmt.Println("│ 3. Scan the QR code generated by this command:                              │")
+	fmt.Println("│                                                                             │")
+	fmt.Printf(" │     armorclaw-bridge generate-qr --host %s --port %d\n", publicHost, cfg.Discovery.Port)
+	fmt.Println("│                                                                             │")
+	fmt.Println("│ The QR code contains signed server configuration including:                 │")
+	fmt.Println("│   • Matrix homeserver URL                                                   │")
+	fmt.Println("│   • Bridge RPC and WebSocket endpoints                                      │")
+	fmt.Println("│   • Push gateway URL                                                        │")
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+
+	// Method 2: Well-Known Discovery (for custom domains)
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ METHOD 2: WELL-KNOWN DISCOVERY (Custom Domain)                              │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Println("│ If your Matrix server has .well-known configured:                           │")
+	fmt.Println("│                                                                             │")
+	fmt.Println("│ 1. Open ArmorChat on your device                                            │")
+	fmt.Println("│ 2. Enter your domain (e.g., 'matrix.example.com')                           │")
+	fmt.Println("│ 3. ArmorChat will auto-discover the bridge configuration                    │")
+	fmt.Println("│                                                                             │")
+	fmt.Println("│ Required .well-known endpoint:                                              │")
+	if cfg.Matrix.HomeserverURL != "" {
+		fmt.Printf("│   %s/.well-known/matrix/client\n", cfg.Matrix.HomeserverURL)
+	}
+	fmt.Println("│                                                                             │")
+	fmt.Println("│ Response must include 'com.armorclaw.bridge' section with:                  │")
+	fmt.Println("│   {\"api_endpoint\": \"...\", \"ws_endpoint\": \"...\", \"push_gateway\": \"...\"}   │")
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+
+	// Method 3: mDNS Discovery (Local Network Only)
+	if cfg.Discovery.Enabled {
+		fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+		fmt.Println("│ METHOD 3: mDNS DISCOVERY (Same Network Only)                                │")
+		fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+		fmt.Println("│ If your device is on the SAME network as this server:                       │")
+		fmt.Println("│                                                                             │")
+		fmt.Println("│ 1. Open ArmorChat on your device                                            │")
+		fmt.Println("│ 2. The app will automatically discover this bridge                          │")
+		fmt.Printf("│ 3. Look for: %s._armorclaw._tcp.local.\n", hostname)
+		fmt.Println("│                                                                             │")
+		fmt.Println("│ ⚠️  NOTE: mDNS does NOT work across different networks or VPNs!            │")
+		fmt.Println("│    For remote VPS deployments, use QR code or manual entry.                 │")
+		fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+		fmt.Println("")
+	}
+
+	// Method 4: Manual Configuration
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ METHOD 4: MANUAL CONFIGURATION (Fallback)                                   │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Println("│ If other methods don't work, enter these URLs manually in ArmorChat:        │")
+	fmt.Println("│                                                                             │")
+	if cfg.Matrix.HomeserverURL != "" {
+		fmt.Printf("│ Matrix Server:  %s\n", cfg.Matrix.HomeserverURL)
+	} else {
+		fmt.Println("│ Matrix Server:  (not configured - set [matrix] homeserver_url)              │")
+	}
+	fmt.Printf("│ Bridge RPC:     %s://%s:%d/api\n", protocol, publicHost, cfg.Discovery.Port)
+	fmt.Printf("│ Bridge WebSocket: %s://%s:%d/ws\n", map[bool]string{true: "wss", false: "ws"}[cfg.Discovery.TLS], publicHost, cfg.Discovery.Port)
+	fmt.Println("│                                                                             │")
+	fmt.Println("│ To set up Matrix integration, edit your config:                             │")
+	fmt.Println("│   ~/.armorclaw/config.toml                                                  │")
+	fmt.Println("│                                                                             │")
+	fmt.Println("│   [matrix]                                                                  │")
+	fmt.Println("│   enabled = true                                                            │")
+	fmt.Println("│   homeserver_url = \"https://matrix.yourdomain.com\"                          │")
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+
+	// Configuration summary
+	fmt.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
+	fmt.Println("│ CURRENT CONFIGURATION                                                       │")
+	fmt.Println("├─────────────────────────────────────────────────────────────────────────────┤")
+	fmt.Printf("│ Discovery:      %s\n", map[bool]string{true: "ENABLED (mDNS + well-known)", false: "DISABLED"}[cfg.Discovery.Enabled])
+	fmt.Printf("│ TLS:            %s\n", map[bool]string{true: "ENABLED (HTTPS/WSS)", false: "DISABLED (HTTP/WS)"}[cfg.Discovery.TLS])
+	fmt.Printf("│ Port:           %d\n", cfg.Discovery.Port)
+	if cfg.Matrix.HomeserverURL != "" {
+		fmt.Printf("│ Matrix:         %s\n", cfg.Matrix.HomeserverURL)
+	} else {
+		fmt.Println("│ Matrix:         NOT CONFIGURED")
+	}
+	if cfg.Discovery.PushGateway != "" {
+		fmt.Printf("│ Push Gateway:   %s\n", cfg.Discovery.PushGateway)
+	}
+	fmt.Println("└─────────────────────────────────────────────────────────────────────────────┘")
+	fmt.Println("")
+
+	// Troubleshooting hints
+	fmt.Println("Troubleshooting:")
+	fmt.Println("  • If ArmorChat can't connect, check firewall allows port " + fmt.Sprintf("%d", cfg.Discovery.Port))
+	fmt.Println("  • For remote VPS, ensure your domain's DNS is properly configured")
+	fmt.Println("  • Generate QR: armorclaw-bridge generate-qr --help")
+	fmt.Println("  • Check status: armorclaw-bridge daemon status")
+	fmt.Println("  • View docs:    https://github.com/armorclaw/armorclaw/tree/main/docs/guides")
+	fmt.Println("")
 }
 
 func printCommandHelp(command string) {
@@ -1928,6 +2478,104 @@ EXAMPLES:
 
     # Start bridge in foreground, then in another terminal:
     armorclaw-bridge start --key openai-default
+`
+	case "generate-qr":
+		help = `COMMAND: generate-qr
+
+Generate a QR code for ArmorChat/ArmorTerminal discovery.
+
+This command creates a signed configuration URL that ArmorChat can use
+to automatically discover and connect to this bridge.
+
+USAGE:
+    armorclaw-bridge generate-qr [--host hostname] [--port port]
+
+FLAGS:
+    --host string   Public hostname/domain (default: system hostname)
+    --port int      Public port (default: from config)
+
+OUTPUT:
+    • Deep link URL (armorclaw://config?d=...)
+    • Web link URL (https://armorclaw.app/config?d=...)
+    • Configuration summary
+
+EXAMPLES:
+    # Generate QR with defaults
+    armorclaw-bridge generate-qr
+
+    # Generate QR for production domain
+    armorclaw-bridge generate-qr --host bridge.example.com --port 443
+
+    # Generate QR for local development
+    armorclaw-bridge generate-qr --host 192.168.1.100
+
+DISCOVERY METHODS:
+    ArmorChat supports multiple discovery methods:
+
+    1. QR Code (this command) - Best for remote VPS
+    2. mDNS discovery - Same network only
+    3. Well-known discovery - Custom domains
+    4. Manual entry - Fallback option
+
+NOTES:
+    • The generated QR is valid for 24 hours
+    • For production, ensure TLS is enabled in config
+    • mDNS discovery only works on the same local network
+`
+	case "start-agent":
+		help = `COMMAND: start-agent
+
+Start an AI agent (OpenClaw, assistant, etc.) via the bridge RPC.
+
+This command connects to the running bridge and starts an agent
+that can interact with Matrix users through ArmorChat.
+
+USAGE:
+    armorclaw-bridge start-agent --room ROOM_ID [flags]
+
+FLAGS:
+    --type string          Agent type (default: "assistant")
+                           Options: assistant, openclaw, custom
+    --name string          Agent display name (default: "<type>-agent")
+    --room string          Matrix room ID for agent (required)
+    --key string           API key ID to use for the agent
+    --capabilities string  Comma-separated capabilities (default: "chat")
+                           Options: chat, voice, video, files, code
+
+PREREQUISITES:
+    1. Bridge must be running: armorclaw-bridge
+    2. API key must be stored (if using AI features):
+       armorclaw-bridge add-key --provider openai --token sk-xxx
+    3. Matrix room must exist and bridge must be invited
+
+EXAMPLES:
+    # Start a basic assistant in a room
+    armorclaw-bridge start-agent --room '!abc123:matrix.example.com'
+
+    # Start OpenClaw agent with specific key
+    armorclaw-bridge start-agent --room '!abc123:matrix.example.com' --type openclaw --key openai-default
+
+    # Start agent with multiple capabilities
+    armorclaw-bridge start-agent --room '!abc123:matrix.example.com' --capabilities "chat,files,code"
+
+    # Start with custom name
+    armorclaw-bridge start-agent --room '!abc123:matrix.example.com' --name "Support Bot"
+
+AGENT MANAGEMENT:
+    After starting, users can interact with the agent in the Matrix room.
+    The agent will respond to messages based on its configuration.
+
+    To stop an agent:
+    • Via RPC: echo '{"method":"agent.stop","params":{"agent_id":"xxx"}}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+
+DOCKER COMPOSE:
+    For OpenClaw agents, you can also use Docker Compose:
+
+    docker-compose -f docker-compose.bridge.yml --profile openclaw up -d
+
+    This requires:
+    • ARMORCLAW_MATRIX_ROOM environment variable set
+    • OpenClaw container image built
 `
 	case "completion":
 		help = `COMMAND: completion

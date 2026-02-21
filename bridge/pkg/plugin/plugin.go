@@ -16,7 +16,7 @@ import (
 )
 
 // PluginVersion defines the current plugin API version
-const PluginAPIVersion = "1.0.0"
+const PluginAPIVersion = "0.2.0"
 
 // PluginType defines the type of plugin
 type PluginType string

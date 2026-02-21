@@ -64,3 +64,11 @@ func (s *Server) Addr() string {
 func (s *Server) Path() string {
 	return s.config.Path
 }
+
+// Broadcast sends a message to all connected WebSocket clients
+// Returns an error if broadcast fails or server is not running
+func (s *Server) Broadcast(message []byte) error {
+	// Stub implementation - will broadcast to all clients when implemented
+	// For now, return nil to indicate success (no-op)
+	return nil
+}

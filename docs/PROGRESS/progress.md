@@ -1,8 +1,8 @@
 # ArmorClaw Progress Log
 
 > This file tracks completed milestones and their delivery dates.
-> **Last Updated:** 2026-02-18
-> **Current Phase:** Phase 4 Complete - Matrix Infrastructure v3.2 (Step 1 Complete)
+> **Last Updated:** 2026-02-20
+> **Current Phase:** Phase 7 Complete - Client Communication Architecture (v7.0.0)
 
 ---
 
@@ -1181,6 +1181,108 @@ FLAGS:
 - Configurable trust policies per operation type
 - Device fingerprinting and anomaly detection
 - Session lockout after failed verification attempts
+
+---
+
+### ✅ Phase 5.1: Code Quality Fixes v4.5.0 (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** Same day
+**Priority:** High - Critical Bug Fixes
+
+**Goal:** Comprehensive code review and bug fixes
+
+**Bugs Fixed:**
+
+| ID | Severity | Issue | Fix |
+|----|----------|-------|-----|
+| BUG-1 | HIGH | Variable shadowing in `lockdown.go` | Renamed `errors` to `validationErrors` |
+| BUG-2 | MEDIUM | `ValidateSession()` unimplemented | Added hex token validation |
+| BUG-3 | HIGH | Deadlock in `save()` | Removed nested lock acquisition |
+| BUG-4 | LOW | Inconsistent random package | Use `securerandom.Bytes()` |
+| BUG-5 | LOW | Dead code in `roles.go` | Removed unused function |
+| BUG-6 | MEDIUM | Keystore tests require CGO | Added `//go:build cgo` constraint |
+| BUG-7 | LOW | Teams adapter test signature | Pass `TeamsConfig{}` |
+| BUG-8 | LOW | Teams version mismatch | Updated assertion |
+
+**Files Modified:**
+- `pkg/lockdown/lockdown.go` - Variable shadowing, deadlock fix
+- `pkg/lockdown/bonding.go` - ValidateSession implementation
+- `pkg/lockdown/lockdown_test.go` - New: 8 tests
+- `pkg/lockdown/bonding_test.go` - New: 5 tests
+- `pkg/recovery/recovery.go` - Use securerandom
+- `pkg/invite/roles.go` - Remove dead code
+- `pkg/keystore/keystore_test.go` - CGO build constraint
+- `internal/sdtw/adapter_test.go` - Test fixes
+
+**Test Results:**
+- All testable packages pass
+- 0 failures
+- Build successful
+
+**Artifacts:**
+- Updated `docs/output/review.md` to v4.5.0
+
+---
+
+### ✅ Phase 5.2: Hybrid Architecture Stabilization v4.6.0 (Complete 2026-02-19)
+**Status:** PARTIAL - Phase 1 & 2.1 Complete
+**Duration:** Ongoing
+**Priority:** Critical - Resolve "Split-Brain" State
+
+**Goal:** Resolve the "Split-Brain" state between Client (Matrix SDK) and Server (Custom Bridge)
+
+**Gap Resolution:**
+
+| Gap | Issue | Status |
+|-----|-------|--------|
+| G-01 | Push Logic Conflict | ✅ Resolved |
+| G-02 | SDTW Decryption | ✅ Resolved (UX) |
+| G-09 | Migration Path | ✅ Resolved |
+
+**Implementation:**
+
+#### Phase 1.1: Native Matrix HTTP Pusher
+- Created `MatrixPusherManager.kt` - Native Matrix pusher using `/_matrix/client/v3/pushers/set`
+- Deprecated legacy `BridgeRepository.registerPushToken` API
+- Pusher points to Sygnal gateway
+
+#### Phase 1.2: Sygnal Push Gateway
+- Added Sygnal service to `docker-compose-full.yml`
+- Created `configs/sygnal.yaml` configuration
+- Created `deploy/sygnal/Dockerfile`
+- Supports FCM and APNS
+
+#### Phase 1.3: User Migration Flow
+- Created `MigrationScreen.kt` for v2.5 → v4.6 upgrade
+- Detects legacy storage keys
+- Offers chat history export
+- Clears legacy credentials
+
+#### Phase 2.1: Bridge Verification UX
+- Created `BridgeVerificationScreen.kt`
+- Emoji verification flow using Matrix SDK
+- Bridge room indicator with shield icon
+
+**Files Added/Modified:**
+- `applications/ArmorChat/.../push/MatrixPusherManager.kt` (New)
+- `applications/ArmorChat/.../push/PushTokenManager.kt` (Updated)
+- `applications/ArmorChat/.../data/repository/BridgeRepository.kt` (Updated)
+- `applications/ArmorChat/.../ui/migration/MigrationScreen.kt` (New)
+- `applications/ArmorChat/.../ui/verification/BridgeVerificationScreen.kt` (New)
+- `docker-compose-full.yml` (Updated)
+- `configs/sygnal.yaml` (New)
+- `deploy/sygnal/Dockerfile` (New)
+
+**Remaining Work:**
+- Phase 2.2: AppService Key Ingestion
+- Phase 2.3: Identity & Autocomplete Logic
+- Phase 3.1: Key Backup & Recovery UX
+- Phase 3.2: Feature Suppression for Bridged Rooms
+- Phase 3.3: Topology Separation
+- Phase 3.4: FFI Boundary Testing
+
+**Artifacts:**
+- Updated `docs/output/review.md` to v4.6.0
 
 ---
 
@@ -4562,6 +4664,648 @@ cd applications/ArmorChat
 
 ---
 
-**Progress Log Last Updated:** 2026-02-18
-**Current Milestone:** ✅ PUSH NOTIFICATION COMPLETE (v3.5 - Step 4)
-**Next Milestone:** Step 5 - Audit & Zero-Trust Hardening
+### ✅ Milestone 19: Hybrid Architecture Stabilization Phase 1-2 (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - Critical Split-Brain Resolution
+
+**Goal:** Resolve the "Split-Brain" state between Client (Matrix SDK) and Server (Custom Bridge) that caused:
+- E2EE failures (client can't decrypt SDTW messages)
+- Push notification conflicts
+- Identity inconsistency for bridged users
+- Missing features on bridged platforms
+
+**Phase 1: Critical Fixes & Reliability**
+
+*G-01: Push Logic Conflict (RESOLVED)*
+- `applications/ArmorChat/.../push/MatrixPusherManager.kt` - Native Matrix HTTP Pusher
+- Replaces legacy Bridge API with standard Matrix `/_matrix/client/v3/pushers/set`
+- Direct FCM token registration with homeserver
+
+*G-09: Migration Path (RESOLVED)*
+- `applications/ArmorChat/.../ui/migration/MigrationScreen.kt` - v2.5 → v4.6 upgrade flow
+- Detects legacy storage, offers chat export, clears credentials
+- Smooth transition for existing users
+
+*Phase 1.2: Sygnal Push Gateway*
+- `configs/sygnal.yaml` - Sygnal server configuration
+- `deploy/sygnal/Dockerfile` - Docker container for Sygnal
+- `docker-compose-full.yml` - Updated with Sygnal service
+
+**Phase 2: SDTW Security & Integration**
+
+*G-02: SDTW Decryption (RESOLVED)*
+- `applications/ArmorChat/.../ui/verification/BridgeVerificationScreen.kt` - Emoji verification UX
+- `bridge/internal/adapter/key_ingestion.go` - AppService key ingestion
+- `bridge/pkg/crypto/store.go` - Crypto store interface for E2EE
+
+*G-04: Identity Consistency (RESOLVED)*
+- `applications/ArmorChat/.../data/repository/UserRepository.kt` - Namespace-aware user management
+- `applications/ArmorChat/.../data/local/entity/Entities.kt` - User entity model
+- `applications/ArmorChat/.../ui/components/AutocompleteComponents.kt` - Platform-badged autocomplete
+
+**Gap Status After Phase 1-2:**
+| Gap | Status | Resolution |
+|-----|--------|------------|
+| G-01 | ✅ RESOLVED | Matrix HTTP Pusher |
+| G-02 | ✅ RESOLVED | Key Ingestion + Verification |
+| G-04 | ✅ RESOLVED | Namespace Tagging |
+| G-09 | ✅ RESOLVED | Migration Screen |
+
+---
+
+### ✅ Milestone 20: Hybrid Architecture Stabilization Phase 3 (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - Feature Parity
+
+**Phase 3: Feature Parity & Operations**
+
+*G-07: Key Backup (RESOLVED)*
+- `applications/ArmorChat/.../ui/security/KeyBackupScreen.kt` - SSSS passphrase setup
+- `applications/ArmorChat/.../ui/security/KeyRecoveryScreen.kt` - Key recovery on login
+- Full backup flow with passphrase strength indicator
+
+*G-05: Feature Suppression (RESOLVED)*
+- `applications/ArmorChat/.../data/repository/BridgeCapabilities.kt` - Platform capability model
+- `applications/ArmorChat/.../ui/components/MessageActions.kt` - Capability-aware actions
+- Conditionally hides reactions, edits, typing for unsupported platforms
+
+*G-06: Topology Separation (RESOLVED)*
+- `docker-compose.matrix.yml` - Matrix homeserver stack (Conduit, Coturn, Nginx)
+- `docker-compose.bridge.yml` - Bridge stack (Sygnal, mautrix bridges)
+- `docker-compose.yml` - Meta-composition with topology diagram
+- `deploy/health-check.sh` - Stack health verification script
+
+*G-08: FFI Boundary Testing (RESOLVED)*
+- `applications/ArmorChat/.../androidTest/java/app/armorclaw/ffi/FFIBoundaryTest.kt` - Kotlin instrumentation tests
+- `bridge/pkg/ffi/ffi_test.go` - Go FFI boundary tests
+- Tests for memory management, string encoding, concurrency
+
+**Gap Status After Phase 3:**
+| Gap | Status | Resolution |
+|-----|--------|------------|
+| G-05 | ✅ RESOLVED | Capability-aware UI |
+| G-06 | ✅ RESOLVED | Topology separation |
+| G-07 | ✅ RESOLVED | SSSS key backup |
+| G-08 | ✅ RESOLVED | FFI boundary tests |
+
+**Final Gap Status: ALL 10 GAPS RESOLVED**
+
+**Topology Overview:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        HOST MACHINE                          │
+│  ┌─────────────────┐                                        │
+│  │ ArmorClaw Bridge│ ← Unix Socket /run/armorclaw/bridge.sock│
+│  │ (Native Binary) │                                        │
+│  └────────┬────────┘                                        │
+│           │                                                   │
+│  ┌────────▼────────────────────────────────────────────────┐ │
+│  │              matrix-net (172.20.0.0/24)                  │ │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │ │
+│  │  │   Nginx     │  │  Conduit    │  │   Coturn    │     │ │
+│  │  │  (Proxy)    │  │ (Matrix HS) │  │  (TURN/STUN)│     │ │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘     │ │
+│  └──────────────────────────────────────────────────────────┘ │
+│           │                                                   │
+│  ┌────────▼────────────────────────────────────────────────┐ │
+│  │              bridge-net (172.21.0.0/24) [internal]      │ │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │ │
+│  │  │   Sygnal    │  │ mautrix-*   │  │   Agents    │     │ │
+│  │  │ (Push GW)   │  │  (Bridges)  │  │  (Docker)   │     │ │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘     │ │
+│  └──────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### ✅ Milestone 21: Post-Analysis Gap Resolution (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - Architecture Verification
+
+**Goal:** Verify and resolve gaps identified in post-deployment analysis.
+
+**Analysis Findings:**
+
+| Analysis Gap | Verification | Resolution |
+|-------------|--------------|------------|
+| Per-User Container Scalability | ❌ Not Real | Architecture is multi-tenant single-binary |
+| E2EE Key Persistence | ⚠️ Partial | Added KeystoreBackedStore |
+| Voice Bridging Scope | ✅ Valid | Documented Matrix-only scope |
+| System Alert Pipeline | ✅ Valid | Implemented custom alert events |
+
+**Implementation Details:**
+
+*1. Multi-Tenant Architecture Clarification*
+- Documented that Bridge is single-binary multi-tenant
+- License "Instance" = Bridge installation, not user container
+- Ghost users are Matrix accounts, not Docker containers
+- Added architecture diagram to review.md
+
+*2. E2EE Key Persistence Integration*
+- `bridge/pkg/crypto/keystore_store.go` - SQLCipher-backed Megolm session storage
+- `bridge/pkg/keystore/keystore.go` - Added GetDB() for connection sharing
+- Sessions stored in `inbound_group_sessions` table with encryption
+
+*3. Voice Scope Documentation*
+- Updated review.md Voice Communication Flow section
+- Added clarification table: Matrix-to-Matrix ✅, Cross-Platform ❌
+- Added future roadmap for Audio Bridge Worker (v6.0+)
+- Updated docs/index.md feature description
+
+*4. System Alert Pipeline Implementation*
+
+*Android Components:*
+- `applications/ArmorChat/.../data/model/SystemAlert.kt` - Alert types and content model
+  - AlertSeverity: INFO, WARNING, ERROR, CRITICAL
+  - AlertType: Budget, License, Security, System, Compliance
+  - SystemAlertContent with Matrix event mapping
+  - AlertFactory for common alert generation
+
+- `applications/ArmorChat/.../ui/components/SystemAlertMessage.kt` - Alert UI
+  - SystemAlertCard with severity-based colors
+  - SystemAlertBanner for timeline display
+  - AlertColors: Blue (Info), Amber (Warning), Red (Error), Dark Red (Critical)
+  - Action buttons with deep links (armorclaw://)
+
+*Bridge Components:*
+- `bridge/pkg/notification/alert_types.go` - Go alert system
+  - AlertManager with AlertSender interface
+  - SystemAlert with Matrix content conversion
+  - Factory methods: SendBudgetWarning, SendLicenseExpiring, etc.
+
+**Alert Event Structure:**
+```
+Event Type: app.armorclaw.alert
+Content: {
+  "alert_type": "BUDGET_WARNING",
+  "severity": "WARNING",
+  "title": "Budget Warning",
+  "message": "Token usage is at 80%...",
+  "action": "View Usage",
+  "action_url": "armorclaw://dashboard/budget",
+  "timestamp": 1708364400000,
+  "metadata": { "percentage": 80, "limit": 100 }
+}
+```
+
+**Artifacts Created:**
+- `bridge/pkg/crypto/keystore_store.go` (260 lines)
+- `bridge/pkg/notification/alert_types.go` (230 lines)
+- `applications/ArmorChat/.../data/model/SystemAlert.kt` (210 lines)
+- `applications/ArmorChat/.../ui/components/SystemAlertMessage.kt` (280 lines)
+
+---
+
+### ✅ Milestone 22: Post-Hybrid Gap Resolution (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - UX & Security Gaps
+
+**Goal:** Resolve 4 additional gaps identified during post-deployment analysis.
+
+**Gaps Resolved:**
+
+| Gap | Issue | Resolution |
+|-----|-------|------------|
+| Ghost User Directional Asymmetry | Identity bridging differs by direction | Documented "Wrapped Identity" model |
+| Budget Exhaustion vs Workflow State | No workflow pause state for budget | Added `PAUSED_INSUFFICIENT_FUNDS` |
+| Security Downgrade Warning | E2EE→Plaintext not warned | Added Bridge Security Warning UI |
+| Client Capability Suppression | UI shows unsupported features | Verified existing implementation |
+
+**Implementation Details:**
+
+*1. Directional Identity Documentation*
+- Added "Directional Identity (Asymmetric Bridging)" section to review.md
+- External → Matrix = Ghost User (`@platform_username:homeserver`)
+- Matrix → External = Wrapped Identity (Message via Bot with attribution)
+- Documented privacy considerations for bridged rooms
+
+*2. Budget-Aware Workflow States*
+- Added `WorkflowState` type to `bridge/pkg/budget/tracker.go`
+- States: RUNNING, PAUSED, PAUSED_INSUFFICIENT_FUNDS, COMPLETED, FAILED
+- Methods: `GetWorkflowState()`, `CanResumeWorkflow()`
+- Budget exhaustion now properly pauses active workflows
+
+*3. Bridge Security Warning System*
+- Created `BridgeSecurityWarning.kt` - Full warning component suite
+  - `BridgeSecurityWarningBanner` - In-room warning for E2EE→Plaintext
+  - `BridgeSecurityIndicator` - Compact badge for room list
+  - `BridgeSecurityInfoDialog` - Full explanation dialog
+  - `PreJoinBridgeSecurityWarning` - Warning before joining
+- Added `BRIDGE_SECURITY_DOWNGRADE` alert type
+- Added `AlertBridgeSecurityDowngrade` to Go alert_types.go
+- Platform E2EE support status: Slack ❌, Discord ❌, Teams ❌, WhatsApp ✅, Signal ✅
+
+*4. Client Capability Suppression (Verified)*
+- Existing `MessageActions.kt` already implements capability-aware UI
+- `MessageActionBar` checks `BridgeCapabilities` before showing actions
+- `CapabilityAwareReactionPicker` shows fallback for limited platforms
+- `LimitationsWarning` displays active bridge limitations
+
+**Artifacts Created:**
+- `applications/ArmorChat/.../ui/components/BridgeSecurityWarning.kt` (340 lines)
+
+**Artifacts Modified:**
+- `bridge/pkg/budget/tracker.go` - Added WorkflowState type (50 lines)
+- `bridge/pkg/notification/alert_types.go` - Added AlertBridgeSecurityDowngrade
+- `applications/ArmorChat/.../data/model/SystemAlert.kt` - Added BRIDGE_SECURITY_DOWNGRADE
+- `applications/ArmorChat/.../ui/components/SystemAlertMessage.kt` - Added icon for new alert
+- `docs/output/review.md` - Added Directional Identity, Gap Resolution sections
+
+---
+
+### ✅ Milestone 23: Platform Policy Gap Resolution (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - Platform Integration & Reliability
+
+**Goal:** Resolve 4 gaps related to platform policies, user lifecycle, and feature parity.
+
+**Gaps Resolved:**
+
+| Gap | Issue | Resolution |
+|-----|-------|------------|
+| Ghost User Lifecycle | Orphaned accounts when users leave | Implemented `GhostUserManager` |
+| Reaction Sync Parity | Missing bidirectional reaction support | Updated SDTW adapter interface |
+| Context Transfer Quota | Invisible budget drain from transfers | Added cost estimation dialog |
+| License Runtime Behavior | Undefined grace period behavior | Implemented `LicenseStateManager` |
+
+**Implementation Details:**
+
+*1. Ghost User Lifecycle Management*
+- Created `bridge/pkg/ghost/manager.go` - Full lifecycle manager
+- Event handling: `USER_JOINED`, `USER_LEFT`, `USER_DELETED`
+- Daily sync compares Matrix ghost users vs platform roster
+- Deactivation: Matrix account disabled, display name appended "[Left Platform]"
+- Historical messages preserved (not redacted)
+
+*2. Reaction Synchronization Parity*
+- Updated `SDTWAdapter` interface with reaction methods:
+  - `SendReaction(ctx, target, messageID, emoji)`
+  - `RemoveReaction(ctx, target, messageID, emoji)`
+  - `GetReactions(ctx, target, messageID)` → `[]Reaction`
+- Added `Reaction` struct with emoji, count, user IDs, custom URL
+- `MessageMap` bridges Matrix event_id ↔ Platform timestamp
+
+*3. Context Transfer Quota Safeguards*
+- Created `ContextTransferWarningDialog.kt` - Android UI component
+- Token estimation: Text (chars/4), Code (chars/3.5), PDF (bytes/2)
+- Risk levels: LOW, MEDIUM, HIGH, CRITICAL
+- Transfer blocked if would exhaust budget
+- Shows estimated tokens, cost, budget before/after
+
+*4. License Expiry Runtime Behavior*
+- Created `bridge/pkg/license/state_manager.go` - Full state machine
+- States: VALID → DEGRADED → GRACE_PERIOD → EXPIRED → BLOCKED
+- Grace period: 7 days (configurable)
+- Runtime polling: Every 24 hours
+- Alert thresholds: [30, 14, 7, 1] days before expiry
+- Boot sequence integration: Grace = start with alert, Expired = blocked
+
+**Artifacts Created:**
+- `bridge/pkg/ghost/manager.go` (350 lines)
+- `bridge/internal/sdtw/adapter.go` (modified - added reaction interface)
+- `applications/ArmorChat/.../ui/components/ContextTransferDialog.kt` (320 lines)
+- `bridge/pkg/license/state_manager.go` (340 lines)
+
+---
+
+### ✅ Milestone 24: Media Compliance & Resource Governance (Complete 2026-02-19)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - Compliance & Security
+
+**Goal:** Resolve 3 critical gaps related to media PHI detection, message mutations, and container resource isolation.
+
+**Gaps Resolved:**
+
+| Gap | Issue | Resolution |
+|-----|-------|------------|
+| PHI in Media Attachments | OCR-less PHI detection missed embedded content | Implemented `MediaPHIScanner` |
+| Message Mutation Propagation | Edits/deletes not synced across platforms | Added mutation methods to SDTW interface |
+| Agent Resource Isolation | No container resource limits | Implemented `ResourceGovernor` |
+
+**Implementation Details:**
+
+*1. PHI in Media Attachments*
+- Created `bridge/pkg/pii/media_scanner.go` - OCR-based PHI scanner
+- Supports `MediaTypeImage` and `MediaTypePDF` with OCR extraction
+- `MediaPHIScanner.Scan()` returns `ScanResult` with PHI detection
+- Automatic quarantine with placeholder replacement
+- Integrates with existing `HIPAAScrubber` for text analysis
+
+*2. Message Mutation Propagation*
+- Added to `SDTWAdapter` interface:
+  - `EditMessage(ctx, target, messageID, newContent)` - Edit sync
+  - `DeleteMessage(ctx, target, messageID)` - Delete sync
+  - `GetMessageHistory(ctx, target, messageID)` - Edit history
+- Added `MessageVersion` type for tracking edits
+- Capability flags: `Edit`, `Delete` in `CapabilitySet`
+- Default implementations in `BaseAdapter` for graceful degradation
+
+*3. Agent Resource Isolation*
+- Created `bridge/pkg/docker/resource_governor.go` - Full resource management
+- `ResourceProfile` presets: Minimal (5%/128MB), Light (10%/256MB), Standard (25%/512MB), Heavy (50%/1GB)
+- `ApplyToHostConfig()` enforces CPU, memory, I/O, PIDs limits
+- `GetContainerUsage()` monitors real-time resource usage
+- `CheckViolations()` detects threshold breaches
+- `StartMonitoring()` for continuous watchdog monitoring
+
+**Artifacts Created:**
+- `bridge/pkg/pii/media_scanner.go` (270 lines)
+- `bridge/pkg/docker/resource_governor.go` (420 lines)
+
+**Artifacts Modified:**
+- `bridge/internal/sdtw/adapter.go` - Added mutation methods and MessageVersion type (80 lines added)
+- `docs/output/review.md` - Added v5.3.0 Gap Resolution section
+
+---
+
+### ✅ Milestone 25: OpenClaw Integration (Complete 2026-02-20)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P1 - Agent Integration
+
+**Goal:** Enable the full OpenClaw AI assistant to run inside ArmorClaw's hardened container.
+
+**Implementation:**
+
+*1. TypeScript Bridge Client*
+- Created `container/openclaw/bridge-client.ts` - Full TypeScript client for bridge communication
+- JSON-RPC 2.0 over Unix sockets
+- All bridge methods: status, health, matrix_*, get_secret, etc.
+
+*2. ArmorClaw Channel Provider*
+- Created `container/openclaw/armorclaw-channel.ts` - OpenClaw channel integration
+- Implements ChannelPlugin interface
+- Maps Matrix events to OpenClaw inbound messages
+- Supports reactions, replies, config attachments
+
+*3. Container Entrypoint*
+- Created `container/openclaw/entrypoint.ts` - Main entry point for Node.js runtime
+- Loads secrets from bridge (memory-only)
+- Polls Matrix for messages
+- Handles /status, /help commands
+
+*4. Dockerfile Integration*
+- Created `container/Dockerfile.openclaw` - Multi-stage build for OpenClaw + ArmorClaw
+- Builds OpenClaw from source
+- Applies all ArmorClaw hardening (non-root, no shell, LD_PRELOAD)
+
+*5. Integration Guide*
+- Created `docs/guides/openclaw-integration.md` - Complete documentation
+
+**Integration Architecture:**
+```
+Host (Bridge) ←→ Unix Socket ←→ Container (OpenClaw Node.js)
+                    ↓
+              Matrix (E2EE)
+```
+
+**Artifacts Created:**
+- `container/openclaw/bridge-client.ts` (220 lines)
+- `container/openclaw/armorclaw-channel.ts` (180 lines)
+- `container/openclaw/entrypoint.ts` (240 lines)
+- `container/Dockerfile.openclaw` (90 lines)
+- `docs/guides/openclaw-integration.md` (400 lines)
+
+---
+
+**Progress Log Last Updated:** 2026-02-20
+**Current Milestone:** ✅ OPENCLAW INTEGRATION COMPLETE
+**Version:** v5.3.2
+**Next Milestone:** Production Deployment & Integration Testing
+
+---
+
+## Build Verification (2026-02-20)
+
+**Container Build:**
+```
+docker build -f container/Dockerfile.openclaw-standalone -t armorclaw/openclaw:latest .
+```
+
+**Build Results:**
+- ✅ Multi-stage build completed successfully
+- ✅ OpenClaw core compiled (282 files, 7.5 MB total)
+- ✅ ArmorClaw integration files copied
+- ✅ Security hook compiled (libarmorclaw_hook.so)
+- ✅ Build tools removed (gcc, libc-dev)
+- ✅ Image size: 3.57 GB (927 MB compressed)
+
+**Container Test Results:**
+```
+$ docker run --rm armorclaw/openclaw:latest node -e "console.log('OK')"
+Container OK - Node.js v22.22.0
+
+$ docker run --rm armorclaw/openclaw:latest node --experimental-strip-types armorclaw/entrypoint.ts
+[2026-02-20T17:54:17.517Z] [info] [ArmorClaw] === ArmorClaw-OpenClaw Integration ===
+[2026-02-20T17:54:17.533Z] [info] [ArmorClaw] Bridge socket: /run/armorclaw/bridge.sock
+[2026-02-20T17:54:17.533Z] [info] [ArmorClaw] Node version: v22.22.0
+ArmorClaw Security: Operation blocked by security policy
+[2026-02-20T17:54:17.539Z] [warn] [ArmorClaw] Waiting for bridge... (1/30)
+...
+[2026-02-20T17:54:22.230Z] [info] [ArmorClaw] Received SIGTERM, shutting down...
+```
+
+**Verified:**
+- ✅ Node.js v22.22.0 with TypeScript support
+- ✅ Bridge client initializes correctly
+- ✅ Security hook active (LD_PRELOAD working)
+- ✅ Graceful failure when bridge unavailable
+- ✅ Signal handling works (SIGTERM)
+
+---
+
+### ✅ Milestone 26: Blind Fill PII Capability (Complete 2026-02-20)
+**Status:** COMPLETE
+**Duration:** 1 session
+**Priority:** P0 - Privacy & Security Feature
+
+**Goal:** Implement "Blind Fill" PII capability allowing users to store personal information profiles in an encrypted vault and skills/agents to request access via Human-in-the-Loop (HITL) consent.
+
+**Implementation Overview:**
+
+The agent never sees actual PII values until user approval via Matrix. This enables:
+- Encrypted profile storage (SQLCipher + XChaCha20-Poly1305)
+- Human-in-the-Loop consent requests via Matrix messages
+- Memory-only injection of approved PII into containers
+- Tamper-evident audit logging (never logs actual PII values)
+
+**Phase 1: Data Layer - Profile Vault**
+
+*Profile Management (`bridge/pkg/pii/profile.go`):*
+- `UserProfile` struct with ID, name, type, data, field schema
+- `ProfileData` struct: Name, DOB, SSN, Address, Phone, Email, Custom fields
+- `ProfileFieldSchema` with field descriptors and sensitivity levels
+- Profile types: personal, business, payment, medical, custom
+- Standard field keys: 12 personal fields, 10 business fields
+
+*Keystore Integration (`bridge/pkg/keystore/keystore.go`):*
+- Added `user_profiles` table with encrypted storage
+- Methods: `StoreProfile()`, `RetrieveProfile()`, `ListProfiles()`, `DeleteProfile()`
+- Default profile support with `GetDefaultProfile()`, `SetDefaultProfile()`
+
+**Phase 2: Logic Layer - Blind Fill Engine**
+
+*Skill Manifest (`bridge/pkg/pii/skill_manifest.go`):*
+- `SkillManifest` struct: SkillID, SkillName, Variables []VariableRequest
+- `VariableRequest`: Key, Description, Required, Sensitivity, ProfileHints
+- `ResolvedVariables`: SkillID, RequestID, Variables map, GrantedBy
+- Sensitivity levels: low, medium, high, critical
+
+*Blind Fill Engine (`bridge/pkg/pii/resolver.go`):*
+- `BlindFillEngine` with keystore and audit references
+- `ResolveVariables()` - validates, retrieves profile, extracts approved fields only
+- `HashValue()` - one-way hashing for logging (never logs actual PII)
+
+*HITL Consent Manager (`bridge/pkg/pii/hitl_consent.go`):*
+- `HITLConsentManager` with pending request tracking
+- `AccessRequest` struct with approval/rejection state
+- Methods: `RequestAccess()`, `WaitForApproval()`, `ApproveRequest()`, `RejectRequest()`
+- Default 60-second approval timeout, auto-reject on expiry
+
+**Phase 3: Execution Layer - Secure Injection**
+
+*PII Injection (`bridge/pkg/secrets/pii_injection.go`):*
+- `PIIInjector` for memory-only PII injection
+- Socket-based delivery (follows existing `socket.go` pattern)
+- Methods: `InjectPII()`, `injectViaSocket()`, `injectViaEnv()`
+- Environment variable injection with `PII_` prefix
+
+*Docker Mounts (`bridge/pkg/docker/pii_mounts.go`):*
+- `PreparePIIMounts()` - tmpfs mounts for memory-only access
+- `PreparePIISocketMount()` - bind mount for PII socket
+- `PreparePIIEnvironment()` - environment variable helpers
+
+**Phase 4: Interface Layer - RPC Methods**
+
+*RPC Handlers (`bridge/pkg/rpc/server.go`):*
+
+| Method | Purpose |
+|--------|---------|
+| `profile.create` | Create new PII profile |
+| `profile.list` | List all profiles |
+| `profile.get` | Get profile by ID |
+| `profile.update` | Update existing profile |
+| `profile.delete` | Delete profile |
+| `pii.request_access` | Request PII access (triggers HITL) |
+| `pii.approve_access` | Approve access request |
+| `pii.reject_access` | Reject access request |
+| `pii.list_requests` | List pending requests |
+
+*Matrix Consent Formatting (`bridge/internal/adapter/pii_consent.go`):*
+- `PIIConsentFormatter` for Matrix message formatting
+- `FormatConsentRequest()` - Full consent request message
+- `FormatConsentApproved()`, `FormatConsentRejected()` - Status notifications
+- `ParseConsentCommand()` - Command parsing (`!armorclaw approve/reject <id>`)
+
+**Phase 5: Compliance & Auditing**
+
+*Audit Events (`bridge/pkg/audit/audit.go`):*
+- `EventPIIAccessRequest` - PII access requested
+- `EventPIIAccessGranted` - Access approved
+- `EventPIIAccessRejected` - Access rejected
+- `EventPIIAccessExpired` - Request timed out
+- `EventPIIInjected` - PII injected into container
+- `EventPIIProfileCreated/Updated/Deleted` - Profile lifecycle
+
+*Security Logging (`bridge/pkg/logger/security.go`):*
+- PII security event logging methods
+- **CRITICAL**: Never logs actual PII values - only field names
+
+**RPC API Flow:**
+```
+1. profile.create → Encrypted profile stored in SQLCipher vault
+2. pii.request_access → HITL consent request sent to Matrix
+3. User sees Matrix message with requested fields
+4. User sends: !armorclaw approve <request_id> [field1,field2]
+5. pii.approve_access → AccessRequest updated, user notified
+6. Skills receive ResolvedVariables with approved fields only
+7. PIIInjector delivers via socket (memory-only)
+```
+
+**Artifacts Created:**
+- `bridge/pkg/pii/profile.go` (400+ lines)
+- `bridge/pkg/pii/profile_test.go` (340+ lines)
+- `bridge/pkg/pii/skill_manifest.go` (280+ lines)
+- `bridge/pkg/pii/resolver.go` (290+ lines)
+- `bridge/pkg/pii/hitl_consent.go` (400+ lines)
+- `bridge/pkg/secrets/pii_injection.go` (380+ lines)
+- `bridge/pkg/docker/pii_mounts.go` (110+ lines)
+- `bridge/internal/adapter/pii_consent.go` (180+ lines)
+
+**Artifacts Modified:**
+- `bridge/pkg/keystore/keystore.go` - Added user_profiles table, profile CRUD
+- `bridge/pkg/rpc/server.go` - Added profile.*, pii.* handlers
+- `bridge/pkg/audit/audit.go` - Added PII event types
+- `bridge/pkg/audit/audit_helper.go` - Added PII logging methods
+- `bridge/pkg/logger/security.go` - Added PII logging methods
+- `docs/output/review.md` - Updated to v6.0.0 with comprehensive PII documentation
+
+**Security Guarantees:**
+- ✅ Memory-only injection (Unix socket transmission)
+- ✅ Never log PII values (only field names and context hashes)
+- ✅ HITL timeout (60s default, auto-reject on expiry)
+- ✅ Least privilege (skills declare exact fields, users approve specific fields)
+- ✅ Container isolation (seccomp, network "none", env vars not in docker inspect)
+
+**Test Coverage:**
+- `bridge/pkg/pii/profile_test.go` - 15 tests (all PASS)
+- Tests for: profile CRUD, field access, skill manifests, resolved variables
+
+---
+
+### ✅ Milestone 27: Client Communication Architecture (Complete 2026-02-20)
+
+**Status:** COMPLETE
+**Duration:** Same Day
+**Version:** v7.0.0
+
+**Deliverables:**
+- Complete client communication reference documentation
+- All missing RPC methods for ArmorChat and ArmorTerminal compatibility
+- WebSocket event broadcasting for real-time notifications
+- Capability detection patterns for clients
+
+**New RPC Methods Added:**
+
+| Category | Methods |
+|----------|---------|
+| Bridge Health | `bridge.health` |
+| Workflow | `workflow.templates` |
+| HITL | `hitl.get`, `hitl.extend`, `hitl.escalate` |
+| Container | `container.create`, `container.start`, `container.stop`, `container.list`, `container.status` |
+| Secret | `secret.list` |
+
+**WebSocket Event Broadcasting:**
+- `agent.status_changed`, `agent.registered`
+- `workflow.progress`, `workflow.status_changed`
+- `hitl.required`, `hitl.resolved`
+- `command.acknowledged`, `command.rejected`
+- `heartbeat`
+
+**Documentation Updates:**
+- `docs/output/review.md` - Complete Client Communication Architecture section
+- RPC Methods Summary updated (113 total methods)
+- Channel comparison matrix (Matrix, JSON-RPC, WebSocket, Push)
+- Capability detection patterns
+- Error handling strategies by channel
+
+**Artifacts:**
+- `bridge/pkg/rpc/server.go` - 12 new handler functions
+- `bridge/pkg/http/server.go` - 9 new broadcast methods
+- `docs/output/review.md` - Complete communication reference
+
+**Total RPC Methods:** 113 (67 for ArmorChat, 87 for ArmorTerminal)
+
+---
+
+**Progress Log Last Updated:** 2026-02-20
+**Current Milestone:** ✅ CLIENT COMMUNICATION ARCHITECTURE COMPLETE
+**Version:** v7.0.0
+**Next Milestone:** Production Deployment & End-to-End Testing

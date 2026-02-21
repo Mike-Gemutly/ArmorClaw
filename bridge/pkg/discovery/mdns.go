@@ -15,7 +15,8 @@ import (
 
 const (
 	// ServiceName is the mDNS service type for ArmorClaw bridge
-	ServiceName = "_armorclaw._tcp"
+	// Note: Trailing dot is required for FQDN format in mDNS
+	ServiceName = "_armorclaw._tcp."
 
 	// ServiceDomain is the mDNS domain
 	ServiceDomain = "local."
@@ -23,20 +24,28 @@ const (
 	// DefaultPort is the default HTTP API port
 	DefaultPort = 8080
 
+	// DefaultTLSPort is the default HTTPS API port
+	DefaultTLSPort = 8443
+
 	// DiscoveryTimeout is how long to wait for discovery responses
 	DiscoveryTimeout = 5 * time.Second
 )
 
 // BridgeInfo contains discovered bridge information
 type BridgeInfo struct {
-	Name     string            `json:"name"`
-	Host     string            `json:"host"`
-	Port     int               `json:"port"`
-	IPs      []net.IP          `json:"ips"`
-	TXT      map[string]string `json:"txt"`
-	Version  string            `json:"version"`
-	Mode     string            `json:"mode"`
-	Hardware string            `json:"hardware,omitempty"`
+	Name             string            `json:"name"`
+	Host             string            `json:"host"`
+	Port             int               `json:"port"`
+	IPs              []net.IP          `json:"ips"`
+	TXT              map[string]string `json:"txt"`
+	Version          string            `json:"version"`
+	Mode             string            `json:"mode"`
+	Hardware         string            `json:"hardware,omitempty"`
+	MatrixHomeserver string            `json:"matrix_homeserver,omitempty"`
+	PushGateway      string            `json:"push_gateway,omitempty"`
+	APIPath          string            `json:"api_path,omitempty"`
+	WSPath           string            `json:"ws_path,omitempty"`
+	TLS              bool              `json:"tls"`
 }
 
 // Server represents an mDNS server that advertises the bridge
@@ -48,13 +57,49 @@ type Server struct {
 	shutdown context.CancelFunc
 }
 
+// ServerConfig contains configuration for the mDNS server
+type ServerConfig struct {
+	// InstanceName is the service instance name (defaults to hostname)
+	InstanceName string
+	// Port is the HTTP/HTTPS port
+	Port int
+	// TLS indicates whether HTTPS is enabled
+	TLS bool
+	// MatrixHomeserver is the Matrix homeserver URL (e.g., https://matrix.example.com)
+	MatrixHomeserver string
+	// PushGateway is the push gateway URL
+	PushGateway string
+	// APIPath is the API path (default: /api)
+	APIPath string
+	// WSPath is the WebSocket path (default: /ws)
+	WSPath string
+	// ExtraTXT contains additional TXT records
+	ExtraTXT map[string]string
+}
+
 // NewServer creates a new mDNS advertisement server
+// Deprecated: Use NewServerWithConfig for full configuration
 func NewServer(instanceName string, port int, extraTXT map[string]string) (*Server, error) {
+	return NewServerWithConfig(ServerConfig{
+		InstanceName: instanceName,
+		Port:         port,
+		ExtraTXT:     extraTXT,
+	})
+}
+
+// NewServerWithConfig creates a new mDNS advertisement server with full configuration
+func NewServerWithConfig(config ServerConfig) (*Server, error) {
+	port := config.Port
 	if port == 0 {
-		port = DefaultPort
+		if config.TLS {
+			port = DefaultTLSPort
+		} else {
+			port = DefaultPort
+		}
 	}
 
 	// Get hostname if not specified
+	instanceName := config.InstanceName
 	if instanceName == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
@@ -69,12 +114,31 @@ func NewServer(instanceName string, port int, extraTXT map[string]string) (*Serv
 		return nil, fmt.Errorf("failed to get local IPs: %w", err)
 	}
 
+	// Set defaults
+	apiPath := config.APIPath
+	if apiPath == "" {
+		apiPath = "/api"
+	}
+	wsPath := config.WSPath
+	if wsPath == "" {
+		wsPath = "/ws"
+	}
+
 	// Build TXT records
 	txt := []string{
-		fmt.Sprintf("version=1.0.0"),
+		fmt.Sprintf("version=0.2.0"),
 		fmt.Sprintf("mode=operational"),
+		fmt.Sprintf("tls=%v", config.TLS),
+		fmt.Sprintf("api_path=%s", apiPath),
+		fmt.Sprintf("ws_path=%s", wsPath),
 	}
-	for k, v := range extraTXT {
+	if config.MatrixHomeserver != "" {
+		txt = append(txt, fmt.Sprintf("matrix_homeserver=%s", config.MatrixHomeserver))
+	}
+	if config.PushGateway != "" {
+		txt = append(txt, fmt.Sprintf("push_gateway=%s", config.PushGateway))
+	}
+	for k, v := range config.ExtraTXT {
 		txt = append(txt, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -99,10 +163,15 @@ func NewServer(instanceName string, port int, extraTXT map[string]string) (*Serv
 	}
 
 	info := &BridgeInfo{
-		Name: instanceName,
-		Port: port,
-		IPs:  ips,
-		TXT:  extraTXT,
+		Name:             instanceName,
+		Port:             port,
+		IPs:              ips,
+		TXT:              config.ExtraTXT,
+		TLS:              config.TLS,
+		APIPath:          apiPath,
+		WSPath:           wsPath,
+		MatrixHomeserver: config.MatrixHomeserver,
+		PushGateway:      config.PushGateway,
 	}
 	for _, t := range txt {
 		parts := strings.SplitN(t, "=", 2)
@@ -115,6 +184,16 @@ func NewServer(instanceName string, port int, extraTXT map[string]string) (*Serv
 				info.Mode = parts[1]
 			case "hardware":
 				info.Hardware = parts[1]
+			case "matrix_homeserver":
+				info.MatrixHomeserver = parts[1]
+			case "push_gateway":
+				info.PushGateway = parts[1]
+			case "api_path":
+				info.APIPath = parts[1]
+			case "ws_path":
+				info.WSPath = parts[1]
+			case "tls":
+				info.TLS = parts[1] == "true"
 			}
 		}
 	}
@@ -195,6 +274,16 @@ func (s *Server) UpdateTXT(txt map[string]string) error {
 			s.info.Mode = v
 		case "hardware":
 			s.info.Hardware = v
+		case "matrix_homeserver":
+			s.info.MatrixHomeserver = v
+		case "push_gateway":
+			s.info.PushGateway = v
+		case "api_path":
+			s.info.APIPath = v
+		case "ws_path":
+			s.info.WSPath = v
+		case "tls":
+			s.info.TLS = v == "true"
 		}
 	}
 
@@ -290,6 +379,10 @@ func parseEntry(entry *mdns.ServiceEntry) BridgeInfo {
 		Port: entry.Port,
 		IPs:  []net.IP{},
 		TXT:  make(map[string]string),
+		// Set defaults
+		APIPath: "/api",
+		WSPath:  "/ws",
+		TLS:     true, // Default to TLS for security
 	}
 
 	// Add IPv4 address if present
@@ -318,6 +411,16 @@ func parseEntry(entry *mdns.ServiceEntry) BridgeInfo {
 					info.Mode = parts[1]
 				case "hardware":
 					info.Hardware = parts[1]
+				case "matrix_homeserver":
+					info.MatrixHomeserver = parts[1]
+				case "push_gateway":
+					info.PushGateway = parts[1]
+				case "api_path":
+					info.APIPath = parts[1]
+				case "ws_path":
+					info.WSPath = parts[1]
+				case "tls":
+					info.TLS = parts[1] == "true"
 				}
 			}
 		}

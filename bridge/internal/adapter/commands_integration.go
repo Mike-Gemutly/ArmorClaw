@@ -97,10 +97,10 @@ func (h *CommandHandler) handleClaimAdmin(ctx context.Context, userID string, ar
 		return "An admin has already been bonded to this instance. Use `/help` for available commands.", nil
 	}
 
-	// Extract device name from args
+	// Extract and validate device name from args
 	deviceName := "Element X"
 	if len(args) > 0 {
-		deviceName = strings.Join(args, " ")
+		deviceName = sanitizeDeviceName(strings.Join(args, " "))
 	}
 
 	// Initiate claim
@@ -283,4 +283,45 @@ func (m *MatrixAdapter) ProcessMessageWithCommands(ctx context.Context, roomID, 
 	}
 
 	return handler.HandleCommand(ctx, roomID, sender, message)
+}
+
+// sanitizeDeviceName sanitizes a device name to prevent injection attacks
+// Removes control characters and limits length
+func sanitizeDeviceName(name string) string {
+	// Limit length to prevent abuse
+	const maxLen = 64
+	if len(name) > maxLen {
+		name = name[:maxLen]
+	}
+
+	// Remove control characters and normalize whitespace
+	var result strings.Builder
+	result.Grow(len(name))
+
+	for _, r := range name {
+		// Allow printable ASCII and common Unicode, reject control characters
+		if r >= 0x20 && r != 0x7F {
+			// Normalize various whitespace to regular space
+			if r == '\t' || r == '\n' || r == '\r' {
+				result.WriteRune(' ')
+			} else {
+				result.WriteRune(r)
+			}
+		}
+	}
+
+	sanitized := result.String()
+
+	// Trim leading/trailing whitespace and collapse multiple spaces
+	sanitized = strings.TrimSpace(sanitized)
+	for strings.Contains(sanitized, "  ") {
+		sanitized = strings.ReplaceAll(sanitized, "  ", " ")
+	}
+
+	// If empty after sanitization, return default
+	if sanitized == "" {
+		return "Element X"
+	}
+
+	return sanitized
 }

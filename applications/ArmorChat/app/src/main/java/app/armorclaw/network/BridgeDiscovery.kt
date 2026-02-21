@@ -21,8 +21,65 @@ data class DiscoveredBridge(
     val version: String? = null,
     val mode: String? = null,
     val hardware: String? = null,
-    val txt: Map<String, String> = emptyMap()
-)
+    val txt: Map<String, String> = emptyMap(),
+    // New fields for complete discovery
+    val matrixHomeserver: String? = null,
+    val pushGateway: String? = null,
+    val apiPath: String = "/api",
+    val wsPath: String = "/ws",
+    val tls: Boolean = true
+) {
+    /**
+     * Get the HTTP/HTTPS URL for this bridge API
+     */
+    fun getApiUrl(): String {
+        val protocol = if (tls) "https" else "http"
+        return if (port == 443 && tls) {
+            "$protocol://$host$apiPath"
+        } else if (port == 80 && !tls) {
+            "$protocol://$host$apiPath"
+        } else {
+            "$protocol://$host:$port$apiPath"
+        }
+    }
+
+    /**
+     * Get the WebSocket URL for this bridge
+     */
+    fun getWebSocketUrl(): String {
+        val protocol = if (tls) "wss" else "ws"
+        return if ((port == 443 && tls) || (port == 80 && !tls)) {
+            "$protocol://$host$wsPath"
+        } else {
+            "$protocol://$host:$port$wsPath"
+        }
+    }
+
+    /**
+     * Get the Matrix homeserver URL
+     * Falls back to constructing from host:port if not provided in TXT
+     */
+    fun getMatrixHomeserverUrl(): String {
+        return matrixHomeserver ?: run {
+            // Fallback: assume Matrix is on port 8008 or 8448
+            val matrixPort = if (tls) 8448 else 8008
+            val protocol = if (tls) "https" else "http"
+            "$protocol://$host:$matrixPort"
+        }
+    }
+
+    /**
+     * Check if this discovery has complete configuration
+     */
+    fun hasCompleteConfig(): Boolean {
+        return matrixHomeserver != null
+    }
+
+    companion object {
+        const val DEFAULT_API_PATH = "/api"
+        const val DEFAULT_WS_PATH = "/ws"
+    }
+}
 
 /**
  * Discovery client using Android NSD (Network Service Discovery)
@@ -94,12 +151,21 @@ class BridgeDiscovery(private val nsdManager: NsdManager) {
             }
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                val txt = parseTxtRecords(serviceInfo.attributes)
                 val bridge = DiscoveredBridge(
                     name = serviceInfo.serviceName,
                     host = serviceInfo.host?.hostAddress ?: "",
                     port = serviceInfo.port,
                     ips = listOfNotNull(serviceInfo.host),
-                    txt = parseTxtRecords(serviceInfo.attributes)
+                    txt = txt,
+                    version = txt["version"],
+                    mode = txt["mode"],
+                    hardware = txt["hardware"],
+                    matrixHomeserver = txt["matrix_homeserver"],
+                    pushGateway = txt["push_gateway"],
+                    apiPath = txt["api_path"] ?: DiscoveredBridge.DEFAULT_API_PATH,
+                    wsPath = txt["ws_path"] ?: DiscoveredBridge.DEFAULT_WS_PATH,
+                    tls = txt["tls"]?.toBoolean() ?: true
                 )
                 onResolved(bridge)
             }

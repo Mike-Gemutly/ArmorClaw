@@ -1,0 +1,310 @@
+# Docker Compose: ArmorClaw Bridge Stack
+# Part of Topology Separation (G-06)
+#
+# This stack runs the ArmorClaw bridge and supporting services.
+# Can be restarted independently of the Matrix homeserver.
+#
+# Usage:
+#   docker-compose -f docker-compose.bridge.yml up -d
+#   Or combined with Matrix stack:
+#   docker-compose -f docker-compose.matrix.yml -f docker-compose.bridge.yml up -d
+#
+# Network Topology:
+#   - bridge-net: Internal network for bridge <-> agent communication
+#   - matrix-net: External network (from matrix stack) for Matrix API access
+
+services:
+  # ========================================
+  # ArmorClaw Bridge (Native Go Binary)
+  # ========================================
+  # NOTE: The bridge runs as a native binary on the host, not in Docker.
+  # This is intentional for security - it needs access to:
+  #   - Docker socket (scoped)
+  #   - Host filesystem (configs, secrets)
+  #   - Unix socket for RPC
+  #
+  # To run the bridge:
+  #   sudo ./bridge/build/armorclaw-bridge
+  #
+  # The bridge connects to the matrix-net network via host networking.
+
+  # ========================================
+  # Sygnal Push Gateway
+  # ========================================
+  sygnal:
+    build:
+      context: ./deploy/sygnal
+      dockerfile: Dockerfile
+    image: armorclaw/sygnal:latest
+    container_name: armorclaw-sygnal
+    restart: unless-stopped
+
+    volumes:
+      - ./configs/sygnal.yaml:/app/sygnal.yaml:ro
+      - sygnal_data:/app/data
+
+    # Expose on internal port only, nginx proxies external access
+    ports:
+      - "5000:5000"
+
+    networks:
+      - bridge-net
+      - matrix-net
+
+    environment:
+      - SYGNAL_CONF=/app/sygnal.yaml
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/_matrix/push/v1/notify"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+        reservations:
+          memory: 30M
+
+    # Note: Sygnal requires Matrix homeserver for pusher validation.
+    # When using standalone, ensure Matrix is accessible at the configured URL.
+    # When combined with Matrix stack:
+    #   docker-compose -f docker-compose.matrix.yml -f docker-compose.bridge.yml up -d
+
+  # ========================================
+  # mautrix-slack Bridge (Optional)
+  # ========================================
+  mautrix-slack:
+    image: dock.mau.dev/mautrix/slack:latest
+    container_name: armorclaw-mautrix-slack
+    restart: unless-stopped
+
+    volumes:
+      - ./configs/mautrix-slack:/data
+
+    networks:
+      - bridge-net
+      - matrix-net
+
+    environment:
+      - UID=10001
+      - GID=10001
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:29335/_matrix/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 100M
+
+    profiles:
+      - slack
+
+  # ========================================
+  # mautrix-discord Bridge (Optional)
+  # ========================================
+  mautrix-discord:
+    image: dock.mau.dev/mautrix/discord:latest
+    container_name: armorclaw-mautrix-discord
+    restart: unless-stopped
+
+    volumes:
+      - ./configs/mautrix-discord:/data
+
+    networks:
+      - bridge-net
+      - matrix-net
+
+    environment:
+      - UID=10001
+      - GID=10001
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:29334/_matrix/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 100M
+
+    profiles:
+      - discord
+
+  # ========================================
+  # mautrix-telegram Bridge (Optional)
+  # ========================================
+  mautrix-telegram:
+    image: dock.mau.dev/mautrix/telegram:latest
+    container_name: armorclaw-mautrix-telegram
+    restart: unless-stopped
+
+    volumes:
+      - ./configs/mautrix-telegram:/data
+
+    networks:
+      - bridge-net
+      - matrix-net
+
+    environment:
+      - UID=10001
+      - GID=10001
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:29317/_matrix/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+        reservations:
+          memory: 150M
+
+    profiles:
+      - telegram
+
+  # ========================================
+  # mautrix-whatsapp Bridge (Optional)
+  # ========================================
+  mautrix-whatsapp:
+    image: dock.mau.dev/mautrix/whatsapp:latest
+    container_name: armorclaw-mautrix-whatsapp
+    restart: unless-stopped
+
+    volumes:
+      - ./configs/mautrix-whatsapp:/data
+
+    networks:
+      - bridge-net
+      - matrix-net
+
+    environment:
+      - UID=10001
+      - GID=10001
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:29318/_matrix/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 100M
+
+    profiles:
+      - whatsapp
+
+  # ========================================
+  # OpenClaw AI Agent (Optional)
+  # ========================================
+  # The OpenClaw agent runs inside a hardened container
+  # and communicates with Matrix through the ArmorClaw bridge.
+  #
+  # Prerequisites:
+  #   1. Build the container: docker build -f container/Dockerfile.openclaw -t armorclaw/openclaw:latest .
+  #   2. Store API keys: armorclaw-bridge add-key --provider openai --token sk-xxx
+  #   3. Configure Matrix room: Set ARMORCLAW_MATRIX_ROOM below
+  #
+  openclaw:
+    image: armorclaw/openclaw:latest
+    build:
+      context: .
+      dockerfile: container/Dockerfile.openclaw
+    container_name: armorclaw-openclaw
+    restart: unless-stopped
+
+    # Security: Run as non-root user
+    user: "10001:10001"
+
+    # Mount bridge socket for RPC communication
+    volumes:
+      - /run/armorclaw:/run/armorclaw:ro
+      - openclaw_tmp:/tmp
+
+    # No network access - all communication via bridge socket
+    network_mode: none
+
+    environment:
+      - ARMORCLAW_BRIDGE_SOCKET=/run/armorclaw/bridge.sock
+      - ARMORCLAW_MATRIX_ROOM=${ARMORCLAW_MATRIX_ROOM:-}
+      - ARMORCLAW_VERBOSE=${ARMORCLAW_VERBOSE:-false}
+
+    # Read-only filesystem except /tmp
+    read_only: true
+
+    # Drop all capabilities
+    cap_drop:
+      - ALL
+
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('healthy')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Only start when bridge is ready
+    # Note: The bridge runs as a native binary, not in Docker
+    # This dependency ensures proper startup order when using compose
+    profiles:
+      - openclaw
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  bridge-net:
+    driver: bridge
+    name: armorclaw-bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+    internal: true  # No external access
+
+  matrix-net:
+    external: true
+    name: armorclaw-matrix
+
+# ========================================
+# Volumes
+# ========================================
+volumes:
+  sygnal_data:
+    driver: local
+    name: armorclaw-sygnal-data
+
+  openclaw_tmp:
+    driver: local
+    name: armorclaw-openclaw-tmp

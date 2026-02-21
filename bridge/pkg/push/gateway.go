@@ -4,13 +4,13 @@ package push
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // Platform represents a push notification platform
@@ -459,15 +459,11 @@ func (g *Gateway) CreateMatrixPushNotification(roomID, eventID, sender, content 
 // Helper functions
 
 func generateDeviceID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return "dev_" + hex.EncodeToString(b)
+	return "dev_" + securerandom.MustID(16)
 }
 
 func generateNotificationID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return "notif_" + hex.EncodeToString(b)
+	return "notif_" + securerandom.MustID(16)
 }
 
 func formatSenderName(sender string) string {

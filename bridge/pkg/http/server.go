@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -24,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/qr"
+	"github.com/armorclaw/bridge/pkg/securerandom"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/gorilla/websocket"
 )
@@ -37,6 +40,9 @@ type ServerConfig struct {
 	Hostname       string
 	EnableCORS     bool
 	AllowedOrigins []string
+	// Discovery configuration
+	MatrixHomeserver string // Matrix homeserver URL
+	ServerName       string // Human-readable server name
 }
 
 // Server is the HTTPS server for the bridge
@@ -48,6 +54,7 @@ type Server struct {
 	keyPEM     []byte
 	mu         sync.RWMutex
 	clients    map[string]*WebSocketClient
+	qrManager  *qr.QRManager
 }
 
 // WebSocketClient represents a connected WebSocket client
@@ -69,10 +76,34 @@ func NewServer(config ServerConfig, rpcServer *rpc.Server) *Server {
 		config.Hostname = "armorclaw.local"
 	}
 
+	// Initialize QR manager for config QR codes
+	serverURL := config.MatrixHomeserver
+	if serverURL == "" {
+		serverURL = "https://matrix.armorclaw.app"
+	}
+	bridgeURL := fmt.Sprintf("https://%s", config.Hostname)
+	if config.Port != 443 && config.Port != 0 {
+		bridgeURL = fmt.Sprintf("https://%s:%d", config.Hostname, config.Port)
+	}
+	serverName := config.ServerName
+	if serverName == "" {
+		serverName = config.Hostname
+	}
+
+	qrConfig := qr.DefaultQRConfig()
+	qrConfig.QRSize = 256 // Good size for mobile scanning
+
 	return &Server{
 		config:    config,
 		rpcServer: rpcServer,
 		clients:   make(map[string]*WebSocketClient),
+		qrManager: qr.NewQRManager(
+			securerandom.MustBytes(32),
+			qrConfig,
+			serverURL,
+			bridgeURL,
+			serverName,
+		),
 	}
 }
 
@@ -88,6 +119,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/discover", s.handleDiscover)
 	mux.HandleFunc("/fingerprint", s.handleFingerprint)
+
+	// Discovery endpoints
+	mux.HandleFunc("/.well-known/matrix/client", s.handleWellKnown)
+	mux.HandleFunc("/qr/config", s.handleQRConfig)
+	mux.HandleFunc("/qr/image", s.handleQRImage)
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.config.Port),
@@ -345,6 +381,108 @@ func (s *Server) writeError(w http.ResponseWriter, id interface{}, code int, mes
 	json.NewEncoder(w).Encode(response)
 }
 
+// handleWellKnown serves the Matrix well-known discovery document
+// This is the standard Matrix discovery mechanism at /.well-known/matrix/client
+func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
+	matrixURL := s.config.MatrixHomeserver
+	if matrixURL == "" {
+		matrixURL = "https://matrix.armorclaw.app"
+	}
+
+	bridgeURL := fmt.Sprintf("https://%s", s.config.Hostname)
+	if s.config.Port != 443 && s.config.Port != 0 {
+		bridgeURL = fmt.Sprintf("https://%s:%d", s.config.Hostname, s.config.Port)
+	}
+
+	response := map[string]interface{}{
+		"m.homeserver": map[string]string{
+			"base_url": matrixURL,
+		},
+		"com.armorclaw.bridge": map[string]string{
+			"base_url":      bridgeURL,
+			"api_endpoint":  bridgeURL + "/api",
+			"ws_endpoint":   bridgeURL + "/ws",
+			"push_gateway":  bridgeURL + "/_matrix/push/v1/notify",
+		},
+	}
+
+	// Add identity server if same as homeserver
+	response["m.identity_server"] = map[string]string{
+		"base_url": matrixURL,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleQRConfig returns a JSON response with QR code configuration
+// Used by ArmorChat to get server configuration via QR scan
+func (s *Server) handleQRConfig(w http.ResponseWriter, r *http.Request) {
+	// Generate signed config QR using QR manager
+	result, err := s.qrManager.GenerateConfigQR(24 * time.Hour)
+	if err != nil {
+		http.Error(w, "Failed to generate config QR", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"config":     result.Config,
+		"deep_link":  result.DeepLink,
+		"url":        result.URL,
+		"expires_at": result.ExpiresAt.Format(time.RFC3339),
+		"png_url":    "/qr/image?format=png",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleQRImage returns a PNG QR code image
+// This endpoint returns an actual PNG image for quick scanning
+func (s *Server) handleQRImage(w http.ResponseWriter, r *http.Request) {
+	// Check Accept header to determine response format
+	accept := r.Header.Get("Accept")
+	returnPNG := accept == "image/png" || r.URL.Query().Get("format") == "png"
+
+	// Generate signed config QR using QR manager
+	result, err := s.qrManager.GenerateConfigQR(24 * time.Hour)
+	if err != nil {
+		http.Error(w, "Failed to generate QR code", http.StatusInternalServerError)
+		return
+	}
+
+	if returnPNG {
+		// Return actual PNG image
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(result.QRImage)))
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write(result.QRImage)
+		return
+	}
+
+	// Return JSON with deep link and optional PNG data URL
+	pngDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(result.QRImage)
+
+	response := map[string]interface{}{
+		"deep_link":  result.DeepLink,
+		"url":        result.URL,
+		"png_data_url": pngDataURL,
+		"expires_at": result.ExpiresAt.Format(time.RFC3339),
+		"config":     result.Config,
+		"message":    "Add ?format=png or set Accept: image/png for raw PNG",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	json.NewEncoder(w).Encode(response)
+}
+
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.config.EnableCORS {
@@ -576,6 +714,237 @@ func (s *Server) NotifyDeviceRejected(deviceID string, reason string) {
 	}
 }
 
+// ============================================================================
+// Event Broadcasting for ArmorTerminal
+// ============================================================================
+
+// BroadcastAgentStatus sends agent status change events to all connected clients
+func (s *Server) BroadcastAgentStatus(agentID, status, previousStatus string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "agent.status_changed",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"agent_id":        agentID,
+			"status":          status,
+			"previous_status": previousStatus,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastAgentRegistered sends agent registration events
+func (s *Server) BroadcastAgentRegistered(agentID, name string, capabilities []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "agent.registered",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"agent_id":     agentID,
+			"name":         name,
+			"capabilities": capabilities,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastWorkflowProgress sends workflow step progress events
+func (s *Server) BroadcastWorkflowProgress(workflowID, agentID string, stepIndex, totalSteps int, stepName string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "workflow.progress",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"workflow_id": workflowID,
+			"agent_id":    agentID,
+			"step_index":  stepIndex,
+			"total_steps": totalSteps,
+			"step_name":   stepName,
+			"progress":    float64(stepIndex) / float64(totalSteps) * 100,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastWorkflowStatus sends workflow status change events
+func (s *Server) BroadcastWorkflowStatus(workflowID, status, previousStatus string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "workflow.status_changed",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"workflow_id":     workflowID,
+			"status":          status,
+			"previous_status": previousStatus,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastHitlRequired sends HITL approval required events
+func (s *Server) BroadcastHitlRequired(gateID, workflowID, agentID, title, description string, options []map[string]string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "hitl.required",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"gate_id":     gateID,
+			"workflow_id": workflowID,
+			"agent_id":    agentID,
+			"title":       title,
+			"description": description,
+			"options":     options,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastHitlResolved sends HITL resolution events
+func (s *Server) BroadcastHitlResolved(gateID, decision, resolvedBy string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "hitl.resolved",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"gate_id":     gateID,
+			"decision":    decision,
+			"resolved_by": resolvedBy,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastCommandAcknowledged sends command acknowledgment events
+func (s *Server) BroadcastCommandAcknowledged(correlationID, commandType, agentID string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "command.acknowledged",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"correlation_id": correlationID,
+			"command_type":   commandType,
+			"agent_id":       agentID,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastCommandRejected sends command rejection events
+func (s *Server) BroadcastCommandRejected(correlationID, commandType, agentID, reason string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "command.rejected",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"payload": map[string]interface{}{
+			"correlation_id": correlationID,
+			"command_type":   commandType,
+			"agent_id":       agentID,
+			"reason":         reason,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+// BroadcastHeartbeat sends heartbeat events for connection health monitoring
+func (s *Server) BroadcastHeartbeat() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	msg := map[string]interface{}{
+		"type":      "heartbeat",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	data, _ := json.Marshal(msg)
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
 func getLocalIPs() ([]net.IP, error) {
 	var ips []net.IP
 
@@ -619,7 +988,5 @@ func getLocalIPs() ([]net.IP, error) {
 }
 
 func generateClientID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	return securerandom.MustID(16)
 }

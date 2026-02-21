@@ -3,7 +3,6 @@ package pii
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +12,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // HIPAATier represents the HIPAA compliance tier
@@ -503,9 +504,7 @@ func hashContext(text string) string {
 }
 
 func generateAuditID() string {
-	b := make([]byte, 8)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return securerandom.MustID(8)
 }
 
 // Buffered Processing Methods for LLM Response Stream

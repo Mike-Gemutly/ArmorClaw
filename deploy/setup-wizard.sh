@@ -984,6 +984,24 @@ inactivity_timeout = "30m"
 EOF
     fi
 
+    # Provisioning configuration (for secure device setup)
+    PROVISIONING_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 32)
+    sudo tee -a "$config_file" > /dev/null <<EOF
+
+[provisioning]
+# Secret key for signing QR code configurations
+# Used for secure ArmorChat/ArmorTerminal device provisioning
+signing_secret = "$PROVISIONING_SECRET"
+# Default token expiry in seconds (60 = 1 minute window)
+default_expiry_seconds = 60
+# Maximum token expiry (300 = 5 minutes max)
+max_expiry_seconds = 300
+# Enable one-time-use tokens (recommended for security)
+one_time_use = true
+EOF
+
+    print_info "Generated provisioning secret for secure device setup"
+
     # Set permissions
     sudo chown armorclaw:armorclaw "$config_file"
     sudo chmod 640 "$config_file"

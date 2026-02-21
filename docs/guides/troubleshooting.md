@@ -1,7 +1,7 @@
 # ArmorClaw Troubleshooting Guide
 
 > **Last Updated:** 2026-02-07
-> **Version:** 1.2.0
+> **Version:** 0.2.0
 > **Component:** All ArmorClaw Components
 
 ---

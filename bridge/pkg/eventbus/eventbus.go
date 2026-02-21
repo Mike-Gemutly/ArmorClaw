@@ -31,6 +31,7 @@ type Subscriber struct {
 	EventChannel  chan *MatrixEventWrapper
 	SubscribeTime  time.Time
 	LastActivity  time.Time
+	closed        bool // Track if channel is already closed
 	mu            sync.RWMutex
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -144,10 +145,15 @@ func (b *EventBus) Stop() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Close all subscriber channels
+	// Close all subscriber channels safely
 	for _, sub := range b.subscribers {
 		sub.cancel()
-		close(sub.EventChannel)
+		sub.mu.Lock()
+		if !sub.closed {
+			sub.closed = true
+			close(sub.EventChannel)
+		}
+		sub.mu.Unlock()
 	}
 
 	b.securityLog.LogSecurityEvent("eventbus_stopped")
@@ -156,19 +162,25 @@ func (b *EventBus) Stop() {
 // Publish publishes a Matrix event to all matching subscribers
 func (b *EventBus) Publish(event *MatrixEvent) error {
 	if event == nil {
-		return fmt.Errorf("cannot publish nil event")
+		err := ErrNilEvent()
+		b.securityLog.LogSecurityEvent("publish_failed",
+			slog.String("domain", string(err.Domain)),
+			slog.String("code", string(err.Code)),
+			slog.String("message", err.Message))
+		return err
 	}
 
 	wrapper := &MatrixEventWrapper{
-		Event:     event,
-		Received:  time.Now(),
-		Sequence:  time.Now().UnixNano(),
+		Event:    event,
+		Received: time.Now(),
+		Sequence: time.Now().UnixNano(),
 	}
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	publishedCount := 0
+	droppedCount := 0
 	for id, sub := range b.subscribers {
 		if b.matchesFilter(event, sub.Filter) {
 			select {
@@ -178,10 +190,14 @@ func (b *EventBus) Publish(event *MatrixEvent) error {
 				sub.LastActivity = time.Now()
 				sub.mu.Unlock()
 			default:
-				// Channel full, subscriber slow - skip
-				b.securityLog.LogSecurityEvent("event_skipped",
+				// Channel full, subscriber slow - log and skip
+				droppedCount++
+				err := ErrChannelFull(id, event.Type)
+				b.securityLog.LogSecurityEvent("event_dropped",
+					slog.String("domain", string(err.Domain)),
+					slog.String("code", string(err.Code)),
 					slog.String("subscriber_id", id),
-					slog.String("reason", "channel_full"))
+					slog.String("event_type", event.Type))
 			}
 		}
 	}
@@ -189,7 +205,8 @@ func (b *EventBus) Publish(event *MatrixEvent) error {
 	b.securityLog.LogSecurityEvent("event_published",
 		slog.String("event_type", event.Type),
 		slog.String("room_id", event.RoomID),
-		slog.Int("subscribers_notified", publishedCount))
+		slog.Int("subscribers_notified", publishedCount),
+		slog.Int("subscribers_dropped", droppedCount))
 
 	return nil
 }
@@ -230,11 +247,23 @@ func (b *EventBus) Unsubscribe(subscriberID string) error {
 
 	sub, exists := b.subscribers[subscriberID]
 	if !exists {
-		return fmt.Errorf("subscriber not found: %s", subscriberID)
+		err := ErrSubscriberNotFound(subscriberID)
+		b.securityLog.LogSecurityEvent("unsubscribe_failed",
+			slog.String("domain", string(err.Domain)),
+			slog.String("code", string(err.Code)),
+			slog.String("subscriber_id", subscriberID))
+		return err
 	}
 
 	sub.cancel()
-	close(sub.EventChannel)
+
+	// Only close the channel if not already closed
+	sub.mu.Lock()
+	if !sub.closed {
+		sub.closed = true
+		close(sub.EventChannel)
+	}
+	sub.mu.Unlock()
 
 	delete(b.subscribers, subscriberID)
 
@@ -338,18 +367,18 @@ func (b *EventBus) handleWebSocketMessage(connID string, message []byte) error {
 
 // sendToSubscriber sends events to a WebSocket subscriber
 func (b *EventBus) sendToSubscriber(connID string, sub *Subscriber) {
-	defer func() {
-		// Clean up subscriber on exit
-		b.Unsubscribe(sub.ID)
-	}()
-
 	for {
 		select {
 		case <-sub.ctx.Done():
 			return
 
+		case <-b.ctx.Done():
+			// Event bus is shutting down
+			return
+
 		case wrapper, ok := <-sub.EventChannel:
 			if !ok {
+				// Channel closed
 				return
 			}
 
@@ -366,7 +395,7 @@ func (b *EventBus) sendToSubscriber(connID string, sub *Subscriber) {
 				b.securityLog.LogSecurityEvent("event_marshal_failed",
 					slog.String("subscriber_id", sub.ID),
 					slog.String("error", err.Error()))
-				return
+				continue // Continue processing instead of returning
 			}
 
 			// Send via WebSocket (implementation depends on WebSocket server)
@@ -378,9 +407,9 @@ func (b *EventBus) sendToSubscriber(connID string, sub *Subscriber) {
 			sub.mu.Unlock()
 
 		case <-time.After(30 * time.Second):
-			// Send keepalive
+			// Send keepalive - continue processing
 			// Implementation depends on WebSocket server
-			return
+			continue
 		}
 	}
 }
@@ -408,7 +437,13 @@ func (b *EventBus) cleanupInactiveSubscribers() {
 						slog.Duration("inactive_time", now.Sub(sub.LastActivity)))
 
 					sub.cancel()
-					close(sub.EventChannel)
+					// Only close if not already closed
+					sub.mu.Lock()
+					if !sub.closed {
+						sub.closed = true
+						close(sub.EventChannel)
+					}
+					sub.mu.Unlock()
 					delete(b.subscribers, id)
 				}
 			}
@@ -434,6 +469,63 @@ func (b *EventBus) GetStats() map[string]interface{} {
 	}
 
 	return stats
+}
+
+// PublishBridgeEvent publishes a BridgeEvent to WebSocket clients
+// This is used for agent, workflow, HITL, and other non-Matrix events
+func (b *EventBus) PublishBridgeEvent(event BridgeEvent) error {
+	if event == nil {
+		err := ErrNilEvent()
+		b.securityLog.LogSecurityEvent("bridge_event_publish_failed",
+			slog.String("domain", string(err.Domain)),
+			slog.String("code", string(err.Code)),
+			slog.String("message", err.Message))
+		return err
+	}
+
+	eventType := event.EventType()
+
+	// Wrap the event for transmission
+	wrapper, err := WrapEvent(event)
+	if err != nil {
+		wrapErr := ErrWrapEventFailed(eventType, err)
+		b.securityLog.LogSecurityEvent("bridge_event_wrap_failed",
+			slog.String("domain", string(wrapErr.Domain)),
+			slog.String("code", string(wrapErr.Code)),
+			slog.String("event_type", eventType),
+			slog.String("error", err.Error()))
+		return wrapErr
+	}
+
+	data, err := wrapper.ToJSON()
+	if err != nil {
+		serErr := ErrSerializeFailed(eventType, err)
+		b.securityLog.LogSecurityEvent("bridge_event_serialize_failed",
+			slog.String("domain", string(serErr.Domain)),
+			slog.String("code", string(serErr.Code)),
+			slog.String("event_type", eventType),
+			slog.String("error", err.Error()))
+		return serErr
+	}
+
+	// Broadcast to WebSocket server if available
+	if b.websocketServer != nil {
+		if broadcastErr := b.websocketServer.Broadcast(data); broadcastErr != nil {
+			bcErr := ErrBroadcastFailed(-1, broadcastErr)
+			b.securityLog.LogSecurityEvent("bridge_event_broadcast_failed",
+				slog.String("domain", string(bcErr.Domain)),
+				slog.String("code", string(bcErr.Code)),
+				slog.String("event_type", eventType),
+				slog.String("error", broadcastErr.Error()))
+			// Don't return error - event was still processed, just not broadcast
+		}
+	}
+
+	b.securityLog.LogSecurityEvent("bridge_event_published",
+		slog.String("event_type", eventType),
+		slog.Bool("websocket_enabled", b.websocketServer != nil))
+
+	return nil
 }
 
 // toString converts interface{} to string

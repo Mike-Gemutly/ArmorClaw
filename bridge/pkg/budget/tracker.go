@@ -20,6 +20,52 @@ var TokenCosts = map[string]float64{
 	"claude-3-haiku":  0.25,
 }
 
+// WorkflowState represents the operational state of a workflow/session
+// considering budget constraints
+type WorkflowState int
+
+const (
+	// WorkflowRunning means the workflow is actively processing
+	WorkflowRunning WorkflowState = iota
+	// WorkflowPaused means temporarily paused (user-initiated)
+	WorkflowPaused
+	// WorkflowPausedInsufficientFunds means paused due to budget exhaustion
+	WorkflowPausedInsufficientFunds
+	// WorkflowCompleted means finished successfully
+	WorkflowCompleted
+	// WorkflowFailed means terminated due to error
+	WorkflowFailed
+)
+
+// String returns the string representation of the workflow state
+func (s WorkflowState) String() string {
+	switch s {
+	case WorkflowRunning:
+		return "running"
+	case WorkflowPaused:
+		return "paused"
+	case WorkflowPausedInsufficientFunds:
+		return "paused_insufficient_funds"
+	case WorkflowCompleted:
+		return "completed"
+	case WorkflowFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
+// IsPaused returns true if the workflow is in any paused state
+func (s WorkflowState) IsPaused() bool {
+	return s == WorkflowPaused || s == WorkflowPausedInsufficientFunds
+}
+
+// CanResume returns true if the workflow can be resumed
+func (s WorkflowState) CanResume() bool {
+	return s == WorkflowPaused
+	// Note: WorkflowPausedInsufficientFunds requires budget top-up before resuming
+}
+
 // UsageRecord tracks token usage for a session
 type UsageRecord struct {
 	SessionID    string    `json:"session_id"`
@@ -274,6 +320,62 @@ func (b *BudgetTracker) CanStartSession() error {
 			return fmt.Errorf("monthly budget limit reached: $%.2f / $%.2f",
 				monthlyCost, b.config.MonthlyLimitUSD)
 		}
+	}
+
+	return nil
+}
+
+// GetWorkflowState returns the current workflow state based on budget status
+// This is used to determine if active sessions should be paused
+func (b *BudgetTracker) GetWorkflowState() WorkflowState {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+
+	now := time.Now()
+	date := now.Format("2006-01-02")
+	month := now.Format("2006-01")
+
+	dailyCost := b.dailyUsage[date]
+	monthlyCost := b.monthlyUsage[month]
+
+	// Check if budget is exhausted
+	if b.config.DailyLimitUSD > 0 && dailyCost >= b.config.DailyLimitUSD {
+		return WorkflowPausedInsufficientFunds
+	}
+
+	if b.config.MonthlyLimitUSD > 0 && monthlyCost >= b.config.MonthlyLimitUSD {
+		return WorkflowPausedInsufficientFunds
+	}
+
+	return WorkflowRunning
+}
+
+// CanResumeWorkflow checks if a paused workflow can be resumed
+// Returns error if budget is still exhausted
+func (b *BudgetTracker) CanResumeWorkflow() error {
+	state := b.GetWorkflowState()
+	if state == WorkflowPausedInsufficientFunds {
+		now := time.Now()
+		date := now.Format("2006-01-02")
+		month := now.Format("2006-01")
+
+		b.mutex.RLock()
+		dailyCost := b.dailyUsage[date]
+		monthlyCost := b.monthlyUsage[month]
+		b.mutex.RUnlock()
+
+		limit := b.config.DailyLimitUSD
+		current := dailyCost
+		limitType := "daily"
+
+		if b.config.MonthlyLimitUSD > 0 && monthlyCost >= b.config.MonthlyLimitUSD {
+			limit = b.config.MonthlyLimitUSD
+			current = monthlyCost
+			limitType = "monthly"
+		}
+
+		return fmt.Errorf("cannot resume: %s budget exhausted ($%.2f of $%.2f)",
+			limitType, current, limit)
 	}
 
 	return nil

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Production configuration - HTTPS only -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">armorclaw.com</domain>
+        <domain includeSubdomains="true">matrix.armorclaw.com</domain>
+        <pin-set>
+            <!-- Pin expiration: 30 days from build -->
+            <pin digest="SHA-256">REPLACE_WITH_ACTUAL_PIN</pin>
+        </pin-set>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Debug/Development configuration - Allow local HTTP -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.</domain>
+        <domain includeSubdomains="true">192.168.</domain>
+        <domain includeSubdomains="true">172.16.</domain>
+    </domain-config>
+
+    <!-- User-added servers (from mDNS discovery or manual entry) -->
+    <base-config cleartextTrafficPermitted="${debuggable}">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

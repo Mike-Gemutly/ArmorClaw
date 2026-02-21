@@ -6,7 +6,7 @@
 
 ---
 
-## Structured Error Codes (v1.7.0)
+## Structured Error Codes (v0.2.0)
 
 ArmorClaw uses structured error codes for programmatic error handling. Each error has:
 - **Code**: `CAT-NNN` format (e.g., `CTX-001`)
@@ -40,6 +40,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"resolve_error","params":{"trace_id":"tr_
 | SYS-XXX | System | SYS-001 (keystore), SYS-010 (secret injection) |
 | BGT-XXX | Budget | BGT-001 (warning), BGT-002 (exceeded) |
 | VOX-XXX | Voice | VOX-001 (WebRTC), VOX-002 (audio capture) |
+| E-XXX | EventBus | E001 (nil event), E101 (subscriber), E201 (websocket) |
 
 ### LLM-Friendly Error Trace Format
 
@@ -776,6 +777,226 @@ chmod 700 ~/.armorclaw
 
 ---
 
+## EventBus Errors
+
+The EventBus provides real-time event distribution with structured error codes for precise debugging.
+
+### Error Format
+
+EventBus errors use a structured format with source location tracking:
+
+```
+[eventbus.publisher:E001] (Publish) cannot publish nil event: event must be non-nil @ eventbus.go:163
+  └─ hint: check event creation logic
+```
+
+Components:
+- **Domain**: `eventbus.publisher`, `eventbus.subscriber`, `eventbus.websocket`, `eventbus.serialize`
+- **Code**: E001-E099 (publisher), E101-E199 (subscriber), E201-E299 (websocket), E301-E399 (filter)
+- **Operation**: The function being performed (Publish, Subscribe, Broadcast, etc.)
+- **Source**: File and line where error originated
+- **Hint**: Suggested resolution
+
+---
+
+### `[eventbus.publisher:E001] cannot publish nil event`
+
+**When:** Attempting to publish a nil event pointer
+
+**Solution:**
+```go
+// Before publishing, check for nil
+if event != nil {
+    bus.Publish(event)
+}
+```
+
+---
+
+### `[eventbus.publisher:E002] failed to wrap event for transmission`
+
+**When:** Event cannot be wrapped for WebSocket transmission
+
+**Solution:**
+```go
+// Check event structure and serialization
+// Ensure all fields are JSON-serializable
+type MyEvent struct {
+    Type    string                 `json:"type"`
+    Content map[string]interface{} `json:"content"`
+}
+```
+
+---
+
+### `[eventbus.serialize:E003] failed to serialize event to JSON`
+
+**When:** Event contains non-serializable fields (channels, functions, etc.)
+
+**Solution:**
+```go
+// Avoid non-serializable types
+type MyEvent struct {
+    Type string `json:"type"`
+    // Don't use: ch chan bool    // Not serializable
+    // Don't use: fn func()       // Not serializable
+    Data string `json:"data"`      // OK
+}
+```
+
+---
+
+### `[eventbus.websocket:E004] failed to broadcast event`
+
+**When:** WebSocket broadcast fails (non-fatal, event still processed)
+
+**Solution:**
+```bash
+# Check WebSocket server status
+netstat -tlnp | grep 8444
+
+# Verify WebSocket configuration in config.toml
+[eventbus]
+  websocket_enabled = true
+  websocket_addr = "0.0.0.0:8444"
+```
+
+---
+
+### `[eventbus.subscriber:E101] subscriber not found`
+
+**When:** Unsubscribing with an invalid subscriber ID
+
+**Solution:**
+```go
+// Verify subscriber ID before unsubscribing
+sub, err := bus.Subscribe(filter)
+if err != nil {
+    log.Error(err)
+    return
+}
+// Store sub.ID and use it for unsubscribe
+bus.Unsubscribe(sub.ID)
+```
+
+---
+
+### `[eventbus.subscriber:E102] subscriber inactive`
+
+**When:** Subscriber hasn't shown activity for 30+ minutes
+
+**Solution:**
+```go
+// Subscriber is automatically cleaned up
+// For long-running subscribers, ensure activity tracking:
+select {
+case sub.EventChannel <- event:
+    sub.LastActivity = time.Now()  // Activity is tracked automatically
+}
+```
+
+---
+
+### `[eventbus.subscriber:E103] event channel buffer full`
+
+**When:** Subscriber is slow and channel buffer (100 events) is full
+
+**Solution:**
+```go
+// Option 1: Process events faster
+for event := range sub.EventChannel {
+    go processEvent(event)  // Process asynchronously
+}
+
+// Option 2: Increase buffer size (requires code change)
+// In eventbus.go, change: make(chan *MatrixEventWrapper, 100)
+// to: make(chan *MatrixEventWrapper, 500)
+```
+
+---
+
+### `[eventbus.subscriber:E104] subscriber channel already closed`
+
+**When:** Operating on an already-closed subscriber
+
+**Solution:**
+```go
+// Check if subscriber is still active before operations
+select {
+case _, ok := <-sub.EventChannel:
+    if !ok {
+        // Channel already closed, handle gracefully
+        return
+    }
+}
+```
+
+---
+
+### `[eventbus.websocket:E201] WebSocket server not enabled`
+
+**When:** Attempting WebSocket operation when server is disabled
+
+**Solution:**
+```bash
+# Enable WebSocket in config.toml
+[eventbus]
+  websocket_enabled = true
+  websocket_addr = "0.0.0.0:8444"
+  websocket_path = "/events"
+```
+
+---
+
+### `[eventbus.websocket:E202] WebSocket connection failed`
+
+**When:** Cannot establish WebSocket connection
+
+**Solution:**
+```bash
+# Check network connectivity
+curl -v http://localhost:8444/events
+
+# Verify server is running
+ps aux | grep armorclaw-bridge
+
+# Check firewall rules
+sudo iptables -L -n | grep 8444
+```
+
+---
+
+### `[eventbus.websocket:E203] WebSocket message failed`
+
+**When:** Failed to send message over WebSocket
+
+**Solution:**
+```bash
+# Check connection status
+# Reconnect if needed (handled automatically by client)
+
+# For manual debugging:
+wscat -c ws://localhost:8444/events
+```
+
+---
+
+### `[eventbus:E301] invalid event filter`
+
+**When:** Provided filter is invalid or malformed
+
+**Solution:**
+```go
+// Ensure filter has valid values
+filter := EventFilter{
+    RoomID:    "!room:matrix.org",  // Valid Matrix room ID
+    SenderID:  "@user:matrix.org",  // Valid Matrix user ID
+    EventType: []string{"m.room.message"},  // Valid event types
+}
+```
+
+---
+
 ## General Troubleshooting
 
 ### For any error not listed:
@@ -822,5 +1043,5 @@ chmod 700 ~/.armorclaw
 
 ---
 
-**Error Catalog Last Updated:** 2026-02-15
+**Error Catalog Last Updated:** 2026-02-21
 **For additional help:** https://github.com/armorclaw/armorclaw/issues

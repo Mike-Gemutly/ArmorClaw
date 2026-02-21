@@ -1,148 +1,85 @@
-# Docker Compose: ArmorClaw Complete Stack
-# For Hostinger KVM2 (4 GB RAM)
-# This orchestrates Matrix Conduit + Nginx. Bridge runs on host.
+# Docker Compose: ArmorClaw Full Stack (Meta-Composition)
+# Part of Topology Separation (G-06)
+#
+# This file provides convenient presets for running the full stack.
+# For production deployments, use the individual stack files:
+#
+#   Matrix Stack:  docker-compose -f docker-compose.matrix.yml up -d
+#   Bridge Stack:  docker-compose -f docker-compose.bridge.yml up -d
+#   Full Stack:    docker-compose --profile full up -d
+#
+# Topology Overview:
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │                        HOST MACHINE                          │
+#   │  ┌─────────────────┐                                        │
+#   │  │ ArmorClaw Bridge│ ← Unix Socket /run/armorclaw/bridge.sock│
+#   │  │ (Native Binary) │                                        │
+#   │  └────────┬────────┘                                        │
+#   │           │                                                   │
+#   │  ┌────────▼────────────────────────────────────────────────┐ │
+#   │  │              matrix-net (172.20.0.0/24)                  │ │
+#   │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │ │
+#   │  │  │   Nginx     │  │  Conduit    │  │   Coturn    │     │ │
+#   │  │  │  (Proxy)    │  │ (Matrix HS) │  │  (TURN/STUN)│     │ │
+#   │  │  └─────────────┘  └─────────────┘  └─────────────┘     │ │
+#   │  └──────────────────────────────────────────────────────────┘ │
+#   │           │                                                   │
+#   │  ┌────────▼────────────────────────────────────────────────┐ │
+#   │  │              bridge-net (172.21.0.0/24) [internal]      │ │
+#   │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │ │
+#   │  │  │   Sygnal    │  │ mautrix-*   │  │   Agents    │     │ │
+#   │  │  │ (Push GW)   │  │  (Bridges)  │  │  (Docker)   │     │ │
+#   │  │  └─────────────┘  └─────────────┘  └─────────────┘     │ │
+#   │  └──────────────────────────────────────────────────────────┘ │
+#   └─────────────────────────────────────────────────────────────┘
+#
+# Network Security:
+#   - matrix-net: Exposed via Nginx (80/443)
+#   - bridge-net: Internal only (no external access)
+#   - Bridge on host: Unix socket only (no network exposure)
 
-version: "3.8"
-
-services:
-  # ========================================
-  # Matrix Conduit Homeserver
-  # ========================================
-  matrix-conduit:
-    image: matrixconduit/matrix-conduit:latest
-    container_name: armorclaw-conduit
-    restart: unless-stopped
-
-    environment:
-      # Server configuration
-      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-matrix.armorclaw.com}"
-      CONDUIT_ADDRESS: "0.0.0.0"
-      CONDUIT_PORT: "6167"
-
-      # Database (embedded SQLite for low memory)
-      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit/conduit.db"
-      CONDUIT_DATABASE_BACKEND: "sqlite"
-
-      # Security
-      CONDUIT_ALLOW_ENCRYPTION: "true"
-      CONDUIT_ALLOW_REGISTRATION: "false"  # Set to true for initial setup
-      CONDUIT_ALLOW_FEDERATION: "true"
-      CONDUIT_ALLOW_CHECK_FOR_UPDATES: "true"
-
-      # Performance tuning
-      CONDUIT_MAX_REQUEST_SIZE: "10485760"  # 10 MB
-      CONDUIT_MAX_CONCURRENT_REQUESTS: "100"
-
-      # Logging
-      CONDUIT_LOG: "info"
-
-    volumes:
-      - conduit_data:/var/lib/matrix-conduit
-      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
-
-    ports:
-      - "6167:6167"   # Client API
-      - "8448:8448"   # Federation
-
-    networks:
-      - armorclaw-net
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6167/_matrix/client/versions"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
-    deploy:
-      resources:
-        limits:
-          memory: 400M
-        reservations:
-          memory: 50M
-
-  # ========================================
-  # Coturn STUN/TURN Server (Voice/Video)
-  # ========================================
-  coturn:
-    image: coturn/coturn:latest
-    container_name: armorclaw-coturn
-    restart: unless-stopped
-
-    network_mode: "host"  # Requires direct network access for TURN
-
-    volumes:
-      - ./configs/turnserver.conf:/etc/coturn/turnserver.conf:ro
-      - coturn_data:/var/lib/coturn
-
-    command: [
-      "--log-file=stdout",
-      "-n",  # Daemon mode
-      "--no-cli",
-      "--realm=${MATRIX_SERVER_NAME:-matrix.armorclaw.com}",
-      "--use-auth-secret",
-      "--static-auth-secret=${TURN_SECRET:-change-me-in-production}",
-      "--external-ip=$(curl -s https://api.ipify.org)",
-    ]
-
-    deploy:
-      resources:
-        limits:
-          memory: 100M
-        reservations:
-          memory: 30M
-
-  # ========================================
-  # Nginx Reverse Proxy
-  # ========================================
-  nginx:
-    image: nginx:alpine
-    container_name: armorclaw-nginx
-    restart: unless-stopped
-
-    volumes:
-      - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./configs/nginx/ssl:/etc/nginx/ssl:ro
-      - ./configs/nginx/conf.d:/etc/nginx/conf.d:ro
-
-    ports:
-      - "80:80"
-      - "443:443"
-
-    networks:
-      - armorclaw-net
-
-    depends_on:
-      - matrix-conduit
-
-    deploy:
-      resources:
-        limits:
-          memory: 80M
-        reservations:
-          memory: 20M
-
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+# Include both stacks
+include:
+  - docker-compose.matrix.yml
+  - docker-compose.bridge.yml
 
 # ========================================
-# Networks
+# Management Commands (via docker-compose)
 # ========================================
-networks:
-  armorclaw-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+#
+# Start Matrix stack only:
+#   docker-compose -f docker-compose.matrix.yml up -d
+#
+# Start Bridge stack only:
+#   docker-compose -f docker-compose.bridge.yml up -d
+#
+# Start full stack:
+#   docker-compose up -d
+#
+# Start with optional bridges (Slack, Discord, etc.):
+#   docker-compose --profile slack up -d
+#   docker-compose --profile discord up -d
+#   docker-compose --profile telegram up -d
+#   docker-compose --profile whatsapp up -d
+#
+# View logs:
+#   docker-compose logs -f matrix-conduit
+#   docker-compose logs -f sygnal
+#
+# Stop all:
+#   docker-compose down
+#
+# Stop and remove volumes:
+#   docker-compose down -v
 
 # ========================================
-# Volumes
+# Health Check Script
 # ========================================
-volumes:
-  conduit_data:
-    driver: local
-  coturn_data:
-    driver: local
+#
+# Verify all services are healthy:
+#   ./deploy/health-check.sh
+#
+# Or manually:
+#   curl -f http://localhost/_matrix/client/versions
+#   curl -f http://localhost:5000/_matrix/push/v1/notify
+#   curl -f http://localhost/health

@@ -257,6 +257,75 @@ func (sl *SecurityLogger) LogHITLTimeout(ctx context.Context, confirmationID, to
 	sl.logger.SecurityEvent(ctx, string(HITLTimeout), append(baseAttrs, attrs...)...)
 }
 
+// PII-specific security event types
+const (
+	PIIAccessRequest  SecurityEventType = "pii_access_request"
+	PIIAccessGranted  SecurityEventType = "pii_access_granted"
+	PIIAccessRejected SecurityEventType = "pii_access_rejected"
+	PIIAccessExpired  SecurityEventType = "pii_access_expired"
+	PIIInjected       SecurityEventType = "pii_injected"
+)
+
+// LogPIIAccessRequest logs when a skill requests access to PII fields
+// CRITICAL: Never log actual PII values - only field names
+func (sl *SecurityLogger) LogPIIAccessRequest(ctx context.Context, requestID, skillName, profileID string, requestedFields []string, attrs ...slog.Attr) {
+	baseAttrs := []slog.Attr{
+		slog.String("request_id", requestID),
+		slog.String("skill_name", skillName),
+		slog.String("profile_id", profileID),
+		// Only log field names, never values
+		slog.Any("requested_fields", requestedFields),
+	}
+	sl.logger.SecurityEvent(ctx, string(PIIAccessRequest), append(baseAttrs, attrs...)...)
+}
+
+// LogPIIAccessGranted logs when PII access is granted by user
+// CRITICAL: Never log actual PII values - only field names and approver
+func (sl *SecurityLogger) LogPIIAccessGranted(ctx context.Context, requestID, skillName, userID string, approvedFields []string, attrs ...slog.Attr) {
+	baseAttrs := []slog.Attr{
+		slog.String("request_id", requestID),
+		slog.String("skill_name", skillName),
+		slog.String("approver", userID),
+		// Only log field names, never values
+		slog.Any("approved_fields", approvedFields),
+	}
+	sl.logger.SecurityEvent(ctx, string(PIIAccessGranted), append(baseAttrs, attrs...)...)
+}
+
+// LogPIIAccessRejected logs when PII access is rejected by user
+func (sl *SecurityLogger) LogPIIAccessRejected(ctx context.Context, requestID, skillName, userID, reason string, attrs ...slog.Attr) {
+	baseAttrs := []slog.Attr{
+		slog.String("request_id", requestID),
+		slog.String("skill_name", skillName),
+		slog.String("rejecter", userID),
+		slog.String("reason", reason),
+	}
+	sl.logger.SecurityEvent(ctx, string(PIIAccessRejected), append(baseAttrs, attrs...)...)
+}
+
+// LogPIIAccessExpired logs when a PII access request expires
+func (sl *SecurityLogger) LogPIIAccessExpired(ctx context.Context, requestID, skillName string, attrs ...slog.Attr) {
+	baseAttrs := []slog.Attr{
+		slog.String("request_id", requestID),
+		slog.String("skill_name", skillName),
+	}
+	sl.logger.SecurityEvent(ctx, string(PIIAccessExpired), append(baseAttrs, attrs...)...)
+}
+
+// LogPIIInjected logs when PII is injected into a container
+// CRITICAL: Never log actual PII values - only field names and container ID
+func (sl *SecurityLogger) LogPIIInjected(ctx context.Context, containerID, skillName string, fieldsInjected []string, method string, attrs ...slog.Attr) {
+	baseAttrs := []slog.Attr{
+		slog.String("container_id", containerID),
+		slog.String("skill_name", skillName),
+		// Only log field names, never values
+		slog.Any("fields_injected", fieldsInjected),
+		slog.String("injection_method", method),
+		slog.String("timestamp", time.Now().UTC().Format(time.RFC3339)),
+	}
+	sl.logger.SecurityEvent(ctx, string(PIIInjected), append(baseAttrs, attrs...)...)
+}
+
 // LogSecurityEvent logs a generic security event with custom event type
 // This provides flexibility for events that don't fit the predefined categories
 func (sl *SecurityLogger) LogSecurityEvent(eventType string, attrs ...slog.Attr) {

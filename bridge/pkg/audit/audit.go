@@ -17,6 +17,18 @@ const (
 	EventCallRejected      EventType = "call_rejected"
 	EventBudgetWarning     EventType = "budget_warning"
 	EventSecurityViolation EventType = "security_violation"
+
+	// PII access events
+	EventPIIAccessRequest  EventType = "pii_access_request"
+	EventPIIAccessGranted  EventType = "pii_access_granted"
+	EventPIIAccessRejected EventType = "pii_access_rejected"
+	EventPIIAccessExpired  EventType = "pii_access_expired"
+	EventPIIInjected       EventType = "pii_injected"
+
+	// PII profile management events
+	EventPIIProfileCreated EventType = "pii_profile_created"
+	EventPIIProfileUpdated EventType = "pii_profile_updated"
+	EventPIIProfileDeleted EventType = "pii_profile_deleted"
 )
 
 type Entry struct {

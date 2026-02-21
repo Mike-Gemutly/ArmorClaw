@@ -139,8 +139,10 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to start budget enforcement: %w", err)
 	}
 
-	// Start voice manager
-	m.voiceMgr.Start()
+	// Start voice manager (if configured)
+	if m.voiceMgr != nil {
+		m.voiceMgr.Start()
+	}
 
 	m.securityLog.LogSecurityEvent("voice_manager_started",
 		slog.Int("max_concurrent_calls", m.config.MaxConcurrentCalls),
@@ -155,16 +157,20 @@ func (m *Manager) Stop() {
 	// Signal all goroutines to stop
 	m.cancel()
 
-	// Stop voice manager
-	m.voiceMgr.Stop()
+	// Stop voice manager (if configured)
+	if m.voiceMgr != nil {
+		m.voiceMgr.Stop()
+	}
 
 	// Wait for all goroutines
 	m.wg.Wait()
 
 	// Clean up all active calls
 	m.calls.Range(func(key, value interface{}) bool {
-		call := value.(*MatrixCall)
-		m.EndCall(call.ID, "manager_shutdown")
+		call, ok := value.(*MatrixCall)
+		if ok {
+			m.EndCall(call.ID, "manager_shutdown")
+		}
 		return true
 	})
 
@@ -173,7 +179,10 @@ func (m *Manager) Stop() {
 
 // HandleMatrixCallEvent handles a Matrix call event
 func (m *Manager) HandleMatrixCallEvent(roomID, eventID, senderID string, event *CallEvent) error {
-	// Forward to voice manager
+	// Forward to voice manager (if configured)
+	if m.voiceMgr == nil {
+		return fmt.Errorf("voice manager not configured")
+	}
 	return m.voiceMgr.HandleCallEvent(roomID, eventID, senderID, event)
 }
 
@@ -181,6 +190,11 @@ func (m *Manager) HandleMatrixCallEvent(roomID, eventID, senderID string, event 
 func (m *Manager) CreateCall(roomID, offerSDP string, userID string) (*MatrixCall, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Check if voice manager is configured
+	if m.voiceMgr == nil {
+		return nil, fmt.Errorf("voice manager not configured")
+	}
 
 	// Check concurrent call limit
 	activeCount := m.getActiveCallCount()
@@ -192,8 +206,10 @@ func (m *Manager) CreateCall(roomID, offerSDP string, userID string) (*MatrixCal
 	}
 
 	// Check security policy
-	if err := m.securityEnforcer.CheckStartCall(userID, roomID); err != nil {
-		return nil, err
+	if m.securityEnforcer != nil {
+		if err := m.securityEnforcer.CheckStartCall(userID, roomID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Create the call via voice manager
@@ -243,17 +259,23 @@ func (m *Manager) AnswerCall(callID, answerSDP string) error {
 	defer m.mu.Unlock()
 
 	// Get the call
-	call, ok := m.calls.Load(callID)
+	value, ok := m.calls.Load(callID)
 	if !ok {
 		return ErrCallNotFound
 	}
 
-	// Answer via voice manager
-	if err := m.voiceMgr.AnswerCall(callID, answerSDP); err != nil {
-		return err
+	matrixCall, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", callID)
 	}
 
-	matrixCall := call.(*MatrixCall)
+	// Answer via voice manager (if configured)
+	if m.voiceMgr != nil {
+		if err := m.voiceMgr.AnswerCall(callID, answerSDP); err != nil {
+			return err
+		}
+	}
+
 	matrixCall.mu.Lock()
 	matrixCall.State = CallStateConnected
 	matrixCall.AnsweredAt = time.Now()
@@ -302,11 +324,16 @@ func (m *Manager) EndCall(callID, reason string) error {
 		return ErrCallNotFound
 	}
 
-	call := value.(*MatrixCall)
+	call, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", callID)
+	}
 
-	// End via voice manager
-	if err := m.voiceMgr.EndCall(callID, reason); err != nil {
-		return err
+	// End via voice manager (if configured)
+	if m.voiceMgr != nil {
+		if err := m.voiceMgr.EndCall(callID, reason); err != nil {
+			return err
+		}
 	}
 
 	// End budget session
@@ -335,6 +362,9 @@ func (m *Manager) EndCall(callID, reason string) error {
 
 // SendCandidates sends ICE candidates for a call
 func (m *Manager) SendCandidates(callID string, candidates []Candidate) error {
+	if m.voiceMgr == nil {
+		return fmt.Errorf("voice manager not configured")
+	}
 	return m.voiceMgr.SendCandidates(callID, candidates)
 }
 
@@ -344,7 +374,8 @@ func (m *Manager) GetCall(callID string) (*MatrixCall, bool) {
 	if !ok {
 		return nil, false
 	}
-	return value.(*MatrixCall), true
+	call, ok := value.(*MatrixCall)
+	return call, ok
 }
 
 // ListCalls returns all active calls
@@ -352,8 +383,10 @@ func (m *Manager) ListCalls() []*MatrixCall {
 	calls := make([]*MatrixCall, 0)
 
 	m.calls.Range(func(key, value interface{}) bool {
-		call := value.(*MatrixCall)
-		calls = append(calls, call)
+		call, ok := value.(*MatrixCall)
+		if ok {
+			calls = append(calls, call)
+		}
 		return true
 	})
 
@@ -365,23 +398,31 @@ func (m *Manager) GetStats() map[string]interface{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Get base stats from voice manager
-	stats := m.voiceMgr.GetStats()
+	stats := make(map[string]interface{})
+
+	// Get base stats from voice manager (if configured)
+	if m.voiceMgr != nil {
+		stats = m.voiceMgr.GetStats()
+	}
 
 	// Add additional stats
 	stats["active_calls"] = m.activeCount
 	stats["max_concurrent_calls"] = m.config.MaxConcurrentCalls
 
 	// Add budget stats
-	budgetStats := m.budgetTracker.GetStats()
-	for k, v := range budgetStats {
-		stats["budget_"+k] = v
+	if m.budgetTracker != nil {
+		budgetStats := m.budgetTracker.GetStats()
+		for k, v := range budgetStats {
+			stats["budget_"+k] = v
+		}
 	}
 
 	// Add TTL stats
-	ttlStats := m.ttlManager.GetTTLStats()
-	for k, v := range ttlStats {
-		stats["ttl_"+k] = v
+	if m.ttlManager != nil {
+		ttlStats := m.ttlManager.GetTTLStats()
+		for k, v := range ttlStats {
+			stats["ttl_"+k] = v
+		}
 	}
 
 	return stats

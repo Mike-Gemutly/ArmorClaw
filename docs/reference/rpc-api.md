@@ -3,8 +3,8 @@
 > **Protocol:** JSON-RPC 2.0
 > **Transport:** Unix Domain Socket
 > **Socket:** `/run/armorclaw/bridge.sock`
-> **Version:** 1.9.0
-> **Last Updated:** 2026-02-17
+> **Version:** 0.2.0
+> **Last Updated:** 2026-02-21
 
 ---
 
@@ -2128,6 +2128,105 @@ Set or update the license key.
 | `free` | matrix-adapter, keystore, basic-validation, offline-queue |
 | `pro` | slack-adapter, discord-adapter, pii-scrubber, audit-log, priority-support |
 | `ent` | All Pro features + whatsapp-adapter, teams-adapter, pii-scrubber-hipaa, sso-integration |
+
+---
+
+## Bridge Discovery Methods (v1.10.0)
+
+Bridge discovery methods enable ArmorChat and ArmorTerminal to discover available features and adapt their UI accordingly.
+
+### bridge.capabilities
+
+Returns detailed bridge capabilities for feature discovery. This method is used by clients to determine which features are available and adapt their behavior accordingly.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "bridge.capabilities"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "version": "1.6.2",
+    "features": {
+      "e2ee": true,
+      "key_backup": true,
+      "key_recovery": true,
+      "cross_signing": true,
+      "verification": true,
+      "push": true,
+      "agents": true,
+      "workflows": true,
+      "hitl": true,
+      "budget": true,
+      "containers": true,
+      "matrix": true,
+      "pii_profiles": true,
+      "platform_bridges": true
+    },
+    "methods": ["status", "health", "agent.start", "workflow.start", ...],
+    "websocket_events": ["agent.started", "workflow.completed", "hitl.pending", ...],
+    "platforms": {
+      "slack": true,
+      "discord": true,
+      "telegram": true,
+      "whatsapp": true
+    },
+    "limits": {
+      "max_containers": 10,
+      "max_agents": 5,
+      "max_workflow_steps": 50,
+      "hitl_timeout_seconds": 60,
+      "max_subscribers": 100
+    }
+  }
+}
+```
+
+**Response Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| version | string | Bridge version |
+| features | object | Feature flags for UI adaptation |
+| features.e2ee | boolean | End-to-end encryption support |
+| features.key_backup | boolean | Key backup support (SSSS) |
+| features.key_recovery | boolean | Key recovery support |
+| features.agents | boolean | Agent lifecycle support |
+| features.workflows | boolean | Workflow execution support |
+| features.hitl | boolean | Human-in-the-Loop approval support |
+| features.budget | boolean | Budget tracking support |
+| methods | string[] | List of available RPC methods |
+| websocket_events | string[] | List of WebSocket event types |
+| platforms | object | Available platform bridges |
+| limits | object | Resource limits and timeouts |
+
+**Usage Example (Kotlin):**
+```kotlin
+// Query bridge capabilities
+val response = bridgeApi.call("bridge.capabilities")
+val capabilities = response.result
+
+// Adapt UI based on capabilities
+if (capabilities.features["agents"] == true) {
+    // Show agent management UI
+}
+
+if (capabilities.features["hitl"] == true) {
+    // Enable HITL approval workflows
+}
+
+// Check if specific method is available
+if ("workflow.start" in capabilities.methods) {
+    // Enable workflow controls
+}
+```
 
 ---
 

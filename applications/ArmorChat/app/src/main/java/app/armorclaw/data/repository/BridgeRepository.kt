@@ -3,6 +3,7 @@ package app.armorclaw.data.repository
 import android.content.Context
 import android.util.Log
 import app.armorclaw.network.BridgeApi
+import app.armorclaw.push.MatrixPusherManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -10,9 +11,14 @@ import kotlinx.coroutines.withContext
  * Repository for Bridge Server communication
  *
  * Handles:
- * - Push token registration
+ * - Native Matrix pusher registration (via MatrixPusherManager)
  * - Message sync
  * - WebSocket connection management
+ *
+ * Migration Note (v4.5.0):
+ * Legacy push token methods (registerPushToken/unregisterPushToken via Bridge API)
+ * have been replaced with standard Matrix HTTP Pusher via MatrixPusherManager.
+ * This resolves the "Split-Brain" push notification issue (G-01).
  */
 class BridgeRepository private constructor(
     private val context: Context,
@@ -36,6 +42,29 @@ class BridgeRepository private constructor(
     private var isConnected: Boolean = false
     private var deviceId: String? = null
 
+    // Matrix credentials (set after login)
+    private var homeserverUrl: String? = null
+    private var accessToken: String? = null
+
+    // Native Matrix Pusher Manager
+    private var pusherManager: MatrixPusherManager? = null
+
+    /**
+     * Set Matrix credentials for native pusher registration
+     */
+    fun setMatrixCredentials(homeserver: String, token: String, device: String) {
+        this.homeserverUrl = homeserver
+        this.accessToken = token
+        this.deviceId = device
+        this.pusherManager = MatrixPusherManager(
+            context = context,
+            homeserverUrl = homeserver,
+            accessToken = token,
+            deviceId = device
+        )
+        Log.d(TAG, "Matrix credentials configured for device: $device")
+    }
+
     /**
      * Set the current device ID for push notifications
      */
@@ -44,48 +73,47 @@ class BridgeRepository private constructor(
     }
 
     /**
-     * Register FCM push token with the Bridge Server
+     * Register push token using native Matrix HTTP Pusher
+     *
+     * This replaces the legacy Bridge API push registration.
+     * Uses standard Matrix pusher API routed through Sygnal.
+     *
+     * @param fcmToken FCM token from Firebase
+     * @param deviceDisplayName Human-readable device name
      */
-    suspend fun registerPushToken(token: String): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val response = api.registerPushToken(
-                deviceId = deviceId ?: "unknown",
-                token = token,
-                platform = "android"
+    suspend fun registerPushToken(
+        fcmToken: String,
+        deviceDisplayName: String = "Android Device"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val manager = pusherManager
+        if (manager == null) {
+            Log.e(TAG, "PusherManager not initialized - call setMatrixCredentials first")
+            return@withContext Result.failure(
+                IllegalStateException("Matrix credentials not set")
             )
-
-            if (response.success) {
-                Log.d(TAG, "Push token registered: ${response.message}")
-                Result.success(Unit)
-            } else {
-                Result.failure(Exception(response.message))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to register push token", e)
-            Result.failure(e)
         }
+
+        manager.registerPusher(fcmToken, deviceDisplayName)
     }
 
     /**
-     * Unregister FCM push token from the Bridge Server
+     * Unregister push token from Matrix homeserver
      */
-    suspend fun unregisterPushToken(token: String): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val response = api.unregisterPushToken(
-                deviceId = deviceId ?: "unknown",
-                token = token
-            )
-
-            if (response.success) {
-                Log.d(TAG, "Push token unregistered: ${response.message}")
-                Result.success(Unit)
-            } else {
-                Result.failure(Exception(response.message))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to unregister push token", e)
-            Result.failure(e)
+    suspend fun unregisterPushToken(fcmToken: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val manager = pusherManager
+        if (manager == null) {
+            Log.w(TAG, "PusherManager not initialized, skipping unregister")
+            return@withContext Result.success(Unit)
         }
+
+        manager.unregisterPusher(fcmToken)
+    }
+
+    /**
+     * Check if pusher is currently registered
+     */
+    fun isPusherRegistered(): Boolean {
+        return pusherManager?.isPusherRegistered() ?: false
     }
 
     /**
@@ -144,6 +172,18 @@ class BridgeRepository private constructor(
      * Check if connected to Bridge
      */
     fun isBridgeConnected(): Boolean = isConnected
+
+    /**
+     * Clear all credentials (for logout)
+     */
+    fun clearCredentials() {
+        homeserverUrl = null
+        accessToken = null
+        deviceId = null
+        pusherManager = null
+        isConnected = false
+        Log.d(TAG, "Credentials cleared")
+    }
 }
 
 /**

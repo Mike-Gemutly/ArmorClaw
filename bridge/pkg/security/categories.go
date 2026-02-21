@@ -640,8 +640,23 @@ func (s *SecurityConfig) Clone() *SecurityConfig {
 	}
 
 	for k, v := range s.Categories {
-		copied := *v
-		clone.Categories[k] = &copied
+		// Create a copy without copying the mutex
+		copied := &CategoryConfig{
+			Permission:       v.Permission,
+			AllowedWebsites:  append([]string(nil), v.AllowedWebsites...),
+			BlockedWebsites:  append([]string(nil), v.BlockedWebsites...),
+			AllowedAdapters:  append([]string(nil), v.AllowedAdapters...),
+			DataSubsets:      make(map[string]SubsetConfig),
+			RequiresApproval: v.RequiresApproval,
+			AuditLevel:       v.AuditLevel,
+			MaxRetention:     v.MaxRetention,
+			ConfiguredAt:     v.ConfiguredAt,
+			ConfiguredBy:     v.ConfiguredBy,
+		}
+		for sk, sv := range v.DataSubsets {
+			copied.DataSubsets[sk] = sv
+		}
+		clone.Categories[k] = copied
 	}
 
 	for k, v := range s.Adapters {

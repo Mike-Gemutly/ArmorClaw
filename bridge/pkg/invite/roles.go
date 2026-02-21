@@ -4,16 +4,16 @@ package invite
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // Role defines the permission level granted by an invite
@@ -206,8 +206,7 @@ type ServerConfig struct {
 func NewInviteManager(signingKey []byte, config ServerConfig) *InviteManager {
 	if len(signingKey) == 0 {
 		// Generate a random signing key
-		signingKey = make([]byte, 32)
-		rand.Read(signingKey)
+		signingKey = securerandom.MustBytes(32)
 	}
 
 	return &InviteManager{
@@ -227,13 +226,8 @@ func (m *InviteManager) CreateInvite(createdBy string, role Role, expiration Exp
 	defer m.mu.Unlock()
 
 	// Generate invite ID and code
-	idBytes := make([]byte, 16)
-	rand.Read(idBytes)
-	inviteID := "inv_" + hex.EncodeToString(idBytes)
-
-	codeBytes := make([]byte, 8)
-	rand.Read(codeBytes)
-	code := hex.EncodeToString(codeBytes)
+	inviteID := "inv_" + securerandom.MustID(16)
+	code := securerandom.MustID(8)
 
 	invite := &Invite{
 		ID:            inviteID,
@@ -645,10 +639,4 @@ func (m *InviteManager) UserMaxInvites(createdBy string, maxActive int) error {
 	}
 
 	return nil
-}
-
-// Helper to parse int from string
-func parseInt(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }

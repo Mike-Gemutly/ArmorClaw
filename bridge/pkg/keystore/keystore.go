@@ -394,6 +394,22 @@ func (ks *Keystore) initSchema(db *sql.DB) error {
 		created_at INTEGER NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS user_profiles (
+		id TEXT PRIMARY KEY,
+		profile_name TEXT NOT NULL,
+		profile_type TEXT NOT NULL DEFAULT 'personal',
+		data_encrypted BLOB NOT NULL,
+		data_nonce BLOB NOT NULL,
+		field_schema TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		last_accessed INTEGER,
+		is_default INTEGER DEFAULT 0
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_profile_type ON user_profiles(profile_type);
+	CREATE INDEX IF NOT EXISTS idx_profile_default ON user_profiles(is_default);
+
 	INSERT OR IGNORE INTO metadata (key, value) VALUES ('version', '1');
 	INSERT OR IGNORE INTO metadata (key, value) VALUES ('created_at', ?);
 	`
@@ -420,6 +436,19 @@ func (ks *Keystore) Close() error {
 
 	ks.isOpen = false
 	return nil
+}
+
+// GetDB returns the underlying database connection for sharing with crypto store
+// This allows the crypto store to use the same encrypted database
+func (ks *Keystore) GetDB() *sql.DB {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	return ks.db
+}
+
+// GetDBPath returns the path to the keystore database
+func (ks *Keystore) GetDBPath() string {
+	return ks.dbPath
 }
 
 // Store stores an encrypted credential
@@ -907,6 +936,339 @@ func (ks *Keystore) DeleteMatrixRefreshToken(id string) error {
 	}
 
 	_, err := ks.db.Exec("DELETE FROM matrix_refresh_tokens WHERE id = ?", id)
+	return err
+}
+
+// UserProfile represents a PII profile for blind fill capability
+// This is a minimal interface struct - full definition is in pii/profile.go
+type UserProfileData struct {
+	ID           string
+	ProfileName  string
+	ProfileType  string
+	Data         []byte // JSON-serialized and encrypted
+	FieldSchema  string // JSON-serialized schema
+	CreatedAt    int64
+	UpdatedAt    int64
+	LastAccessed int64
+	IsDefault    bool
+}
+
+// ErrProfileNotFound is returned when a profile is not found
+var ErrProfileNotFound = errors.New("profile not found")
+
+// StoreProfile stores an encrypted user profile
+func (ks *Keystore) StoreProfile(id, profileName, profileType string, data []byte, fieldSchema string, isDefault bool) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	if !ks.isOpen {
+		return errors.New("keystore is not open")
+	}
+
+	// Validate inputs
+	if id == "" {
+		return errors.New("profile id is required")
+	}
+	if profileName == "" {
+		return errors.New("profile name is required")
+	}
+
+	// Encrypt the profile data using XChaCha20-Poly1305
+	encrypted, nonce, err := ks.encrypt(data)
+	if err != nil {
+		return fmt.Errorf("encryption failed: %w", err)
+	}
+
+	now := time.Now().Unix()
+
+	// If setting as default, clear other defaults of same type
+	if isDefault {
+		_, _ = ks.db.Exec("UPDATE user_profiles SET is_default = 0 WHERE profile_type = ?", profileType)
+	}
+
+	// Insert or replace into database
+	query := `
+	INSERT OR REPLACE INTO user_profiles
+	(id, profile_name, profile_type, data_encrypted, data_nonce, field_schema, created_at, updated_at, last_accessed, is_default)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	var createdAt int64
+	row := ks.db.QueryRow("SELECT created_at FROM user_profiles WHERE id = ?", id)
+	_ = row.Scan(&createdAt) // Ignore error - will use new timestamp if not exists
+
+	if createdAt == 0 {
+		createdAt = now
+	}
+
+	_, err = ks.db.Exec(query,
+		id,
+		profileName,
+		profileType,
+		encrypted,
+		nonce,
+		fieldSchema,
+		createdAt,
+		now,
+		nil, // last_accessed is NULL initially
+		isDefault,
+	)
+
+	// Log to audit if available
+	if ks.auditLogger != nil {
+		ks.auditLogger.LogProfileStored(context.Background(), id, profileType)
+	}
+
+	return err
+}
+
+// RetrieveProfile retrieves and decrypts a user profile
+func (ks *Keystore) RetrieveProfile(id string) (*UserProfileData, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	if !ks.isOpen {
+		return nil, errors.New("keystore is not open")
+	}
+
+	query := `
+	SELECT id, profile_name, profile_type, data_encrypted, data_nonce, field_schema, created_at, updated_at, last_accessed, is_default
+	FROM user_profiles WHERE id = ?
+	`
+
+	row := ks.db.QueryRow(query, id)
+
+	var profile UserProfileData
+	var encryptedData, nonce []byte
+	var lastAccessed sql.NullInt64
+
+	err := row.Scan(
+		&profile.ID,
+		&profile.ProfileName,
+		&profile.ProfileType,
+		&encryptedData,
+		&nonce,
+		&profile.FieldSchema,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+		&lastAccessed,
+		&profile.IsDefault,
+	)
+
+	if err == sql.ErrNoRows {
+		if ks.auditLogger != nil {
+			ks.auditLogger.LogProfileAccess(context.Background(), id, "retrieve", false)
+		}
+		return nil, ErrProfileNotFound
+	}
+	if err != nil {
+		if ks.auditLogger != nil {
+			ks.auditLogger.LogProfileAccess(context.Background(), id, "retrieve", false)
+		}
+		return nil, fmt.Errorf("database query failed: %w", err)
+	}
+
+	// Decrypt profile data using XChaCha20-Poly1305
+	decrypted, err := ks.decrypt(encryptedData, nonce)
+	if err != nil {
+		if ks.auditLogger != nil {
+			ks.auditLogger.LogProfileAccess(context.Background(), id, "retrieve", false)
+		}
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+	profile.Data = decrypted
+
+	if lastAccessed.Valid {
+		profile.LastAccessed = lastAccessed.Int64
+	}
+
+	// Update last accessed timestamp asynchronously (don't block on this)
+	go func() {
+		ks.mu.Lock()
+		defer ks.mu.Unlock()
+		ks.db.Exec("UPDATE user_profiles SET last_accessed = ? WHERE id = ?", time.Now().Unix(), id)
+	}()
+
+	// Log successful access
+	if ks.auditLogger != nil {
+		ks.auditLogger.LogProfileAccess(context.Background(), id, "retrieve", true)
+	}
+
+	return &profile, nil
+}
+
+// ListProfiles returns all stored profiles (without decrypting data)
+func (ks *Keystore) ListProfiles(profileType string) ([]UserProfileData, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	if !ks.isOpen {
+		return nil, errors.New("keystore is not open")
+	}
+
+	query := `
+	SELECT id, profile_name, profile_type, field_schema, created_at, updated_at, last_accessed, is_default
+	FROM user_profiles
+	`
+
+	args := []interface{}{}
+	if profileType != "" {
+		query += " WHERE profile_type = ?"
+		args = append(args, profileType)
+	}
+
+	query += " ORDER BY is_default DESC, profile_name ASC"
+
+	rows, err := ks.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("database query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var profiles []UserProfileData
+	for rows.Next() {
+		var profile UserProfileData
+		var lastAccessed sql.NullInt64
+		var schema sql.NullString
+
+		err := rows.Scan(
+			&profile.ID,
+			&profile.ProfileName,
+			&profile.ProfileType,
+			&schema,
+			&profile.CreatedAt,
+			&profile.UpdatedAt,
+			&lastAccessed,
+			&profile.IsDefault,
+		)
+		if err != nil {
+			continue
+		}
+
+		if schema.Valid {
+			profile.FieldSchema = schema.String
+		}
+		if lastAccessed.Valid {
+			profile.LastAccessed = lastAccessed.Int64
+		}
+
+		// Note: Data is not included (not decrypted for list operation)
+		profiles = append(profiles, profile)
+	}
+
+	return profiles, nil
+}
+
+// DeleteProfile removes a profile from the keystore
+func (ks *Keystore) DeleteProfile(id string) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	if !ks.isOpen {
+		return errors.New("keystore is not open")
+	}
+
+	result, err := ks.db.Exec("DELETE FROM user_profiles WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrProfileNotFound
+	}
+
+	// Log deletion to audit
+	if ks.auditLogger != nil {
+		ks.auditLogger.LogProfileDeleted(context.Background(), id)
+	}
+
+	return nil
+}
+
+// GetDefaultProfile returns the default profile for a given type
+func (ks *Keystore) GetDefaultProfile(profileType string) (*UserProfileData, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	if !ks.isOpen {
+		return nil, errors.New("keystore is not open")
+	}
+
+	query := `
+	SELECT id, profile_name, profile_type, data_encrypted, data_nonce, field_schema, created_at, updated_at, last_accessed, is_default
+	FROM user_profiles WHERE profile_type = ? AND is_default = 1
+	LIMIT 1
+	`
+
+	row := ks.db.QueryRow(query, profileType)
+
+	var profile UserProfileData
+	var encryptedData, nonce []byte
+	var lastAccessed sql.NullInt64
+
+	err := row.Scan(
+		&profile.ID,
+		&profile.ProfileName,
+		&profile.ProfileType,
+		&encryptedData,
+		&nonce,
+		&profile.FieldSchema,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+		&lastAccessed,
+		&profile.IsDefault,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrProfileNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("database query failed: %w", err)
+	}
+
+	// Decrypt profile data
+	decrypted, err := ks.decrypt(encryptedData, nonce)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+	profile.Data = decrypted
+
+	if lastAccessed.Valid {
+		profile.LastAccessed = lastAccessed.Int64
+	}
+
+	return &profile, nil
+}
+
+// SetDefaultProfile sets a profile as the default for its type
+func (ks *Keystore) SetDefaultProfile(id string) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	if !ks.isOpen {
+		return errors.New("keystore is not open")
+	}
+
+	// Get the profile type first
+	var profileType string
+	row := ks.db.QueryRow("SELECT profile_type FROM user_profiles WHERE id = ?", id)
+	err := row.Scan(&profileType)
+	if err == sql.ErrNoRows {
+		return ErrProfileNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get profile type: %w", err)
+	}
+
+	// Clear other defaults of same type
+	_, err = ks.db.Exec("UPDATE user_profiles SET is_default = 0 WHERE profile_type = ?", profileType)
+	if err != nil {
+		return fmt.Errorf("failed to clear defaults: %w", err)
+	}
+
+	// Set new default
+	_, err = ks.db.Exec("UPDATE user_profiles SET is_default = 1 WHERE id = ?", id)
 	return err
 }
 

@@ -39,6 +39,50 @@ services:
           memory: 50M
 
   # ========================================
+  # Sygnal Push Gateway (Matrix Push Notifications)
+  # Phase 1.2: Deploy Push Gateway Infrastructure
+  # ========================================
+  sygnal:
+    build:
+      context: ./deploy/sygnal
+      dockerfile: Dockerfile
+    container_name: armorclaw-sygnal
+    restart: unless-stopped
+
+    volumes:
+      - sygnal_data:/data
+      - ./configs/sygnal.yaml:/etc/sygnal/sygnal.yaml:ro
+      # FCM credentials (mount as secret in production)
+      - ./secrets/fcm-credentials.json:/etc/sygnal/fcm-credentials.json:ro
+
+    ports:
+      - "5000:5000"   # Push Gateway API
+      - "9100:9100"   # Prometheus Metrics
+
+    networks:
+      - armorclaw-net
+
+    depends_on:
+      - matrix
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/_matrix/push/v1/notify')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+        reservations:
+          memory: 50M
+
+    environment:
+      - SYGNAL_CONFIG=/etc/sygnal/sygnal.yaml
+
+  # ========================================
   # Caddy Reverse Proxy (with automatic SSL)
   # ========================================
   caddy:
@@ -60,6 +104,7 @@ services:
 
     depends_on:
       - matrix
+      - sygnal
 
     deploy:
       resources:
@@ -70,6 +115,7 @@ services:
 
     environment:
       - MATRIX_DOMAIN=${MATRIX_DOMAIN:-matrix.localhost}
+      - PUSH_DOMAIN=${PUSH_DOMAIN:-push.armorclaw.app}
       - ACME_AGREE=true
 
   # ========================================
@@ -94,6 +140,7 @@ services:
 
     depends_on:
       - matrix
+      - sygnal
 
     environment:
       - ARMORCLAW_CONFIG=/etc/armorclaw/config.toml
@@ -101,6 +148,7 @@ services:
       - ARMORCLAW_MATRIX_HOMESERVER_URL=http://matrix:6167
       - ARMORCLAW_MATRIX_USERNAME=${MATRIX_BRIDGE_USER:-bridge}
       - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-change-me}
+      - ARMORCLAW_PUSH_GATEWAY_URL=http://sygnal:5000/_matrix/push/v1/notify
 
     deploy:
       resources:
@@ -167,6 +215,7 @@ services:
         while true; do
           echo 'Checking services...'
           curl -sf http://matrix:6167/_matrix/client/versions || echo 'Matrix: DOWN'
+          curl -sf http://sygnal:5000/_matrix/push/v1/notify || echo 'Sygnal: DOWN'
           curl -sf http://caddy:2019/config/ || echo 'Caddy: DOWN'
           echo '---'
           sleep 30
@@ -175,6 +224,7 @@ services:
 
     depends_on:
       - matrix
+      - sygnal
       - caddy
       - bridge
 
@@ -198,6 +248,8 @@ networks:
 # ========================================
 volumes:
   conduit_data:
+    driver: local
+  sygnal_data:
     driver: local
   caddy_data:
     driver: local

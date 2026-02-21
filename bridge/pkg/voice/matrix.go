@@ -268,8 +268,10 @@ func (m *MatrixManager) Stop() {
 
 	// End all active calls
 	m.calls.Range(func(key, value interface{}) bool {
-		call := value.(*MatrixCall)
-		m.EndCall(call.ID, "manager_shutdown")
+		call, ok := value.(*MatrixCall)
+		if ok {
+			m.EndCall(call.ID, "manager_shutdown")
+		}
 		return true
 	})
 }
@@ -370,7 +372,10 @@ func (m *MatrixManager) handleAnswer(roomID, eventID, senderID string, event *Ca
 		return fmt.Errorf("call %s not found", event.CallID)
 	}
 
-	call := value.(*MatrixCall)
+	call, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", event.CallID)
+	}
 
 	// Verify answer is from caller
 	if senderID != call.CallerID {
@@ -400,7 +405,10 @@ func (m *MatrixManager) handleHangup(roomID, eventID, senderID string, event *Ca
 		return fmt.Errorf("call %s not found", event.CallID)
 	}
 
-	call := value.(*MatrixCall)
+	call, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", event.CallID)
+	}
 
 	// Update call state
 	call.State = CallStateEnded
@@ -437,7 +445,10 @@ func (m *MatrixManager) handleReject(roomID, eventID, senderID string, event *Ca
 		return fmt.Errorf("call %s not found", event.CallID)
 	}
 
-	call := value.(*MatrixCall)
+	call, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", event.CallID)
+	}
 
 	// Verify reject is from callee
 	if senderID != call.CalleeID {
@@ -473,7 +484,10 @@ func (m *MatrixManager) handleCandidates(roomID, eventID, senderID string, event
 		return fmt.Errorf("call %s not found", event.CallID)
 	}
 
-	call := value.(*MatrixCall)
+	call, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", event.CallID)
+	}
 
 	// Verify candidate is from caller
 	if senderID != call.CallerID {
@@ -577,7 +591,10 @@ func (m *MatrixManager) AnswerCall(callID string, answerSDP string) error {
 		return fmt.Errorf("call %s not found", callID)
 	}
 
-	call := value.(*MatrixCall)
+	call, ok := value.(*MatrixCall)
+	if !ok {
+		return fmt.Errorf("invalid call type for %s", callID)
+	}
 
 	// Verify call is in appropriate state
 	if call.State != CallStateInvite && call.State != CallStateRinging {
@@ -785,8 +802,10 @@ func (m *MatrixManager) ListCalls() []*MatrixCall {
 	calls := make([]*MatrixCall, 0)
 
 	m.calls.Range(func(key, value interface{}) bool {
-		call := value.(*MatrixCall)
-		calls = append(calls, call)
+		call, ok := value.(*MatrixCall)
+		if ok {
+			calls = append(calls, call)
+		}
 		return true
 	})
 
@@ -896,7 +915,11 @@ func (m *MatrixManager) cleanupExpiredCalls() {
 	now := time.Now()
 
 	m.calls.Range(func(key, value interface{}) bool {
-		call := value.(*MatrixCall)
+		call, ok := value.(*MatrixCall)
+		if !ok {
+			m.calls.Delete(key)
+			return true
+		}
 
 		if now.After(call.ExpiresAt) {
 			// Call has expired

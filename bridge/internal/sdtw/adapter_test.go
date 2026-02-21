@@ -191,14 +191,14 @@ func TestDiscordAdapter(t *testing.T) {
 }
 
 func TestTeamsAdapter(t *testing.T) {
-	adapter := NewTeamsAdapter()
+	adapter := NewTeamsAdapter(TeamsConfig{})
 
 	if adapter.Platform() != "teams" {
 		t.Errorf("expected platform 'teams', got '%s'", adapter.Platform())
 	}
 
-	if adapter.Version() != "0.1.0-stub" {
-		t.Errorf("expected version '0.1.0-stub', got '%s'", adapter.Version())
+	if adapter.Version() != "1.0.0" {
+		t.Errorf("expected version '1.0.0', got '%s'", adapter.Version())
 	}
 
 	// Test that operations return not implemented errors

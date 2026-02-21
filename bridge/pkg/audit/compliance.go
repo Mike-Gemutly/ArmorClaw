@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // ComplianceLevel represents the compliance level
@@ -33,6 +35,7 @@ type ComplianceConfig struct {
 	MaxEntries      int
 	EnableHashChain bool   // Tamper-evident logging
 	ExportFormats   []string // Supported: json, csv
+	HashKey         []byte  // Optional: HMAC key for tamper-evident logging. If nil, generates new key.
 }
 
 // ComplianceEntry represents an enhanced audit entry with compliance metadata
@@ -119,7 +122,7 @@ func NewComplianceAuditLog(config ComplianceConfig) (*ComplianceAuditLog, error)
 		config:        config,
 		entries:       make([]ComplianceEntry, 0, 10000),
 		retentionDays: retentionDays,
-		hashKey:       generateHashKey(),
+		hashKey:       getOrGenerateHashKey(config.HashKey),
 	}
 
 	// Load existing entries
@@ -504,12 +507,19 @@ func generateEntryID(t time.Time) string {
 	return fmt.Sprintf("audit-%d", t.UnixNano())
 }
 
-func generateHashKey() []byte {
-	key := make([]byte, 32)
-	// In production, this should be loaded from secure storage
-	// For now, use a deterministic key based on timestamp
-	for i := range key {
-		key[i] = byte(i * 7 % 256)
+func getOrGenerateHashKey(providedKey []byte) []byte {
+	// Use provided key if valid
+	if len(providedKey) >= 32 {
+		return providedKey
+	}
+
+	// Generate cryptographically secure random key
+	// NOTE: This key should be persisted to secure storage for production use
+	// to maintain audit log integrity across restarts
+	key, err := securerandom.Bytes(32)
+	if err != nil {
+		// This should never happen with securerandom, but handle gracefully
+		panic(fmt.Sprintf("failed to generate secure hash key: %v", err))
 	}
 	return key
 }

@@ -11,7 +11,6 @@
 package recovery
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -22,6 +21,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // Recovery phrase word list (BIP39 English subset - 2048 words)
@@ -390,8 +391,8 @@ func (m *Manager) initSchema() error {
 
 // GeneratePhrase generates a new 12-word recovery phrase
 func GeneratePhrase() (string, error) {
-	entropy := make([]byte, EntropyBytes)
-	if _, err := rand.Read(entropy); err != nil {
+	entropy, err := securerandom.Bytes(EntropyBytes)
+	if err != nil {
 		return "", fmt.Errorf("failed to generate entropy: %w", err)
 	}
 
@@ -460,9 +461,9 @@ func (m *Manager) StorePhrase(phrase string) error {
 		return err
 	}
 
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return err
+	nonce, err := securerandom.Bytes(aead.NonceSize())
+	if err != nil {
+		return fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
 	encrypted := aead.Seal(nil, nonce, []byte(phrase), nil)
@@ -673,7 +674,5 @@ func (m *Manager) InvalidatePhrase() error {
 
 // generateID generates a random ID
 func generateID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return securerandom.MustID(16)
 }

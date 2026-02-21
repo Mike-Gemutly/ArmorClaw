@@ -1,0 +1,200 @@
+# Nginx Reverse Proxy Configuration
+# ArmorClaw Communication Stack
+#
+# Environment Variables (set in docker-compose or .env):
+#   MATRIX_SERVER_NAME - Matrix homeserver domain (default: matrix.armorclaw.com)
+#   TURN_SERVER_NAME   - TURN server domain (default: turn.armorclaw.com)
+
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 256;
+    use epoll;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # Logging
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log /var/log/nginx/access.log main;
+
+    # Performance
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 10M;
+
+    # Rate limiting
+    limit_req_zone $binary_remote_addr zone=matrix_limit:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=registration_limit:10m rate=1r/m;
+
+    # Upstream Matrix Conduit
+    upstream matrix_backend {
+        server matrix-conduit:6167;
+        keepalive 32;
+    }
+
+    # Upstream Coturn
+    upstream coturn_backend {
+        server coturn:3478;
+    }
+
+    # HTTP → HTTPS redirect
+    server {
+        listen 80;
+        server_name ${MATRIX_SERVER_NAME};
+
+        # Let's Encrypt challenge
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+
+        # Redirect everything else to HTTPS
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    # HTTPS Matrix server
+    server {
+        listen 443 ssl http2;
+        server_name ${MATRIX_SERVER_NAME};
+
+        # SSL certificates (managed by Certbot)
+        ssl_certificate /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+        ssl_trusted_certificate /etc/nginx/ssl/chain.pem;
+
+        # SSL configuration
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 10m;
+
+        # Security headers
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+
+        # Matrix client API
+        location /_matrix/ {
+            limit_req zone=matrix_limit burst=20 nodelay;
+
+            # CORS headers for web clients (ArmorChat web, Element Web)
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type, X-Matrix-Device-Id, X-Matrix-User-Id' always;
+            add_header 'Access-Control-Max-Age' '86400' always;
+
+            # Handle preflight requests
+            if ($request_method = 'OPTIONS') {
+                add_header 'Access-Control-Allow-Origin' '*';
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS';
+                add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type, X-Matrix-Device-Id, X-Matrix-User-Id';
+                add_header 'Access-Control-Max-Age' '86400';
+                add_header 'Content-Length' '0';
+                return 204;
+            }
+
+            proxy_pass http://matrix_backend;
+            proxy_http_version 1.1;
+
+            # Headers
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Timeouts for long-polling
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+
+            # Buffering
+            proxy_buffering off;
+        }
+
+        # Matrix federation
+        location /_matrix/federation {
+            proxy_pass http://matrix_backend;
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Well-known Matrix delegation
+        location /.well-known/matrix/server {
+            default_type application/json;
+            # CORS for federation discovery
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            return 200 '{"m.server": "${MATRIX_SERVER_NAME}:443"}';
+        }
+
+        location /.well-known/matrix/client {
+            default_type application/json;
+            # CORS for client discovery (ArmorChat, ArmorTerminal, Element)
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+            return 200 '{
+                "m.homeserver": {"base_url": "https://${MATRIX_SERVER_NAME}"},
+                "m.identity_server": {"base_url": "https://${MATRIX_SERVER_NAME}"},
+                "org.matrix.msc3575.proxy": {"url": "https://${MATRIX_SERVER_NAME}"}
+            }';
+        }
+
+        # ArmorClaw app configuration endpoint
+        location /.well-known/armorclaw {
+            default_type application/json;
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+            return 200 '{
+                "api_url": "https://${MATRIX_SERVER_NAME}/api",
+                "ws_url": "wss://${MATRIX_SERVER_NAME}/ws",
+                "push_gateway": "https://${MATRIX_SERVER_NAME}/_matrix/push/v1/notify",
+                "matrix_homeserver": "https://${MATRIX_SERVER_NAME}"
+            }';
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "OK\n";
+            add_header Content-Type text/plain;
+        }
+    }
+
+    # Coturn TURN server (TCP) - optional
+    server {
+        listen 443 ssl http2;
+        server_name ${TURN_SERVER_NAME:-turn.${MATRIX_SERVER_NAME}};
+
+        ssl_certificate /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+        location / {
+            proxy_pass http://coturn_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # TURN over TCP
+            proxy_buffering off;
+        }
+    }
+}

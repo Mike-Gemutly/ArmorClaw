@@ -1335,3 +1335,311 @@ func (m *MatrixAdapter) SetCommandHandler(h *CommandHandler) {
 	defer m.mu.Unlock()
 	m.commandHandler = h
 }
+
+// ============================================================================
+// ArmorChat Compatibility Methods
+// ============================================================================
+
+// SyncWithParams performs a Matrix sync with full parameters
+// This is the enhanced version for ArmorChat compatibility
+func (m *MatrixAdapter) SyncWithParams(ctx context.Context, since string, timeout int, fullState bool, setPresence string) (map[string]interface{}, error) {
+	if err := m.ensureValidToken(); err != nil {
+		return nil, fmt.Errorf("token validation failed: %w", err)
+	}
+
+	// Build sync URL with parameters
+	syncURL := fmt.Sprintf("%s/_matrix/client/v3/sync?access_token=%s", m.homeserverURL, m.accessToken)
+
+	if since != "" {
+		syncURL += fmt.Sprintf("&since=%s", since)
+	}
+	if timeout > 0 {
+		syncURL += fmt.Sprintf("&timeout=%d", timeout)
+	}
+	if fullState {
+		syncURL += "&full_state=true"
+	}
+	if setPresence != "" {
+		syncURL += fmt.Sprintf("&set_presence=%s", setPresence)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", syncURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync request: %w", err)
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sync request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("sync failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode sync response: %w", err)
+	}
+
+	return result, nil
+}
+
+// CreateRoom creates a new Matrix room
+func (m *MatrixAdapter) CreateRoom(ctx context.Context, params map[string]interface{}) (roomID, roomAlias string, err error) {
+	if err := m.ensureValidToken(); err != nil {
+		return "", "", fmt.Errorf("token validation failed: %w", err)
+	}
+
+	createURL := fmt.Sprintf("%s/_matrix/client/v3/createRoom?access_token=%s", m.homeserverURL, m.accessToken)
+
+	bodyBytes, err := json.Marshal(params)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to marshal create room request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", createURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("create room request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("create room failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		RoomID    string `json:"room_id"`
+		RoomAlias string `json:"room_alias,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", fmt.Errorf("failed to decode create room response: %w", err)
+	}
+
+	return result.RoomID, result.RoomAlias, nil
+}
+
+// JoinRoom joins an existing Matrix room
+func (m *MatrixAdapter) JoinRoom(ctx context.Context, roomIDOrAlias string, viaServers []string, reason string) (string, error) {
+	if err := m.ensureValidToken(); err != nil {
+		return "", fmt.Errorf("token validation failed: %w", err)
+	}
+
+	// URL encode the room ID/alias
+	encodedRoomID := url.PathEscape(roomIDOrAlias)
+	joinURL := fmt.Sprintf("%s/_matrix/client/v3/join/%s?access_token=%s", m.homeserverURL, encodedRoomID, m.accessToken)
+
+	// Build request body with optional via servers and reason
+	reqBody := map[string]interface{}{}
+	if len(viaServers) > 0 {
+		reqBody["via_servers"] = viaServers
+	}
+	if reason != "" {
+		reqBody["reason"] = reason
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal join room request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", joinURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("join room request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("join room failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		RoomID string `json:"room_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode join room response: %w", err)
+	}
+
+	return result.RoomID, nil
+}
+
+// LeaveRoom leaves a Matrix room
+func (m *MatrixAdapter) LeaveRoom(ctx context.Context, roomID string, reason string) error {
+	if err := m.ensureValidToken(); err != nil {
+		return fmt.Errorf("token validation failed: %w", err)
+	}
+
+	leaveURL := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/leave?access_token=%s", m.homeserverURL, roomID, m.accessToken)
+
+	reqBody := map[string]interface{}{}
+	if reason != "" {
+		reqBody["reason"] = reason
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal leave room request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", leaveURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("leave room request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("leave room failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// InviteUser invites a user to a Matrix room
+func (m *MatrixAdapter) InviteUser(ctx context.Context, roomID, userID, reason string) error {
+	if err := m.ensureValidToken(); err != nil {
+		return fmt.Errorf("token validation failed: %w", err)
+	}
+
+	inviteURL := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/invite?access_token=%s", m.homeserverURL, roomID, m.accessToken)
+
+	reqBody := map[string]interface{}{
+		"user_id": userID,
+	}
+	if reason != "" {
+		reqBody["reason"] = reason
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal invite request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", inviteURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("invite request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("invite failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// SendTyping sends a typing notification to a room
+func (m *MatrixAdapter) SendTyping(ctx context.Context, roomID string, typing bool, timeout int) error {
+	if err := m.ensureValidToken(); err != nil {
+		return fmt.Errorf("token validation failed: %w", err)
+	}
+
+	userID := m.GetUserID()
+	typingURL := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/typing/%s?access_token=%s",
+		m.homeserverURL, roomID, userID, m.accessToken)
+
+	reqBody := map[string]interface{}{
+		"typing": typing,
+	}
+	if typing && timeout > 0 {
+		reqBody["timeout"] = timeout
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal typing request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", typingURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("typing request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("typing notification failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// SendReadReceipt sends a read receipt for an event
+func (m *MatrixAdapter) SendReadReceipt(ctx context.Context, roomID, eventID, receiptType string) error {
+	if err := m.ensureValidToken(); err != nil {
+		return fmt.Errorf("token validation failed: %w", err)
+	}
+
+	// Default to m.read if not specified
+	if receiptType == "" {
+		receiptType = "m.read"
+	}
+
+	receiptURL := fmt.Sprintf("%s/_matrix/client/v3/rooms/%s/receipt/%s/%s?access_token=%s",
+		m.homeserverURL, roomID, receiptType, eventID, m.accessToken)
+
+	reqBody := map[string]interface{}{
+		"data": map[string]interface{}{
+			"thread_id": "main", // Optional: indicate which thread the receipt applies to
+		},
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal receipt request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", receiptURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("receipt request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("read receipt failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}

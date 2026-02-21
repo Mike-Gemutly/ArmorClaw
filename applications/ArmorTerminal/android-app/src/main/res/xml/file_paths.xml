@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Internal files directory -->
+    <files-path
+        name="internal_files"
+        path="." />
+
+    <!-- Internal cache directory -->
+    <cache-path
+        name="internal_cache"
+        path="." />
+
+    <!-- External files directory -->
+    <external-files-path
+        name="external_files"
+        path="." />
+
+    <!-- External cache directory -->
+    <external-cache-path
+        name="external_cache"
+        path="." />
+
+    <!-- Encrypted exports directory -->
+    <files-path
+        name="encrypted_exports"
+        path="exports/" />
+
+    <!-- Key backups directory -->
+    <files-path
+        name="key_backups"
+        path="backups/" />
+
+    <!-- Temporary files for sharing -->
+    <cache-path
+        name="shared_files"
+        path="shared/" />
+
+    <!-- Terminal logs -->
+    <files-path
+        name="terminal_logs"
+        path="logs/" />
+</paths>

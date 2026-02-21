@@ -485,6 +485,293 @@ func (l *CriticalOperationLogger) LogPHIAccess(ctx context.Context, userID, reso
 	return err
 }
 
+// LogProfileStored logs when a user profile is stored
+// CRITICAL: Never log actual PII values - only profile ID and type
+func (l *CriticalOperationLogger) LogProfileStored(ctx context.Context, profileID, profileType string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "system",
+		ID:   "keystore",
+	}
+	resource := Resource{
+		Type: "pii_profile",
+		ID:   profileID,
+	}
+	// Only log metadata, never PII values
+	details := map[string]interface{}{
+		"profile_type": profileType,
+		"action":       "store",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_management",
+		Severity:      "high",
+		AuditRequired: true,
+		PHIInvolved:   true,
+	}
+
+	_, err := auditLog.LogEntry("pii_profile_stored", actor, "store", resource, details, compliance)
+	return err
+}
+
+// LogProfileAccess logs when a user profile is accessed
+// CRITICAL: Never log actual PII values - only profile ID and operation
+func (l *CriticalOperationLogger) LogProfileAccess(ctx context.Context, profileID, operation string, success bool) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "system",
+		ID:   "keystore",
+	}
+	resource := Resource{
+		Type: "pii_profile",
+		ID:   profileID,
+	}
+	severity := "medium"
+	if !success {
+		severity = "high"
+	}
+	// Only log metadata, never PII values
+	details := map[string]interface{}{
+		"operation": operation,
+		"success":   success,
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_access",
+		Severity:      severity,
+		AuditRequired: true,
+		PHIInvolved:   true,
+	}
+
+	eventType := "pii_profile_access"
+	if !success {
+		eventType = "pii_profile_access_denied"
+	}
+
+	_, err := auditLog.LogEntry(eventType, actor, operation, resource, details, compliance)
+	return err
+}
+
+// LogProfileDeleted logs when a user profile is deleted
+func (l *CriticalOperationLogger) LogProfileDeleted(ctx context.Context, profileID string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "system",
+		ID:   "keystore",
+	}
+	resource := Resource{
+		Type: "pii_profile",
+		ID:   profileID,
+	}
+	details := map[string]interface{}{
+		"action": "delete",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_management",
+		Severity:      "high",
+		AuditRequired: true,
+		PHIInvolved:   false, // PII is deleted, no longer involved
+	}
+
+	_, err := auditLog.LogEntry("pii_profile_deleted", actor, "delete", resource, details, compliance)
+	return err
+}
+
+// LogPIIAccessRequest logs when a skill requests access to PII fields
+// CRITICAL: Never log actual PII values - only field names and hashes
+func (l *CriticalOperationLogger) LogPIIAccessRequest(ctx context.Context, requestID, skillID, profileID string, requestedFields []string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "skill",
+		ID:   skillID,
+	}
+	resource := Resource{
+		Type: "pii_profile",
+		ID:   profileID,
+	}
+	// Only log field names, never values
+	details := map[string]interface{}{
+		"request_id":       requestID,
+		"requested_fields": requestedFields,
+		"action":           "request_access",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_access",
+		Severity:      "high",
+		AuditRequired: true,
+		PHIInvolved:   true,
+	}
+
+	_, err := auditLog.LogEntry("pii_access_request", actor, "request", resource, details, compliance)
+	return err
+}
+
+// LogPIIAccessGranted logs when PII access is granted
+// CRITICAL: Never log actual PII values - only field names and approver
+func (l *CriticalOperationLogger) LogPIIAccessGranted(ctx context.Context, requestID, skillID, userID string, approvedFields []string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "user",
+		ID:   userID,
+	}
+	resource := Resource{
+		Type: "pii_request",
+		ID:   requestID,
+	}
+	// Only log field names, never values
+	details := map[string]interface{}{
+		"skill_id":        skillID,
+		"approved_fields": approvedFields,
+		"action":          "approve",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_access",
+		Severity:      "high",
+		AuditRequired: true,
+		PHIInvolved:   true,
+	}
+
+	_, err := auditLog.LogEntry("pii_access_granted", actor, "approve", resource, details, compliance)
+	return err
+}
+
+// LogPIIAccessRejected logs when PII access is rejected
+func (l *CriticalOperationLogger) LogPIIAccessRejected(ctx context.Context, requestID, skillID, userID, reason string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "user",
+		ID:   userID,
+	}
+	resource := Resource{
+		Type: "pii_request",
+		ID:   requestID,
+	}
+	details := map[string]interface{}{
+		"skill_id": skillID,
+		"reason":   reason,
+		"action":   "reject",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_access",
+		Severity:      "medium",
+		AuditRequired: true,
+		PHIInvolved:   false,
+	}
+
+	_, err := auditLog.LogEntry("pii_access_rejected", actor, "reject", resource, details, compliance)
+	return err
+}
+
+// LogPIIAccessExpired logs when a PII access request expires
+func (l *CriticalOperationLogger) LogPIIAccessExpired(ctx context.Context, requestID, skillID string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "system",
+		ID:   "hitl_manager",
+	}
+	resource := Resource{
+		Type: "pii_request",
+		ID:   requestID,
+	}
+	details := map[string]interface{}{
+		"skill_id": skillID,
+		"action":   "expire",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_access",
+		Severity:      "medium",
+		AuditRequired: true,
+		PHIInvolved:   false,
+	}
+
+	_, err := auditLog.LogEntry("pii_access_expired", actor, "expire", resource, details, compliance)
+	return err
+}
+
+// LogPIIInjected logs when PII is injected into a container
+// CRITICAL: Never log actual PII values - only field names and container ID
+func (l *CriticalOperationLogger) LogPIIInjected(ctx context.Context, containerID, skillID string, fieldsInjected []string, method string) error {
+	l.mu.RLock()
+	auditLog := l.auditLog
+	l.mu.RUnlock()
+
+	if auditLog == nil {
+		return nil
+	}
+
+	actor := Actor{
+		Type: "skill",
+		ID:   skillID,
+	}
+	resource := Resource{
+		Type: "container",
+		ID:   containerID,
+	}
+	// Only log field names, never values
+	details := map[string]interface{}{
+		"fields_injected": fieldsInjected,
+		"injection_method": method,
+		"action":          "inject",
+	}
+	compliance := ComplianceFlags{
+		Category:      "pii_injection",
+		Severity:      "high",
+		AuditRequired: true,
+		PHIInvolved:   true,
+	}
+
+	_, err := auditLog.LogEntry("pii_injected", actor, "inject", resource, details, compliance)
+	return err
+}
+
+
 // Global audit logger instance
 var globalAuditLogger *CriticalOperationLogger
 var globalAuditMu sync.RWMutex

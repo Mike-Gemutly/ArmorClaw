@@ -26,6 +26,22 @@ type SDTWAdapter interface {
 	SendMessage(ctx context.Context, target Target, msg Message) (*SendResult, error)
 	ReceiveEvent(event ExternalEvent) error // Inbound handler
 
+	// Reaction Operations (Bidirectional Sync)
+	// SendReaction adds a reaction to a message on the external platform
+	SendReaction(ctx context.Context, target Target, messageID string, emoji string) error
+	// RemoveReaction removes a reaction from a message on the external platform
+	RemoveReaction(ctx context.Context, target Target, messageID string, emoji string) error
+	// GetReactions retrieves current reactions for a message
+	GetReactions(ctx context.Context, target Target, messageID string) ([]Reaction, error)
+
+	// Message Mutation Operations (Edit/Delete Sync)
+	// EditMessage edits an existing message on the external platform
+	EditMessage(ctx context.Context, target Target, messageID string, newContent string) error
+	// DeleteMessage deletes a message from the external platform
+	DeleteMessage(ctx context.Context, target Target, messageID string) error
+	// GetMessageHistory retrieves edit history for a message (if supported)
+	GetMessageHistory(ctx context.Context, target Target, messageID string) ([]MessageVersion, error)
+
 	// Health & Monitoring
 	HealthCheck() (HealthStatus, error)
 	Metrics() (AdapterMetrics, error)
@@ -83,6 +99,26 @@ type Attachment struct {
 	MimeType string
 	Size     int64
 	Filename string
+}
+
+// Reaction represents a message reaction
+type Reaction struct {
+	Emoji      string    // The emoji used for the reaction
+	Count      int       // Number of times this reaction was used
+	UserIDs    []string  // Users who reacted (platform user IDs)
+	Timestamp  time.Time // When the reaction was added
+	IsCustom   bool      // Whether this is a custom emoji
+	CustomURL  string    // URL for custom emoji image (if custom)
+}
+
+// MessageVersion represents a version of an edited message
+type MessageVersion struct {
+	VersionID   string    // Unique version identifier
+	Content     string    // Content at this version
+	EditedAt    time.Time // When this version was created
+	EditedBy    string    // User ID who made the edit
+	EditReason  string    // Optional reason for edit
+	IsCurrent   bool      // Whether this is the current version
 }
 
 // SendResult represents the result of a send operation
@@ -298,4 +334,57 @@ func (b *BaseAdapter) RecordError(err error) {
 	b.metrics.MessagesFailed++
 	b.metrics.LastError = err.Error()
 	b.metrics.LastErrorTime = time.Now()
+}
+
+// DefaultReactionMethods provides default implementations for reaction methods
+// Adapters that support reactions should override these
+
+// SendReaction default implementation (unsupported)
+func (b *BaseAdapter) SendReaction(ctx context.Context, target Target, messageID string, emoji string) error {
+	if !b.capabilities.Reactions {
+		return NewAdapterError(ErrValidation, "reactions not supported on this platform", false)
+	}
+	return NewAdapterError(ErrPlatformError, "SendReaction not implemented", false)
+}
+
+// RemoveReaction default implementation (unsupported)
+func (b *BaseAdapter) RemoveReaction(ctx context.Context, target Target, messageID string, emoji string) error {
+	if !b.capabilities.Reactions {
+		return NewAdapterError(ErrValidation, "reactions not supported on this platform", false)
+	}
+	return NewAdapterError(ErrPlatformError, "RemoveReaction not implemented", false)
+}
+
+// GetReactions default implementation (unsupported)
+func (b *BaseAdapter) GetReactions(ctx context.Context, target Target, messageID string) ([]Reaction, error) {
+	if !b.capabilities.Reactions {
+		return nil, NewAdapterError(ErrValidation, "reactions not supported on this platform", false)
+	}
+	return nil, NewAdapterError(ErrPlatformError, "GetReactions not implemented", false)
+}
+
+// Message Mutation Default Methods
+
+// EditMessage default implementation (unsupported)
+func (b *BaseAdapter) EditMessage(ctx context.Context, target Target, messageID string, newContent string) error {
+	if !b.capabilities.Edit {
+		return NewAdapterError(ErrValidation, "message editing not supported on this platform", false)
+	}
+	return NewAdapterError(ErrPlatformError, "EditMessage not implemented", false)
+}
+
+// DeleteMessage default implementation (unsupported)
+func (b *BaseAdapter) DeleteMessage(ctx context.Context, target Target, messageID string) error {
+	if !b.capabilities.Delete {
+		return NewAdapterError(ErrValidation, "message deletion not supported on this platform", false)
+	}
+	return NewAdapterError(ErrPlatformError, "DeleteMessage not implemented", false)
+}
+
+// GetMessageHistory default implementation (unsupported)
+func (b *BaseAdapter) GetMessageHistory(ctx context.Context, target Target, messageID string) ([]MessageVersion, error) {
+	if !b.capabilities.Edit {
+		return nil, NewAdapterError(ErrValidation, "message history not supported on this platform", false)
+	}
+	return nil, NewAdapterError(ErrPlatformError, "GetMessageHistory not implemented", false)
 }

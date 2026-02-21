@@ -23,7 +23,9 @@ log = "info"
 
 # Matrix-specific settings
 [global.matrix]
-allow_registration = false  # Set to true for initial setup, then disable
+# SECURITY: Keep registration DISABLED. Use deploy/create-matrix-admin.sh to create users.
+# Enabling registration creates a window of vulnerability where anyone can register.
+allow_registration = false
 allow_encryption = true
 allow_federation = true
 allow_check_for_updates = true

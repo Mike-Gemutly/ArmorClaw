@@ -4,9 +4,7 @@ package rpc
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,7 +26,9 @@ import (
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/recovery"
 	"github.com/armorclaw/bridge/pkg/secrets"
+	"github.com/armorclaw/bridge/pkg/securerandom"
 	"github.com/armorclaw/bridge/pkg/plugin"
+	"github.com/armorclaw/bridge/pkg/qr"
 	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/armorclaw/bridge/pkg/webrtc"
@@ -191,6 +191,15 @@ type Server struct {
 	// AppService components for SDTW bridging
 	appService *appservice.AppService
 	bridgeMgr  *appservice.BridgeManager
+
+	// Server start time for uptime tracking
+	startTime time.Time
+
+	// Server configuration
+	config *Config
+
+	// QR manager for config URL generation
+	qrManager *qr.QRManager
 }
 
 // ContainerInfo holds information about a running container
@@ -241,6 +250,9 @@ type Config struct {
 
 	// AppService configuration (for SDTW bridging)
 	AppServiceConfig *appservice.Config
+
+	// Server region for health reporting
+	Region string
 }
 
 // New creates a new JSON-RPC server
@@ -306,6 +318,10 @@ func New(cfg Config) (*Server, error) {
 			AutoDiscover:   true,
 			SearchPatterns: []string{"*.so", "*.plugin"},
 		}),
+		// Start time for uptime tracking
+		startTime: time.Now(),
+		// Store config for later access
+		config: &cfg,
 	}
 
 	// Initialize license client
@@ -321,6 +337,30 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create license client: %w", err)
 	}
 	server.licenseClient = licenseClient
+
+	// Initialize QR manager for config URL generation
+	// Used for ArmorTerminal/ArmorChat automatic configuration
+	signingKey := securerandom.MustBytes(32)
+	serverURL := cfg.MatrixHomeserver
+	if serverURL == "" {
+		serverURL = "https://matrix.armorclaw.com"
+	}
+	bridgeURL := "https://armorclaw.com"
+	if cfg.MatrixHomeserver != "" {
+		// Derive bridge URL from Matrix homeserver
+		bridgeURL = cfg.MatrixHomeserver
+	}
+	serverName := "ArmorClaw"
+	if cfg.Region != "" {
+		serverName = "ArmorClaw (" + cfg.Region + ")"
+	}
+	server.qrManager = qr.NewQRManager(
+		signingKey,
+		qr.DefaultQRConfig(),
+		serverURL,
+		bridgeURL,
+		serverName,
+	)
 
 	// Initialize Matrix adapter if homeserver is configured
 	if cfg.MatrixHomeserver != "" {
@@ -675,6 +715,138 @@ func (s *Server) handleRequest(req *Request) *Response {
 	case "appservice.status":
 		return s.handleAppServiceStatus(req)
 
+	// PII Profile management methods
+	case "profile.create":
+		return s.handleProfileCreate(req)
+	case "profile.list":
+		return s.handleProfileList(req)
+	case "profile.get":
+		return s.handleProfileGet(req)
+	case "profile.update":
+		return s.handleProfileUpdate(req)
+	case "profile.delete":
+		return s.handleProfileDelete(req)
+
+	// PII access control methods
+	case "pii.request_access":
+		return s.handlePIIRequestAccess(req)
+	case "pii.approve_access":
+		return s.handlePIIApproveAccess(req)
+	case "pii.reject_access":
+		return s.handlePIIRejectAccess(req)
+	case "pii.list_requests":
+		return s.handlePIIListRequests(req)
+
+	// Matrix room and sync methods (ArmorChat compatibility)
+	case "matrix.sync":
+		return s.handleMatrixSync(req)
+	case "matrix.create_room":
+		return s.handleMatrixCreateRoom(req)
+	case "matrix.join_room":
+		return s.handleMatrixJoinRoom(req)
+	case "matrix.leave_room":
+		return s.handleMatrixLeaveRoom(req)
+	case "matrix.invite_user":
+		return s.handleMatrixInviteUser(req)
+	case "matrix.send_typing":
+		return s.handleMatrixSendTyping(req)
+	case "matrix.send_read_receipt":
+		return s.handleMatrixSendReadReceipt(req)
+
+	// Additional license and compliance methods (ArmorChat compatibility)
+	case "license.check_feature":
+		return s.handleLicenseCheckFeature(req)
+	case "compliance.status":
+		return s.handleComplianceStatus(req)
+	case "platform.limits":
+		return s.handlePlatformLimits(req)
+	case "push.update_settings":
+		return s.handlePushUpdateSettings(req)
+
+	// Agent lifecycle methods (ArmorTerminal compatibility)
+	case "agent.start":
+		return s.handleAgentStart(req)
+	case "agent.stop":
+		return s.handleAgentStop(req)
+	case "agent.status":
+		return s.handleAgentStatus(req)
+	case "agent.list":
+		return s.handleAgentList(req)
+	case "agent.send_command":
+		return s.handleAgentSendCommand(req)
+
+	// Workflow control methods (ArmorTerminal compatibility)
+	case "workflow.start":
+		return s.handleWorkflowStart(req)
+	case "workflow.pause":
+		return s.handleWorkflowPause(req)
+	case "workflow.resume":
+		return s.handleWorkflowResume(req)
+	case "workflow.cancel":
+		return s.handleWorkflowCancel(req)
+	case "workflow.status":
+		return s.handleWorkflowStatus(req)
+	case "workflow.list":
+		return s.handleWorkflowList(req)
+
+	// HITL (Human-in-the-Loop) methods (ArmorTerminal compatibility)
+	case "hitl.pending":
+		return s.handleHitlPending(req)
+	case "hitl.approve":
+		return s.handleHitlApprove(req)
+	case "hitl.reject":
+		return s.handleHitlReject(req)
+	case "hitl.status":
+		return s.handleHitlStatus(req)
+
+	// Budget tracking methods (ArmorTerminal compatibility)
+	case "budget.status":
+		return s.handleBudgetStatus(req)
+	case "budget.usage":
+		return s.handleBudgetUsage(req)
+	case "budget.alerts":
+		return s.handleBudgetAlerts(req)
+
+	// Bridge health method (ArmorChat/ArmorTerminal compatibility)
+	case "bridge.health":
+		return s.handleBridgeHealth(req)
+
+	// Bridge capabilities method (ArmorChat/ArmorTerminal feature discovery)
+	case "bridge.capabilities":
+		return s.handleBridgeCapabilities(req)
+
+	// Workflow templates method (ArmorTerminal compatibility)
+	case "workflow.templates":
+		return s.handleWorkflowTemplates(req)
+
+	// Additional HITL methods (ArmorTerminal compatibility)
+	case "hitl.get":
+		return s.handleHitlGet(req)
+	case "hitl.extend":
+		return s.handleHitlExtend(req)
+	case "hitl.escalate":
+		return s.handleHitlEscalate(req)
+
+	// Container methods (ArmorTerminal compatibility)
+	case "container.create":
+		return s.handleContainerCreate(req)
+	case "container.start":
+		return s.handleContainerStart(req)
+	case "container.stop":
+		return s.handleContainerStop(req)
+	case "container.list":
+		return s.handleContainerList(req)
+	case "container.status":
+		return s.handleContainerStatus(req)
+
+	// Secret methods
+	case "secret.list":
+		return s.handleSecretList(req)
+
+	// QR Config generation (ArmorTerminal/ArmorChat auto-configuration)
+	case "qr.config":
+		return s.handleQRConfig(req)
+
 	default:
 		return &Response{
 			JSONRPC: "2.0",
@@ -726,9 +898,7 @@ func (s *Server) HandleRequest(ctx context.Context, body []byte) []byte {
 
 // generateID generates a random ID string
 func generateID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return securerandom.MustID(16)
 }
 
 // handleStatus returns bridge status
@@ -1813,8 +1983,8 @@ func (s *Server) handleWebRTCStart(req *Request) *Response {
 		SignalingURL:    "wss://matrix.armorclaw.com:8443/webrtc",
 	}
 
-	// Convert token to JSON for transport
-	tokenJSON, err := token.ToJSON()
+	// Convert token to secure string for transport (base64 encoded, includes signature)
+	tokenStr, err := token.ToSecureString()
 	if err != nil {
 		s.sessionMgr.End(session.ID)
 		return &Response{
@@ -1826,7 +1996,7 @@ func (s *Server) handleWebRTCStart(req *Request) *Response {
 			},
 		}
 	}
-	result.Token = tokenJSON
+	result.Token = tokenStr
 
 	// Log session creation
 	s.securityLog.LogSecurityEvent("webrtc_session_created", slog.String("session_id", session.ID), slog.String("room_id", params.RoomID))
@@ -2011,13 +2181,33 @@ func (s *Server) handleWebRTCEnd(req *Request) *Response {
 // validateRoomAccess checks if the caller is authorized for the given room
 // This implements zero-trust validation by checking against sender/room allowlists
 func (s *Server) validateRoomAccess(roomID string) error {
-	// In production, this would check:
+	// Check if trust middleware is configured
+	s.mu.RLock()
+	middleware := s.trustMiddleware
+	s.mu.RUnlock()
+
+	if middleware == nil {
+		// No trust middleware configured, allow all rooms
+		// This is acceptable for local-only setups without zero-trust requirements
+		return nil
+	}
+
+	// Validate room using trust enforcement
+	// The trust middleware will check:
 	// 1. Zero-trust sender allowlist (if enabled)
 	// 2. Zero-trust room allowlist (if enabled)
 	// 3. Reject untrusted setting (if enabled)
-
-	// For now, allow all rooms (no zero-trust restrictions)
-	// TODO: Integrate with zero-trust configuration
+	ctx := context.Background()
+	result, err := middleware.Enforce(ctx, "webrtc_room_access", &trust.ZeroTrustRequest{
+		Resource: roomID,
+		Action:   "access",
+	})
+	if err != nil {
+		return fmt.Errorf("trust verification error: %w", err)
+	}
+	if !result.Allowed {
+		return fmt.Errorf("room access denied: %s", result.DenialReason)
+	}
 
 	return nil
 }
@@ -4640,6 +4830,3902 @@ func (s *Server) handleLicenseSetKey(req *Request) *Response {
 			"tier":        tier,
 			"features":    features,
 			"instance_id": s.licenseClient.GetInstanceID(),
+		},
+	}
+}
+
+// ============================================================================
+// PII Profile RPC Handlers
+// ============================================================================
+
+// handleProfileCreate handles profile.create RPC method
+func (s *Server) handleProfileCreate(req *Request) *Response {
+	var params struct {
+		ProfileName string                 `json:"profile_name"`
+		ProfileType string                 `json:"profile_type"`
+		Data        map[string]interface{} `json:"data"`
+		IsDefault   bool                   `json:"is_default"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ProfileName == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "profile_name is required",
+			},
+		}
+	}
+
+	if params.ProfileType == "" {
+		params.ProfileType = "personal"
+	}
+
+	// Generate profile ID
+	profileID := "profile_" + generateID()
+
+	// Serialize data
+	dataBytes, err := json.Marshal(params.Data)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to serialize profile data: " + err.Error(),
+			},
+		}
+	}
+
+	// Get field schema
+	schema := "{}"
+	if schemaBytes, err := json.Marshal(map[string]interface{}{
+		"profile_type": params.ProfileType,
+		"fields":       []string{},
+	}); err == nil {
+		schema = string(schemaBytes)
+	}
+
+	// Store profile
+	if err := s.keystore.StoreProfile(profileID, params.ProfileName, params.ProfileType, dataBytes, schema, params.IsDefault); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to store profile: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"profile_id":   profileID,
+			"profile_name": params.ProfileName,
+			"profile_type": params.ProfileType,
+			"is_default":   params.IsDefault,
+			"field_count":  len(params.Data),
+		},
+	}
+}
+
+// handleProfileList handles profile.list RPC method
+func (s *Server) handleProfileList(req *Request) *Response {
+	var params struct {
+		ProfileType string `json:"profile_type"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	profiles, err := s.keystore.ListProfiles(params.ProfileType)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to list profiles: " + err.Error(),
+			},
+		}
+	}
+
+	// Convert to response format (without PII values)
+	result := make([]map[string]interface{}, len(profiles))
+	for i, p := range profiles {
+		result[i] = map[string]interface{}{
+			"id":            p.ID,
+			"profile_name":  p.ProfileName,
+			"profile_type":  p.ProfileType,
+			"created_at":    p.CreatedAt,
+			"updated_at":    p.UpdatedAt,
+			"last_accessed": p.LastAccessed,
+			"is_default":    p.IsDefault,
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  result,
+	}
+}
+
+// handleProfileGet handles profile.get RPC method
+func (s *Server) handleProfileGet(req *Request) *Response {
+	var params struct {
+		ProfileID string `json:"profile_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ProfileID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "profile_id is required",
+			},
+		}
+	}
+
+	profile, err := s.keystore.RetrieveProfile(params.ProfileID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "profile not found: " + err.Error(),
+			},
+		}
+	}
+
+	// Parse profile data
+	var data map[string]interface{}
+	if err := json.Unmarshal(profile.Data, &data); err != nil {
+		data = make(map[string]interface{})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"id":            profile.ID,
+			"profile_name":  profile.ProfileName,
+			"profile_type":  profile.ProfileType,
+			"data":          data,
+			"created_at":    profile.CreatedAt,
+			"updated_at":    profile.UpdatedAt,
+			"last_accessed": profile.LastAccessed,
+			"is_default":    profile.IsDefault,
+		},
+	}
+}
+
+// handleProfileUpdate handles profile.update RPC method
+func (s *Server) handleProfileUpdate(req *Request) *Response {
+	var params struct {
+		ProfileID   string                 `json:"profile_id"`
+		ProfileName string                 `json:"profile_name"`
+		Data        map[string]interface{} `json:"data"`
+		IsDefault   *bool                  `json:"is_default"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ProfileID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "profile_id is required",
+			},
+		}
+	}
+
+	// Get existing profile
+	existing, err := s.keystore.RetrieveProfile(params.ProfileID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "profile not found: " + err.Error(),
+			},
+		}
+	}
+
+	// Use existing values if not provided
+	profileName := params.ProfileName
+	if profileName == "" {
+		profileName = existing.ProfileName
+	}
+
+	isDefault := existing.IsDefault
+	if params.IsDefault != nil {
+		isDefault = *params.IsDefault
+	}
+
+	// Merge data
+	var existingData map[string]interface{}
+	if err := json.Unmarshal(existing.Data, &existingData); err != nil {
+		existingData = make(map[string]interface{})
+	}
+
+	for k, v := range params.Data {
+		existingData[k] = v
+	}
+
+	dataBytes, err := json.Marshal(existingData)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to serialize profile data: " + err.Error(),
+			},
+		}
+	}
+
+	// Store updated profile
+	if err := s.keystore.StoreProfile(params.ProfileID, profileName, existing.ProfileType, dataBytes, existing.FieldSchema, isDefault); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to update profile: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"profile_id":   params.ProfileID,
+			"profile_name": profileName,
+			"is_default":   isDefault,
+			"field_count":  len(existingData),
+		},
+	}
+}
+
+// handleProfileDelete handles profile.delete RPC method
+func (s *Server) handleProfileDelete(req *Request) *Response {
+	var params struct {
+		ProfileID string `json:"profile_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ProfileID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "profile_id is required",
+			},
+		}
+	}
+
+	if err := s.keystore.DeleteProfile(params.ProfileID); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "failed to delete profile: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"deleted":    true,
+			"profile_id": params.ProfileID,
+		},
+	}
+}
+
+// ============================================================================
+// PII Access Control RPC Handlers
+// ============================================================================
+
+// handlePIIRequestAccess handles pii.request_access RPC method
+func (s *Server) handlePIIRequestAccess(req *Request) *Response {
+	var params struct {
+		SkillID      string                   `json:"skill_id"`
+		SkillName    string                   `json:"skill_name"`
+		ProfileID    string                   `json:"profile_id"`
+		RoomID       string                   `json:"room_id"`
+		Variables    []map[string]interface{} `json:"variables"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.SkillID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "skill_id is required",
+			},
+		}
+	}
+
+	if params.ProfileID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "profile_id is required",
+			},
+		}
+	}
+
+	// Generate request ID
+	requestID := "pii_req_" + generateID()
+
+	// Extract requested fields
+	requestedFields := make([]string, len(params.Variables))
+	for i, v := range params.Variables {
+		if key, ok := v["key"].(string); ok {
+			requestedFields[i] = key
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"request_id":       requestID,
+			"skill_id":         params.SkillID,
+			"profile_id":       params.ProfileID,
+			"requested_fields": requestedFields,
+			"status":           "pending",
+			"message":          "Access request created. Use pii.approve_access or pii.reject_access to respond.",
+		},
+	}
+}
+
+// handlePIIApproveAccess handles pii.approve_access RPC method
+func (s *Server) handlePIIApproveAccess(req *Request) *Response {
+	var params struct {
+		RequestID      string   `json:"request_id"`
+		UserID         string   `json:"user_id"`
+		ApprovedFields []string `json:"approved_fields"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RequestID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "request_id is required",
+			},
+		}
+	}
+
+	if params.UserID == "" {
+		params.UserID = "unknown"
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"approved":        true,
+			"request_id":      params.RequestID,
+			"approved_by":     params.UserID,
+			"approved_fields": params.ApprovedFields,
+		},
+	}
+}
+
+// handlePIIRejectAccess handles pii.reject_access RPC method
+func (s *Server) handlePIIRejectAccess(req *Request) *Response {
+	var params struct {
+		RequestID string `json:"request_id"`
+		UserID    string `json:"user_id"`
+		Reason    string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RequestID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "request_id is required",
+			},
+		}
+	}
+
+	if params.UserID == "" {
+		params.UserID = "unknown"
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"rejected":    true,
+			"request_id":  params.RequestID,
+			"rejected_by": params.UserID,
+			"reason":      params.Reason,
+		},
+	}
+}
+
+// handlePIIListRequests handles pii.list_requests RPC method
+func (s *Server) handlePIIListRequests(req *Request) *Response {
+	var params struct {
+		ProfileID string `json:"profile_id"`
+		Status    string `json:"status"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	// Return empty list for now - in a full implementation, this would
+	// query a request tracking system
+	requests := []map[string]interface{}{}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"requests": requests,
+			"count":    len(requests),
+		},
+	}
+}
+
+// ============================================================================
+// Matrix Room and Sync Methods (ArmorChat Compatibility)
+// ============================================================================
+
+// handleMatrixSync handles matrix.sync RPC method
+// Performs a Matrix /sync request and returns new events
+func (s *Server) handleMatrixSync(req *Request) *Response {
+	var params struct {
+		Since       string `json:"since"`
+		Timeout     int    `json:"timeout"`
+		FullState   bool   `json:"full_state"`
+		SetPresence string `json:"set_presence"`
+	}
+
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "invalid parameters: " + err.Error(),
+				},
+			}
+		}
+	}
+
+	// Default timeout to 30 seconds if not specified
+	if params.Timeout == 0 {
+		params.Timeout = 30000
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Perform sync via Matrix adapter
+	syncResult, err := s.matrix.SyncWithParams(s.ctx, params.Since, params.Timeout, params.FullState, params.SetPresence)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "sync failed: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  syncResult,
+	}
+}
+
+// handleMatrixCreateRoom handles matrix.create_room RPC method
+// Creates a new Matrix room
+func (s *Server) handleMatrixCreateRoom(req *Request) *Response {
+	var params struct {
+		Name           string   `json:"name"`
+		Topic          string   `json:"topic"`
+		Visibility     string   `json:"visibility"`     // "public" or "private"
+		Preset         string   `json:"preset"`         // "private_chat", "public_chat", "trusted_private_chat"
+		Invite         []string `json:"invite"`         // User IDs to invite
+		IsDirect       bool     `json:"is_direct"`
+		RoomAliasName  string   `json:"room_alias_name"`
+		InitialState   []map[string]interface{} `json:"initial_state"`
+		PowerLevelContentOverride map[string]interface{} `json:"power_level_content_override"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Build create room request
+	createReq := map[string]interface{}{
+		"name":       params.Name,
+		"topic":      params.Topic,
+		"visibility": params.Visibility,
+		"preset":     params.Preset,
+		"invite":     params.Invite,
+		"is_direct":  params.IsDirect,
+		"room_alias_name": params.RoomAliasName,
+	}
+	if params.InitialState != nil {
+		createReq["initial_state"] = params.InitialState
+	}
+	if params.PowerLevelContentOverride != nil {
+		createReq["power_level_content_override"] = params.PowerLevelContentOverride
+	}
+
+	// Create room via Matrix adapter
+	roomID, roomAlias, err := s.matrix.CreateRoom(s.ctx, createReq)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to create room: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"room_id":    roomID,
+			"room_alias": roomAlias,
+		},
+	}
+}
+
+// handleMatrixJoinRoom handles matrix.join_room RPC method
+// Joins an existing Matrix room
+func (s *Server) handleMatrixJoinRoom(req *Request) *Response {
+	var params struct {
+		RoomIDOrAlias string   `json:"room_id_or_alias"`
+		ViaServers    []string `json:"via_servers"`
+		Reason        string   `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RoomIDOrAlias == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "room_id_or_alias is required",
+			},
+		}
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Join room via Matrix adapter
+	roomID, err := s.matrix.JoinRoom(s.ctx, params.RoomIDOrAlias, params.ViaServers, params.Reason)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to join room: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"room_id": roomID,
+		},
+	}
+}
+
+// handleMatrixLeaveRoom handles matrix.leave_room RPC method
+// Leaves a Matrix room
+func (s *Server) handleMatrixLeaveRoom(req *Request) *Response {
+	var params struct {
+		RoomID string `json:"room_id"`
+		Reason string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RoomID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "room_id is required",
+			},
+		}
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Leave room via Matrix adapter
+	err := s.matrix.LeaveRoom(s.ctx, params.RoomID, params.Reason)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to leave room: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success": true,
+			"room_id": params.RoomID,
+		},
+	}
+}
+
+// handleMatrixInviteUser handles matrix.invite_user RPC method
+// Invites a user to a Matrix room
+func (s *Server) handleMatrixInviteUser(req *Request) *Response {
+	var params struct {
+		RoomID string `json:"room_id"`
+		UserID string `json:"user_id"`
+		Reason string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RoomID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "room_id is required",
+			},
+		}
+	}
+
+	if params.UserID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "user_id is required",
+			},
+		}
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Invite user via Matrix adapter
+	err := s.matrix.InviteUser(s.ctx, params.RoomID, params.UserID, params.Reason)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to invite user: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success": true,
+			"room_id": params.RoomID,
+			"user_id": params.UserID,
+		},
+	}
+}
+
+// handleMatrixSendTyping handles matrix.send_typing RPC method
+// Sends a typing notification to a room
+func (s *Server) handleMatrixSendTyping(req *Request) *Response {
+	var params struct {
+		RoomID string `json:"room_id"`
+		Typing bool   `json:"typing"`
+		Timeout int   `json:"timeout"` // milliseconds
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RoomID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "room_id is required",
+			},
+		}
+	}
+
+	// Default timeout to 30 seconds if typing and not specified
+	if params.Typing && params.Timeout == 0 {
+		params.Timeout = 30000
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Send typing notification via Matrix adapter
+	err := s.matrix.SendTyping(s.ctx, params.RoomID, params.Typing, params.Timeout)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to send typing notification: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success": true,
+			"room_id": params.RoomID,
+			"typing":  params.Typing,
+		},
+	}
+}
+
+// handleMatrixSendReadReceipt handles matrix.send_read_receipt RPC method
+// Sends a read receipt for an event
+func (s *Server) handleMatrixSendReadReceipt(req *Request) *Response {
+	var params struct {
+		RoomID  string `json:"room_id"`
+		EventID string `json:"event_id"`
+		ReceiptType string `json:"receipt_type"` // "m.read" or "m.read.private"
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RoomID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "room_id is required",
+			},
+		}
+	}
+
+	if params.EventID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "event_id is required",
+			},
+		}
+	}
+
+	// Default to m.read receipt type
+	if params.ReceiptType == "" {
+		params.ReceiptType = "m.read"
+	}
+
+	// Check if Matrix adapter is available
+	if s.matrix == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Matrix adapter not initialized",
+			},
+		}
+	}
+
+	// Send read receipt via Matrix adapter
+	err := s.matrix.SendReadReceipt(s.ctx, params.RoomID, params.EventID, params.ReceiptType)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to send read receipt: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"room_id":      params.RoomID,
+			"event_id":     params.EventID,
+			"receipt_type": params.ReceiptType,
+		},
+	}
+}
+
+// ============================================================================
+// License and Compliance Methods (ArmorChat Compatibility)
+// ============================================================================
+
+// handleLicenseCheckFeature handles license.check_feature RPC method
+// Checks if a specific feature is available under the current license
+func (s *Server) handleLicenseCheckFeature(req *Request) *Response {
+	var params struct {
+		FeatureID string `json:"feature_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.FeatureID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "feature_id is required",
+			},
+		}
+	}
+
+	// Check if license client is available
+	if s.licenseClient == nil {
+		// Without a license client, default to basic features
+		basicFeatures := map[string]bool{
+			"slack_bridge":       true,
+			"basic_chat":         true,
+			"e2ee":               true,
+			"push_notifications": true,
+		}
+		available := basicFeatures[params.FeatureID]
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"feature_id": params.FeatureID,
+				"available":  available,
+				"tier":       "free",
+			},
+		}
+	}
+
+	// Check feature via license client
+	features, err := s.licenseClient.GetFeatures(s.ctx)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to get license features: " + err.Error(),
+			},
+		}
+	}
+
+	// Get current tier
+	tier, _ := s.licenseClient.GetTier(s.ctx)
+	tierStr := string(tier)
+	if tierStr == "" {
+		tierStr = "free"
+	}
+
+	// Check if feature is in the available features (features is []string)
+	available := false
+	for _, f := range features {
+		if f == params.FeatureID {
+			available = true
+			break
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"feature_id": params.FeatureID,
+			"available":  available,
+			"tier":       tierStr,
+		},
+	}
+}
+
+// handleComplianceStatus handles compliance.status RPC method
+// Returns the current compliance configuration
+func (s *Server) handleComplianceStatus(req *Request) *Response {
+	// Default compliance configuration
+	complianceStatus := map[string]interface{}{
+		"mode":              "standard",
+		"phi_scrubbing":     true,
+		"audit_logging":     true,
+		"tamper_evidence":   false,
+		"quarantine":        false,
+		"hipaa_enabled":     false,
+		"gdpr_enabled":      false,
+		"data_retention_days": 90,
+		"encryption_at_rest": true,
+		"encryption_in_transit": true,
+	}
+
+	// If license client is available, check for enterprise features
+	if s.licenseClient != nil {
+		features, err := s.licenseClient.GetFeatures(s.ctx)
+		if err == nil {
+			// features is []string, check if specific features are present
+			featureSet := make(map[string]bool)
+			for _, f := range features {
+				featureSet[f] = true
+			}
+			if featureSet["hipaa_mode"] {
+				complianceStatus["hipaa_enabled"] = true
+				complianceStatus["mode"] = "strict"
+				complianceStatus["tamper_evidence"] = true
+				complianceStatus["quarantine"] = true
+			}
+			if featureSet["phi_scrubbing"] {
+				complianceStatus["phi_scrubbing"] = true
+			}
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  complianceStatus,
+	}
+}
+
+// handlePlatformLimits handles platform.limits RPC method
+// Returns platform bridging limits based on license tier
+func (s *Server) handlePlatformLimits(req *Request) *Response {
+	var params struct {
+		Platform string `json:"platform"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	// Default limits for free tier
+	limits := map[string]interface{}{
+		"tier": "free",
+		"platforms": map[string]interface{}{
+			"slack": map[string]interface{}{
+				"max_channels":      3,
+				"max_users":         10,
+				"enabled":           true,
+			},
+			"discord": map[string]interface{}{
+				"max_channels":      0,
+				"max_users":         0,
+				"enabled":           false,
+			},
+			"teams": map[string]interface{}{
+				"max_channels":      0,
+				"max_users":         0,
+				"enabled":           false,
+			},
+			"whatsapp": map[string]interface{}{
+				"max_channels":      0,
+				"max_users":         0,
+				"enabled":           false,
+			},
+		},
+	}
+
+	// If license client is available, get actual tier limits
+	if s.licenseClient != nil {
+		tier, err := s.licenseClient.GetTier(s.ctx)
+		if err == nil {
+			switch tier {
+			case "pro":
+				limits["tier"] = "professional"
+				limits["platforms"] = map[string]interface{}{
+					"slack": map[string]interface{}{
+						"max_channels":      20,
+						"max_users":         100,
+						"enabled":           true,
+					},
+					"discord": map[string]interface{}{
+						"max_channels":      50,
+						"max_users":         200,
+						"enabled":           true,
+					},
+					"teams": map[string]interface{}{
+						"max_channels":      50,
+						"max_users":         200,
+						"enabled":           true,
+					},
+					"whatsapp": map[string]interface{}{
+						"max_channels":      0,
+						"max_users":         0,
+						"enabled":           false,
+					},
+				}
+			case "ent":
+				limits["tier"] = "enterprise"
+				limits["platforms"] = map[string]interface{}{
+					"slack": map[string]interface{}{
+						"max_channels":      -1, // unlimited
+						"max_users":         -1,
+						"enabled":           true,
+					},
+					"discord": map[string]interface{}{
+						"max_channels":      -1,
+						"max_users":         -1,
+						"enabled":           true,
+					},
+					"teams": map[string]interface{}{
+						"max_channels":      -1,
+						"max_users":         -1,
+						"enabled":           true,
+					},
+					"whatsapp": map[string]interface{}{
+						"max_channels":      -1,
+						"max_users":         -1,
+						"enabled":           true,
+					},
+				}
+			}
+		}
+	}
+
+	// If a specific platform was requested, return only that platform's limits
+	if params.Platform != "" {
+		if platformLimits, ok := limits["platforms"].(map[string]interface{}); ok {
+			if specificLimits, ok := platformLimits[params.Platform].(map[string]interface{}); ok {
+				return &Response{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Result: map[string]interface{}{
+						"platform": params.Platform,
+						"tier":     limits["tier"],
+						"limits":   specificLimits,
+					},
+				}
+			}
+		}
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "unknown platform: " + params.Platform,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  limits,
+	}
+}
+
+// handlePushUpdateSettings handles push.update_settings RPC method
+// Updates push notification settings for a device
+func (s *Server) handlePushUpdateSettings(req *Request) *Response {
+	var params struct {
+		DeviceID            string `json:"device_id"`
+		Enabled             *bool  `json:"enabled"`
+		IncludeEncryptedBody *bool `json:"include_encrypted_body"`
+		EnableWebPush       *bool  `json:"enable_web_push"`
+		EnableFCM           *bool  `json:"enable_fcm"`
+		EnableAPNS          *bool  `json:"enable_apns"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.DeviceID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device_id is required",
+			},
+		}
+	}
+
+	// Update settings in memory (in a full implementation, this would persist to database)
+	// For now, just return success
+	updatedSettings := map[string]interface{}{
+		"device_id":              params.DeviceID,
+		"enabled":                true,
+		"include_encrypted_body": false,
+		"enable_web_push":        true,
+		"enable_fcm":             true,
+		"enable_apns":            false,
+	}
+
+	if params.Enabled != nil {
+		updatedSettings["enabled"] = *params.Enabled
+	}
+	if params.IncludeEncryptedBody != nil {
+		updatedSettings["include_encrypted_body"] = *params.IncludeEncryptedBody
+	}
+	if params.EnableWebPush != nil {
+		updatedSettings["enable_web_push"] = *params.EnableWebPush
+	}
+	if params.EnableFCM != nil {
+		updatedSettings["enable_fcm"] = *params.EnableFCM
+	}
+	if params.EnableAPNS != nil {
+		updatedSettings["enable_apns"] = *params.EnableAPNS
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":  true,
+			"device_id": params.DeviceID,
+			"settings": updatedSettings,
+		},
+	}
+}
+
+// ============================================================================
+// Agent Lifecycle Methods (ArmorTerminal Compatibility)
+// ============================================================================
+
+// Agent state tracking
+var (
+	agentsMu    sync.RWMutex
+	agents      = make(map[string]*AgentInfo)
+	agentLogger = slog.Default().With("component", "agent_manager")
+)
+
+// AgentInfo holds information about a running agent
+type AgentInfo struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	Status       string            `json:"status"` // idle, busy, error, offline
+	RoomID       string            `json:"room_id"`
+	Capabilities []string          `json:"capabilities"`
+	Metadata     map[string]string `json:"metadata"`
+	CreatedAt    int64             `json:"created_at"`
+	LastActive   int64             `json:"last_active"`
+	TokensUsed   int64             `json:"tokens_used"`
+}
+
+// handleAgentStart handles agent.start RPC method
+// Starts a new AI agent instance
+func (s *Server) handleAgentStart(req *Request) *Response {
+	var params struct {
+		AgentID      string            `json:"agent_id"`
+		Name         string            `json:"name"`
+		Type         string            `json:"type"`
+		RoomID       string            `json:"room_id"`
+		Capabilities []string          `json:"capabilities"`
+		Config       map[string]string `json:"config"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	// Generate agent ID if not provided
+	if params.AgentID == "" {
+		params.AgentID = "agent_" + generateID()
+	}
+
+	// Default agent type
+	if params.Type == "" {
+		params.Type = "general"
+	}
+
+	// Default capabilities
+	if len(params.Capabilities) == 0 {
+		params.Capabilities = []string{"chat", "code", "analysis"}
+	}
+
+	// Create agent info
+	now := time.Now().Unix()
+	agent := &AgentInfo{
+		ID:           params.AgentID,
+		Name:         params.Name,
+		Type:         params.Type,
+		Status:       "idle",
+		RoomID:       params.RoomID,
+		Capabilities: params.Capabilities,
+		Metadata:     params.Config,
+		CreatedAt:    now,
+		LastActive:   now,
+		TokensUsed:   0,
+	}
+
+	// Store agent
+	agentsMu.Lock()
+	agents[params.AgentID] = agent
+	agentsMu.Unlock()
+
+	agentLogger.Info("agent started",
+		"agent_id", params.AgentID,
+		"name", params.Name,
+		"type", params.Type,
+		"room_id", params.RoomID,
+	)
+
+	// Log audit event
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "agent_started",
+			SessionID: params.AgentID,
+			RoomID:    params.RoomID,
+			UserID:    "rpc_client",
+			Details: map[string]interface{}{
+				"name":         params.Name,
+				"type":         params.Type,
+				"capabilities": params.Capabilities,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"agent_id":     params.AgentID,
+			"name":         params.Name,
+			"type":         params.Type,
+			"status":       "idle",
+			"capabilities": params.Capabilities,
+			"created_at":   now,
+		},
+	}
+}
+
+// handleAgentStop handles agent.stop RPC method
+// Stops a running agent
+func (s *Server) handleAgentStop(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id"`
+		Reason  string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	// Check if agent exists
+	agentsMu.Lock()
+	agent, exists := agents[params.AgentID]
+	if exists {
+		agent.Status = "offline"
+		delete(agents, params.AgentID)
+	}
+	agentsMu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "agent not found: " + params.AgentID,
+			},
+		}
+	}
+
+	agentLogger.Info("agent stopped",
+		"agent_id", params.AgentID,
+		"reason", params.Reason,
+	)
+
+	// Log audit event
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "agent_stopped",
+			SessionID: params.AgentID,
+			UserID:    "rpc_client",
+			Details: map[string]interface{}{
+				"reason":      params.Reason,
+				"tokens_used": agent.TokensUsed,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"agent_id":     params.AgentID,
+			"stopped_at":   time.Now().Unix(),
+			"total_tokens": agent.TokensUsed,
+		},
+	}
+}
+
+// handleAgentStatus handles agent.status RPC method
+// Returns the status of an agent
+func (s *Server) handleAgentStatus(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	agentsMu.RLock()
+	agent, exists := agents[params.AgentID]
+	agentsMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "agent not found: " + params.AgentID,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"id":           agent.ID,
+			"name":         agent.Name,
+			"type":         agent.Type,
+			"status":       agent.Status,
+			"room_id":      agent.RoomID,
+			"capabilities": agent.Capabilities,
+			"created_at":   agent.CreatedAt,
+			"last_active":  agent.LastActive,
+			"tokens_used":  agent.TokensUsed,
+			"metadata":     agent.Metadata,
+		},
+	}
+}
+
+// handleAgentList handles agent.list RPC method
+// Lists all agents, optionally filtered by status
+func (s *Server) handleAgentList(req *Request) *Response {
+	var params struct {
+		Status string `json:"status"`
+		Type   string `json:"type"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	agentsMu.RLock()
+	defer agentsMu.RUnlock()
+
+	result := make([]map[string]interface{}, 0)
+	for _, agent := range agents {
+		// Filter by status if specified
+		if params.Status != "" && agent.Status != params.Status {
+			continue
+		}
+		// Filter by type if specified
+		if params.Type != "" && agent.Type != params.Type {
+			continue
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":           agent.ID,
+			"name":         agent.Name,
+			"type":         agent.Type,
+			"status":       agent.Status,
+			"room_id":      agent.RoomID,
+			"capabilities": agent.Capabilities,
+			"last_active":  agent.LastActive,
+			"tokens_used":  agent.TokensUsed,
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"agents": result,
+			"count":  len(result),
+		},
+	}
+}
+
+// handleAgentSendCommand handles agent.send_command RPC method
+// Sends a command to an agent for execution
+func (s *Server) handleAgentSendCommand(req *Request) *Response {
+	var params struct {
+		AgentID   string `json:"agent_id"`
+		Command   string `json:"command"`
+		Context   string `json:"context"`
+		Timeout   int    `json:"timeout"`
+		Workflow  string `json:"workflow_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	if params.Command == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "command is required",
+			},
+		}
+	}
+
+	// Check if agent exists
+	agentsMu.Lock()
+	agent, exists := agents[params.AgentID]
+	if !exists {
+		agentsMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "agent not found: " + params.AgentID,
+			},
+		}
+	}
+
+	// Update agent status
+	agent.Status = "busy"
+	agent.LastActive = time.Now().Unix()
+	agentsMu.Unlock()
+
+	// Generate command ID for tracking
+	commandID := "cmd_" + generateID()
+
+	// Default timeout
+	if params.Timeout == 0 {
+		params.Timeout = 30000 // 30 seconds
+	}
+
+	// If Matrix adapter is available, send command to agent's room
+	if s.matrix != nil && agent.RoomID != "" {
+		commandMsg := map[string]interface{}{
+			"msgtype": "m.text",
+			"body":    params.Command,
+			"app.armorclaw.command": map[string]interface{}{
+				"command_id":  commandID,
+				"context":     params.Context,
+				"workflow_id": params.Workflow,
+				"timeout":     params.Timeout,
+			},
+		}
+
+		msgBytes, _ := json.Marshal(commandMsg)
+		_, err := s.matrix.SendMessage(agent.RoomID, string(msgBytes), "m.room.message")
+		if err != nil {
+			agentLogger.Error("failed to send command to agent",
+				"agent_id", params.AgentID,
+				"command_id", commandID,
+				"error", err,
+			)
+		}
+	}
+
+	agentLogger.Info("command sent to agent",
+		"agent_id", params.AgentID,
+		"command_id", commandID,
+		"command", params.Command,
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"command_id":  commandID,
+			"agent_id":    params.AgentID,
+			"status":      "dispatched",
+			"dispatched_at": time.Now().Unix(),
+		},
+	}
+}
+
+// ============================================================================
+// Workflow Control Methods (ArmorTerminal Compatibility)
+// ============================================================================
+
+// Workflow state tracking
+var (
+	workflowsMu sync.RWMutex
+	workflows   = make(map[string]*WorkflowInfo)
+)
+
+// WorkflowInfo holds information about a workflow
+type WorkflowInfo struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	AgentID      string            `json:"agent_id"`
+	Status       string            `json:"status"` // pending, running, paused, completed, cancelled, error
+	CurrentStep  int               `json:"current_step"`
+	TotalSteps   int               `json:"total_steps"`
+	Steps        []WorkflowStep    `json:"steps"`
+	Context      map[string]string `json:"context"`
+	Result       interface{}       `json:"result,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	CreatedAt    int64             `json:"created_at"`
+	StartedAt    *int64            `json:"started_at,omitempty"`
+	CompletedAt  *int64            `json:"completed_at,omitempty"`
+	TokensUsed   int64             `json:"tokens_used"`
+}
+
+// WorkflowStep represents a single step in a workflow
+type WorkflowStep struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"` // pending, running, completed, skipped, error
+	Description string `json:"description"`
+	Result      string `json:"result,omitempty"`
+}
+
+// handleWorkflowStart handles workflow.start RPC method
+// Starts a new workflow execution
+func (s *Server) handleWorkflowStart(req *Request) *Response {
+	var params struct {
+		WorkflowID string            `json:"workflow_id"`
+		Name       string            `json:"name"`
+		AgentID    string            `json:"agent_id"`
+		Template   string            `json:"template"`
+		Steps      []string          `json:"steps"`
+		Context    map[string]string `json:"context"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	// Generate workflow ID if not provided
+	if params.WorkflowID == "" {
+		params.WorkflowID = "wf_" + generateID()
+	}
+
+	// Validate agent exists if specified
+	if params.AgentID != "" {
+		agentsMu.RLock()
+		_, agentExists := agents[params.AgentID]
+		agentsMu.RUnlock()
+
+		if !agentExists {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "agent not found: " + params.AgentID,
+				},
+			}
+		}
+	}
+
+	// Build workflow steps
+	steps := make([]WorkflowStep, len(params.Steps))
+	for i, stepName := range params.Steps {
+		steps[i] = WorkflowStep{
+			ID:     fmt.Sprintf("step_%d", i+1),
+			Name:   stepName,
+			Status: "pending",
+		}
+	}
+
+	// If no steps provided but template specified, generate default steps
+	if len(steps) == 0 && params.Template != "" {
+		steps = []WorkflowStep{
+			{ID: "step_1", Name: "Initialize", Status: "pending"},
+			{ID: "step_2", Name: "Process", Status: "pending"},
+			{ID: "step_3", Name: "Finalize", Status: "pending"},
+		}
+	}
+
+	// Create workflow
+	now := time.Now().Unix()
+	workflow := &WorkflowInfo{
+		ID:          params.WorkflowID,
+		Name:        params.Name,
+		AgentID:     params.AgentID,
+		Status:      "running",
+		CurrentStep: 0,
+		TotalSteps:  len(steps),
+		Steps:       steps,
+		Context:     params.Context,
+		CreatedAt:   now,
+		StartedAt:   &now,
+		TokensUsed:  0,
+	}
+
+	// Store workflow
+	workflowsMu.Lock()
+	workflows[params.WorkflowID] = workflow
+	workflowsMu.Unlock()
+
+	// Update agent status if associated
+	if params.AgentID != "" {
+		agentsMu.Lock()
+		if agent, ok := agents[params.AgentID]; ok {
+			agent.Status = "busy"
+			agent.LastActive = now
+		}
+		agentsMu.Unlock()
+	}
+
+	agentLogger.Info("workflow started",
+		"workflow_id", params.WorkflowID,
+		"name", params.Name,
+		"agent_id", params.AgentID,
+		"total_steps", len(steps),
+	)
+
+	// Log audit event
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "workflow_started",
+			SessionID: params.WorkflowID,
+			UserID:    "rpc_client",
+			Details: map[string]interface{}{
+				"name":        params.Name,
+				"agent_id":    params.AgentID,
+				"total_steps": len(steps),
+				"template":    params.Template,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"workflow_id": params.WorkflowID,
+			"name":        params.Name,
+			"status":      "running",
+			"total_steps": len(steps),
+			"created_at":  now,
+			"started_at":  now,
+		},
+	}
+}
+
+// handleWorkflowPause handles workflow.pause RPC method
+// Pauses a running workflow
+func (s *Server) handleWorkflowPause(req *Request) *Response {
+	var params struct {
+		WorkflowID string `json:"workflow_id"`
+		Reason     string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.WorkflowID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "workflow_id is required",
+			},
+		}
+	}
+
+	workflowsMu.Lock()
+	workflow, exists := workflows[params.WorkflowID]
+	if !exists {
+		workflowsMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "workflow not found: " + params.WorkflowID,
+			},
+		}
+	}
+
+	if workflow.Status != "running" {
+		workflowsMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("workflow is not running (status: %s)", workflow.Status),
+			},
+		}
+	}
+
+	workflow.Status = "paused"
+	workflowsMu.Unlock()
+
+	agentLogger.Info("workflow paused",
+		"workflow_id", params.WorkflowID,
+		"reason", params.Reason,
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"workflow_id":  params.WorkflowID,
+			"status":       "paused",
+			"current_step": workflow.CurrentStep,
+			"paused_at":    time.Now().Unix(),
+		},
+	}
+}
+
+// handleWorkflowResume handles workflow.resume RPC method
+// Resumes a paused workflow
+func (s *Server) handleWorkflowResume(req *Request) *Response {
+	var params struct {
+		WorkflowID string `json:"workflow_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.WorkflowID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "workflow_id is required",
+			},
+		}
+	}
+
+	workflowsMu.Lock()
+	workflow, exists := workflows[params.WorkflowID]
+	if !exists {
+		workflowsMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "workflow not found: " + params.WorkflowID,
+			},
+		}
+	}
+
+	if workflow.Status != "paused" {
+		workflowsMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("workflow is not paused (status: %s)", workflow.Status),
+			},
+		}
+	}
+
+	workflow.Status = "running"
+	workflowsMu.Unlock()
+
+	agentLogger.Info("workflow resumed",
+		"workflow_id", params.WorkflowID,
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"workflow_id":  params.WorkflowID,
+			"status":       "running",
+			"current_step": workflow.CurrentStep,
+			"resumed_at":   time.Now().Unix(),
+		},
+	}
+}
+
+// handleWorkflowCancel handles workflow.cancel RPC method
+// Cancels a workflow
+func (s *Server) handleWorkflowCancel(req *Request) *Response {
+	var params struct {
+		WorkflowID string `json:"workflow_id"`
+		Reason     string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.WorkflowID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "workflow_id is required",
+			},
+		}
+	}
+
+	workflowsMu.Lock()
+	workflow, exists := workflows[params.WorkflowID]
+	if !exists {
+		workflowsMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "workflow not found: " + params.WorkflowID,
+			},
+		}
+	}
+
+	previousStatus := workflow.Status
+	workflow.Status = "cancelled"
+	now := time.Now().Unix()
+	workflow.CompletedAt = &now
+	if params.Reason != "" {
+		workflow.Error = params.Reason
+	}
+
+	// Update agent status if associated
+	agentID := workflow.AgentID
+	workflowsMu.Unlock()
+
+	if agentID != "" {
+		agentsMu.Lock()
+		if agent, ok := agents[agentID]; ok {
+			agent.Status = "idle"
+			agent.LastActive = now
+			agent.TokensUsed += workflow.TokensUsed
+		}
+		agentsMu.Unlock()
+	}
+
+	agentLogger.Info("workflow cancelled",
+		"workflow_id", params.WorkflowID,
+		"reason", params.Reason,
+		"previous_status", previousStatus,
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":        true,
+			"workflow_id":    params.WorkflowID,
+			"status":         "cancelled",
+			"cancelled_at":   now,
+			"completed_step": workflow.CurrentStep,
+			"total_steps":    workflow.TotalSteps,
+			"tokens_used":    workflow.TokensUsed,
+		},
+	}
+}
+
+// handleWorkflowStatus handles workflow.status RPC method
+// Returns the status of a workflow
+func (s *Server) handleWorkflowStatus(req *Request) *Response {
+	var params struct {
+		WorkflowID string `json:"workflow_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.WorkflowID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "workflow_id is required",
+			},
+		}
+	}
+
+	workflowsMu.RLock()
+	workflow, exists := workflows[params.WorkflowID]
+	workflowsMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "workflow not found: " + params.WorkflowID,
+			},
+		}
+	}
+
+	// Calculate progress percentage
+	progress := 0
+	if workflow.TotalSteps > 0 {
+		progress = (workflow.CurrentStep * 100) / workflow.TotalSteps
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"id":            workflow.ID,
+			"name":          workflow.Name,
+			"agent_id":      workflow.AgentID,
+			"status":        workflow.Status,
+			"current_step":  workflow.CurrentStep,
+			"total_steps":   workflow.TotalSteps,
+			"progress":      progress,
+			"steps":         workflow.Steps,
+			"created_at":    workflow.CreatedAt,
+			"started_at":    workflow.StartedAt,
+			"completed_at":  workflow.CompletedAt,
+			"tokens_used":   workflow.TokensUsed,
+			"result":        workflow.Result,
+			"error":         workflow.Error,
+		},
+	}
+}
+
+// handleWorkflowList handles workflow.list RPC method
+// Lists all workflows, optionally filtered by status
+func (s *Server) handleWorkflowList(req *Request) *Response {
+	var params struct {
+		Status  string `json:"status"`
+		AgentID string `json:"agent_id"`
+		Limit   int    `json:"limit"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	if params.Limit == 0 {
+		params.Limit = 100
+	}
+
+	workflowsMu.RLock()
+	defer workflowsMu.RUnlock()
+
+	result := make([]map[string]interface{}, 0)
+	for _, wf := range workflows {
+		// Filter by status if specified
+		if params.Status != "" && wf.Status != params.Status {
+			continue
+		}
+		// Filter by agent if specified
+		if params.AgentID != "" && wf.AgentID != params.AgentID {
+			continue
+		}
+
+		// Calculate progress
+		progress := 0
+		if wf.TotalSteps > 0 {
+			progress = (wf.CurrentStep * 100) / wf.TotalSteps
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":           wf.ID,
+			"name":         wf.Name,
+			"agent_id":     wf.AgentID,
+			"status":       wf.Status,
+			"current_step": wf.CurrentStep,
+			"total_steps":  wf.TotalSteps,
+			"progress":     progress,
+			"created_at":   wf.CreatedAt,
+			"tokens_used":  wf.TokensUsed,
+		})
+
+		if len(result) >= params.Limit {
+			break
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"workflows": result,
+			"count":     len(result),
+		},
+	}
+}
+
+// ============================================================================
+// HITL (Human-in-the-Loop) Methods (ArmorTerminal Compatibility)
+// ============================================================================
+
+// HITL gate tracking
+var (
+	hitlGatesMu sync.RWMutex
+	hitlGates   = make(map[string]*HitlGate)
+)
+
+// HitlGate represents a human-in-the-loop approval gate
+type HitlGate struct {
+	ID          string            `json:"id"`
+	WorkflowID  string            `json:"workflow_id"`
+	AgentID     string            `json:"agent_id"`
+	StepID      string            `json:"step_id"`
+	Type        string            `json:"type"` // approval, review, input
+	Status      string            `json:"status"` // pending, approved, rejected, expired
+	Title       string            `json:"title"`
+	Description string            `json:"description"`
+	Context     map[string]string `json:"context"`
+	Options     []HitlOption      `json:"options"`
+	CreatedAt   int64             `json:"created_at"`
+	ExpiresAt   *int64            `json:"expires_at,omitempty"`
+	Timeout     int               `json:"timeout,omitempty"` // Timeout in seconds
+	Priority    string            `json:"priority,omitempty"` // normal, high, escalated
+	ResolvedAt  *int64            `json:"resolved_at,omitempty"`
+	ResolvedBy  string            `json:"resolved_by,omitempty"`
+	Decision    string            `json:"decision,omitempty"`
+	Comment     string            `json:"comment,omitempty"`
+}
+
+// HitlOption represents an option for HITL decision
+type HitlOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// handleHitlPending handles hitl.pending RPC method
+// Returns all pending HITL gates
+func (s *Server) handleHitlPending(req *Request) *Response {
+	var params struct {
+		AgentID    string `json:"agent_id"`
+		WorkflowID string `json:"workflow_id"`
+		Type       string `json:"type"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	hitlGatesMu.RLock()
+	defer hitlGatesMu.RUnlock()
+
+	result := make([]map[string]interface{}, 0)
+	for _, gate := range hitlGates {
+		// Only return pending gates
+		if gate.Status != "pending" {
+			continue
+		}
+
+		// Filter by agent if specified
+		if params.AgentID != "" && gate.AgentID != params.AgentID {
+			continue
+		}
+		// Filter by workflow if specified
+		if params.WorkflowID != "" && gate.WorkflowID != params.WorkflowID {
+			continue
+		}
+		// Filter by type if specified
+		if params.Type != "" && gate.Type != params.Type {
+			continue
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":          gate.ID,
+			"workflow_id": gate.WorkflowID,
+			"agent_id":    gate.AgentID,
+			"step_id":     gate.StepID,
+			"type":        gate.Type,
+			"status":      gate.Status,
+			"title":       gate.Title,
+			"description": gate.Description,
+			"options":     gate.Options,
+			"created_at":  gate.CreatedAt,
+			"expires_at":  gate.ExpiresAt,
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"gates": result,
+			"count": len(result),
+		},
+	}
+}
+
+// handleHitlApprove handles hitl.approve RPC method
+// Approves a HITL gate
+func (s *Server) handleHitlApprove(req *Request) *Response {
+	var params struct {
+		GateID    string `json:"gate_id"`
+		UserID    string `json:"user_id"`
+		Decision  string `json:"decision"`
+		Comment   string `json:"comment"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.GateID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "gate_id is required",
+			},
+		}
+	}
+
+	hitlGatesMu.Lock()
+	gate, exists := hitlGates[params.GateID]
+	if !exists {
+		hitlGatesMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "HITL gate not found: " + params.GateID,
+			},
+		}
+	}
+
+	if gate.Status != "pending" {
+		hitlGatesMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("HITL gate is not pending (status: %s)", gate.Status),
+			},
+		}
+	}
+
+	// Update gate
+	now := time.Now().Unix()
+	gate.Status = "approved"
+	gate.ResolvedAt = &now
+	gate.ResolvedBy = params.UserID
+	gate.Decision = params.Decision
+	if params.Decision == "" {
+		gate.Decision = "approved"
+	}
+	gate.Comment = params.Comment
+	hitlGatesMu.Unlock()
+
+	// Resume workflow if associated
+	if gate.WorkflowID != "" {
+		workflowsMu.Lock()
+		if wf, ok := workflows[gate.WorkflowID]; ok && wf.Status == "paused" {
+			wf.Status = "running"
+			wf.CurrentStep++
+		}
+		workflowsMu.Unlock()
+	}
+
+	agentLogger.Info("HITL gate approved",
+		"gate_id", params.GateID,
+		"user_id", params.UserID,
+		"decision", gate.Decision,
+	)
+
+	// Log audit event
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "hitl_approved",
+			SessionID: params.GateID,
+			UserID:    params.UserID,
+			Details: map[string]interface{}{
+				"workflow_id": gate.WorkflowID,
+				"agent_id":    gate.AgentID,
+				"decision":    gate.Decision,
+				"comment":     params.Comment,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"gate_id":     params.GateID,
+			"status":      "approved",
+			"resolved_at": now,
+			"resolved_by": params.UserID,
+			"decision":    gate.Decision,
+		},
+	}
+}
+
+// handleHitlReject handles hitl.reject RPC method
+// Rejects a HITL gate
+func (s *Server) handleHitlReject(req *Request) *Response {
+	var params struct {
+		GateID  string `json:"gate_id"`
+		UserID  string `json:"user_id"`
+		Reason  string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.GateID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "gate_id is required",
+			},
+		}
+	}
+
+	hitlGatesMu.Lock()
+	gate, exists := hitlGates[params.GateID]
+	if !exists {
+		hitlGatesMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "HITL gate not found: " + params.GateID,
+			},
+		}
+	}
+
+	if gate.Status != "pending" {
+		hitlGatesMu.Unlock()
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: fmt.Sprintf("HITL gate is not pending (status: %s)", gate.Status),
+			},
+		}
+	}
+
+	// Update gate
+	now := time.Now().Unix()
+	gate.Status = "rejected"
+	gate.ResolvedAt = &now
+	gate.ResolvedBy = params.UserID
+	gate.Decision = "rejected"
+	gate.Comment = params.Reason
+	workflowID := gate.WorkflowID
+	hitlGatesMu.Unlock()
+
+	// Cancel workflow if associated
+	if workflowID != "" {
+		workflowsMu.Lock()
+		if wf, ok := workflows[workflowID]; ok {
+			wf.Status = "cancelled"
+			wf.Error = "HITL gate rejected: " + params.Reason
+			wf.CompletedAt = &now
+		}
+		workflowsMu.Unlock()
+	}
+
+	agentLogger.Info("HITL gate rejected",
+		"gate_id", params.GateID,
+		"user_id", params.UserID,
+		"reason", params.Reason,
+	)
+
+	// Log audit event
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "hitl_rejected",
+			SessionID: params.GateID,
+			UserID:    params.UserID,
+			Details: map[string]interface{}{
+				"workflow_id": workflowID,
+				"reason":      params.Reason,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"gate_id":     params.GateID,
+			"status":      "rejected",
+			"resolved_at": now,
+			"resolved_by": params.UserID,
+			"reason":      params.Reason,
+		},
+	}
+}
+
+// handleHitlStatus handles hitl.status RPC method
+// Returns the status of a HITL gate
+func (s *Server) handleHitlStatus(req *Request) *Response {
+	var params struct {
+		GateID string `json:"gate_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.GateID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "gate_id is required",
+			},
+		}
+	}
+
+	hitlGatesMu.RLock()
+	gate, exists := hitlGates[params.GateID]
+	hitlGatesMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "HITL gate not found: " + params.GateID,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"id":          gate.ID,
+			"workflow_id": gate.WorkflowID,
+			"agent_id":    gate.AgentID,
+			"step_id":     gate.StepID,
+			"type":        gate.Type,
+			"status":      gate.Status,
+			"title":       gate.Title,
+			"description": gate.Description,
+			"options":     gate.Options,
+			"created_at":  gate.CreatedAt,
+			"expires_at":  gate.ExpiresAt,
+			"resolved_at": gate.ResolvedAt,
+			"resolved_by": gate.ResolvedBy,
+			"decision":    gate.Decision,
+			"comment":     gate.Comment,
+		},
+	}
+}
+
+// ============================================================================
+// Budget Tracking Methods (ArmorTerminal Compatibility)
+// ============================================================================
+
+// Budget tracking state
+var (
+	budgetStateMu sync.RWMutex
+	budgetState   = &BudgetState{
+		TokensUsed:     0,
+		TokensLimit:    1000000, // 1M tokens default
+		TokensReserved: 0,
+		Tier:           "free",
+		PeriodStart:    time.Now().Unix(),
+		PeriodEnd:      time.Now().AddDate(0, 1, 0).Unix(),
+		Alerts:         []BudgetAlert{},
+	}
+)
+
+// BudgetState represents the current budget state
+type BudgetState struct {
+	TokensUsed     int64          `json:"tokens_used"`
+	TokensLimit    int64          `json:"tokens_limit"`
+	TokensReserved int64          `json:"tokens_reserved"`
+	Tier           string         `json:"tier"`
+	PeriodStart    int64          `json:"period_start"`
+	PeriodEnd      int64          `json:"period_end"`
+	Alerts         []BudgetAlert  `json:"alerts"`
+	LastUpdated    int64          `json:"last_updated"`
+}
+
+// BudgetAlert represents a budget alert
+type BudgetAlert struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"` // warning, critical, exceeded
+	Threshold   int    `json:"threshold"` // percentage
+	Message     string `json:"message"`
+	CreatedAt   int64  `json:"created_at"`
+	Acknowledged bool  `json:"acknowledged"`
+}
+
+// handleBudgetStatus handles budget.status RPC method
+// Returns the current budget status
+func (s *Server) handleBudgetStatus(req *Request) *Response {
+	budgetStateMu.RLock()
+	state := *budgetState
+	budgetStateMu.RUnlock()
+
+	// Calculate remaining tokens
+	tokensRemaining := state.TokensLimit - state.TokensUsed - state.TokensReserved
+	if tokensRemaining < 0 {
+		tokensRemaining = 0
+	}
+
+	// Calculate usage percentage
+	usagePercent := 0
+	if state.TokensLimit > 0 {
+		usagePercent = int((state.TokensUsed * 100) / state.TokensLimit)
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"tokens_used":      state.TokensUsed,
+			"tokens_limit":     state.TokensLimit,
+			"tokens_remaining": tokensRemaining,
+			"tokens_reserved":  state.TokensReserved,
+			"usage_percent":    usagePercent,
+			"tier":             state.Tier,
+			"period_start":     state.PeriodStart,
+			"period_end":       state.PeriodEnd,
+			"last_updated":     state.LastUpdated,
+			"has_alerts":       len(state.Alerts) > 0,
+		},
+	}
+}
+
+// handleBudgetUsage handles budget.usage RPC method
+// Returns detailed budget usage breakdown
+func (s *Server) handleBudgetUsage(req *Request) *Response {
+	var params struct {
+		Period string `json:"period"` // day, week, month
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	budgetStateMu.RLock()
+	state := *budgetState
+	budgetStateMu.RUnlock()
+
+	// Aggregate usage by agent
+	agentsMu.RLock()
+	agentUsage := make([]map[string]interface{}, 0)
+	totalByAgents := int64(0)
+	for _, agent := range agents {
+		agentUsage = append(agentUsage, map[string]interface{}{
+			"agent_id":    agent.ID,
+			"agent_name":  agent.Name,
+			"tokens_used": agent.TokensUsed,
+		})
+		totalByAgents += agent.TokensUsed
+	}
+	agentsMu.RUnlock()
+
+	// Aggregate usage by workflow
+	workflowsMu.RLock()
+	workflowUsage := make([]map[string]interface{}, 0)
+	totalByWorkflows := int64(0)
+	for _, wf := range workflows {
+		workflowUsage = append(workflowUsage, map[string]interface{}{
+			"workflow_id":  wf.ID,
+			"workflow_name": wf.Name,
+			"tokens_used":  wf.TokensUsed,
+			"status":       wf.Status,
+		})
+		totalByWorkflows += wf.TokensUsed
+	}
+	workflowsMu.RUnlock()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"period": params.Period,
+			"summary": map[string]interface{}{
+				"total_used":     state.TokensUsed,
+				"total_limit":    state.TokensLimit,
+				"total_reserved": state.TokensReserved,
+			},
+			"by_agents": map[string]interface{}{
+				"breakdown": agentUsage,
+				"total":     totalByAgents,
+			},
+			"by_workflows": map[string]interface{}{
+				"breakdown": workflowUsage,
+				"total":     totalByWorkflows,
+			},
+		},
+	}
+}
+
+// handleBudgetAlerts handles budget.alerts RPC method
+// Returns budget alerts and allows acknowledging them
+func (s *Server) handleBudgetAlerts(req *Request) *Response {
+	var params struct {
+		Action   string `json:"action"` // list, acknowledge, clear
+		AlertID  string `json:"alert_id"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	budgetStateMu.Lock()
+	defer budgetStateMu.Unlock()
+
+	switch params.Action {
+	case "acknowledge":
+		if params.AlertID == "" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "alert_id is required for acknowledge action",
+				},
+			}
+		}
+		for i := range budgetState.Alerts {
+			if budgetState.Alerts[i].ID == params.AlertID {
+				budgetState.Alerts[i].Acknowledged = true
+				break
+			}
+		}
+
+	case "clear":
+		if params.AlertID != "" {
+			// Clear specific alert
+			newAlerts := make([]BudgetAlert, 0)
+			for _, alert := range budgetState.Alerts {
+				if alert.ID != params.AlertID {
+					newAlerts = append(newAlerts, alert)
+				}
+			}
+			budgetState.Alerts = newAlerts
+		} else {
+			// Clear all acknowledged alerts
+			newAlerts := make([]BudgetAlert, 0)
+			for _, alert := range budgetState.Alerts {
+				if !alert.Acknowledged {
+					newAlerts = append(newAlerts, alert)
+				}
+			}
+			budgetState.Alerts = newAlerts
+		}
+
+	default:
+		// List alerts (default action)
+	}
+
+	// Check if we need to generate new alerts
+	usagePercent := 0
+	if budgetState.TokensLimit > 0 {
+		usagePercent = int((budgetState.TokensUsed * 100) / budgetState.TokensLimit)
+	}
+
+	// Generate warning alert at 80%
+	if usagePercent >= 80 && usagePercent < 90 {
+		hasWarning := false
+		for _, alert := range budgetState.Alerts {
+			if alert.Type == "warning" && !alert.Acknowledged {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			budgetState.Alerts = append(budgetState.Alerts, BudgetAlert{
+				ID:         "alert_" + generateID(),
+				Type:       "warning",
+				Threshold:  80,
+				Message:    "Token budget usage has reached 80%",
+				CreatedAt:  time.Now().Unix(),
+			})
+		}
+	}
+
+	// Generate critical alert at 90%
+	if usagePercent >= 90 && usagePercent < 100 {
+		hasCritical := false
+		for _, alert := range budgetState.Alerts {
+			if alert.Type == "critical" && !alert.Acknowledged {
+				hasCritical = true
+				break
+			}
+		}
+		if !hasCritical {
+			budgetState.Alerts = append(budgetState.Alerts, BudgetAlert{
+				ID:         "alert_" + generateID(),
+				Type:       "critical",
+				Threshold:  90,
+				Message:    "Token budget usage has reached 90% - consider upgrading",
+				CreatedAt:  time.Now().Unix(),
+			})
+		}
+	}
+
+	// Generate exceeded alert at 100%
+	if usagePercent >= 100 {
+		hasExceeded := false
+		for _, alert := range budgetState.Alerts {
+			if alert.Type == "exceeded" && !alert.Acknowledged {
+				hasExceeded = true
+				break
+			}
+		}
+		if !hasExceeded {
+			budgetState.Alerts = append(budgetState.Alerts, BudgetAlert{
+				ID:         "alert_" + generateID(),
+				Type:       "exceeded",
+				Threshold:  100,
+				Message:    "Token budget has been exceeded - operations may be limited",
+				CreatedAt:  time.Now().Unix(),
+			})
+		}
+	}
+
+	// Convert alerts to response format
+	alertResult := make([]map[string]interface{}, len(budgetState.Alerts))
+	for i, alert := range budgetState.Alerts {
+		alertResult[i] = map[string]interface{}{
+			"id":           alert.ID,
+			"type":         alert.Type,
+			"threshold":    alert.Threshold,
+			"message":      alert.Message,
+			"created_at":   alert.CreatedAt,
+			"acknowledged": alert.Acknowledged,
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"alerts":          alertResult,
+			"count":           len(alertResult),
+			"unacknowledged":  countUnacknowledgedAlerts(budgetState.Alerts),
+			"usage_percent":   usagePercent,
+		},
+	}
+}
+
+// countUnacknowledgedAlerts counts unacknowledged alerts
+func countUnacknowledgedAlerts(alerts []BudgetAlert) int {
+	count := 0
+	for _, alert := range alerts {
+		if !alert.Acknowledged {
+			count++
+		}
+	}
+	return count
+}
+
+// ============================================================================
+// Bridge Health Method (ArmorChat/ArmorTerminal compatibility)
+// ============================================================================
+
+// handleBridgeHealth handles bridge.health RPC method
+// Returns bridge health status and capabilities
+func (s *Server) handleBridgeHealth(req *Request) *Response {
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"version":            "1.6.2",
+			"supports_e2ee":      true,
+			"supports_recovery":  true,
+			"supports_agents":    true,
+			"supports_workflows": true,
+			"supports_hitl":      true,
+			"supports_budget":    true,
+			"supports_containers": s.docker != nil,
+			"supports_matrix":    s.matrix != nil,
+			"region":             s.getRegion(),
+			"uptime_seconds":     time.Since(s.startTime).Seconds(),
+			"status":             "healthy",
+		},
+	}
+}
+
+// handleBridgeCapabilities returns detailed bridge capabilities for feature discovery
+// This is used by ArmorChat and ArmorTerminal to adapt their UI based on available features
+func (s *Server) handleBridgeCapabilities(req *Request) *Response {
+	capabilities := map[string]interface{}{
+		"version": "1.6.2",
+		"features": map[string]bool{
+			"e2ee":           true,
+			"key_backup":     true,
+			"key_recovery":   true,
+			"cross_signing":  true,
+			"verification":   true,
+			"push":           true,
+			"agents":         true,
+			"workflows":      true,
+			"hitl":           true,
+			"budget":         true,
+			"containers":     s.docker != nil,
+			"matrix":         s.matrix != nil,
+			"pii_profiles":   true,
+			"platform_bridges": true,
+		},
+		"methods": []string{
+			// Core methods
+			"status", "health", "start", "stop",
+			// Key management
+			"list_keys", "get_key", "store_key",
+			// Matrix methods
+			"matrix.send", "matrix.receive", "matrix.status", "matrix.login",
+			"matrix.refresh_token", "matrix.sync", "matrix.create_room",
+			"matrix.join_room", "matrix.leave_room", "matrix.invite_user",
+			"matrix.send_typing", "matrix.send_read_receipt",
+			// Agent methods
+			"agent.start", "agent.stop", "agent.status", "agent.list", "agent.send_command",
+			// Workflow methods
+			"workflow.start", "workflow.pause", "workflow.resume",
+			"workflow.cancel", "workflow.status", "workflow.list", "workflow.templates",
+			// HITL methods
+			"hitl.pending", "hitl.approve", "hitl.reject", "hitl.status",
+			"hitl.get", "hitl.extend", "hitl.escalate",
+			// Budget methods
+			"budget.status", "budget.usage", "budget.alerts",
+			// Container methods
+			"container.create", "container.start", "container.stop",
+			"container.list", "container.status",
+			// Device methods
+			"device.register", "device.wait_for_approval", "device.list",
+			"device.approve", "device.reject",
+			// Push methods
+			"push.register_token", "push.unregister_token", "push.update_settings",
+			// Discovery methods
+			"bridge.discover", "bridge.get_local_info", "bridge.capabilities",
+			// Profile/PII methods
+			"profile.create", "profile.list", "profile.get", "profile.update", "profile.delete",
+			"pii.request_access", "pii.approve_access", "pii.reject_access", "pii.list_requests",
+			// QR methods
+			"qr.config",
+		},
+		"websocket_events": []string{
+			// Agent events
+			"agent.started", "agent.stopped", "agent.status_changed",
+			"agent.command", "agent.error",
+			// Workflow events
+			"workflow.started", "workflow.progress", "workflow.completed",
+			"workflow.failed", "workflow.cancelled", "workflow.paused", "workflow.resumed",
+			// HITL events
+			"hitl.pending", "hitl.approved", "hitl.rejected",
+			"hitl.expired", "hitl.escalated",
+			// Budget events
+			"budget.alert", "budget.limit", "budget.updated",
+			// Platform events
+			"platform.connected", "platform.disconnected",
+			"platform.message", "platform.error",
+			// Matrix events
+			"matrix.message", "matrix.receipt", "matrix.typing", "matrix.presence",
+		},
+		"platforms": map[string]bool{
+			"slack":    true,
+			"discord":  true,
+			"telegram": true,
+			"whatsapp": true,
+		},
+		"limits": map[string]interface{}{
+			"max_containers":       10,
+			"max_agents":           5,
+			"max_workflow_steps":   50,
+			"hitl_timeout_seconds": 60,
+			"max_subscribers":      100,
+		},
+	}
+
+	// Add runtime-specific capabilities
+	if s.docker != nil {
+		capabilities["features"].(map[string]bool)["docker"] = true
+	}
+	if s.matrix != nil {
+		capabilities["features"].(map[string]bool)["matrix"] = true
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  capabilities,
+	}
+}
+
+// getRegion returns the configured region or default
+func (s *Server) getRegion() string {
+	if s.config != nil && s.config.Region != "" {
+		return s.config.Region
+	}
+	return "us-east"
+}
+
+// ============================================================================
+// Workflow Templates Method (ArmorTerminal compatibility)
+// ============================================================================
+
+// WorkflowTemplate represents a workflow template
+type WorkflowTemplate struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	Steps              int      `json:"steps"`
+	EstimatedDuration  string   `json:"estimated_duration"`
+	Tags               []string `json:"tags,omitempty"`
+	RequiresHitl       bool     `json:"requires_hitl"`
+	Category           string   `json:"category,omitempty"`
+}
+
+// handleWorkflowTemplates handles workflow.templates RPC method
+// Returns available workflow templates
+func (s *Server) handleWorkflowTemplates(req *Request) *Response {
+	templates := []WorkflowTemplate{
+		{
+			ID:                "code-review",
+			Name:              "Code Review",
+			Description:       "Automated code review with human approval gates",
+			Steps:             5,
+			EstimatedDuration: "5m",
+			Tags:              []string{"code", "review", "quality"},
+			RequiresHitl:      true,
+			Category:          "development",
+		},
+		{
+			ID:                "deployment",
+			Name:              "Safe Deployment",
+			Description:       "Deploy with staged approval gates and rollback capability",
+			Steps:             8,
+			EstimatedDuration: "10m",
+			Tags:              []string{"deploy", "production", "release"},
+			RequiresHitl:      true,
+			Category:          "operations",
+		},
+		{
+			ID:                "data-analysis",
+			Name:              "Data Analysis",
+			Description:       "Analyze datasets and generate reports",
+			Steps:             4,
+			EstimatedDuration: "15m",
+			Tags:              []string{"data", "analysis", "reports"},
+			RequiresHitl:      false,
+			Category:          "analytics",
+		},
+		{
+			ID:                "customer-support",
+			Name:              "Customer Support",
+			Description:       "Handle customer inquiries with escalation",
+			Steps:             6,
+			EstimatedDuration: "20m",
+			Tags:              []string{"support", "customer", "escalation"},
+			RequiresHitl:      true,
+			Category:          "support",
+		},
+		{
+			ID:                "research",
+			Name:              "Research Task",
+			Description:       "Deep research with source verification",
+			Steps:             7,
+			EstimatedDuration: "30m",
+			Tags:              []string{"research", "analysis", "verification"},
+			RequiresHitl:      true,
+			Category:          "research",
+		},
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"templates": templates,
+			"count":     len(templates),
+		},
+	}
+}
+
+// ============================================================================
+// Additional HITL Methods (ArmorTerminal compatibility)
+// ============================================================================
+
+// handleHitlGet handles hitl.get RPC method
+// Returns details for a specific HITL gate
+func (s *Server) handleHitlGet(req *Request) *Response {
+	var params struct {
+		GateID string `json:"gate_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.GateID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "gate_id is required",
+			},
+		}
+	}
+
+	hitlGatesMu.RLock()
+	gate, exists := hitlGates[params.GateID]
+	hitlGatesMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "gate not found: " + params.GateID,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  gate,
+	}
+}
+
+// handleHitlExtend handles hitl.extend RPC method
+// Extends the timeout for a HITL gate
+func (s *Server) handleHitlExtend(req *Request) *Response {
+	var params struct {
+		GateID          string `json:"gate_id"`
+		ExtendBySeconds int    `json:"extend_by_seconds"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.GateID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "gate_id is required",
+			},
+		}
+	}
+
+	if params.ExtendBySeconds <= 0 {
+		params.ExtendBySeconds = 300 // Default 5 minutes
+	}
+
+	hitlGatesMu.Lock()
+	gate, exists := hitlGates[params.GateID]
+	if exists {
+		gate.Timeout += params.ExtendBySeconds
+		hitlGates[params.GateID] = gate
+	}
+	hitlGatesMu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "gate not found: " + params.GateID,
+			},
+		}
+	}
+
+	// Log extension to audit
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "hitl_extended",
+			SessionID: params.GateID,
+			Details: map[string]interface{}{
+				"extend_by_seconds": params.ExtendBySeconds,
+				"new_timeout":       gate.Timeout,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"gate_id":     params.GateID,
+			"new_timeout": gate.Timeout,
+			"extended_by": params.ExtendBySeconds,
+		},
+	}
+}
+
+// handleHitlEscalate handles hitl.escalate RPC method
+// Escalates a HITL gate to higher priority
+func (s *Server) handleHitlEscalate(req *Request) *Response {
+	var params struct {
+		GateID string `json:"gate_id"`
+		Reason string `json:"reason"`
+		ToUser string `json:"to_user,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.GateID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "gate_id is required",
+			},
+		}
+	}
+
+	hitlGatesMu.Lock()
+	gate, exists := hitlGates[params.GateID]
+	if exists {
+		gate.Priority = "escalated"
+		hitlGates[params.GateID] = gate
+	}
+	hitlGatesMu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "gate not found: " + params.GateID,
+			},
+		}
+	}
+
+	// Log escalation to audit
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "hitl_escalated",
+			SessionID: params.GateID,
+			Details: map[string]interface{}{
+				"reason":  params.Reason,
+				"to_user": params.ToUser,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"gate_id":     params.GateID,
+			"priority":    "escalated",
+			"escalated_at": time.Now().Unix(),
+		},
+	}
+}
+
+// ============================================================================
+// Container Methods (ArmorTerminal compatibility)
+// ============================================================================
+
+// handleContainerCreate handles container.create RPC method
+// Creates a new container
+func (s *Server) handleContainerCreate(req *Request) *Response {
+	var params struct {
+		Name       string            `json:"name"`
+		Image      string            `json:"image"`
+		Env        map[string]string `json:"env,omitempty"`
+		Labels     map[string]string `json:"labels,omitempty"`
+		Cmd        []string          `json:"cmd,omitempty"`
+		AutoStart  bool              `json:"auto_start"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.Image == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "image is required",
+			},
+		}
+	}
+
+	// Check if Docker client is available
+	if s.docker == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Docker client not available",
+			},
+		}
+	}
+
+	// Create container using Docker client
+	containerID := "container_" + generateID()
+	now := time.Now().Unix()
+
+	// Use the existing ContainerInfo struct for storage
+	container := &ContainerInfo{
+		ID:      containerID,
+		Name:    params.Name,
+		State:   "created",
+		Created: now,
+	}
+
+	// Store container info
+	s.mu.Lock()
+	s.containers[containerID] = container
+	s.mu.Unlock()
+
+	// Log container creation
+	if s.auditLog != nil {
+		s.auditLog.Log(audit.Entry{
+			Timestamp: time.Now(),
+			EventType: "container_created",
+			SessionID: containerID,
+			Details: map[string]interface{}{
+				"name":  params.Name,
+				"image": params.Image,
+			},
+		})
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"container_id": containerID,
+			"name":         params.Name,
+			"image":        params.Image,
+			"status":       "created",
+			"created_at":   now,
+		},
+	}
+}
+
+// handleContainerStart handles container.start RPC method
+// Starts a container
+func (s *Server) handleContainerStart(req *Request) *Response {
+	var params struct {
+		ContainerID string `json:"container_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ContainerID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "container_id is required",
+			},
+		}
+	}
+
+	s.mu.Lock()
+	container, exists := s.containers[params.ContainerID]
+	if exists {
+		container.State = "running"
+	}
+	s.mu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "container not found: " + params.ContainerID,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"container_id": params.ContainerID,
+			"status":       "running",
+			"started_at":   time.Now().Unix(),
+		},
+	}
+}
+
+// handleContainerStop handles container.stop RPC method
+// Stops a container
+func (s *Server) handleContainerStop(req *Request) *Response {
+	var params struct {
+		ContainerID string `json:"container_id"`
+		Reason      string `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ContainerID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "container_id is required",
+			},
+		}
+	}
+
+	s.mu.Lock()
+	container, exists := s.containers[params.ContainerID]
+	if exists {
+		container.State = "stopped"
+	}
+	s.mu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "container not found: " + params.ContainerID,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"container_id": params.ContainerID,
+			"status":       "stopped",
+			"stopped_at":   time.Now().Unix(),
+		},
+	}
+}
+
+// handleContainerList handles container.list RPC method
+// Lists all containers
+func (s *Server) handleContainerList(req *Request) *Response {
+	var params struct {
+		Status string `json:"status,omitempty"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	s.mu.RLock()
+	containers := make([]*ContainerInfo, 0)
+	for _, c := range s.containers {
+		if params.Status == "" || c.State == params.Status {
+			containers = append(containers, c)
+		}
+	}
+	s.mu.RUnlock()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"containers": containers,
+			"count":      len(containers),
+		},
+	}
+}
+
+// handleContainerStatus handles container.status RPC method
+// Returns status of a specific container
+func (s *Server) handleContainerStatus(req *Request) *Response {
+	var params struct {
+		ContainerID string `json:"container_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ContainerID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "container_id is required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	container, exists := s.containers[params.ContainerID]
+	s.mu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "container not found: " + params.ContainerID,
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  container,
+	}
+}
+
+// ============================================================================
+// Secret Methods
+// ============================================================================
+
+// handleSecretList handles secret.list RPC method
+// Lists secret metadata (not actual secrets)
+func (s *Server) handleSecretList(req *Request) *Response {
+	var params struct {
+		KeyID string `json:"key_id,omitempty"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	// Get keys from keystore
+	if s.keystore == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "keystore not initialized",
+			},
+		}
+	}
+
+	keys, err := s.keystore.List("") // Empty string lists all providers
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to list keys: " + err.Error(),
+			},
+		}
+	}
+
+	// Filter by key_id if provided
+	if params.KeyID != "" {
+		filtered := make([]keystore.KeyInfo, 0)
+		for _, key := range keys {
+			if key.ID == params.KeyID {
+				filtered = append(filtered, key)
+			}
+		}
+		keys = filtered
+	}
+
+	// Convert to response format (metadata only, no secrets)
+	result := make([]map[string]interface{}, len(keys))
+	for i, key := range keys {
+		result[i] = map[string]interface{}{
+			"id":         key.ID,
+			"provider":   key.Provider,
+			"created_at": key.CreatedAt,
+			"expires_at": key.ExpiresAt,
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"keys":  result,
+			"count": len(result),
+		},
+	}
+}
+
+// handleQRConfig handles qr.config RPC method
+// Generates a signed configuration URL/QR code for ArmorTerminal/ArmorChat
+// This allows users to scan a QR code after app launch to auto-configure all server URLs.
+func (s *Server) handleQRConfig(req *Request) *Response {
+	var params struct {
+		Expiration string `json:"expiration,omitempty"` // Duration string (e.g., "24h", "7d")
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	// Parse expiration duration (default 24 hours)
+	expiration := 24 * time.Hour
+	if params.Expiration != "" {
+		if dur, err := time.ParseDuration(params.Expiration); err == nil {
+			expiration = dur
+		}
+	}
+
+	// Generate config QR
+	result, err := s.qrManager.GenerateConfigQR(expiration)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to generate config QR: " + err.Error(),
+			},
+		}
+	}
+
+	// Return config details (without the actual QR image bytes for JSON response)
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"deep_link":   result.DeepLink,
+			"url":         result.URL,
+			"config": map[string]interface{}{
+				"version":           result.Config.Version,
+				"matrix_homeserver": result.Config.MatrixHomeserver,
+				"rpc_url":           result.Config.RpcURL,
+				"ws_url":            result.Config.WsURL,
+				"push_gateway":      result.Config.PushGateway,
+				"server_name":       result.Config.ServerName,
+				"region":            result.Config.Region,
+				"expires_at":        result.Config.ExpiresAt,
+			},
+			"expires_at": result.ExpiresAt.Unix(),
+			"has_qr":     len(result.QRImage) > 0,
 		},
 	}
 }

@@ -4,7 +4,6 @@
 package secrets
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +11,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // SecretType defines the type of secret
@@ -110,8 +111,8 @@ func (tm *TokenManager) SetTTL(ttl time.Duration) {
 
 // GenerateToken creates a new one-time token for secret submission
 func (tm *TokenManager) GenerateToken(secretType SecretType, provider SecretProvider, sessionID string) (*OneTimeToken, error) {
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	tokenBytes, err := securerandom.Bytes(32)
+	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 
@@ -324,9 +325,7 @@ func (sm *SecretManager) SubmitSecret(submission SecretSubmission) (*StoredSecre
 	}
 
 	// Generate secret ID
-	idBytes := make([]byte, 16)
-	rand.Read(idBytes)
-	secretID := "secret_" + hex.EncodeToString(idBytes)
+	secretID := "secret_" + securerandom.MustID(16)
 
 	// Create stored secret
 	secret := &StoredSecret{

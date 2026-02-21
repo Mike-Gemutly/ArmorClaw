@@ -99,6 +99,9 @@ type Config struct {
 	// Event bus configuration
 	EventBus EventBusConfig `toml:"eventbus"`
 
+	// Discovery configuration (mDNS)
+	Discovery DiscoveryConfig `toml:"discovery"`
+
 	// Error system configuration
 	ErrorSystem ErrorSystemConfig `toml:"errors"`
 
@@ -381,6 +384,38 @@ type EventBusConfig struct {
 
 	// InactivityTimeout is the timeout for inactive subscribers
 	InactivityTimeout string `toml:"inactivity_timeout" env:"ARMORCLAW_EVENTBUS_INACTIVITY_TIMEOUT"`
+}
+
+// DiscoveryConfig holds mDNS/Bonjour discovery configuration
+type DiscoveryConfig struct {
+	// Enabled controls whether mDNS discovery is active
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_DISCOVERY_ENABLED"`
+
+	// InstanceName is the service instance name (defaults to hostname)
+	InstanceName string `toml:"instance_name" env:"ARMORCLAW_DISCOVERY_NAME"`
+
+	// Port is the HTTP API port to advertise
+	Port int `toml:"port" env:"ARMORCLAW_DISCOVERY_PORT"`
+
+	// TLS indicates whether HTTPS is enabled
+	TLS bool `toml:"tls" env:"ARMORCLAW_DISCOVERY_TLS"`
+
+	// APIPath is the API endpoint path (default: /api)
+	APIPath string `toml:"api_path" env:"ARMORCLAW_DISCOVERY_API_PATH"`
+
+	// WSPath is the WebSocket path (default: /ws)
+	WSPath string `toml:"ws_path" env:"ARMORCLAW_DISCOVERY_WS_PATH"`
+
+	// MatrixHomeserver is the Matrix homeserver URL to advertise
+	// If empty, uses the Matrix config's homeserver URL
+	MatrixHomeserver string `toml:"matrix_homeserver" env:"ARMORCLAW_DISCOVERY_MATRIX_URL"`
+
+	// PushGateway is the push gateway URL to advertise
+	// If empty, derived from the API URL
+	PushGateway string `toml:"push_gateway" env:"ARMORCLAW_DISCOVERY_PUSH_URL"`
+
+	// Hardware describes the hardware platform (optional)
+	Hardware string `toml:"hardware" env:"ARMORCLAW_DISCOVERY_HARDWARE"`
 }
 
 // ComplianceConfig holds PII/PHI compliance settings
@@ -736,6 +771,17 @@ func DefaultConfig() *Config {
 			WebSocketPath:     "/events",
 			MaxSubscribers:    100,
 			InactivityTimeout: "30m",
+		},
+		Discovery: DiscoveryConfig{
+			Enabled:          true,  // Enable mDNS discovery by default
+			InstanceName:     "",    // Will use hostname if empty
+			Port:             8080,  // Default HTTP port
+			TLS:              false, // Default to HTTP for local development
+			APIPath:          "/api",
+			WSPath:           "/ws",
+			MatrixHomeserver: "", // Will use Matrix config if empty
+			PushGateway:      "", // Will derive from API URL if empty
+			Hardware:         "",
 		},
 		ErrorSystem: ErrorSystemConfig{
 			Enabled:         true,

@@ -1,0 +1,164 @@
+# Docker Compose: Matrix Homeserver Stack
+# Part of Topology Separation (G-06)
+#
+# This stack runs the Matrix homeserver infrastructure.
+# Can be deployed independently for homeserver-only deployments.
+#
+# Usage:
+#   docker-compose -f docker-compose.matrix.yml up -d
+
+services:
+  # ========================================
+  # Matrix Conduit Homeserver
+  # ========================================
+  matrix-conduit:
+    image: matrixconduit/matrix-conduit:latest
+    container_name: armorclaw-conduit
+    restart: unless-stopped
+
+    environment:
+      # Server configuration
+      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-matrix.armorclaw.com}"
+      CONDUIT_ADDRESS: "0.0.0.0"
+      CONDUIT_PORT: "6167"
+
+      # Database (embedded SQLite for low memory)
+      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit/conduit.db"
+      CONDUIT_DATABASE_BACKEND: "sqlite"
+
+      # Security
+      CONDUIT_ALLOW_ENCRYPTION: "true"
+      CONDUIT_ALLOW_REGISTRATION: "false"  # Set to true for initial setup
+      CONDUIT_ALLOW_FEDERATION: "true"
+      CONDUIT_ALLOW_CHECK_FOR_UPDATES: "true"
+
+      # Performance tuning
+      CONDUIT_MAX_REQUEST_SIZE: "10485760"  # 10 MB
+      CONDUIT_MAX_CONCURRENT_REQUESTS: "100"
+
+      # Logging
+      CONDUIT_LOG: "info"
+
+    volumes:
+      - conduit_data:/var/lib/matrix-conduit
+      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
+
+    ports:
+      - "6167:6167"   # Client API
+      - "8448:8448"   # Federation
+
+    networks:
+      - matrix-net
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6167/_matrix/client/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+        reservations:
+          memory: 50M
+
+  # ========================================
+  # Coturn STUN/TURN Server (Voice/Video)
+  # ========================================
+  coturn:
+    image: coturn/coturn:latest
+    container_name: armorclaw-coturn
+    restart: unless-stopped
+
+    network_mode: "host"  # Requires direct network access for TURN
+
+    volumes:
+      - ./configs/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - coturn_data:/var/lib/coturn
+
+    command: [
+      "--log-file=stdout",
+      "-n",  # Daemon mode
+      "--no-cli",
+      "--realm=${MATRIX_SERVER_NAME:-matrix.armorclaw.com}",
+      "--use-auth-secret",
+      "--static-auth-secret=${TURN_SECRET:-change-me-in-production}",
+      "--external-ip=$(curl -s https://api.ipify.org)",
+    ]
+
+    deploy:
+      resources:
+        limits:
+          memory: 100M
+        reservations:
+          memory: 30M
+
+  # ========================================
+  # Nginx Reverse Proxy (Matrix Frontend)
+  # ========================================
+  nginx:
+    build:
+      context: ./deploy/nginx
+      dockerfile: Dockerfile
+    image: armorclaw/nginx:latest
+    container_name: armorclaw-nginx
+    restart: unless-stopped
+
+    environment:
+      - MATRIX_SERVER_NAME=${MATRIX_SERVER_NAME:-matrix.armorclaw.com}
+      - TURN_SERVER_NAME=${TURN_SERVER_NAME:-turn.matrix.armorclaw.com}
+
+    volumes:
+      - ./configs/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./configs/nginx/ssl:/etc/nginx/ssl:ro
+      - letsencrypt:/etc/letsencrypt:ro
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    networks:
+      - matrix-net
+
+    depends_on:
+      - matrix-conduit
+
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+        reservations:
+          memory: 20M
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  matrix-net:
+    driver: bridge
+    name: armorclaw-matrix
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+# ========================================
+# Volumes
+# ========================================
+volumes:
+  conduit_data:
+    driver: local
+    name: armorclaw-conduit-data
+  coturn_data:
+    driver: local
+    name: armorclaw-coturn-data
+  letsencrypt:
+    driver: local
+    name: armorclaw-letsencrypt

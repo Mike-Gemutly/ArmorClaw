@@ -3,7 +3,6 @@ package trust
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +10,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // TrustScore represents the trust level of a device or session
@@ -668,8 +669,7 @@ func (m *ZeroTrustManager) GetZeroTrustStats() map[string]interface{} {
 
 // generateZeroTrustDeviceID creates a unique device identifier
 func generateZeroTrustDeviceID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
+	b := securerandom.MustBytes(16)
 	hash := sha256.Sum256(b)
 	return hex.EncodeToString(hash[:8])
 }

@@ -5,7 +5,6 @@ package qr
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/securerandom"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -30,6 +30,7 @@ const (
 	TokenTypeAPISecret  TokenType = "api_secret"
 	TokenTypeInvite     TokenType = "invite"
 	TokenTypeVerification TokenType = "verification"
+	TokenTypeConfig     TokenType = "config" // Client configuration (ArmorTerminal/ArmorChat)
 )
 
 // TokenState represents the state of a one-time token
@@ -107,8 +108,7 @@ func DefaultQRConfig() QRConfig {
 // NewQRManager creates a new QR manager
 func NewQRManager(signingKey []byte, config QRConfig, serverURL, bridgeURL, serverName string) *QRManager {
 	if len(signingKey) == 0 {
-		signingKey = make([]byte, 32)
-		rand.Read(signingKey)
+		signingKey = securerandom.MustBytes(32)
 	}
 
 	return &QRManager{
@@ -259,6 +259,179 @@ func (m *QRManager) GenerateVerificationQR(deviceID string) (*QRResult, error) {
 	}, nil
 }
 
+// ConfigPayload contains server configuration for client apps
+type ConfigPayload struct {
+	Version         int    `json:"version"`           // Config format version
+	MatrixHomeserver string `json:"matrix_homeserver"` // Matrix homeserver URL
+	RpcURL          string `json:"rpc_url"`           // Bridge RPC endpoint
+	WsURL           string `json:"ws_url"`            // WebSocket endpoint
+	PushGateway     string `json:"push_gateway"`      // Push gateway URL
+	ServerName      string `json:"server_name"`       // Human-readable server name
+	Region          string `json:"region,omitempty"`  // Server region
+	ExpiresAt       int64  `json:"expires_at"`        // Unix timestamp
+	Signature       string `json:"signature"`         // HMAC signature
+}
+
+// GenerateConfigQR generates a QR code with server configuration for ArmorTerminal/ArmorChat
+// This allows users to scan a QR code after app launch to auto-configure all server URLs.
+func (m *QRManager) GenerateConfigQR(expiration time.Duration) (*ConfigQRResult, error) {
+	if expiration == 0 {
+		expiration = 24 * time.Hour // Default 24 hours for config tokens
+	}
+
+	// Create config payload
+	config := &ConfigPayload{
+		Version:          1,
+		MatrixHomeserver: m.serverURL,
+		RpcURL:           m.bridgeURL + "/api",
+		WsURL:            m.bridgeURL + "/ws",
+		PushGateway:      m.bridgeURL + "/_matrix/push/v1/notify",
+		ServerName:       m.serverName,
+		ExpiresAt:        time.Now().Add(expiration).Unix(),
+	}
+
+	// Sign the config
+	config.Signature = m.signConfig(config)
+
+	// Encode config as JSON, then base64
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+	configB64 := base64.URLEncoding.EncodeToString(configJSON)
+
+	// Create deep link URL
+	deepLink := fmt.Sprintf("armorclaw://config?d=%s", configB64)
+
+	// Create web URL (for browsers)
+	webURL := fmt.Sprintf("https://armorclaw.app/config?d=%s", configB64)
+
+	// Generate QR code
+	qrBytes, err := qrcode.Encode(deepLink, m.config.QRRecoveryLevel, m.config.QRSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate QR: %w", err)
+	}
+
+	// Create a token for tracking
+	token, err := m.createToken(TokenTypeConfig, string(configJSON), expiration, 10, map[string]string{
+		"server_name": m.serverName,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ConfigQRResult{
+		Token:     token,
+		Config:    config,
+		URL:       webURL,
+		DeepLink:  deepLink,
+		QRImage:   qrBytes,
+		ExpiresAt: token.ExpiresAt,
+	}, nil
+}
+
+// GenerateConfigURL generates a signed configuration URL (no QR image)
+func (m *QRManager) GenerateConfigURL(expiration time.Duration) (string, *ConfigPayload, error) {
+	if expiration == 0 {
+		expiration = 24 * time.Hour
+	}
+
+	config := &ConfigPayload{
+		Version:          1,
+		MatrixHomeserver: m.serverURL,
+		RpcURL:           m.bridgeURL + "/api",
+		WsURL:            m.bridgeURL + "/ws",
+		PushGateway:      m.bridgeURL + "/_matrix/push/v1/notify",
+		ServerName:       m.serverName,
+		ExpiresAt:        time.Now().Add(expiration).Unix(),
+	}
+	config.Signature = m.signConfig(config)
+
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+	configB64 := base64.URLEncoding.EncodeToString(configJSON)
+
+	url := fmt.Sprintf("armorclaw://config?d=%s", configB64)
+	return url, config, nil
+}
+
+// ValidateConfig validates a signed configuration payload
+func (m *QRManager) ValidateConfig(config *ConfigPayload) error {
+	// Check expiration
+	if time.Now().Unix() > config.ExpiresAt {
+		return errors.New("config expired")
+	}
+
+	// Verify signature
+	expectedSig := m.signConfig(config)
+	if !hmac.Equal([]byte(config.Signature), []byte(expectedSig)) {
+		return errors.New("invalid config signature")
+	}
+
+	return nil
+}
+
+// ParseConfigURL parses a config URL and returns the payload
+func ParseConfigURL(configURL string) (*ConfigPayload, error) {
+	// Parse armorclaw://config?d=...
+	u, err := url.Parse(configURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if u.Scheme != "armorclaw" || u.Host != "config" {
+		return nil, errors.New("not a config URL")
+	}
+
+	data := u.Query().Get("d")
+	if data == "" {
+		return nil, errors.New("missing config data")
+	}
+
+	// Decode base64
+	configJSON, err := base64.URLEncoding.DecodeString(data)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64: %w", err)
+	}
+
+	// Parse JSON
+	var config ConfigPayload
+	if err := json.Unmarshal(configJSON, &config); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	return &config, nil
+}
+
+// signConfig generates a signature for a config payload
+func (m *QRManager) signConfig(config *ConfigPayload) string {
+	data := fmt.Sprintf("%d:%s:%s:%s:%s:%s:%d",
+		config.Version,
+		config.MatrixHomeserver,
+		config.RpcURL,
+		config.WsURL,
+		config.PushGateway,
+		config.ServerName,
+		config.ExpiresAt,
+	)
+
+	h := hmac.New(sha256.New, m.signingKey)
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ConfigQRResult contains the result of config QR generation
+type ConfigQRResult struct {
+	Token     *OneTimeToken `json:"token"`
+	Config    *ConfigPayload `json:"config"`
+	URL       string         `json:"url"`        // Web URL
+	DeepLink  string         `json:"deep_link"`  // armorclaw:// deep link
+	QRImage   []byte         `json:"qr_image"`   // PNG QR code
+	ExpiresAt time.Time      `json:"expires_at"`
+}
+
 // QRResult contains the result of QR code generation
 type QRResult struct {
 	Token     *OneTimeToken `json:"token"`
@@ -285,13 +458,8 @@ func (m *QRManager) createToken(tokenType TokenType, payload string, expiration 
 	}
 
 	// Generate token
-	idBytes := make([]byte, 16)
-	rand.Read(idBytes)
-	tokenID := "tok_" + hex.EncodeToString(idBytes)
-
-	tokenBytes := make([]byte, 24)
-	rand.Read(tokenBytes)
-	tokenStr := base64.URLEncoding.EncodeToString(tokenBytes)
+	tokenID := "tok_" + securerandom.MustID(16)
+	tokenStr := base64.URLEncoding.EncodeToString(securerandom.MustBytes(24))
 
 	now := time.Now()
 	token := &OneTimeToken{

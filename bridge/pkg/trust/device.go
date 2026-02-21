@@ -3,12 +3,12 @@
 package trust
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/securerandom"
 )
 
 // TrustState represents the verification state of a device
@@ -509,9 +509,7 @@ func (m *Manager) Summary() map[string]interface{} {
 
 // generateID creates a unique identifier
 func generateID(prefix string) string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("%s_%x", prefix, b)
+	return prefix + "_" + securerandom.MustID(16)
 }
 
 // VerificationNotifier interface for sending notifications

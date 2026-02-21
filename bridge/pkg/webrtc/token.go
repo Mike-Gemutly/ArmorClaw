@@ -3,6 +3,7 @@ package webrtc
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -18,7 +19,7 @@ type Token struct {
 	SessionID  string    `json:"session_id"`
 	RoomID     string    `json:"room_id"`
 	ExpiresAt  time.Time `json:"expires_at"`
-	Signature  string    `json:"signature"`
+	Signature  string    `json:"-"` // Never expose signature in JSON - use ToSecureString() instead
 }
 
 // TokenClaims represents the claims within a token
@@ -168,12 +169,72 @@ func (tm *TokenManager) hmac(s string) string {
 }
 
 // ToJSON converts the token to a JSON string for transport
+// Note: This does NOT include the signature. Use ToSecureString() for full token transport.
 func (t *Token) ToJSON() (string, error) {
-	data, err := json.Marshal(t)
+	// Create a safe version without signature for JSON output
+	safeToken := struct {
+		SessionID string    `json:"session_id"`
+		RoomID    string    `json:"room_id"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}{
+		SessionID: t.SessionID,
+		RoomID:    t.RoomID,
+		ExpiresAt: t.ExpiresAt,
+	}
+	data, err := json.Marshal(safeToken)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ToSecureString converts the token to an opaque, authenticated string
+// that can be safely transported to the client. The client can present
+// this string for authentication without knowing the internal structure.
+func (t *Token) ToSecureString() (string, error) {
+	// Create a full token including signature for secure transport
+	fullToken := struct {
+		SessionID string `json:"sid"`
+		RoomID    string `json:"rid"`
+		ExpiresAt int64  `json:"exp"`
+		Signature string `json:"sig"`
+	}{
+		SessionID: t.SessionID,
+		RoomID:    t.RoomID,
+		ExpiresAt: t.ExpiresAt.Unix(),
+		Signature: t.Signature,
+	}
+	data, err := json.Marshal(fullToken)
+	if err != nil {
+		return "", err
+	}
+	// Base64 encode for safe transport
+	return base64.URLEncoding.EncodeToString(data), nil
+}
+
+// TokenFromSecureString parses a token from a secure string
+func TokenFromSecureString(secureStr string) (*Token, error) {
+	data, err := base64.URLEncoding.DecodeString(secureStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode token: %w", err)
+	}
+
+	var fullToken struct {
+		SessionID string `json:"sid"`
+		RoomID    string `json:"rid"`
+		ExpiresAt int64  `json:"exp"`
+		Signature string `json:"sig"`
+	}
+	if err := json.Unmarshal(data, &fullToken); err != nil {
+		return nil, fmt.Errorf("failed to parse token: %w", err)
+	}
+
+	return &Token{
+		SessionID: fullToken.SessionID,
+		RoomID:    fullToken.RoomID,
+		ExpiresAt: time.Unix(fullToken.ExpiresAt, 0),
+		Signature: fullToken.Signature,
+	}, nil
 }
 
 // TokenFromJSON parses a token from a JSON string
