@@ -28,7 +28,7 @@ echo "Starting container with test secret..."
 docker run -d --rm --name $CONTAINER_NAME \
     -e OPENAI_API_KEY="$TEST_SECRET" \
     -e ANTHROPIC_API_KEY="sk-ant-test-$(date +%s)" \
-    armorclaw/agent:v1 python -c "import time; time.sleep(999999)" >/dev/null 2>&1
+    mikegemut/armorclaw:latest python -c "import time; time.sleep(999999)" >/dev/null 2>&1
 
 sleep 1
 
@@ -181,7 +181,7 @@ sleep 1
 # Start new container with a DIFFERENT dummy key (container requires API key to start)
 docker run -d --rm --name $CONTAINER_NAME \
     -e OPENAI_API_KEY="sk-restart-dummy-key" \
-    armorclaw/agent:v1 python -c "import time; time.sleep(999999)" >/dev/null 2>&1
+    mikegemut/armorclaw:latest python -c "import time; time.sleep(999999)" >/dev/null 2>&1
 sleep 2
 
 # Verify NO old secrets in the restarted container
