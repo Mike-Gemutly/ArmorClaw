@@ -5,6 +5,7 @@
 > **Milestone:** First Production Testing
 > **Edition:** **Slack Enterprise Edition** (Discord/Teams/WhatsApp planned - see [ROADMAP.md](ROADMAP.md))
 > **Status:** PRODUCTION TESTING - Enterprise Security with Zero-Trust Enforcement
+> **Security Hardening:** v0.2.0 includes secure provisioning, admin creation, and credential cleanup
 
 ---
 
@@ -151,14 +152,25 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 | `applications/ArmorChat/` | Android client source |
 | `docs/` | Documentation |
 
-### Deployment Checklist
+### Deployment Checklist (Quick Reference)
 
-1. **Clone:** `git clone https://github.com/armorclaw/armorclaw.git`
-2. **Build Bridge:** `cd bridge && go build -o armorclaw-bridge ./cmd/bridge`
-3. **Start Matrix:** `docker compose -f docker-compose.matrix.yml up -d`
-4. **Run Setup:** `./deploy/setup-wizard.sh`
-5. **Start Bridge:** `systemctl start armorclaw-bridge`
-6. **Verify:** `./deploy/health-check.sh`
+> **Full Guide:** See "Complete VPS Deployment Guide" section below for detailed steps.
+
+| Phase | Command | Purpose |
+|-------|---------|---------|
+| 1. VPS Setup | `apt install -y docker.io docker-compose-plugin` | Install prerequisites |
+| 2. Clone | `git clone https://github.com/armorclaw/armorclaw.git` | Get source code |
+| 3. Build Bridge | `cd bridge && go build -o armorclaw-bridge ./cmd/bridge` | Compile Go binary |
+| 4. Start Matrix | `docker compose -f docker-compose.matrix.yml up -d` | Start homeserver |
+| 5. Create Admin | `./deploy/create-matrix-admin.sh admin` | Secure user creation |
+| 6. Run Setup | `./deploy/setup-wizard.sh` | Interactive configuration |
+| 7. Start Bridge | `systemctl start armorclaw-bridge` | Start bridge service |
+| 8. Verify | `./deploy/health-check.sh` | Health verification |
+
+**Key Scripts:**
+- `deploy/create-matrix-admin.sh` - Secure admin creation (NO registration window!)
+- `deploy/setup-wizard.sh` - Interactive setup wizard
+- `deploy/health-check.sh` - Stack health verification
 
 ### Quick Test Commands
 
@@ -6065,9 +6077,400 @@ fun getMatrixHomeserverUrl(): String {
 
 ---
 
-**Review Last Updated:** 2026-02-20
+**Review Last Updated:** 2026-02-21
 **Status:** ✅ PHASE 7.2 COMPLETE (v7.2.0) - mDNS Discovery Protocol Enhanced
 **Next Milestone:** First VPS Deployment - End-to-End E2EE Verification with Real Devices
+
+---
+
+## Complete VPS Deployment Guide (v0.2.0)
+
+This section provides a comprehensive deployment guide for ArmorClaw with OpenClaw, ArmorChat, ArmorTerminal, and Element X.
+
+### Pre-Deployment Requirements
+
+#### VPS Requirements
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| **OS** | Ubuntu 22.04+ / Debian 12+ | Ubuntu 24.04 LTS |
+| **RAM** | 2GB | 4GB+ |
+| **Disk** | 10GB free | 20GB+ SSD |
+| **CPU** | 2 cores | 4+ cores |
+| **Network** | Public IP | Static IP |
+
+#### Required Open Ports
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 22 | TCP | SSH |
+| 80 | TCP | HTTP (Let's Encrypt) |
+| 443 | TCP | HTTPS |
+| 8448 | TCP | Matrix Federation |
+| 3478 | TCP/UDP | STUN |
+| 5349 | TCP/UDP | TURN TLS |
+| 49152-65535 | UDP | TURN relay ports |
+
+#### DNS Configuration
+```
+A record:     matrix.yourdomain.com → VPS IP
+A record:     bridge.yourdomain.com → VPS IP (optional, for HTTPS RPC)
+SRV record:   _matrix._tcp.yourdomain.com → matrix.yourdomain.com:8448
+```
+
+### Phase 1: VPS Initial Setup
+
+```bash
+# Connect to VPS
+ssh root@your-vps-ip
+
+# Update system
+apt update && apt upgrade -y
+
+# Install prerequisites
+apt install -y curl wget git docker.io docker-compose-plugin socat jq unzip
+
+# Configure firewall
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 8448/tcp
+ufw allow 3478/tcp
+ufw allow 3478/udp
+ufw allow 5349/tcp
+ufw allow 5349/udp
+ufw allow 49152:65535/udp
+ufw enable
+
+# Clone repository
+cd /opt
+git clone https://github.com/armorclaw/armorclaw.git
+cd armorclaw
+```
+
+### Phase 2: Build Bridge Binary
+
+```bash
+# Install Go 1.24+
+wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+rm -rf /usr/local/go && tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+
+# Build bridge
+cd /opt/armorclaw/bridge
+go build -o armorclaw-bridge ./cmd/bridge
+
+# Verify build
+./armorclaw-bridge --version
+# Expected: ArmorClaw Bridge v7.0.0
+
+# Install to system location
+mkdir -p /opt/armorclaw
+cp armorclaw-bridge /opt/armorclaw/
+chmod +x /opt/armorclaw/armorclaw-bridge
+ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge
+```
+
+### Phase 3: Matrix Stack Deployment
+
+```bash
+# Create configuration directories
+mkdir -p /etc/armorclaw
+mkdir -p /var/lib/armorclaw
+mkdir -p /run/armorclaw
+mkdir -p /var/log/armorclaw
+
+# Start Matrix stack
+cd /opt/armorclaw
+docker compose -f docker-compose.matrix.yml up -d
+
+# Wait for services to start
+sleep 15
+
+# Verify Matrix is running
+curl -f http://localhost:6167/_matrix/client/versions
+# Expected: {"versions":["v1.0","v1.1",...,"v1.11"]}
+```
+
+### Phase 4: Create Admin User (SECURE METHOD)
+
+**CRITICAL:** Never enable `allow_registration`! Use the secure admin creation script:
+
+```bash
+# Use the secure admin creation script (no registration window)
+cd /opt/armorclaw
+chmod +x deploy/create-matrix-admin.sh
+./deploy/create-matrix-admin.sh admin
+
+# Or specify password directly (for automation):
+# ./deploy/create-matrix-admin.sh admin "your-secure-password"
+```
+
+**Why this matters:** Enabling `allow_registration` creates a window where anyone can register an account on your server. The script creates users via the admin API instead, keeping registration disabled at all times.
+
+### Phase 5: Bridge Configuration
+
+```bash
+# Run setup wizard
+cd /opt/armorclaw
+chmod +x deploy/setup-wizard.sh
+./deploy/setup-wizard.sh
+```
+
+**Setup Wizard Choices:**
+
+| Step | Choice |
+|------|--------|
+| 1. Welcome | "No" for import (fresh install) |
+| 2. Prerequisites | Should pass automatically |
+| 3. Docker | Already installed |
+| 4. Container | Build from Dockerfile |
+| 5. Bridge | Already built |
+| 6. Budget | Set hard limits in provider dashboard first! |
+| 7. Configuration | Socket: `/run/armorclaw/bridge.sock`, Log: `info` |
+| 8. Keystore | Initialize new keystore |
+| 9. API Key | Add first API key (OpenAI/Anthropic/etc.) |
+| 10. Systemd | Create service file |
+| 11. Verification | Should pass all checks |
+| 12. Advanced Features | Enable all recommended |
+
+### Phase 6: Verify Bridge
+
+```bash
+# Start bridge
+systemctl start armorclaw-bridge
+systemctl status armorclaw-bridge
+
+# Test bridge RPC
+echo '{"jsonrpc":"2.0","id":1,"method":"bridge.health"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+**Expected response:**
+```json
+{
+  "jsonrpc":"2.0",
+  "id":1,
+  "result":{
+    "version":"7.0.0",
+    "supports_e2ee":true,
+    "supports_recovery":true,
+    "supports_agents":true,
+    "supports_workflows":true,
+    "status":"healthy"
+  }
+}
+```
+
+### Phase 7: Push Gateway (Sygnal)
+
+```bash
+# Start Sygnal
+cd /opt/armorclaw
+docker compose -f docker-compose.bridge.yml up -d sygnal
+
+# Verify Sygnal
+curl -f http://localhost:5000/_matrix/push/v1/notify
+# Expected: 400 Bad Request (normal, needs body) or 200
+```
+
+### Phase 8: Build Agent Container
+
+```bash
+cd /opt/armorclaw
+docker build -t mikegemut/armorclaw:latest .
+
+# Verify container hardening
+docker run --rm mikegemut/armorclaw:latest id
+# Expected: uid=10001(claw) gid=10001(claw)
+```
+
+### Phase 9: Client Integration
+
+#### Element X (Manual Configuration)
+1. Download Element X: https://element.io/download
+2. Open Element X → Edit homeserver → Enter: `https://matrix.yourdomain.com`
+3. Create account or sign in
+4. Verify E2EE: Start DM with `@bridge:matrix.yourdomain.com`, send `!status`
+
+#### ArmorChat (QR Provisioning or Manual)
+**QR Provisioning (Recommended):**
+1. On bridge admin: Run `provisioning.start` RPC method
+2. Display QR code (60s window)
+3. On ArmorChat: Scan QR code → Auto-configure
+
+**Manual Configuration:**
+1. Open ArmorChat
+2. Enter homeserver: `https://matrix.yourdomain.com`
+3. Navigate to Settings → Bridge
+4. Enter bridge URL: `https://bridge.yourdomain.com`
+
+#### ArmorTerminal
+1. Open ArmorTerminal
+2. Configure bridge:
+   - RPC URL: `https://bridge.yourdomain.com/rpc`
+   - WebSocket URL: `wss://bridge.yourdomain.com/ws`
+3. Authenticate with Matrix credentials
+
+### Phase 10: Post-Deployment Security
+
+```bash
+# Verify registration is disabled
+grep 'allow_registration' /opt/armorclaw/configs/conduit.toml
+# Expected: allow_registration = false
+
+# Enable HTTPS with Let's Encrypt
+apt install -y certbot python3-certbot-nginx
+certbot --nginx -d matrix.yourdomain.com
+certbot --nginx -d bridge.yourdomain.com
+systemctl enable certbot.timer
+
+# Enable bridge service on boot
+systemctl enable armorclaw-bridge
+```
+
+### Verification Checklist
+
+```bash
+# Run health check script
+./deploy/health-check.sh
+
+# Manual verification
+echo '{"jsonrpc":"2.0","id":1,"method":"bridge.health"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+curl -f http://localhost:6167/_matrix/client/versions
+curl -f http://localhost:5000/_matrix/push/v1/notify
+
+# Check containers
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+**Expected running containers:**
+- `armorclaw-conduit` (healthy)
+- `armorclaw-nginx` (healthy)
+- `armorclaw-coturn` (running)
+- `armorclaw-sygnal` (healthy)
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Bridge not starting | `journalctl -u armorclaw-bridge -n 50` |
+| Matrix not responding | `docker logs armorclaw-conduit` |
+| Push not working | `docker logs armorclaw-sygnal` |
+| Clients can't connect | Check firewall: `ufw status`, DNS: `nslookup matrix.yourdomain.com` |
+
+### Quick Reference Commands
+
+```bash
+# Start all services
+docker compose up -d && systemctl start armorclaw-bridge
+
+# Stop all services
+systemctl stop armorclaw-bridge && docker compose down
+
+# View logs
+journalctl -u armorclaw-bridge -f
+docker compose logs -f matrix-conduit
+
+# Health check
+./deploy/health-check.sh
+
+# Test RPC
+echo '{"jsonrpc":"2.0","id":1,"method":"bridge.health"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+
+# Rebuild bridge
+cd /opt/armorclaw/bridge && go build -o /opt/armorclaw/armorclaw-bridge ./cmd/bridge
+systemctl restart armorclaw-bridge
+```
+
+### Secure Provisioning Protocol (v0.2.0)
+
+ArmorClaw v0.2.0 introduces a secure QR-based provisioning protocol for ArmorChat and ArmorTerminal:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    SECURE PROVISIONING FLOW                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. Admin triggers provisioning on bridge                           │
+│     RPC: provisioning.start → generates 60s token                   │
+│                                                                      │
+│  2. Bridge displays QR code with signed config                      │
+│     Config: {matrix_homeserver, rpc_url, ws_url, signature}        │
+│                                                                      │
+│  3. User scans QR with ArmorChat/ArmorTerminal                     │
+│     - Verifies HMAC-SHA256 signature                                │
+│     - Checks token expiry                                           │
+│     - Applies configuration                                         │
+│                                                                      │
+│  4. Token consumed (one-time-use)                                   │
+│     RPC: provisioning.claim                                         │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Security Properties:**
+- **Narrow Window:** 60-second default expiry (max 300s)
+- **One-Time Use:** Tokens deleted after successful claim
+- **Signature Verification:** HMAC-SHA256 with TOFU (Trust-On-First-Use)
+- **Memory-Only:** Tokens stored in memory, never persisted
+
+**RPC Methods:**
+| Method | Purpose |
+|--------|---------|
+| `provisioning.start` | Generate new provisioning token |
+| `provisioning.status` | Check token status |
+| `provisioning.claim` | Claim token (client-side) |
+| `provisioning.cancel` | Cancel pending token |
+| `provisioning.rotate_secret` | Rotate signing key (admin) |
+
+---
+
+## v0.2.0: Security Hardening (2026-02-21)
+
+Version 0.2.0 addresses critical security gaps identified during pre-deployment review:
+
+### Security Gaps Resolved
+
+| Gap | Issue | Resolution | Files |
+|-----|-------|------------|-------|
+| GAP-1 | Registration Window | Secure admin creation script (no registration enable) | `deploy/create-matrix-admin.sh` |
+| GAP-2 | No Server Identity | HMAC-SHA256 signed provisioning config | `bridge/pkg/provisioning/` |
+| GAP-3 | Stubbed Signature | Full HMAC verification in clients | `applications/*/SignedConfigParser.kt` |
+| GAP-4 | mDNS No Auth | QR-based provisioning replaces mDNS | `docs/plans/2026-02-21-secure-provisioning-protocol.md` |
+| GAP-5 | No Firewall Check | Enhanced health-check.sh with UFW verification | `deploy/health-check.sh` |
+| GAP-6 | Credential in Git | Removed hardcoded OAuth secrets, use env vars | `container/openclaw-src/extensions/google-antigravity-auth/index.ts` |
+| GAP-7 | No TOFU | BridgeTrustStore for known bridge identities | `applications/*/BridgeTrustStore.kt` |
+
+### New Files (v0.2.0)
+
+| File | Purpose |
+|------|---------|
+| `deploy/create-matrix-admin.sh` | Secure admin user creation via CLI |
+| `bridge/pkg/provisioning/manager.go` | Provisioning token management |
+| `bridge/pkg/provisioning/rpc.go` | RPC handlers for provisioning |
+| `bridge/pkg/provisioning/config.go` | Configuration loader |
+| `applications/ArmorChat/.../SignedConfigParser.kt` | HMAC signature verification |
+| `applications/ArmorChat/.../BridgeTrustStore.kt` | TOFU trust store |
+| `applications/ArmorTerminal/.../SignedConfigParser.kt` | HMAC signature verification |
+| `applications/ArmorTerminal/.../BridgeTrustStore.kt` | TOFU trust store |
+| `docs/plans/2026-02-21-secure-provisioning-protocol.md` | Provisioning protocol spec |
+| `docs/plans/2026-02-21-security-gap-analysis.md` | Security gap analysis |
+
+### Security Principles Enforced
+
+1. **No Registration Window:** Admin users created via CLI, never by enabling registration
+2. **Narrow Provisioning Window:** 60-second default, one-time-use tokens
+3. **Signature Verification:** HMAC-SHA256 for all provisioning configs
+4. **Trust-On-First-Use:** Bridge identity stored after first successful connection
+5. **No Hardcoded Secrets:** All credentials via environment variables
+6. **Constant-Time Comparison:** Prevents timing attacks on signature verification
+7. **Memory-Only Tokens:** Provisioning tokens never persisted to disk
+
+### Deployment Impact
+
+- **Breaking Change:** mDNS discovery deprecated in favor of QR provisioning
+- **Migration:** Existing manual configurations continue to work
+- **Element X:** Unaffected (manual configuration remains)
+- **ArmorChat/ArmorTerminal:** Must upgrade to v0.2.0 for QR provisioning
 
 ---
 
