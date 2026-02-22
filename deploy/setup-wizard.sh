@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Setup Wizard
 # Interactive guided installation and configuration
-# Version: 1.0.0
+# Version: 2.0.0 - Added mode selection
 
 set -e
 
@@ -11,6 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -20,6 +21,9 @@ DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"
 SOCKET_PATH="$RUN_DIR/bridge.sock"
 LOG_FILE="/var/log/armorclaw-setup.log"
+
+# Setup mode (quick/standard/expert)
+SETUP_MODE="standard"
 
 # Import state flags
 SETTINGS_IMPORTED="false"
@@ -146,6 +150,92 @@ init_logging() {
     mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
     exec > >(tee -a "$LOG_FILE")
     exec 2>&1
+}
+
+#=============================================================================
+# Mode Selection
+#=============================================================================
+
+select_setup_mode() {
+    clear 2>/dev/null || true
+
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}              ${BOLD}ArmorClaw Setup Wizard${NC}                              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}              ${BOLD}Version 2.0.0${NC}                                        ${CYAN}║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${BOLD}Choose your setup experience:${NC}"
+    echo ""
+
+    echo -e "  ${GREEN}[1]${NC} ${BOLD}Quick Setup${NC} ${CYAN}(Recommended)${NC}"
+    echo "      → 2-3 minutes, secure defaults, minimal prompts"
+    echo "      → Best for: First-time users, local development"
+    echo ""
+
+    echo -e "  ${YELLOW}[2]${NC} ${BOLD}Standard Setup${NC}"
+    echo "      → 5-10 minutes, guided configuration with explanations"
+    echo "      → Best for: Production deployments with custom needs"
+    echo ""
+
+    echo -e "  ${MAGENTA}[3]${NC} ${BOLD}Expert Setup${NC}"
+    echo "      → 10-15 minutes, full control over all settings"
+    echo "      → Best for: Advanced users, complex configurations"
+    echo ""
+
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    local choice
+    while true; do
+        echo -ne "${CYAN}Enter choice [1/2/3] (default: 1): ${NC}"
+        read -r choice
+        choice=${choice:-1}
+
+        case "$choice" in
+            1|quick)
+                SETUP_MODE="quick"
+                echo ""
+                echo -e "${GREEN}✓ Quick Setup selected${NC}"
+                echo ""
+                return 0
+                ;;
+            2|standard)
+                SETUP_MODE="standard"
+                echo ""
+                echo -e "${YELLOW}✓ Standard Setup selected${NC}"
+                echo ""
+                return 0
+                ;;
+            3|expert)
+                SETUP_MODE="expert"
+                echo ""
+                echo -e "${MAGENTA}✓ Expert Setup selected${NC}"
+                echo ""
+                return 0
+                ;;
+            *)
+                echo -e "${YELLOW}Please enter 1, 2, or 3${NC}"
+                ;;
+        esac
+    done
+}
+
+run_quick_setup() {
+    print_info "Launching Quick Setup..."
+    echo ""
+
+    # Find the quick setup script
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local quick_script="$script_dir/setup-quick.sh"
+
+    if [[ -x "$quick_script" ]]; then
+        exec "$quick_script" "$@"
+    else
+        print_error "Quick setup script not found: $quick_script"
+        print_info "Continuing with standard setup..."
+        SETUP_MODE="standard"
+    fi
 }
 
 #=============================================================================
@@ -313,10 +403,17 @@ import_agent_settings() {
 #=============================================================================
 
 step_welcome() {
-    print_step 1 14 "Welcome and Overview"
+    local total_steps=13
+    if [[ "$SETUP_MODE" == "expert" ]]; then
+        total_steps=14
+    fi
 
-    cat <<'EOF'
+    print_step 1 $total_steps "Welcome and Overview"
+
+    cat <<EOF
 ${BOLD}Welcome to ArmorClaw!${NC}
+
+${BOLD}Setup Mode:${NC} ${SETUP_MODE^}
 
 ArmorClaw is a secure containerization system for AI agents. This wizard will guide you through:
 
@@ -330,10 +427,20 @@ ArmorClaw is a secure containerization system for AI agents. This wizard will gu
   8. First API key setup
   9. Systemd service setup
   10. Post-installation verification
-  11. Advanced features (WebRTC Voice, Host Hardening, Production Logging)
-  12. Start first agent (optional)
+EOF
 
-${BOLD}Estimated time:${NC} 10-15 minutes (fresh install) or 2-3 minutes (with import)
+    if [[ "$SETUP_MODE" == "expert" ]]; then
+        echo "  11. Advanced features (WebRTC Voice, Host Hardening, Production Logging)"
+        echo "  12. Start first agent (optional)"
+    else
+        echo "  11. Start first agent (optional)"
+        echo ""
+        echo "  ${CYAN}(Advanced features can be configured later with separate scripts)${NC}"
+    fi
+
+    cat <<EOF
+
+${BOLD}Estimated time:${NC} $([[ "$SETUP_MODE" == "expert" ]] && echo "10-15" || echo "5-10") minutes
 ${BOLD}Configuration directory:${NC} /etc/armorclaw
 ${BOLD}Data directory:${NC} /var/lib/armorclaw
 
@@ -400,7 +507,7 @@ EOF
 #=============================================================================
 
 step_prerequisites() {
-    print_step 2 14 "System Requirements Check"
+    print_step 2 13 "System Requirements Check"
 
     local all_ok=true
 
@@ -480,7 +587,7 @@ step_prerequisites() {
 #=============================================================================
 
 step_docker() {
-    print_step 3 14 "Docker Verification"
+    print_step 3 13 "Docker Verification"
 
     if check_command docker; then
         local docker_version=$(docker --version | awk '{print $3}' | sed 's/,//')
@@ -542,7 +649,7 @@ step_docker() {
 #=============================================================================
 
 step_container() {
-    print_step 4 14 "Container Image Setup"
+    print_step 4 13 "Container Image Setup"
 
     # Check if image exists locally
     print_info "Checking for ArmorClaw agent container image..."
@@ -586,7 +693,7 @@ step_container() {
 #=============================================================================
 
 step_bridge_install() {
-    print_step 5 14 "Bridge Installation"
+    print_step 5 13 "Bridge Installation"
 
     # Check if already installed
     if [ -f "/usr/local/bin/armorclaw-bridge" ] || [ -f "/opt/armorclaw/armorclaw-bridge" ]; then
@@ -661,7 +768,7 @@ step_bridge_install() {
 #=============================================================================
 
 step_budget_confirmation() {
-    print_step 6 14 "Budget Confirmation"
+    print_step 6 13 "Budget Confirmation"
 
     cat <<'EOF'
 ${BOLD}CRITICAL: Financial Responsibility${NC}
@@ -703,7 +810,7 @@ EOF
 #=============================================================================
 
 step_configuration() {
-    print_step 7 14 "Configuration File Creation"
+    print_step 7 13 "Configuration File Creation"
 
     print_info "Creating configuration directory..."
     sudo mkdir -p "$CONFIG_DIR"
@@ -1016,7 +1123,7 @@ EOF
 #=============================================================================
 
 step_keystore() {
-    print_step 8 14 "Keystore Initialization"
+    print_step 8 13 "Keystore Initialization"
 
     local keystore_db="$DATA_DIR/keystore.db"
 
@@ -1072,7 +1179,7 @@ EOF
 #=============================================================================
 
 step_api_key() {
-    print_step 9 14 "First API Key Setup"
+    print_step 9 13 "First API Key Setup"
 
     echo ""
 
@@ -1136,7 +1243,7 @@ step_api_key() {
 #=============================================================================
 
 step_systemd() {
-    print_step 10 14 "Systemd Service Setup"
+    print_step 10 13 "Systemd Service Setup"
 
     local service_file="/etc/systemd/system/armorclaw-bridge.service"
 
@@ -1203,7 +1310,7 @@ EOF
 #=============================================================================
 
 step_verify() {
-    print_step 11 14 "Final Verification"
+    print_step 11 13 "Final Verification"
 
     print_info "Running verification checks..."
 
@@ -1567,7 +1674,11 @@ EOF
 #=============================================================================
 
 step_start_agent() {
-    print_step 13 14 "Start First Agent (Optional)"
+    local total_steps=13
+    if [[ "$SETUP_MODE" == "expert" ]]; then
+        total_steps=14
+    fi
+    print_step $((total_steps - 1)) $total_steps "Start First Agent (Optional)"
 
     echo ""
     echo "Would you like to start your first agent now?"
@@ -1686,7 +1797,16 @@ main() {
     # Initialize logging
     init_logging
 
-    # Print welcome
+    # Mode selection (NEW in v2.0)
+    select_setup_mode
+
+    # Route to quick setup if selected
+    if [[ "$SETUP_MODE" == "quick" ]]; then
+        run_quick_setup "$@"
+        # If run_quick_setup returns, quick setup failed - fall through to standard
+    fi
+
+    # Print welcome for standard/expert modes
     print_header
     step_welcome
 
@@ -1701,7 +1821,17 @@ main() {
     step_api_key
     step_systemd
     step_verify
-    step_advanced_features
+
+    # Advanced features only in expert mode
+    if [[ "$SETUP_MODE" == "expert" ]]; then
+        step_advanced_features
+    else
+        print_info "Skipping advanced features (use Expert mode or run scripts later)"
+        echo "  • Matrix setup:     ./deploy/setup-matrix.sh"
+        echo "  • Host hardening:   ./deploy/armorclaw-harden.sh"
+        echo ""
+    fi
+
     step_start_agent
 
     # Print completion message

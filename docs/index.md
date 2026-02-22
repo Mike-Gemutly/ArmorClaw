@@ -1,6 +1,6 @@
 # ArmorClaw Documentation
 
-> **Version:** 0.2.0 | **Last Updated:** 2026-02-21 | **Status:** Production Testing
+> **Version:** 0.2.0 | **Last Updated:** 2026-02-22 | **Status:** Production Testing
 
 ---
 
@@ -8,10 +8,26 @@
 
 | What | Link | Time |
 |------|------|------|
-| **Docker Quick Start** | [Docker Image Guide](guides/quickstart-docker.md) ⚡ | 2 min |
+| **Quick Setup** ⚡ | [Express Installation](guides/setup-guide.md#method-1-quick-setup--recommended-for-beginners) | 2 min |
+| **Docker Quick Start** | [Docker Image Guide](guides/quickstart-docker.md) | 2 min |
 | First VPS deployment? | [First Deployment Checklist](guides/first-deployment-checklist.md) ⭐ | 30 min |
 | New to ArmorClaw? | [Getting Started Guide](guides/getting-started.md) | 5 min |
 | Deploy to production | [Hostinger VPS Deployment](guides/hostinger-vps-deployment.md) | 15 min |
+
+## Post-Setup Scripts
+
+| Script | Purpose | Command |
+|--------|---------|---------|
+| **Quick Setup** | 2-minute express installation | `sudo ./deploy/setup-quick.sh` |
+| **Setup Wizard** | Mode-based setup (Quick/Standard/Expert) | `sudo ./deploy/setup-wizard.sh` |
+| **Matrix Setup** | Enable Matrix communication | `sudo ./deploy/setup-matrix.sh` |
+| **Production Hardening** | Firewall, SSH, Fail2Ban, logging | `sudo ./deploy/armorclaw-harden.sh` |
+| **Device Provisioning** | Generate QR codes for ArmorChat | `sudo ./deploy/armorclaw-provision.sh` |
+
+## Additional Resources
+
+| What | Link | Time |
+|------|------|------|
 | Setup client discovery | [Discovery Deployment Guide](guides/discovery-deployment.md) | 10 min |
 | Secure provisioning | [Provisioning Protocol](plans/2026-02-21-secure-provisioning-protocol.md) | 10 min |
 | Security gap analysis | [Security Gap Analysis](plans/2026-02-21-security-gap-analysis.md) | - |

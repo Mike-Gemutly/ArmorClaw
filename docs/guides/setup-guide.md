@@ -1,7 +1,7 @@
 # ArmorClaw Setup Guide
 
-> **Last Updated:** 2026-02-06
-> **Time to Complete:** 5-15 minutes
+> **Last Updated:** 2026-02-22
+> **Time to Complete:** 2-15 minutes (depending on method)
 
 ---
 
@@ -11,10 +11,100 @@ ArmorClaw provides multiple ways to get started, depending on your experience le
 
 | Method | Time Required | Experience Level | Recommended For |
 |--------|---------------|------------------|-----------------|
-| **Shell Script Wizard** ⭐ | 10-15 min | Beginner | First-time users, complete automation |
-| **CLI Wizard** | 5-10 min | Intermediate | Users who prefer to build first |
-| **Manual Installation** | 15-20 min | Advanced | Full control over each step |
+| **Quick Setup** ⚡ ⭐ | 2-3 min | Beginner | First-time users, local development |
+| **Standard Setup** | 5-10 min | Intermediate | Production with custom config |
+| **Expert Setup** | 10-15 min | Advanced | Full control over all settings |
 | **Docker Compose Stack** | 5 min | Expert | Quick testing with Matrix |
+
+---
+
+## Method 1: Quick Setup ⚡ (Recommended for Beginners)
+
+The fastest way to get ArmorClaw running. Uses secure defaults with minimal prompts.
+
+### One Command Setup
+
+```bash
+sudo ./deploy/setup-quick.sh
+```
+
+### What Quick Setup Does
+
+1. ✅ Auto-checks prerequisites (no prompts unless failures)
+2. ✅ Builds/installs bridge automatically
+3. ✅ Generates config with secure defaults:
+   - Log level: info, format: text
+   - Budget: $5/day, $100/month with hard stop
+   - Matrix: disabled (can enable later)
+4. ✅ Initializes encrypted keystore
+5. ✅ Creates systemd service
+6. ✅ Starts bridge and verifies health
+7. ✅ Generates QR code for device provisioning
+
+### After Quick Setup
+
+```bash
+# Add your API key
+sudo armorclaw-bridge add-key --provider openai --token sk-...
+
+# Start an agent
+sudo armorclaw-bridge start --key openai-main
+
+# Optional: Enable Matrix
+sudo ./deploy/setup-matrix.sh
+
+# Optional: Harden for production
+sudo ./deploy/armorclaw-harden.sh
+
+# Generate QR for new devices
+sudo ./deploy/armorclaw-provision.sh
+```
+
+### Non-Interactive Mode
+
+For automation or CI/CD:
+
+```bash
+sudo ./deploy/setup-quick.sh --non-interactive
+```
+
+---
+
+## Method 2: Setup Wizard with Mode Selection
+
+The setup wizard now offers three modes:
+
+```bash
+sudo ./deploy/setup-wizard.sh
+```
+
+You'll see:
+
+```
+Choose your setup experience:
+
+  [1] Quick Setup (Recommended)
+      → 2-3 minutes, secure defaults, minimal prompts
+      → Best for: First-time users, local development
+
+  [2] Standard Setup
+      → 5-10 minutes, guided configuration with explanations
+      → Best for: Production deployments with custom needs
+
+  [3] Expert Setup
+      → 10-15 minutes, full control over all settings
+      → Best for: Advanced users, complex configurations
+```
+
+### Mode Comparison
+
+| Feature | Quick | Standard | Expert |
+|---------|-------|----------|--------|
+| Time | 2-3 min | 5-10 min | 10-15 min |
+| Prompts | Minimal | Guided | Full |
+| Matrix Config | Skip | Optional | Full |
+| Advanced Features | Skip | Skip | Full |
+| Production Hardening | Skip | Skip | Optional |
 
 ---
 
@@ -113,7 +203,7 @@ echo '{"jsonrpc":"2.0","method":"health","id":1}' | sudo socat - UNIX-CONNECT:/r
 
 ---
 
-## Method 2: CLI Interactive Wizard
+## Method 3: CLI Interactive Wizard
 
 For users who prefer to build the bridge first, then use an interactive wizard:
 
@@ -201,6 +291,84 @@ The wizard will guide you through:
 ```bash
 ./build/armorclaw-bridge start --key openai-default
 ```
+
+---
+
+## Post-Setup: Enable Matrix
+
+After initial setup, you can enable Matrix communication for remote access:
+
+```bash
+sudo ./deploy/setup-matrix.sh
+```
+
+This script configures:
+- Matrix homeserver connection
+- Bridge user credentials
+- Zero-trust sender/room filtering
+- Notification system
+
+### Matrix Setup Options
+
+1. **Existing Server** - Connect to your own Matrix server
+2. **Local Conduit** - Deploy a local Conduit server (recommended for VPS)
+3. **Matrix.org** - Use the public Matrix.org service
+
+---
+
+## Post-Setup: Production Hardening
+
+For production deployments, run the hardening script:
+
+```bash
+sudo ./deploy/armorclaw-harden.sh
+```
+
+This configures:
+
+| Feature | Description |
+|---------|-------------|
+| **UFW Firewall** | Deny-all default, rate-limited SSH |
+| **SSH Hardening** | Key-only auth, no root login |
+| **Fail2Ban** | Brute-force protection |
+| **Auto Updates** | Security patches only |
+| **Production Logging** | JSON format with rotation |
+
+### Hardening Checklist
+
+After running the hardening script:
+
+- [ ] Verify SSH key login works before closing session
+- [ ] Test firewall doesn't block required services
+- [ ] Review Fail2Ban logs: `journalctl -u fail2ban`
+- [ ] Confirm log rotation is working
+
+---
+
+## Post-Setup: Device Provisioning
+
+Generate QR codes to connect ArmorChat devices:
+
+```bash
+sudo ./deploy/armorclaw-provision.sh
+```
+
+### Options
+
+```bash
+# Custom expiry time (default: 5 minutes)
+sudo ./deploy/armorclaw-provision.sh --expiry 60
+
+# Print URL only (for scripting)
+sudo ./deploy/armorclaw-provision.sh --show-url
+```
+
+### QR Code Features
+
+- JWT-like token signing
+- Configurable expiry (30s - 1 hour)
+- Single-use tokens
+- Works with local IP or public domain
 
 ---
 
@@ -891,4 +1059,4 @@ If you encounter issues during container build, particularly related to circular
 
 ---
 
-**Setup Guide Last Updated:** 2026-02-07
+**Setup Guide Last Updated:** 2026-02-22
