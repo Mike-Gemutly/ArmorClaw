@@ -168,15 +168,24 @@ configure_matrix() {
         print_step 1 5 "Matrix Homeserver Configuration"
 
         echo "Enter your Matrix server details:"
+        echo "  - For domain: matrix.example.com"
+        echo "  - For IP-only: YOUR_VPS_IP (e.g., 192.168.1.100)"
         echo ""
 
-        MATRIX_SERVER=$(prompt_input "Matrix server domain (e.g., matrix.example.com)" "")
+        MATRIX_SERVER=$(prompt_input "Matrix server (domain or IP)" "")
         if [ -z "$MATRIX_SERVER" ]; then
-            print_error "Matrix server domain is required"
+            print_error "Matrix server is required"
             exit 1
         fi
 
-        MATRIX_URL=$(prompt_input "Matrix homeserver URL" "http://localhost:6167")
+        # Auto-detect if IP address
+        if echo "$MATRIX_SERVER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            print_info "Detected IP address mode - using HTTP"
+            MATRIX_URL="http://localhost:6167"
+            MATRIX_SERVER="$MATRIX_SERVER:8448"
+        else
+            MATRIX_URL=$(prompt_input "Matrix homeserver URL" "http://localhost:6167")
+        fi
 
         echo ""
         if prompt_yes_no "Create bridge user on Matrix?" "y"; then
@@ -426,10 +435,25 @@ final_summary() {
     echo "  - Config: $CONFIG_FILE"
     echo "  - Keystore: $DATA_DIR/keystore.db"
     echo ""
-    echo "Next steps:"
-    echo "  1. Connect ArmorChat to: https://$MATRIX_SERVER"
-    echo "  2. Start DM with: @bridge:$MATRIX_SERVER"
-    echo "  3. Send '!status' to verify connection"
+
+    # Check if IP-based setup
+    if echo "$MATRIX_SERVER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+':; then
+        echo "Next steps (IP-based setup):"
+        echo "  1. Ensure ports are open: 6167, 8448, 5000, 8443"
+        echo "  2. Connect ArmorChat to: http://$MATRIX_SERVER"
+        echo "  3. Start DM with: @bridge:$MATRIX_SERVER"
+        echo "  4. Send '!status' to verify connection"
+        echo ""
+        echo "For SSL/Domain setup later:"
+        echo "  1. Point domain A record to this IP"
+        echo "  2. Run: certbot --nginx -d your-domain.com"
+        echo "  3. Update MATRIX_SERVER and restart"
+    else
+        echo "Next steps:"
+        echo "  1. Connect ArmorChat to: https://$MATRIX_SERVER"
+        echo "  2. Start DM with: @bridge:$MATRIX_SERVER"
+        echo "  3. Send '!status' to verify connection"
+    fi
     echo ""
 
     # Mark setup complete
