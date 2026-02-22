@@ -1,9 +1,12 @@
 #!/bin/bash
 # ArmorClaw Device Provisioning
 # Generate QR codes for secure ArmorChat/ArmorTerminal connection
-# Version: 1.0.0
+# Version: 1.1.0
 #
 # Usage: sudo ./deploy/armorclaw-provision.sh [--expiry SECONDS] [--show-url]
+#
+# QR Format: armorclaw://config?d=<base64-encoded-json>
+# JSON contains: matrix_homeserver, rpc_url, ws_url, push_gateway, server_name, expires_at
 
 set -e
 
@@ -21,6 +24,11 @@ CONFIG_DIR="/etc/armorclaw"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 DEFAULT_EXPIRY=300  # 5 minutes
 MAX_EXPIRY=3600     # 1 hour
+
+# Default ports
+DEFAULT_HTTP_PORT=8443
+DEFAULT_MATRIX_PORT=8448
+DEFAULT_PUSH_PORT=5000
 
 # Output options
 EXPIRY_SECONDS=$DEFAULT_EXPIRY
@@ -51,6 +59,12 @@ fail() {
     exit 1
 }
 
+# URL-safe base64 encoding
+base64_url_encode() {
+    local input="$1"
+    echo -n "$input" | base64 | tr '+/' '-_' | tr -d '='
+}
+
 #=============================================================================
 # Parse Arguments
 #=============================================================================
@@ -70,6 +84,16 @@ parse_args() {
                 echo "Usage: sudo $0 [options]"
                 echo ""
                 echo "Generate QR codes for secure ArmorChat device provisioning."
+                echo ""
+                echo "Output Format: armorclaw://config?d=<base64-encoded-json>"
+                echo ""
+                echo "JSON Payload:"
+                echo "  - matrix_homeserver: Matrix server URL"
+                echo "  - rpc_url: Bridge RPC API URL"
+                echo "  - ws_url: WebSocket URL for real-time events"
+                echo "  - push_gateway: Push notification gateway URL"
+                echo "  - server_name: Human-readable server name"
+                echo "  - expires_at: Unix timestamp for expiry"
                 echo ""
                 echo "Options:"
                 echo "  --expiry, -e SECONDS  Token expiry time (default: 300, max: 3600)"
@@ -109,52 +133,94 @@ read_config() {
         fail "Configuration not found: $CONFIG_FILE"
     fi
 
-    # Extract provisioning secret
-    PROVISIONING_SECRET=$(grep 'signing_secret' "$CONFIG_FILE" 2>/dev/null | \
-        sed 's/.*= *"\([^"]*\)".*/\1' || echo "")
-
-    if [[ -z "$PROVISIONING_SECRET" ]]; then
-        fail "Provisioning secret not configured. Run setup-wizard.sh first."
-    fi
-
     # Get bridge info
     BRIDGE_HOSTNAME=$(hostname)
     BRIDGE_IP=$(hostname -I | awk '{print $1}')
 
-    # Check for public IP/domain
-    if grep -q 'homeserver_url.*https' "$CONFIG_FILE" 2>/dev/null; then
-        # Extract domain from Matrix config
-        PUBLIC_DOMAIN=$(grep 'homeserver_url' "$CONFIG_FILE" | \
-            sed 's/.*https:\/\/\([^/]*\).*/\1/' | head -1)
+    # Extract Matrix homeserver URL from config
+    MATRIX_HOMESERVER=$(grep 'homeserver_url' "$CONFIG_FILE" 2>/dev/null | \
+        sed 's/.*= *"\([^"]*\)".*/\1' | head -1)
+
+    # Extract server name (for display purposes)
+    SERVER_NAME=$(grep 'server_name' "$CONFIG_FILE" 2>/dev/null | \
+        sed 's/.*= *"\([^"]*\)".*/\1' || echo "$BRIDGE_HOSTNAME")
+
+    # Determine if we have a public domain or IP-only
+    if [[ -n "$MATRIX_HOMESERVER" ]] && [[ "$MATRIX_HOMESERVER" == https://* ]]; then
+        # Extract domain from Matrix URL
+        PUBLIC_DOMAIN=$(echo "$MATRIX_HOMESERVER" | sed 's|https://\([^/:]*\).*|\1|')
+        USE_TLS=true
+    else
+        PUBLIC_DOMAIN=""
+        USE_TLS=false
+    fi
+
+    # Determine the host to use
+    if [[ -n "$PUBLIC_DOMAIN" ]]; then
+        HOST="$PUBLIC_DOMAIN"
+    else
+        HOST="$BRIDGE_IP"
+    fi
+
+    # Build URLs based on TLS setting
+    if [[ "$USE_TLS" == true ]]; then
+        # Production with TLS
+        MATRIX_URL="${MATRIX_HOMESERVER}"
+        RPC_URL="https://${HOST}:${DEFAULT_HTTP_PORT}/api"
+        WS_URL="wss://${HOST}:${DEFAULT_HTTP_PORT}/ws"
+        PUSH_URL="https://${HOST}:${DEFAULT_PUSH_PORT}"
+    else
+        # Development/Local without TLS
+        MATRIX_URL="http://${HOST}:${DEFAULT_MATRIX_PORT}"
+        RPC_URL="http://${HOST}:${DEFAULT_HTTP_PORT}/api"
+        WS_URL="ws://${HOST}:${DEFAULT_HTTP_PORT}/ws"
+        PUSH_URL="http://${HOST}:${DEFAULT_PUSH_PORT}"
+    fi
+
+    # Override with explicit config values if present
+    local config_rpc_url=$(grep 'rpc_url' "$CONFIG_FILE" 2>/dev/null | \
+        sed 's/.*= *"\([^"]*\)".*/\1' | head -1)
+    if [[ -n "$config_rpc_url" ]]; then
+        RPC_URL="$config_rpc_url"
+    fi
+
+    local config_ws_url=$(grep 'ws_url' "$CONFIG_FILE" 2>/dev/null | \
+        sed 's/.*= *"\([^"]*\)".*/\1' | head -1)
+    if [[ -n "$config_ws_url" ]]; then
+        WS_URL="$config_ws_url"
     fi
 }
 
 #=============================================================================
-# Generate Token
+# Generate QR Config
 #=============================================================================
 
-generate_token() {
+generate_qr_config() {
     # Create timestamp
     local now=$(date +%s)
     local expiry=$((now + EXPIRY_SECONDS))
 
-    # Create token payload
-    # Format: base64(header).base64(payload).signature
-    local header='{"alg":"HS256","typ":"JWT"}'
-    local payload="{\"bridge\":\"$BRIDGE_HOSTNAME\",\"iat\":$now,\"exp\":$expiry}"
+    # Build JSON config for ArmorChat
+    # This format matches what ArmorChat's parseConfigDeepLink() expects
+    CONFIG_JSON=$(cat <<EOF
+{
+  "matrix_homeserver": "${MATRIX_URL}",
+  "rpc_url": "${RPC_URL}",
+  "ws_url": "${WS_URL}",
+  "push_gateway": "${PUSH_URL}",
+  "server_name": "${SERVER_NAME:-$HOST}",
+  "expires_at": ${expiry}
+}
+EOF
+)
 
     # Base64 encode (URL-safe)
-    local header_b64=$(echo -n "$header" | base64 | tr '+/' '-_' | tr -d '=')
-    local payload_b64=$(echo -n "$payload" | base64 | tr '+/' '-_' | tr -d '=')
+    CONFIG_B64=$(base64_url_encode "$CONFIG_JSON")
 
-    # Create signature
-    local signing_input="$header_b64.$payload_b64"
-    local signature=$(echo -n "$signing_input" | \
-        openssl dgst -sha256 -hmac "$PROVISIONING_SECRET" | \
-        awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+    # Build the deep link URL that ArmorChat expects
+    # Format: armorclaw://config?d=<base64-encoded-json>
+    PROVISION_URL="armorclaw://config?d=${CONFIG_B64}"
 
-    # Build JWT
-    JWT_TOKEN="$signing_input.$signature"
     TOKEN_EXPIRY=$expiry
 }
 
@@ -163,13 +229,6 @@ generate_token() {
 #=============================================================================
 
 generate_qr_code() {
-    # Determine host (prefer public domain over IP)
-    local host="${PUBLIC_DOMAIN:-$BRIDGE_IP}"
-    local port="8080"
-
-    # Build provisioning URL
-    PROVISION_URL="armorclaw://provision?host=${host}&port=${port}&token=${JWT_TOKEN}&expires=${TOKEN_EXPIRY}"
-
     if $SHOW_URL_ONLY; then
         echo "$PROVISION_URL"
         return 0
@@ -184,9 +243,13 @@ generate_qr_code() {
 
     # Show connection info
     echo -e "${BOLD}Connection Details:${NC}"
-    echo "  Host:    $host"
-    echo "  Port:    $port"
-    echo "  Expiry:  $(date -d @$TOKEN_EXPIRY 2>/dev/null || date -r $TOKEN_EXPIRY 2>/dev/null || echo "in $EXPIRY_SECONDS seconds")"
+    echo "  Server:      ${SERVER_NAME:-$HOST}"
+    echo "  Matrix:      ${MATRIX_URL}"
+    echo "  Bridge RPC:  ${RPC_URL}"
+    echo "  WebSocket:   ${WS_URL}"
+    echo "  Push:        ${PUSH_URL}"
+    echo ""
+    echo -e "${BOLD}Expires:${NC} $(date -d @$TOKEN_EXPIRY 2>/dev/null || date -r $TOKEN_EXPIRY 2>/dev/null || echo "in $EXPIRY_SECONDS seconds")"
     echo ""
 
     echo -e "${BOLD}Scan with ArmorChat or ArmorTerminal:${NC}"
@@ -213,11 +276,10 @@ generate_qr_code() {
 
     echo ""
     echo -e "${YELLOW}Note:${NC} This code expires in $EXPIRY_SECONDS seconds"
-    echo -e "${YELLOW}Note:${NC} Token is single-use and will be invalidated after scanning"
     echo ""
 
     # Show URL for manual entry
-    echo -e "${BOLD}Manual Entry URL:${NC}"
+    echo -e "${BOLD}Manual Entry URL (copy to ArmorChat):${NC}"
     echo -e "  ${CYAN}$PROVISION_URL${NC}"
     echo ""
 }
@@ -262,14 +324,17 @@ detect_environment() {
         print_warning "VPS Environment Detected"
         echo ""
         echo "  For VPS deployments, ensure:"
-        echo "  1. Firewall allows port 8080 (or configured port)"
-        echo "  2. TLS is configured for production"
+        echo "  1. Firewall allows ports: ${DEFAULT_HTTP_PORT}, ${DEFAULT_MATRIX_PORT}, ${DEFAULT_PUSH_PORT}"
+        echo "  2. TLS is configured for production (https://)"
         echo "  3. Public IP/domain is accessible from devices"
         echo ""
+        if [[ "$USE_TLS" != true ]]; then
+            print_warning "TLS not detected - recommend enabling for production!"
+        fi
     else
         print_info "Detected: Local/Hardware deployment"
         echo ""
-        echo "  Using local network IP: $BRIDGE_IP"
+        echo "  Using local network IP: $HOST"
         echo ""
     fi
 }
@@ -286,7 +351,7 @@ main() {
 
     parse_args "$@"
     read_config
-    generate_token
+    generate_qr_config
 
     if ! $SHOW_URL_ONLY; then
         detect_environment
