@@ -135,6 +135,7 @@ set -e
 CONFIG_FILE="/etc/armorclaw/config.toml"
 SETUP_FLAG="/etc/armorclaw/.setup_complete"
 API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
+VERSION="1.0.0"
 
 # Colors
 RED='\033[0;31m'
@@ -143,6 +144,37 @@ CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+# Handle --help and --version flags before any setup
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "ArmorClaw Quick Start - Self-contained deployment image"
+    echo ""
+    echo "Usage: docker run [OPTIONS] armorclaw/quickstart [COMMAND]"
+    echo ""
+    echo "Commands:"
+    echo "  --help, -h     Show this help message"
+    echo "  --version, -v  Show version information"
+    echo "  (no args)      Start ArmorClaw bridge (requires Docker socket)"
+    echo ""
+    echo "Required volumes:"
+    echo "  -v /var/run/docker.sock:/var/run/docker.sock"
+    echo "  -v armorclaw-data:/etc/armorclaw (optional, persists config)"
+    echo ""
+    echo "Example:"
+    echo "  docker run -d --name armorclaw \\"
+    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
+    echo "    -v armorclaw-data:/etc/armorclaw \\"
+    echo "    -p 8443:8443 \\"
+    echo "    armorclaw/quickstart"
+    exit 0
+fi
+
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "ArmorClaw Quick Start v${VERSION}"
+    echo "Bridge: $(/opt/armorclaw/armorclaw-bridge --version 2>/dev/null || echo 'installed')"
+    echo "Node.js: $(node --version 2>/dev/null || echo 'installed')"
+    exit 0
+fi
 
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════╗"
