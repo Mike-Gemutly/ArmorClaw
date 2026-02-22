@@ -121,12 +121,12 @@ jobs:
         run: |
           # Pull the image
           docker pull ${{ env.DOCKER_IMAGE }}:latest
-          
-          # Test that the image runs
+
+          # Test that the image runs (help flag should work without Docker socket)
           docker run --rm ${{ env.DOCKER_IMAGE }}:latest --help
-          
-          # Verify image exists
-          docker images | grep ${{ github.repository_owner }}/agent
+
+          # Verify image exists (use env variable, not hardcoded name)
+          docker images | grep -E "${{ env.DOCKER_IMAGE }}|armorclaw"
       
       - name: Image information
         run: |
