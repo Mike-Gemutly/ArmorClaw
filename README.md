@@ -100,15 +100,65 @@ We need **community testers** to validate the security hardening across differen
 
 ## ⚡ Quick Start
 
-### Option 0: Docker Image ⚡ FASTEST (No Git/Go Required)
+### Prerequisites
 
-Pull and run - setup wizard launches automatically:
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| **OS** | Ubuntu 22.04, Debian 12 | Ubuntu 24.04 |
+| **RAM** | 1 GB | 2 GB |
+| **Disk** | 2 GB | 5 GB |
+| **Docker** | 24.0+ | Latest |
+| **Go** | 1.21+ | 1.24+ |
+
+---
+
+### Method 1: Quick Setup ⚡ (Recommended)
+
+The fastest way to get ArmorClaw running with secure defaults:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/armorclaw/armorclaw.git
+cd armorclaw
+
+# 2. Run quick setup (2-3 minutes)
+sudo ./deploy/setup-quick.sh
+```
+
+**What happens automatically:**
+- ✅ Prerequisites check (Docker, memory, disk)
+- ✅ Bridge build from source
+- ✅ System user creation (non-root, no shell)
+- ✅ Encrypted keystore initialization (hardware-bound)
+- ✅ Systemd service with hardening (NoNewPrivileges, PrivateTmp, ProtectSystem)
+- ✅ QR code generation for device provisioning
+
+**After setup completes:**
+
+```bash
+# 3. Add your API key
+sudo armorclaw-bridge add-key --provider openai --token sk-...
+
+# 4. Scan the QR code with ArmorChat (or run again for new devices)
+sudo ./deploy/armorclaw-provision.sh
+
+# 5. Start an agent
+sudo armorclaw-bridge start --key openai-main
+```
+
+**Time:** 2-3 minutes | **Experience Level:** Beginner
+
+---
+
+### Method 2: Docker Image ⚡ (No Build Required)
+
+Pull and run with automatic setup wizard:
 
 ```bash
 # Pull the image
 docker pull mikegemut/armorclaw:latest
 
-# Run with Docker socket (required for container orchestration)
+# Run with Docker socket
 docker run -it \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-config:/etc/armorclaw \
@@ -117,9 +167,7 @@ docker run -it \
   mikegemut/armorclaw:latest
 ```
 
-**The setup wizard guides you through configuration.** See [Quick Start Guide](docs/guides/quickstart-docker.md) for details.
-
-**Non-interactive mode (automation):**
+**Non-interactive mode (CI/CD):**
 ```bash
 docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -134,9 +182,9 @@ docker run -d \
 
 ---
 
-### Option 1: Element X (Mobile) ⭐ FASTEST
+### Method 3: Element X Mobile ⭐
 
-Connect to your AI agent via Element X mobile app in 5 minutes:
+Connect via Element X mobile app:
 
 ```bash
 git clone https://github.com/armorclaw/armorclaw.git
@@ -144,58 +192,15 @@ cd armorclaw
 ./deploy/launch-element-x.sh
 ```
 
-**That's it!** Scan the QR code with Element X and start chatting.
+Scan the QR code with Element X and start chatting.
 
-**Time:** 5 minutes | **Experience Level:** Beginner | **Platform:** Mobile-friendly
+**Time:** 5 minutes | **Experience Level:** Beginner | **Platform:** Mobile
 
 ---
 
-### Option 2: Interactive Setup Wizard ⭐ (Recommended)
+### Method 4: VPS Deployment 🌐
 
-The easiest way to get started on desktop:
-
-```bash
-# Clone repository
-git clone https://github.com/armorclaw/armorclaw.git
-cd armorclaw
-
-# Run the interactive setup wizard
-./deploy/setup-wizard.sh
-```
-
-The wizard guides you through:
-- ✅ System requirements validation
-- ✅ Docker installation/verification
-- ✅ Container image setup
-- ✅ Bridge compilation
-- ✅ Encrypted keystore initialization
-- ✅ First API key configuration
-- ✅ Systemd service setup
-- ✅ Post-installation verification
-
-**Time:** 10-15 minutes | **Experience Level:** Beginner
-
-### Option 3: One-Command Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy.sh | bash
-```
-
-### Option 4: Docker Compose (Quick Test)
-
-```bash
-git clone https://github.com/armorclaw/armorclaw.git
-cd armorclaw
-./deploy/launch-element-x.sh
-```
-
-Deploys Matrix, Caddy, and Bridge with auto-provisioning.
-
-**Time:** 5 minutes | **Experience Level:** Intermediate
-
-### Option 5: VPS Deployment 🆓
-
-Deploy to a remote VPS (Hostinger, DigitalOcean, etc.) with automated script:
+Deploy to a remote VPS (Hostinger, DigitalOcean, AWS, etc.):
 
 ```bash
 # 1. Create deployment tarball
@@ -205,20 +210,79 @@ tar -czf armorclaw-deploy.tar.gz --exclude='.git' --exclude='bridge/build' .
 # 2. Transfer to VPS
 scp deploy/vps-deploy.sh armorclaw-deploy.tar.gz user@your-vps-ip:/tmp/
 
-# 3. Run deployment script on VPS
+# 3. Run deployment on VPS
 ssh user@your-vps-ip
 chmod +x /tmp/vps-deploy.sh
 sudo bash /tmp/vps-deploy.sh
 ```
 
-The automated script handles:
-- ✅ Pre-flight checks (disk, memory, ports)
-- ✅ Docker installation
-- ✅ Tarball verification and extraction
-- ✅ Interactive configuration
-- ✅ Automated deployment
-
 **Time:** 10-15 minutes | **Experience Level:** Intermediate | **Platform:** VPS
+
+---
+
+### Connecting ArmorChat
+
+After setup, connect your ArmorChat app:
+
+1. **Generate QR code:**
+   ```bash
+   sudo ./deploy/armorclaw-provision.sh
+   ```
+
+2. **Scan with ArmorChat:**
+   - Open ArmorChat app
+   - Tap "Scan QR Code" or enter URL manually
+   - Connection configured automatically
+
+3. **QR Code Format:**
+   ```
+   armorclaw://config?d=<base64-encoded-json>
+
+   Contains:
+   - Matrix homeserver URL
+   - Bridge RPC URL
+   - WebSocket URL
+   - Push gateway URL
+   - Server name
+   - Expiry (5 min default)
+   ```
+
+---
+
+### Post-Setup: Production Hardening
+
+For production deployments:
+
+```bash
+# 1. Enable Matrix with TLS (recommended)
+sudo ./deploy/setup-matrix.sh
+
+# 2. Apply system hardening
+sudo ./deploy/armorclaw-harden.sh
+```
+
+**Hardening includes:**
+- UFW firewall (deny-all default)
+- SSH hardening (key-only, no root)
+- Fail2Ban (brute-force protection)
+- Automatic security updates
+- Production logging (JSON format)
+
+---
+
+### Verify Installation
+
+```bash
+# Check bridge status
+sudo systemctl status armorclaw-bridge
+
+# Verify health via RPC
+echo '{"jsonrpc":"2.0","method":"health","id":1}' | \
+  sudo socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+
+# Check systemd hardening
+systemctl show armorclaw-bridge | grep -E "NoNewPrivileges|PrivateTmp|ProtectSystem"
+```
 
 ---
 
@@ -327,6 +391,46 @@ Connect via Element X mobile app - chat with your agent from anywhere:
 **Compliance Ready:** Supports GDPR, HIPAA, SOC 2 requirements through data isolation, audit logging, and access controls.
 
 > **📖 Security Configuration Guide:** See [docs/guides/security-configuration.md](docs/guides/security-configuration.md) for complete security feature documentation.
+
+---
+
+## 🔐 Installation Security
+
+The setup process is **secure by design**:
+
+| Security Aspect | Implementation | Status |
+|-----------------|----------------|--------|
+| **Privilege Separation** | Dedicated `armorclaw` user (no shell) | ✅ Secure |
+| **File Permissions** | Config 640, Data 750 | ✅ Secure |
+| **Keystore Encryption** | SQLCipher + XChaCha20-Poly1305 | ✅ Secure |
+| **Hardware Binding** | machine-id + DMI UUID + MAC | ✅ Secure |
+| **Systemd Hardening** | NoNewPrivileges, PrivateTmp, ProtectSystem | ✅ Secure |
+| **QR Code Expiry** | 5 min default, 1 hour max | ✅ Secure |
+| **IP Detection** | Local `hostname -I` (no external calls) | ✅ Secure |
+
+### What Gets Created
+
+| Path | Purpose | Permissions |
+|------|---------|-------------|
+| `/opt/armorclaw/armorclaw-bridge` | Bridge binary | 755 (root:root) |
+| `/etc/armorclaw/config.toml` | Configuration | 640 (armorclaw:armorclaw) |
+| `/var/lib/armorclaw/keystore.db` | Encrypted keystore | 600 (armorclaw:armorclaw) |
+| `/run/armorclaw/bridge.sock` | Unix socket | 660 (armorclaw:armorclaw) |
+
+### Systemd Service Hardening
+
+```ini
+[Service]
+User=armorclaw
+NoNewPrivileges=true        # No setuid/escalation
+PrivateTmp=true             # Isolated /tmp
+ProtectSystem=strict        # Read-only /usr, /boot
+ProtectHome=true            # Cannot access /home
+MemoryMax=512M              # Resource limit
+CPUQuota=50%                # Resource limit
+```
+
+> **📖 Full Security Review:** See [docs/output/review.md](docs/output/review.md) for complete security analysis.
 
 ---
 
