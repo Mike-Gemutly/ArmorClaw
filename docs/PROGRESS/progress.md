@@ -5579,7 +5579,57 @@ The agent never sees actual PII values until user approval via Matrix. This enab
 
 ---
 
-**Progress Log Last Updated:** 2026-02-21
-**Current Milestone:** ✅ SECURITY & DEPLOYMENT ENHANCEMENTS COMPLETE
-**Version:** v8.0.0
+### ✅ Milestone 32: Installation Security Review (Complete 2026-02-22)
+**Status:** COMPLETE
+**Duration:** 1 day
+**Deliverables:**
+- Security review of all setup scripts
+- IP detection method analysis
+- QR format consistency fix
+- Configuration parameter verification
+
+**Artifacts:**
+- `deploy/setup-quick.sh` - Fixed QR format in fallback path
+- `deploy/armorclaw-provision.sh` - Correct QR format implementation
+- `docs/output/review.md` - Added v8.1 security review section
+
+**Security Findings:**
+| Script | IP Detection | External Call | Status |
+|--------|--------------|---------------|--------|
+| armorclaw-provision.sh | `hostname -I` | No | ✅ Secure |
+| setup-quick.sh | `hostname -I` | No | ✅ Secure |
+| container-setup.sh | `curl ifconfig.me` | Yes | ⚠️ Fallback available |
+
+**QR Format Standardized:**
+```
+armorclaw://config?d=<base64-encoded-json>
+{
+  "matrix_homeserver": "http://IP:8448",
+  "rpc_url": "http://IP:8443/api",
+  "ws_url": "ws://IP:8443/ws",
+  "push_gateway": "http://IP:5000",
+  "server_name": "hostname",
+  "expires_at": <unix_timestamp>
+}
+```
+
+**Config Parameters Verified:**
+- ✅ Matrix homeserver URL (from config.toml)
+- ✅ RPC/WebSocket/Push ports (defaults: 8443, 8448, 5000)
+- ✅ Server name (from config or hostname)
+- ✅ TLS status (detected from homeserver URL)
+- ✅ Provisioning secret (from config.toml)
+
+**Systemd Hardening Confirmed:**
+- NoNewPrivileges=true
+- PrivateTmp=true
+- ProtectSystem=strict
+- ProtectHome=true
+- ReadWritePaths for data directories
+
+---
+
+**Progress Log Last Updated:** 2026-02-22
+**Current Milestone:** ✅ INSTALLATION SECURITY REVIEW COMPLETE
+**Version:** v8.1.0
 **Next Milestone:** Production Deployment & End-to-End Testing

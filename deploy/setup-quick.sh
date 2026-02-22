@@ -541,20 +541,21 @@ generate_qr_code() {
 
         local hostname=$(hostname)
         local ip_address=$(hostname -I | awk '{print $1}')
-        local provisioning_secret=$(grep 'signing_secret' "$CONFIG_DIR/config.toml" 2>/dev/null | sed 's/.*= *"\([^"]*\)".*/\1' || echo "")
 
-        if [[ -z "$provisioning_secret" ]]; then
-            print_warning "Could not read provisioning secret"
-            return 0
-        fi
-
-        # Generate JWT-like token (simplified)
+        # Generate config JSON matching ArmorChat's expected format
         local expiry=$(($(date +%s) + 300))  # 5 minutes
-        local token_data="${hostname}:${provisioning_secret}:${expiry}"
-        local token=$(echo -n "$token_data" | sha256sum | awk '{print $1}')
+        local matrix_url="http://${ip_address}:8448"
+        local rpc_url="http://${ip_address}:8443/api"
+        local ws_url="ws://${ip_address}:8443/ws"
+        local push_url="http://${ip_address}:5000"
 
-        # Create provisioning URL
-        local provision_url="armorclaw://provision?host=${ip_address}&port=8080&token=${token}&expires=${expiry}"
+        local config_json=$(cat <<EOF
+{"matrix_homeserver":"${matrix_url}","rpc_url":"${rpc_url}","ws_url":"${ws_url}","push_gateway":"${push_url}","server_name":"${hostname}","expires_at":${expiry}}
+EOF
+)
+        # Base64 encode (URL-safe) - matches armorclaw-provision.sh format
+        local config_b64=$(echo -n "$config_json" | base64 | tr '+/' '-_' | tr -d '=')
+        local provision_url="armorclaw://config?d=${config_b64}"
 
         echo ""
         echo -e "  ${BOLD}Scan this QR code with ArmorChat to connect:${NC}"

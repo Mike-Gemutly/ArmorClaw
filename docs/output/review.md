@@ -272,6 +272,41 @@ All 10 gaps from the Split-Brain analysis have been resolved:
 | `caution` | Advisory warning | User notified |
 | `none` | No PCI concern | Normal flow |
 
+### v8.1: Installation Security Review (2026-02-22)
+
+| Component | Finding | Status |
+|-----------|---------|--------|
+| **IP Detection (provision.sh)** | Uses local `hostname -I` - secure, no external calls | ✅ Secure |
+| **IP Detection (container-setup.sh)** | Uses `curl ifconfig.me` - exposes IP to third party | ⚠️ Acceptable |
+| **IP Detection (setup-quick.sh)** | Uses local `hostname -I` - secure, no external calls | ✅ Secure |
+| **QR Format Consistency** | Fixed inconsistent format in setup-quick.sh fallback | ✅ Fixed |
+| **Config Parameters** | Properly determined from config.toml | ✅ Secure |
+| **Systemd Hardening** | NoNewPrivileges, PrivateTmp, ProtectSystem, ProtectHome | ✅ Secure |
+| **API Key Storage** | Temporary plaintext file (600 permissions) | ⚠️ Acceptable |
+| **Provisioning Secret** | Stored in config (640 permissions, armorclaw user) | ✅ Secure |
+
+**IP Detection Methods:**
+| Script | Method | External Call | Notes |
+|--------|--------|---------------|-------|
+| armorclaw-provision.sh | `hostname -I` | No | ✅ Recommended |
+| container-setup.sh | `curl ifconfig.me` | Yes | ⚠️ Fallback to `hostname -I` |
+| setup-quick.sh | `hostname -I` | No | ✅ Recommended |
+
+**QR Format (Standardized):**
+```
+armorclaw://config?d=<base64-encoded-json>
+
+JSON Payload:
+{
+  "matrix_homeserver": "http://IP:8448",
+  "rpc_url": "http://IP:8443/api",
+  "ws_url": "ws://IP:8443/ws",
+  "push_gateway": "http://IP:5000",
+  "server_name": "hostname",
+  "expires_at": <unix_timestamp>
+}
+```
+
 ---
 
 ## Executive Summary
