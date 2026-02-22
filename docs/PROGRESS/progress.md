@@ -1,8 +1,8 @@
 # ArmorClaw Progress Log
 
 > This file tracks completed milestones and their delivery dates.
-> **Last Updated:** 2026-02-20
-> **Current Phase:** Phase 7 Complete - Client Communication Architecture (v7.0.0)
+> **Last Updated:** 2026-02-21
+> **Current Phase:** Phase 8 Complete - Security & Deployment Enhancements (v8.0.0)
 
 ---
 
@@ -1369,8 +1369,66 @@ When continuing development, focus on:
 
 ---
 
-**Progress Log Last Updated:** 2026-02-19
-**Next Milestone:** Production Deployment → Phase 2 Planning
+**Progress Log Last Updated:** 2026-02-22
+**Next Milestone:** Production Deployment → First VPS E2EE Verification
+
+---
+
+## ✅ Milestone: Simplified Secure Startup Experience (2026-02-22)
+
+**Status:** COMPLETE
+**Version:** v7.4.0
+**Priority:** High - User Experience
+
+**Goal:** Reduce setup friction from 10-15 minutes to 2-3 minutes while maintaining security.
+
+**Deliverables:**
+
+### New Setup Scripts
+- `deploy/setup-quick.sh` - Express 2-3 minute setup with secure defaults
+- `deploy/setup-wizard.sh` - Updated with mode selection (Quick/Standard/Expert)
+- `deploy/setup-matrix.sh` - Post-setup Matrix configuration
+- `deploy/armorclaw-harden.sh` - Production hardening script
+- `deploy/armorclaw-provision.sh` - QR code generation for device provisioning
+
+### Configuration Files
+- `.gitattributes` - LF line endings for shell scripts
+
+### Documentation Updates
+- `docs/guides/setup-guide.md` - Added Quick Setup section
+- `docs/index.md` - Added Post-Setup Scripts section
+- `docs/output/review.md` - Added v7.4.0 section
+
+### CI/CD Fixes
+- `.dockerignore` - Fixed exclusions blocking Dockerfile.quickstart
+- `.github/workflows/dockerhub.yml` - Added `security-events: write` permission
+- `.github/workflows/dockerhub.yml` - Upgraded CodeQL Action from v3 to v4
+- `Dockerfile.quickstart` - Fixed docker-compose installation (GitHub releases)
+
+**Quick Mode Smart Defaults:**
+| Setting | Quick Mode | Standard Mode |
+|---------|------------|---------------|
+| Log level | info | Prompt |
+| Budget alerts | $5 daily, $100 monthly | Prompt |
+| Hard stop | true | Prompt |
+| Matrix | Disabled | Prompt |
+| Voice | Disabled | Prompt |
+| Zero-trust | Empty (allow all) | Prompt |
+
+**Production Hardening Features:**
+- UFW firewall with Tailscale auto-detection
+- SSH hardening (key-only, no root)
+- Fail2Ban for brute-force protection
+- Automatic security updates
+- JSON structured logging with rotation
+- Health check cron job
+
+**QR Provisioning Protocol:**
+- JWT-like signed tokens with configurable expiry
+- VPS vs local environment detection
+- Single-use tokens with HMAC-SHA256 signatures
+
+**Build Status:** ✅ All scripts created, CI/CD passing
 
 ---
 
@@ -5318,7 +5376,131 @@ The agent never sees actual PII values until user approval via Matrix. This enab
 
 ---
 
-**Progress Log Last Updated:** 2026-02-20
-**Current Milestone:** ✅ CLIENT COMMUNICATION ARCHITECTURE COMPLETE
-**Version:** v7.0.0
+### ✅ Milestone 28: SSL Tunnel Skills (Complete 2026-02-21)
+**Status:** COMPLETE
+**Duration:** 1 day
+**Deliverables:**
+- Self-signed certificate auto-generation
+- Ngrok tunnel skill (quick temporary tunnels)
+- Cloudflare tunnel skill (permanent free tunnels)
+- SSL skill handler for agent guidance
+
+**Artifacts:**
+- `container/openclaw/skills/__init__.py` - Skill module initialization
+- `container/openclaw/skills/ssl_tunnel_setup.py` - Core SSL tunnel functionality
+  - NgrokTunnelSkill: Quick temporary tunnels
+  - CloudflareTunnelSkill: Permanent free tunnels
+  - SelfSignedCertSkill: Local certificate generation
+- `container/openclaw/skills/ssl_skill_handler.py` - Agent instructions
+
+**Security Model:**
+- Quick tunnels (Cloudflare): No auth needed, agent handles everything
+- Permanent tunnels: User auths in browser → provides token → agent configures
+- **Never access user email**
+- **Never ask for passwords**
+- **Never automate browser login**
+
+**Default SSL Setup:**
+- Auto-generate self-signed certificate on first run
+- Cert stored in /etc/armorclaw/ssl/
+- Uses server's public IP for SAN
+
+---
+
+### ✅ Milestone 29: IP-Only Deployment Support (Complete 2026-02-21)
+**Status:** COMPLETE
+**Duration:** 1 day
+**Deliverables:**
+- Auto-detect IP address format in setup wizard
+- Use HTTP for IP-based setups (no SSL)
+- Append :8448 port for federation on IP setups
+- Show IP-specific next steps (no HTTPS)
+
+**Artifacts:**
+- `deploy/container-setup.sh` - Updated with IP-only support
+
+**IP Deployment Flow:**
+1. User enters IP address instead of domain
+2. Wizard detects IP format → switches to HTTP mode
+3. Federation uses IP:8448 format
+4. Self-signed cert generated for local HTTPS (optional)
+5. Guidance provided for later SSL/domain migration
+
+---
+
+### ✅ Milestone 30: Onboarding Flow Enhancement (Complete 2026-02-21)
+**Status:** COMPLETE
+**Duration:** 1 day
+**Deliverables:**
+- 5-phase onboarding documentation
+- Security tier selection (essential/enhanced/maximum)
+- Post-setup options for ArmorTerminal
+- Better summary with next steps
+
+**Artifacts:**
+- `docs/guides/onboarding-flow.md` - Complete setup guide
+- `deploy/container-setup.sh` - Enhanced with security tiers
+
+**Onboarding Phases:**
+1. **Initial Setup** - Pull, run, configure basics
+2. **Matrix Stack** - Start homeserver
+3. **Hardening** - Apply security tier
+4. **Additional Apps** - Add ArmorTerminal etc.
+5. **External Access** - SSL/tunnel setup
+
+**Security Tiers:**
+| Tier | Description | Use Case |
+|------|-------------|----------|
+| Essential | Basic isolation | Dev/test environments |
+| Enhanced | + Seccomp, network isolation | **Recommended** for production |
+| Maximum | + Audit, PII scrubbing | High-security production |
+
+**Environment Variables:**
+- `ARMORCLAW_SECURITY_TIER=enhanced` - Pre-select security tier
+
+---
+
+### ✅ Milestone 31: PCI-DSS Compliance Warnings (Complete 2026-02-21)
+**Status:** COMPLETE
+**Duration:** 1 day
+**Deliverables:**
+- PCI warning levels (prohibited/violation/caution)
+- Payment profile acknowledgment requirements
+- PCI field detection in access requests
+- Matrix consent formatter with PCI warnings
+
+**Artifacts:**
+- `bridge/pkg/pii/hitl_consent.go` - HITL consent with PCI warnings
+- `bridge/pkg/pii/hitl_consent_test.go` - 499 lines of tests
+- `bridge/pkg/pii/profile.go` - Profile management with PCI support
+- `bridge/pkg/pii/profile_test.go` - Profile tests
+- `bridge/pkg/pii/resolver_test.go` - Resolver tests
+- `bridge/pkg/rpc/server.go` - RPC methods with PCI detection
+- `bridge/pkg/rpc/server_test.go` - RPC tests with PCI coverage
+- `bridge/pkg/secrets/pii_injection_test.go` - PII injection tests
+- `bridge/pkg/logger/security.go` - Security logging
+- `bridge/internal/adapter/pii_consent.go` - Matrix consent formatting
+
+**PCI Warning Levels:**
+| Level | Meaning | Action Required |
+|-------|---------|-----------------|
+| `prohibited` | Never allowed | Request auto-rejected |
+| `violation` | Strong warning | Acknowledgment required |
+| `caution` | Advisory warning | User notified |
+| `none` | No PCI concern | Normal flow |
+
+**Test Coverage:**
+- ✅ PCI field detection tests
+- ✅ Acknowledgment flow tests
+- ✅ Consent formatter tests
+- ✅ Profile CRUD with PCI tests
+- ✅ 35+ tests across all PII packages
+
+**Total RPC Methods:** 114 (added profile.*, pii.* with PCI support)
+
+---
+
+**Progress Log Last Updated:** 2026-02-21
+**Current Milestone:** ✅ SECURITY & DEPLOYMENT ENHANCEMENTS COMPLETE
+**Version:** v8.0.0
 **Next Milestone:** Production Deployment & End-to-End Testing

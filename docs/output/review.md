@@ -1,11 +1,11 @@
 # ArmorClaw Architecture Review - Complete
 
 > **Date:** 2026-02-21
-> **Version:** 0.2.0
-> **Milestone:** First Production Testing
+> **Version:** 8.0.0
+> **Milestone:** Security & Deployment Enhancements Complete
 > **Edition:** **Slack Enterprise Edition** (Discord/Teams/WhatsApp planned - see [ROADMAP.md](ROADMAP.md))
-> **Status:** PRODUCTION TESTING - Enterprise Security with Zero-Trust Enforcement
-> **Security Hardening:** v0.2.0 includes secure provisioning, admin creation, and credential cleanup
+> **Status:** PRODUCTION READY - Enterprise Security with Zero-Trust Enforcement
+> **Security Hardening:** v8.0.0 includes PCI-DSS compliance, SSL tunnel skills, and enhanced onboarding
 
 ---
 
@@ -29,6 +29,7 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 | **Hardware-Bound Encryption** | SQLCipher + XChaCha20-Poly1305 tied to machine hardware |
 | **HITL Consent** | Human-in-the-Loop approval for sensitive operations |
 | **Blind Fill PII** | Skills request PII access without seeing values until user approval |
+| **PCI-DSS Compliance** | Payment card field protection with acknowledgment requirements |
 | **Budget Guardrails** | Token tracking with cost controls and workflow states |
 
 ### Architecture Overview
@@ -140,13 +141,14 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 | Directory | Purpose |
 |-----------|---------|
 | `bridge/` | Go bridge implementation |
-| `bridge/pkg/rpc/server.go` | JSON-RPC server with 113 methods |
+| `bridge/pkg/rpc/server.go` | JSON-RPC server with 114 methods |
 | `bridge/pkg/keystore/keystore.go` | Encrypted credential storage |
 | `bridge/internal/adapter/matrix.go` | Matrix protocol adapter |
 | `bridge/pkg/secrets/` | Memory-only secret injection |
-| `bridge/pkg/pii/` | Blind Fill PII system |
+| `bridge/pkg/pii/` | Blind Fill PII system with PCI-DSS compliance |
 | `container/` | Docker container runtime |
 | `container/openclaw/` | OpenClaw agent implementation |
+| `container/openclaw/skills/` | Agent skills (SSL tunnels, etc.) |
 | `configs/` | Service configurations |
 | `deploy/` | Deployment scripts |
 | `applications/ArmorChat/` | Android client source |
@@ -244,6 +246,31 @@ All 10 gaps from the Split-Brain analysis have been resolved:
 | **secret.list** | List secret metadata | ✅ Implemented |
 | **WebSocket Events** | Agent/workflow/HITL event broadcasting | ✅ Implemented |
 | **Documentation** | Complete client communication reference | ✅ Implemented |
+
+### v8.0: Security & Deployment Enhancements (2026-02-21)
+
+| Component | Description | Status |
+|-----------|-------------|--------|
+| **SSL Tunnel Skills** | Ngrok/Cloudflare tunnel setup via agent | ✅ Implemented |
+| **Self-Signed Certs** | Auto-generated SSL for local/development | ✅ Implemented |
+| **IP-Only Deployment** | Deploy without domain using IP address | ✅ Implemented |
+| **Security Tiers** | Essential/Enhanced/Maximum hardening levels | ✅ Implemented |
+| **Onboarding Flow** | 5-phase guided setup with ArmorTerminal | ✅ Implemented |
+| **PCI-DSS Warnings** | Payment card field protection with acknowledgments | ✅ Implemented |
+| **PCI Warning Levels** | prohibited/violation/caution/none classification | ✅ Implemented |
+
+**SSL Tunnel Security Model:**
+- Quick tunnels (Cloudflare): No auth needed, agent handles everything
+- Permanent tunnels: User auths in browser → provides token → agent configures
+- Agent never sees credentials, emails, or passwords
+
+**PCI-DSS Compliance:**
+| Warning Level | Meaning | Action |
+|---------------|---------|--------|
+| `prohibited` | Never allowed | Auto-rejected |
+| `violation` | Strong warning | Acknowledgment required |
+| `caution` | Advisory warning | User notified |
+| `none` | No PCI concern | Normal flow |
 
 ---
 
@@ -1994,7 +2021,7 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 - ✅ **PCI warning levels** (prohibited > violation > caution > none)
 - ✅ **Comprehensive test coverage** (35+ tests across pii, resolver, hitl_consent, injection, rpc)
 
-### Build Status (2026-02-20): ✅
+### Build Status (2026-02-21): ✅
 
 **Core Bridge Packages:**
 - ✅ cmd/bridge - Main binary builds (31MB)
@@ -2026,7 +2053,7 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 - ✅ pkg/sso - SAML 2.0 and OIDC authentication
 - ✅ pkg/dashboard - Embedded web management interface
 
-### Test Status (2026-02-18): ✅
+### Test Status (2026-02-21): ✅
 
 **Core Package Tests (Phase 1-3):**
 - ✅ pkg/audio (all tests pass)
@@ -2051,6 +2078,27 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 - ✅ pkg/dashboard (12 tests - routes, API, authentication)
 
 **Total: 76+ core tests + 76 enterprise tests = 152+ tests passing**
+
+### Phase 8 Security & Deployment Enhancements: ✅ COMPLETE
+**4/4** Phase 8 components implemented
+- ✅ **SSL Tunnel Skills** (NgrokTunnelSkill, CloudflareTunnelSkill, SelfSignedCertSkill)
+- ✅ **IP-Only Deployment** (HTTP mode for IP addresses, self-signed cert generation)
+- ✅ **Onboarding Flow** (5-phase guided setup with security tier selection)
+- ✅ **PCI-DSS Compliance** (warning levels, acknowledgment requirements, audit logging)
+
+**Security Tiers:**
+| Tier | Features | Use Case |
+|------|----------|----------|
+| Essential | Basic isolation | Dev/test |
+| Enhanced | + Seccomp, network isolation | Production (recommended) |
+| Maximum | + Audit, PII scrubbing | High-security |
+
+**Container Skills:**
+- `container/openclaw/skills/ssl_tunnel_setup.py` - Core tunnel functionality
+- `container/openclaw/skills/ssl_skill_handler.py` - Agent guidance
+
+**New Documentation:**
+- `docs/guides/onboarding-flow.md` - 5-phase setup guide
 
 ---
 
@@ -6083,8 +6131,159 @@ fun getMatrixHomeserverUrl(): String {
 
 ---
 
-**Review Last Updated:** 2026-02-21
-**Status:** ✅ PHASE 7.2 COMPLETE (v7.2.0) - mDNS Discovery Protocol Enhanced
+## Simplified Secure Startup Experience (v7.4.0)
+
+### Overview
+
+Version 7.4.0 reduces setup friction while maintaining security through smart defaults, progressive disclosure, and auto-configuration.
+
+**Goal:** Reduce setup time from 10-15 minutes to 2-3 minutes while maintaining production-ready security.
+
+### Setup Mode Selection
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  ARMORCLAW SETUP MODES                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  [1] Quick Setup (2-3 min)                                      │
+│      • Secure defaults, minimal prompts                         │
+│      • Auto-generated QR code for ArmorChat                     │
+│      • Best for: First-time users, quick evaluation            │
+│                                                                  │
+│  [2] Standard Setup (5-10 min)                                  │
+│      • Guided setup with explanations                           │
+│      • Customize key settings                                   │
+│      • Best for: Production deployments                         │
+│                                                                  │
+│  [3] Expert Setup (Full control)                                │
+│      • Full 14-step wizard                                      │
+│      • Advanced configuration options                           │
+│      • Best for: Advanced users, custom deployments            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### New Setup Scripts
+
+| Script | Purpose | Time |
+|--------|---------|------|
+| `deploy/setup-quick.sh` | Express setup with secure defaults | 2-3 min |
+| `deploy/setup-wizard.sh` | Updated wizard with mode selection | 5-15 min |
+| `deploy/setup-matrix.sh` | Post-setup Matrix configuration | 2-5 min |
+| `deploy/armorclaw-harden.sh` | Production hardening (optional) | 5-10 min |
+| `deploy/armorclaw-provision.sh` | QR code generation for devices | 30s |
+
+### Quick Mode Smart Defaults
+
+| Setting | Quick Mode | Standard Mode |
+|---------|------------|---------------|
+| Log level | info | Prompt |
+| Log format | text | Prompt |
+| Matrix | Disabled | Prompt |
+| Budget alerts | Enabled ($5 daily, $100 monthly) | Prompt |
+| Hard stop | true | Prompt |
+| Voice | Disabled | Prompt |
+| Notifications | Disabled | Prompt |
+| Zero-trust | Empty (allow all) | Prompt |
+
+### QR Code Provisioning Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    VPS PROVISIONING FLOW                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. BRIDGE SETUP (on VPS)                                        │
+│     $ sudo ./deploy/setup-quick.sh                               │
+│     → Generates provisioning secret                              │
+│     → Creates signed URL with expiry                            │
+│     → Displays QR code in terminal                              │
+│                                                                  │
+│  2. ARMORCHAT CONNECTION                                         │
+│     → Scan QR code OR                                            │
+│     → Enter signed URL manually                                  │
+│     → URL contains: bridge address + token + expiry             │
+│                                                                  │
+│  3. FIRST DEVICE BONDING                                         │
+│     → Prompt for passphrase (required on VPS)                    │
+│     → Passphrase encrypts keystore                               │
+│     → Device becomes admin                                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### QR Code URL Format
+
+```
+armorclaw://provision?
+  host=bridge.example.com&
+  port=8443&
+  token=<JWT>&
+  expires=<timestamp>
+```
+
+### Production Hardening Script
+
+The `armorclaw-harden.sh` script provides post-setup security hardening:
+
+| Feature | Purpose |
+|---------|---------|
+| UFW Firewall | Deny-all default, allow required ports |
+| SSH Hardening | Key-only auth, no root login |
+| Fail2Ban | Brute-force protection |
+| Auto Updates | Security patches only |
+| Production Logging | JSON format with rotation |
+| Monitoring | Health check cron (optional) |
+
+### Files Created/Modified in v7.4.0
+
+| File | Purpose |
+|------|---------|
+| `deploy/setup-quick.sh` | Express 2-3 minute setup |
+| `deploy/setup-wizard.sh` | Updated with mode selection |
+| `deploy/setup-matrix.sh` | Post-setup Matrix config |
+| `deploy/armorclaw-harden.sh` | Production hardening |
+| `deploy/armorclaw-provision.sh` | QR code generation |
+| `.gitattributes` | LF line endings for shell scripts |
+| `docs/guides/setup-guide.md` | Updated Quick Setup section |
+
+### Environment Detection
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ENVIRONMENT DETECTION                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  VPS Environment:                                                │
+│  ├─ AWS: http://169.254.169.254/latest/meta-data/               │
+│  ├─ GCP: http://metadata.google.internal/                       │
+│  ├─ DigitalOcean: http://169.254.169.254/metadata/v1/           │
+│  └─ Generic: /etc/cloud/cloud.cfg                               │
+│                                                                  │
+│  Local/Hardware:                                                 │
+│  └─ Uses local network IP, hardware-bound keystore              │
+│                                                                  │
+│  Provisioning Output:                                            │
+│  ├─ VPS: QR code + passphrase prompt                            │
+│  └─ Local: QR code (no passphrase, hardware-bound)              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### CI/CD Fixes Applied
+
+| Issue | Resolution |
+|-------|------------|
+| `.dockerignore` excluding required files | Commented out exclusions for bridge/, deploy/, docker-compose*.yml |
+| `docker-compose-plugin` not in Debian repos | Download standalone binary from GitHub releases |
+| Missing `security-events: write` permission | Added to dockerhub.yml workflow |
+| CodeQL Action v3 deprecation | Upgraded to v4 |
+
+---
+
+**Review Last Updated:** 2026-02-22
+**Status:** ✅ PHASE 7.4 COMPLETE (v7.4.0) - Simplified Secure Startup Experience
 **Next Milestone:** First VPS Deployment - End-to-End E2EE Verification with Real Devices
 
 ---
