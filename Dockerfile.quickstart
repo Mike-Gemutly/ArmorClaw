@@ -1,0 +1,196 @@
+# ArmorClaw Quick Start Image
+# Self-contained deployment image with bridge, wizard, and agent runtime
+# Pull and run - setup wizard launches automatically
+
+# ============================================================================
+# Stage 1: Go Bridge Builder
+# ============================================================================
+FROM golang:1.24-bookworm AS bridge-builder
+
+WORKDIR /build
+
+# Copy Go module files first for caching
+COPY bridge/go.mod bridge/go.sum ./
+RUN go mod download
+
+# Copy bridge source
+COPY bridge/ ./
+
+# Build static binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o armorclaw-bridge ./cmd/bridge
+
+# ============================================================================
+# Stage 2: Agent Runtime Builder
+# ============================================================================
+FROM debian:bookworm-slim AS agent-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl build-essential \
+    python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create Python venv
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir aiohttp websockets python-dotenv
+
+# ============================================================================
+# Stage 3: Quick Start Runtime
+# ============================================================================
+FROM debian:bookworm-slim
+
+ARG BUILD_DATE
+ARG VCS_REF
+
+LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
+      org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
+      org.opencontainers.image.version="v1.0.0" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core runtime
+    python3 python3-venv \
+    # Required for setup wizard and bridge
+    curl wget jq socat \
+    # Docker client (for container orchestration)
+    docker.io docker-compose-plugin \
+    # System utilities
+    ca-certificates procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create ArmorClaw user
+RUN groupadd -g 10001 armorclaw && \
+    useradd -u 10001 -g armorclaw -m -s /bin/bash armorclaw
+
+# Create directory structure
+RUN mkdir -p /opt/armorclaw \
+             /etc/armorclaw \
+             /var/lib/armorclaw \
+             /run/armorclaw \
+             /var/log/armorclaw \
+    && chown -R armorclaw:armorclaw /opt/armorclaw /etc/armorclaw /var/lib/armorclaw /run/armorclaw /var/log/armorclaw
+
+# Copy bridge binary from builder
+COPY --from=bridge-builder /build/armorclaw-bridge /opt/armorclaw/
+RUN chmod +x /opt/armorclaw/armorclaw-bridge && \
+    ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge
+
+# Copy agent runtime from builder
+COPY --from=agent-builder /opt/venv /opt/venv
+COPY --from=agent-builder /usr/lib/node_modules /usr/lib/node_modules
+COPY --from=agent-builder /usr/bin/node /usr/bin/node
+COPY --from=agent-builder /usr/bin/npm /usr/bin/npm
+COPY --from=agent-builder /usr/bin/npx /usr/bin/npx
+
+# Copy agent container files
+COPY container/opt/openclaw/* /opt/armorclaw/agent/
+COPY container/openclaw/ /opt/armorclaw/agent/openclaw/
+
+# Copy setup wizard
+COPY deploy/setup-wizard.sh /opt/armorclaw/
+COPY deploy/health-check.sh /opt/armorclaw/
+COPY deploy/create-matrix-admin.sh /opt/armorclaw/
+RUN chmod +x /opt/armorclaw/*.sh
+
+# Copy configuration templates
+COPY configs/ /opt/armorclaw/configs/
+
+# Copy docker-compose files
+COPY docker-compose.yml /opt/armorclaw/
+COPY docker-compose-full.yml /opt/armorclaw/
+COPY docker-compose.matrix.yml /opt/armorclaw/
+COPY docker-compose.bridge.yml /opt/armorclaw/
+
+# Copy environment template
+COPY .env.template /opt/armorclaw/.env.template
+
+# Create quickstart entrypoint
+RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
+#!/bin/bash
+# ArmorClaw Quick Start Entrypoint
+# Launches setup wizard on first run, then starts bridge
+
+set -e
+
+CONFIG_FILE="/etc/armorclaw/config.toml"
+SETUP_FLAG="/etc/armorclaw/.setup_complete"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+echo -e "${CYAN}"
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║        ${BOLD}ArmorClaw Quick Start${NC}${CYAN}                          ║"
+echo "║        ${BOLD}Self-Contained Deployment${NC}${CYAN}                    ║"
+echo "╚══════════════════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# Check if setup is needed
+if [ ! -f "$SETUP_FLAG" ]; then
+    echo -e "${CYAN}First run detected. Starting setup wizard...${NC}"
+    echo ""
+
+    # Check for Docker socket
+    if [ ! -S /var/run/docker.sock ]; then
+        echo -e "${RED}ERROR: Docker socket not found at /var/run/docker.sock${NC}"
+        echo -e "${RED}This container requires Docker socket access.${NC}"
+        echo ""
+        echo "Run with: docker run -v /var/run/docker.sock:/var/run/docker.sock ..."
+        exit 1
+    fi
+
+    # Run setup wizard
+    cd /opt/armorclaw
+    ./setup-wizard.sh
+
+    # Mark setup complete
+    touch "$SETUP_FLAG"
+fi
+
+# Check configuration exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo -e "${RED}ERROR: Configuration not found at $CONFIG_FILE${NC}"
+    echo -e "${RED}Run the setup wizard first: /opt/armorclaw/setup-wizard.sh${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Starting ArmorClaw Bridge...${NC}"
+exec /opt/armorclaw/armorclaw-bridge
+ENTRYPOINT
+
+RUN chmod +x /opt/armorclaw/quickstart.sh
+
+# Environment
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV ARMORCLAW_CONFIG="/etc/armorclaw/config.toml"
+
+# Expose ports (when running as bridge)
+EXPOSE 8443 5000 6167
+
+# Volumes
+VOLUME ["/etc/armorclaw", "/var/lib/armorclaw", "/run/armorclaw", "/var/log/armorclaw"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD test -S /run/armorclaw/bridge.sock || exit 1
+
+# Entrypoint - launches setup wizard on first run
+ENTRYPOINT ["/opt/armorclaw/quickstart.sh"]

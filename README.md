@@ -100,6 +100,40 @@ We need **community testers** to validate the security hardening across differen
 
 ## ⚡ Quick Start
 
+### Option 0: Docker Image ⚡ FASTEST (No Git/Go Required)
+
+Pull and run - setup wizard launches automatically:
+
+```bash
+# Pull the image
+docker pull mikegemut/armorclaw:latest
+
+# Run with Docker socket (required for container orchestration)
+docker run -it \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-config:/etc/armorclaw \
+  -v armorclaw-data:/var/lib/armorclaw \
+  -p 8443:8443 -p 5000:5000 -p 6167:6167 \
+  mikegemut/armorclaw:latest
+```
+
+**The setup wizard guides you through configuration.** See [Quick Start Guide](docs/guides/quickstart-docker.md) for details.
+
+**Non-interactive mode (automation):**
+```bash
+docker run -d \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-config:/etc/armorclaw \
+  -e ARMORCLAW_MATRIX_SERVER=matrix.yourdomain.com \
+  -e ARMORCLAW_API_KEY=your-api-key \
+  -p 8443:8443 -p 5000:5000 -p 6167:6167 \
+  mikegemut/armorclaw:latest
+```
+
+**Time:** 2 minutes | **Experience Level:** Beginner | **Requirements:** Docker only
+
+---
+
 ### Option 1: Element X (Mobile) ⭐ FASTEST
 
 Connect to your AI agent via Element X mobile app in 5 minutes:

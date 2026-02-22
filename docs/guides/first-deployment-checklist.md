@@ -7,6 +7,36 @@
 
 ---
 
+## Quick Start Options
+
+### Option A: Docker Image (FASTEST - 2 minutes)
+
+If you want the quickest setup with no dependencies:
+
+```bash
+# Pull and run - setup wizard launches automatically
+docker pull mikegemut/armorclaw:latest
+
+docker run -it \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-config:/etc/armorclaw \
+  -v armorclaw-data:/var/lib/armorclaw \
+  -p 8443:8443 -p 5000:5000 -p 6167:6167 \
+  mikegemut/armorclaw:latest
+```
+
+**See:** [Docker Quick Start Guide](quickstart-docker.md) for full details.
+
+**Continue to:** Phase 7 (Client Integration) after Docker setup completes.
+
+---
+
+### Option B: Manual Deployment (Full Control)
+
+Follow the phases below for complete control over deployment.
+
+---
+
 ## Pre-Deployment Requirements
 
 ### VPS Requirements
