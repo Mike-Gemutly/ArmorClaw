@@ -136,8 +136,28 @@ create_directories() {
     mkdir -p "$DATA_DIR"
     mkdir -p "$RUN_DIR"
     mkdir -p "/var/log/armorclaw"
+    mkdir -p "$CONFIG_DIR/ssl"
 
     print_success "Directories created"
+}
+
+generate_self_signed_cert() {
+    print_info "Generating self-signed SSL certificate..."
+
+    local ssl_dir="$CONFIG_DIR/ssl"
+    local ip_address=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "$ssl_dir/key.pem" \
+        -out "$ssl_dir/cert.pem" \
+        -subj "/CN=$ip_address" \
+        -addext "subjectAltName=IP:$ip_address" 2>/dev/null
+
+    chmod 600 "$ssl_dir/key.pem"
+    chmod 644 "$ssl_dir/cert.pem"
+
+    print_success "Self-signed certificate generated for $ip_address"
+    print_warning "Note: Browsers will show security warnings. Ask the agent about ngrok or Cloudflare for trusted SSL."
 }
 
 check_docker_socket() {
@@ -472,6 +492,9 @@ main() {
 
     # Create directories
     create_directories
+
+    # Generate self-signed SSL certificate (default)
+    generate_self_signed_cert
 
     # Check Docker socket
     check_docker_socket
