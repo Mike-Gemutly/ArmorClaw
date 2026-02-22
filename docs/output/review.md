@@ -6282,8 +6282,62 @@ The `armorclaw-harden.sh` script provides post-setup security hardening:
 
 ---
 
+## Docker CI/CD Fixes (v7.4.1)
+
+### Issues Resolved
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Entrypoint fails on `--help` | Docker socket checked before flags | Handle `--help`/`--version` first |
+| Test grep finds no match | Used `agent` instead of `armorclaw` | Use `env.DOCKER_IMAGE` variable |
+| Missing documentation | No Docker patterns doc | Created `docs/dockerfiles/README.md` |
+
+### Entrypoint Pattern
+
+```bash
+#!/bin/bash
+# CORRECT: Handle flags BEFORE checking dependencies
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage information..."
+    exit 0
+fi
+
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "Version: 1.0.0"
+    exit 0
+fi
+
+# NOW check for Docker socket (only for actual runtime)
+if [ ! -S /var/run/docker.sock ]; then
+    echo "ERROR: Docker socket required"
+    exit 1
+fi
+```
+
+### Files Created/Modified in v7.4.1
+
+| File | Changes |
+|------|---------|
+| `Dockerfile.quickstart` | Added `--help` and `--version` flag handling before socket check |
+| `.github/workflows/dockerhub.yml` | Fixed grep pattern from `agent` to `armorclaw` |
+| `docs/dockerfiles/README.md` | **NEW** - Docker patterns, gotchas, and solutions |
+
+### Docker Documentation Reference
+
+See `docs/dockerfiles/README.md` for:
+- Entrypoint flag handling pattern
+- CI/CD test image grep patterns
+- `.dockerignore` exclusion issues
+- Docker Compose installation from GitHub releases
+- GitHub Actions permissions for SARIF upload
+- Line endings fix via `.gitattributes`
+- Troubleshooting checklist and error reference table
+
+---
+
 **Review Last Updated:** 2026-02-22
-**Status:** ✅ PHASE 7.4 COMPLETE (v7.4.0) - Simplified Secure Startup Experience
+**Status:** ✅ PHASE 7.4.1 COMPLETE - Docker CI/CD Fixes
 **Next Milestone:** First VPS Deployment - End-to-End E2EE Verification with Real Devices
 
 ---

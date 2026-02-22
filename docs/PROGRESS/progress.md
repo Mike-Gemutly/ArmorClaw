@@ -1432,6 +1432,47 @@ When continuing development, focus on:
 
 ---
 
+## ✅ Milestone: Docker CI/CD Fixes (2026-02-22)
+
+**Status:** COMPLETE
+**Version:** v7.4.1
+**Priority:** High - CI/CD Pipeline
+
+**Goal:** Fix Docker image test failures in GitHub Actions workflow.
+
+**Issues Resolved:**
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Entrypoint fails on `--help` | Docker socket checked before flags | Handle `--help`/`--version` first |
+| Test grep finds no match | Used `agent` instead of `armorclaw` | Use `env.DOCKER_IMAGE` variable |
+
+**Deliverables:**
+
+### Files Modified
+- `Dockerfile.quickstart` - Added `--help` and `--version` flag handling before socket check
+- `.github/workflows/dockerhub.yml` - Fixed grep pattern from `agent` to `armorclaw`
+
+### Files Created
+- `docs/dockerfiles/README.md` - Docker patterns, gotchas, and solutions documentation
+
+**Key Pattern Documented:**
+```bash
+# Handle --help BEFORE checking dependencies
+if [ "$1" = "--help" ]; then
+    echo "Usage..."
+    exit 0
+fi
+# NOW check for Docker socket
+if [ ! -S /var/run/docker.sock ]; then
+    exit 1
+fi
+```
+
+**Build Status:** ✅ CI/CD pipeline passing
+
+---
+
 ## Summary of Phase 1 Complete Status
 
 As of 2026-02-07, Phase 1 implementation is **COMPLETE** with all critical security gaps fixed and startup/configuration improvements applied.
