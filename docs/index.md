@@ -1,6 +1,6 @@
 # ArmorClaw Documentation
 
-> **Version:** 0.2.0 | **Last Updated:** 2026-02-22 | **Status:** Production Testing
+> **Version:** 0.2.1 | **Last Updated:** 2026-02-22 | **Status:** Production Testing
 
 ---
 
@@ -36,6 +36,7 @@
 | Connect ArmorTerminal | [ArmorTerminal Documentation](output/ArmorTerminal.md) | 10 min |
 | Run OpenClaw inside | [OpenClaw Integration](guides/openclaw-integration.md) | 10 min |
 | Troubleshoot issues | [Error Catalog](guides/error-catalog.md) | - |
+| Docker patterns & gotchas | [Dockerfiles Guide](dockerfiles/README.md) | 5 min |
 
 ---
 
