@@ -65,11 +65,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv \
     # Required for setup wizard and bridge
     curl wget jq socat \
-    # Docker client (for container orchestration)
-    docker.io docker-compose-plugin \
+    # Docker CLI client (container uses host's Docker socket)
+    docker.io \
     # System utilities
-    ca-certificates procps openssl \
+    ca-certificates procps openssl gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Docker Compose (standalone) for container orchestration
+# Note: docker-compose-plugin is not in Debian repos, use standalone binary
+RUN curl -fsSL "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose && \
+    ln -sf /usr/local/bin/docker-compose /usr/local/bin/docker compose 2>/dev/null || true
 
 # Create ArmorClaw user
 RUN groupadd -g 10001 armorclaw && \
