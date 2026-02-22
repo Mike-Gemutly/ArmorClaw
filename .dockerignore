@@ -40,20 +40,22 @@ coverage.txt
 
 # ============================================================================
 # Bridge (Go source - not needed in container)
+# Note: Dockerfile.quickstart needs bridge/ for building
+# Use !bridge/ exception in that Dockerfile's context
 # ============================================================================
-bridge/
-*.go
-go.mod
-go.sum
+# bridge/ - commented out, handled per-Dockerfile
+# *.go - commented out, handled per-Dockerfile
+# go.mod - commented out, handled per-Dockerfile
+# go.sum - commented out, handled per-Dockerfile
 vendor/
 
 # ============================================================================
 # Deployment & Infrastructure
+# Note: Dockerfile.quickstart needs specific deploy scripts
 # ============================================================================
-deploy/
+# deploy/ - commented out, Dockerfile.quickstart needs specific scripts
 scripts/
-docker-compose*.yml
-docker-compose*.yaml
+# docker-compose*.yml - commented out, Dockerfile.quickstart needs these
 docker-stack*.yml
 *.tar.gz
 *.tgz
@@ -62,7 +64,7 @@ docker-stack*.yml
 # Configuration & Secrets
 # ============================================================================
 .env
-.env.*
+# .env.* - commented out to allow .env.template
 *.env
 config*.toml
 *.secret
