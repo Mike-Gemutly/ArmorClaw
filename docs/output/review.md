@@ -1979,15 +1979,20 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 - ✅ **2/2** Error management RPC methods operational
 - ✅ **5/5** base security features implemented
 
-### Phase 6 Blind Fill PII: ✅ NEW
-**5/5** Phase 6 PII components implemented
+### Phase 6 Blind Fill PII: ✅ COMPLETE
+**9/9** Phase 6 PII components implemented
 - ✅ **5/5** Profile management RPC methods (profile.create, profile.list, profile.get, profile.update, profile.delete)
 - ✅ **4/4** PII access control RPC methods (pii.request_access, pii.approve_access, pii.reject_access, pii.list_requests)
 - ✅ **Encrypted Profile Vault** (user_profiles table in SQLCipher keystore)
 - ✅ **BlindFillEngine** (resolve only approved fields, never log values)
-- ✅ **HITLConsentManager** (60s timeout, Matrix notifications)
-- ✅ **PIIInjector** (memory-only Unix socket injection)
+- ✅ **HITLConsentManager** (60s timeout, Matrix notifications, critical field helpers)
+- ✅ **PIIInjector** (memory-only Unix socket injection, environment variable fallback)
 - ✅ **Compliance logging** (field names only, audit trail)
+- ✅ **Profile schemas** for personal, business, payment, medical, custom types
+- ✅ **Sensitivity levels** (low, medium, high, critical) with helper methods
+- ✅ **PCI-DSS workflow** (field detection, acknowledgment required, admin notification, audit logging)
+- ✅ **PCI warning levels** (prohibited > violation > caution > none)
+- ✅ **Comprehensive test coverage** (35+ tests across pii, resolver, hitl_consent, injection, rpc)
 
 ### Build Status (2026-02-20): ✅
 
@@ -2030,6 +2035,7 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 - ✅ pkg/errors (all tests pass)
 - ✅ pkg/logger (all tests pass)
 - ✅ pkg/rpc (all tests pass)
+- ✅ pkg/secrets (all tests pass - includes PII injection tests)
 - ✅ pkg/ttl (all tests pass)
 - ✅ pkg/turn (all tests pass)
 - ✅ pkg/voice (budget tests pass)
@@ -2039,7 +2045,7 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 
 **Enterprise Package Tests (Phase 4):**
 - ✅ license-server (15 tests - validation, activation, rate limiting)
-- ✅ pkg/pii (12 tests - HIPAA compliance, PHI detection, scrubbing)
+- ✅ pkg/pii (35+ tests - HIPAA compliance, PHI detection, scrubbing, resolver, HITL consent, PCI warnings)
 - ✅ pkg/audit (18 tests - hash chains, tamper evidence, export)
 - ✅ pkg/sso (19 tests - OIDC, SAML, sessions, role mapping)
 - ✅ pkg/dashboard (12 tests - routes, API, authentication)

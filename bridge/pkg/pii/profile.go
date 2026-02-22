@@ -6,6 +6,8 @@ package pii
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/securerandom"
@@ -38,6 +40,11 @@ const (
 	FieldCountry     = "country"
 	FieldCompany     = "company"
 	FieldJobTitle    = "job_title"
+
+	// Payment fields
+	FieldCardNumber  = "card_number"  // PCI-DSS restricted - optional with warning
+	FieldCardExpiry  = "card_expiry"  // PCI-DSS restricted - optional with warning
+	FieldCardCVV     = "card_cvv"     // PCI-DSS PROHIBITED - optional with severe warning
 )
 
 // ProfileData contains the actual PII values for a profile.
@@ -133,7 +140,20 @@ type FieldDescriptor struct {
 	Required    bool   `json:"required"`
 	Sensitive   bool   `json:"sensitive"` // If true, requires explicit consent
 	Category    string `json:"category,omitempty"`
+
+	// PCIWarning indicates this field may violate PCI-DSS if stored
+	PCIWarning PCIWarningLevel `json:"pci_warning,omitempty"`
 }
+
+// PCIWarningLevel indicates the severity of PCI-DSS compliance risk
+type PCIWarningLevel string
+
+const (
+	PCIWarningNone     PCIWarningLevel = ""              // No PCI concern
+	PCIWarningCaution  PCIWarningLevel = "caution"       // May increase PCI scope (expiry)
+	PCIWarningViolation PCIWarningLevel = "violation"    // Violates PCI-DSS if stored (card number)
+	PCIWarningProhibited PCIWarningLevel = "prohibited"  // Explicitly prohibited by PCI-DSS (CVV)
+)
 
 // ProfileFieldSchema describes available fields for a profile type
 type ProfileFieldSchema struct {
@@ -172,6 +192,50 @@ func GetStandardFieldSchema(profileType ProfileType) *ProfileFieldSchema {
 				{Key: FieldCompany, Label: "Company Name", Type: "text", Category: "business"},
 				{Key: FieldJobTitle, Label: "Job Title", Type: "text", Category: "business"},
 				{Key: FieldAddress, Label: "Business Address", Type: "text", Category: "location"},
+				{Key: FieldCity, Label: "City", Type: "text", Category: "location"},
+				{Key: FieldState, Label: "State/Province", Type: "text", Category: "location"},
+				{Key: FieldPostalCode, Label: "Postal Code", Type: "text", Category: "location"},
+				{Key: FieldCountry, Label: "Country", Type: "text", Category: "location"},
+			},
+		}
+	case ProfileTypePayment:
+		return &ProfileFieldSchema{
+			ProfileType: ProfileTypePayment,
+			Fields: []FieldDescriptor{
+				// Standard payment fields (safe to store)
+				{Key: FieldFullName, Label: "Cardholder Name", Type: "text", Category: "identity"},
+				{Key: "card_last_four", Label: "Card Last 4 Digits", Type: "text", Sensitive: true, Category: "payment"},
+				{Key: "card_type", Label: "Card Type", Type: "text", Category: "payment"},
+				{Key: FieldEmail, Label: "Billing Email", Type: "email", Category: "contact"},
+				{Key: FieldAddress, Label: "Billing Address", Type: "text", Category: "location"},
+				{Key: FieldCity, Label: "City", Type: "text", Category: "location"},
+				{Key: FieldState, Label: "State/Province", Type: "text", Category: "location"},
+				{Key: FieldPostalCode, Label: "Postal Code", Type: "text", Category: "location"},
+				{Key: FieldCountry, Label: "Country", Type: "text", Category: "location"},
+
+				// Optional PCI-DSS fields (with warnings)
+				{Key: FieldCardNumber, Label: "Card Number (Optional)", Type: "text", Sensitive: true,
+					Description: "⚠️ PCI-DSS VIOLATION: Storing full card numbers requires PCI Level 1 compliance. Use payment processor tokens instead.",
+					Category: "payment_pci", PCIWarning: PCIWarningViolation},
+				{Key: FieldCardExpiry, Label: "Expiry Date (Optional)", Type: "text", Sensitive: true,
+					Description: "⚠️ CAUTION: Storing expiry dates may increase PCI compliance scope.",
+					Category: "payment_pci", PCIWarning: PCIWarningCaution},
+				{Key: FieldCardCVV, Label: "CVV/CVC (Optional)", Type: "text", Sensitive: true,
+					Description: "🚫 PCI-DSS PROHIBITED: CVV storage is explicitly forbidden by PCI-DSS. Storing this field is a compliance violation.",
+					Category: "payment_pci", PCIWarning: PCIWarningProhibited},
+			},
+		}
+	case ProfileTypeMedical:
+		return &ProfileFieldSchema{
+			ProfileType: ProfileTypeMedical,
+			Fields: []FieldDescriptor{
+				{Key: FieldFullName, Label: "Full Name", Type: "text", Category: "identity"},
+				{Key: FieldDateOfBirth, Label: "Date of Birth", Type: "date", Sensitive: true, Category: "identity"},
+				{Key: FieldEmail, Label: "Email", Type: "email", Category: "contact"},
+				{Key: FieldPhone, Label: "Phone", Type: "tel", Category: "contact"},
+				{Key: "insurance_id", Label: "Insurance ID", Type: "text", Sensitive: true, Category: "medical"},
+				{Key: "primary_care_provider", Label: "Primary Care Provider", Type: "text", Category: "medical"},
+				{Key: FieldAddress, Label: "Address", Type: "text", Category: "location"},
 				{Key: FieldCity, Label: "City", Type: "text", Category: "location"},
 				{Key: FieldState, Label: "State/Province", Type: "text", Category: "location"},
 				{Key: FieldPostalCode, Label: "Postal Code", Type: "text", Category: "location"},
@@ -400,4 +464,68 @@ func (p *UserProfile) IsFieldSensitive(key string) bool {
 	}
 	// Custom fields are not sensitive by default
 	return false
+}
+
+// GetPCIWarningFields returns fields that have PCI compliance warnings
+func (p *UserProfile) GetPCIWarningFields() []FieldDescriptor {
+	var pciFields []FieldDescriptor
+	for _, field := range p.FieldSchema.Fields {
+		if field.PCIWarning != "" && field.PCIWarning != PCIWarningNone {
+			pciFields = append(pciFields, field)
+		}
+	}
+	return pciFields
+}
+
+// HasPCIViolationFields checks if any PCI violation fields are populated
+func (p *UserProfile) HasPCIViolationFields() bool {
+	dataMap := p.Data.ToMap()
+	for _, field := range p.FieldSchema.Fields {
+		if field.PCIWarning == PCIWarningViolation || field.PCIWarning == PCIWarningProhibited {
+			if val, exists := dataMap[field.Key]; exists && val != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// GetPCIWarningLevel returns the PCI warning level for a specific field
+func (p *UserProfile) GetPCIWarningLevel(key string) PCIWarningLevel {
+	for _, field := range p.FieldSchema.Fields {
+		if field.Key == key {
+			return field.PCIWarning
+		}
+	}
+	return PCIWarningNone
+}
+
+// GetPCIViolationMessage returns a human-readable warning about PCI violations
+func (p *UserProfile) GetPCIViolationMessage() string {
+	dataMap := p.Data.ToMap()
+	var violations []string
+
+	for _, field := range p.FieldSchema.Fields {
+		if val, exists := dataMap[field.Key]; exists && val != "" {
+			switch field.PCIWarning {
+			case PCIWarningProhibited:
+				violations = append(violations, fmt.Sprintf("🚫 CRITICAL: %s - CVV storage is EXPLICITLY PROHIBITED by PCI-DSS", field.Label))
+			case PCIWarningViolation:
+				violations = append(violations, fmt.Sprintf("⚠️ VIOLATION: %s - Storing full card numbers requires PCI Level 1 certification", field.Label))
+			case PCIWarningCaution:
+				violations = append(violations, fmt.Sprintf("⚡ CAUTION: %s - May increase PCI compliance scope", field.Label))
+			}
+		}
+	}
+
+	if len(violations) == 0 {
+		return ""
+	}
+
+	return "PCI-DSS COMPLIANCE WARNING:\n" + strings.Join(violations, "\n")
+}
+
+// RequiresPCIAcknowledgment checks if user must acknowledge PCI risks
+func (p *UserProfile) RequiresPCIAcknowledgment() bool {
+	return p.HasPCIViolationFields()
 }

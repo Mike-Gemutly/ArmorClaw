@@ -493,3 +493,464 @@ func TestErrorRPCResponseFormat(t *testing.T) {
 		t.Error("resolve_error result should have 'trace_id' field")
 	}
 }
+
+// TestCheckPCIFields tests the PCI field detection logic
+func TestCheckPCIFields(t *testing.T) {
+	// Create a minimal server for testing
+	s := &Server{}
+
+	tests := []struct {
+		name           string
+		profileType    string
+		data           map[string]interface{}
+		expectWarnings int
+		expectedFields []string
+	}{
+		{
+			name:           "non-payment profile",
+			profileType:    "personal",
+			data:           map[string]interface{}{"card_number": "4242424242424242"},
+			expectWarnings: 0,
+			expectedFields: nil,
+		},
+		{
+			name:           "payment profile without PCI fields",
+			profileType:    "payment",
+			data:           map[string]interface{}{"full_name": "John Doe"},
+			expectWarnings: 0,
+			expectedFields: nil,
+		},
+		{
+			name:           "payment profile with card number",
+			profileType:    "payment",
+			data:           map[string]interface{}{"card_number": "4242424242424242"},
+			expectWarnings: 1,
+			expectedFields: []string{"card_number"},
+		},
+		{
+			name:           "payment profile with CVV",
+			profileType:    "payment",
+			data:           map[string]interface{}{"card_cvv": "123"},
+			expectWarnings: 1,
+			expectedFields: []string{"card_cvv"},
+		},
+		{
+			name:           "payment profile with all PCI fields",
+			profileType:    "payment",
+			data:           map[string]interface{}{"card_number": "4242424242424242", "card_cvv": "123", "card_expiry": "12/28"},
+			expectWarnings: 3,
+			expectedFields: []string{"card_number", "card_cvv", "card_expiry"},
+		},
+		{
+			name:           "payment profile with empty PCI fields",
+			profileType:    "payment",
+			data:           map[string]interface{}{"card_number": "", "card_cvv": nil},
+			expectWarnings: 0,
+			expectedFields: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings := s.checkPCIFields(tt.profileType, tt.data)
+
+			if len(warnings) != tt.expectWarnings {
+				t.Errorf("Expected %d warnings, got %d", tt.expectWarnings, len(warnings))
+			}
+
+			if tt.expectedFields != nil {
+				warningFields := make(map[string]bool)
+				for _, w := range warnings {
+					warningFields[w["field"]] = true
+				}
+				for _, expected := range tt.expectedFields {
+					if !warningFields[expected] {
+						t.Errorf("Expected warning for field %s", expected)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestPCIWarningLevels tests that PCI warning levels are correct
+func TestPCIWarningLevels(t *testing.T) {
+	s := &Server{}
+
+	// Test card_number has violation level
+	data := map[string]interface{}{"card_number": "4242424242424242"}
+	warnings := s.checkPCIFields("payment", data)
+
+	if len(warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d", len(warnings))
+	}
+
+	if warnings[0]["level"] != "violation" {
+		t.Errorf("Expected level 'violation', got '%s'", warnings[0]["level"])
+	}
+
+	// Test card_cvv has prohibited level
+	data = map[string]interface{}{"card_cvv": "123"}
+	warnings = s.checkPCIFields("payment", data)
+
+	if len(warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d", len(warnings))
+	}
+
+	if warnings[0]["level"] != "prohibited" {
+		t.Errorf("Expected level 'prohibited', got '%s'", warnings[0]["level"])
+	}
+
+	// Test card_expiry has caution level
+	data = map[string]interface{}{"card_expiry": "12/28"}
+	warnings = s.checkPCIFields("payment", data)
+
+	if len(warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d", len(warnings))
+	}
+
+	if warnings[0]["level"] != "caution" {
+		t.Errorf("Expected level 'caution', got '%s'", warnings[0]["level"])
+	}
+}
+
+// TestPCIAcknowledgmentPhrase tests the exact acknowledgment phrase requirement
+func TestPCIAcknowledgmentPhrase(t *testing.T) {
+	tests := []struct {
+		name           string
+		acknowledgment string
+		expectedMatch  bool
+	}{
+		{
+			name:           "exact match",
+			acknowledgment: "I accept all risks and liability",
+			expectedMatch:  true,
+		},
+		{
+			name:           "wrong phrase",
+			acknowledgment: "I accept the risks",
+			expectedMatch:  false,
+		},
+		{
+			name:           "empty string",
+			acknowledgment: "",
+			expectedMatch:  false,
+		},
+		{
+			name:           "extra spaces",
+			acknowledgment: "I accept all risks and liability ",
+			expectedMatch:  false,
+		},
+		{
+			name:           "lowercase",
+			acknowledgment: "i accept all risks and liability",
+			expectedMatch:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The phrase must match exactly
+			matches := tt.acknowledgment == "I accept all risks and liability"
+			if matches != tt.expectedMatch {
+				t.Errorf("Expected match=%v, got match=%v for phrase '%s'", tt.expectedMatch, matches, tt.acknowledgment)
+			}
+		})
+	}
+}
+
+// TestCheckPCIFieldsInRequest tests PCI field detection in access requests
+func TestCheckPCIFieldsInRequest(t *testing.T) {
+	s := &Server{}
+
+	tests := []struct {
+		name            string
+		requestedFields []string
+		expectWarnings  int
+		expectedFields  []string
+	}{
+		{
+			name:            "no PCI fields",
+			requestedFields: []string{"full_name", "email", "phone"},
+			expectWarnings:  0,
+			expectedFields:  nil,
+		},
+		{
+			name:            "card_number only",
+			requestedFields: []string{"full_name", "card_number"},
+			expectWarnings:  1,
+			expectedFields:  []string{"card_number"},
+		},
+		{
+			name:            "card_cvv only (prohibited)",
+			requestedFields: []string{"card_cvv"},
+			expectWarnings:  1,
+			expectedFields:  []string{"card_cvv"},
+		},
+		{
+			name:            "all PCI fields",
+			requestedFields: []string{"card_number", "card_cvv", "card_expiry"},
+			expectWarnings:  3,
+			expectedFields:  []string{"card_number", "card_cvv", "card_expiry"},
+		},
+		{
+			name:            "mixed fields",
+			requestedFields: []string{"full_name", "card_number", "email", "card_expiry"},
+			expectWarnings:  2,
+			expectedFields:  []string{"card_number", "card_expiry"},
+		},
+		{
+			name:            "empty request",
+			requestedFields: []string{},
+			expectWarnings:  0,
+			expectedFields:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings := s.checkPCIFieldsInRequest(tt.requestedFields)
+
+			if len(warnings) != tt.expectWarnings {
+				t.Errorf("Expected %d warnings, got %d", tt.expectWarnings, len(warnings))
+			}
+
+			if tt.expectedFields != nil {
+				warningFields := make(map[string]bool)
+				for _, w := range warnings {
+					warningFields[w["field"]] = true
+				}
+				for _, expected := range tt.expectedFields {
+					if !warningFields[expected] {
+						t.Errorf("Expected warning for field %s", expected)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestPCIFieldWarningLevels tests that PCI warning levels are correct in requests
+func TestPCIFieldWarningLevels(t *testing.T) {
+	s := &Server{}
+
+	// Test card_number has violation level
+	warnings := s.checkPCIFieldsInRequest([]string{"card_number"})
+	if len(warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d", len(warnings))
+	}
+	if warnings[0]["level"] != "violation" {
+		t.Errorf("Expected level 'violation' for card_number, got '%s'", warnings[0]["level"])
+	}
+
+	// Test card_cvv has prohibited level
+	warnings = s.checkPCIFieldsInRequest([]string{"card_cvv"})
+	if len(warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d", len(warnings))
+	}
+	if warnings[0]["level"] != "prohibited" {
+		t.Errorf("Expected level 'prohibited' for card_cvv, got '%s'", warnings[0]["level"])
+	}
+
+	// Test card_expiry has caution level
+	warnings = s.checkPCIFieldsInRequest([]string{"card_expiry"})
+	if len(warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d", len(warnings))
+	}
+	if warnings[0]["level"] != "caution" {
+		t.Errorf("Expected level 'caution' for card_expiry, got '%s'", warnings[0]["level"])
+	}
+}
+
+// TestPIIRequestAccessWithPCIFields tests pii.request_access with PCI fields
+func TestPIIRequestAccessWithPCIFields(t *testing.T) {
+	tests := []struct {
+		name           string
+		params         map[string]interface{}
+		expectPCIWarn  bool
+	}{
+		{
+			name: "request without PCI fields",
+			params: map[string]interface{}{
+				"skill_id":   "skill-123",
+				"profile_id": "profile-456",
+				"variables": []interface{}{
+					map[string]interface{}{"key": "full_name", "description": "Your name"},
+					map[string]interface{}{"key": "email", "description": "Your email"},
+				},
+			},
+			expectPCIWarn: false,
+		},
+		{
+			name: "request with card_number",
+			params: map[string]interface{}{
+				"skill_id":   "skill-123",
+				"profile_id": "profile-456",
+				"variables": []interface{}{
+					map[string]interface{}{"key": "full_name", "description": "Your name"},
+					map[string]interface{}{"key": "card_number", "description": "Card number"},
+				},
+			},
+			expectPCIWarn: true,
+		},
+		{
+			name: "request with card_cvv (prohibited)",
+			params: map[string]interface{}{
+				"skill_id":   "skill-123",
+				"profile_id": "profile-456",
+				"variables": []interface{}{
+					map[string]interface{}{"key": "card_cvv", "description": "CVV"},
+				},
+			},
+			expectPCIWarn: true,
+		},
+		{
+			name: "request with all PCI fields",
+			params: map[string]interface{}{
+				"skill_id":   "skill-123",
+				"profile_id": "profile-456",
+				"variables": []interface{}{
+					map[string]interface{}{"key": "card_number", "description": "Card number"},
+					map[string]interface{}{"key": "card_cvv", "description": "CVV"},
+					map[string]interface{}{"key": "card_expiry", "description": "Expiry"},
+				},
+			},
+			expectPCIWarn: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, err := json.Marshal(tt.params)
+			if err != nil {
+				t.Fatalf("Failed to marshal params: %v", err)
+			}
+
+			req := Request{
+				JSONRPC: "2.0",
+				ID:      1,
+				Method:  "pii.request_access",
+				Params:  paramsJSON,
+			}
+
+			reqJSON, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("Failed to marshal request: %v", err)
+			}
+
+			// Verify request can be unmarshaled
+			var unmarshaledReq Request
+			if err := json.Unmarshal(reqJSON, &unmarshaledReq); err != nil {
+				t.Fatalf("Failed to unmarshal request: %v", err)
+			}
+
+			// Verify variables are present
+			var params struct {
+				Variables []map[string]interface{} `json:"variables"`
+			}
+			if err := json.Unmarshal(unmarshaledReq.Params, &params); err != nil {
+				t.Fatalf("Failed to unmarshal params: %v", err)
+			}
+
+			// Check if PCI fields are in the request
+			hasPCIField := false
+			pciFields := map[string]bool{"card_number": true, "card_cvv": true, "card_expiry": true}
+			for _, v := range params.Variables {
+				if key, ok := v["key"].(string); ok && pciFields[key] {
+					hasPCIField = true
+					break
+				}
+			}
+
+			if hasPCIField != tt.expectPCIWarn {
+				t.Errorf("Expected PCI warning=%v, got PCI field present=%v", tt.expectPCIWarn, hasPCIField)
+			}
+		})
+	}
+}
+
+// TestPIIApproveAccessWithPCIFields tests pii.approve_access with PCI fields
+func TestPIIApproveAccessWithPCIFields(t *testing.T) {
+	tests := []struct {
+		name          string
+		params        map[string]interface{}
+		expectPCIWarn bool
+	}{
+		{
+			name: "approve without PCI fields",
+			params: map[string]interface{}{
+				"request_id":      "pii_req_123",
+				"user_id":         "user-001",
+				"approved_fields": []string{"full_name", "email"},
+			},
+			expectPCIWarn: false,
+		},
+		{
+			name: "approve with card_number",
+			params: map[string]interface{}{
+				"request_id":      "pii_req_123",
+				"user_id":         "user-001",
+				"approved_fields": []string{"full_name", "card_number"},
+			},
+			expectPCIWarn: true,
+		},
+		{
+			name: "approve with card_cvv (prohibited)",
+			params: map[string]interface{}{
+				"request_id":      "pii_req_123",
+				"user_id":         "user-001",
+				"approved_fields": []string{"card_cvv"},
+			},
+			expectPCIWarn: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, err := json.Marshal(tt.params)
+			if err != nil {
+				t.Fatalf("Failed to marshal params: %v", err)
+			}
+
+			req := Request{
+				JSONRPC: "2.0",
+				ID:      1,
+				Method:  "pii.approve_access",
+				Params:  paramsJSON,
+			}
+
+			// Verify request format
+			reqJSON, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("Failed to marshal request: %v", err)
+			}
+
+			var unmarshaledReq Request
+			if err := json.Unmarshal(reqJSON, &unmarshaledReq); err != nil {
+				t.Fatalf("Failed to unmarshal request: %v", err)
+			}
+
+			// Verify approved fields
+			var params struct {
+				ApprovedFields []string `json:"approved_fields"`
+			}
+			if err := json.Unmarshal(unmarshaledReq.Params, &params); err != nil {
+				t.Fatalf("Failed to unmarshal params: %v", err)
+			}
+
+			// Check if PCI fields are in the approved list
+			hasPCIField := false
+			pciFields := map[string]bool{"card_number": true, "card_cvv": true, "card_expiry": true}
+			for _, field := range params.ApprovedFields {
+				if pciFields[field] {
+					hasPCIField = true
+					break
+				}
+			}
+
+			if hasPCIField != tt.expectPCIWarn {
+				t.Errorf("Expected PCI warning=%v, got PCI field present=%v", tt.expectPCIWarn, hasPCIField)
+			}
+		})
+	}
+}

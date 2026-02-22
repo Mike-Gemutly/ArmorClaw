@@ -87,6 +87,10 @@ type AccessRequest struct {
 	// Manifest is the original skill manifest
 	Manifest *SkillManifest `json:"manifest,omitempty"`
 
+	// PCIWarnings contains warnings about PCI-DSS sensitive fields being requested
+	// This is populated when the request includes card_number, card_cvv, or card_expiry
+	PCIWarnings []map[string]string `json:"pci_warnings,omitempty"`
+
 	// approvalChan is used to signal approval completion
 	approvalChan chan approvalResult `json:"-"`
 
@@ -428,6 +432,50 @@ func (m *HITLConsentManager) GetRequest(requestID string) (*AccessRequest, error
 	}
 
 	return request, nil
+}
+
+// GetCriticalFields returns the list of fields with critical sensitivity from a request
+func (r *AccessRequest) GetCriticalFields() []string {
+	return r.getFieldsBySensitivity(SensitivityCritical)
+}
+
+// GetHighSensitivityFields returns the list of high sensitivity fields
+func (r *AccessRequest) GetHighSensitivityFields() []string {
+	return r.getFieldsBySensitivity(SensitivityHigh)
+}
+
+// getFieldsBySensitivity returns fields matching a sensitivity level
+func (r *AccessRequest) getFieldsBySensitivity(level SensitivityLevel) []string {
+	if r.Manifest == nil {
+		return nil
+	}
+
+	var fields []string
+	for _, v := range r.Manifest.Variables {
+		if v.Sensitivity == level {
+			fields = append(fields, v.Key)
+		}
+	}
+	return fields
+}
+
+// HasCriticalFields returns true if the request contains any critical fields
+func (r *AccessRequest) HasCriticalFields() bool {
+	return len(r.GetCriticalFields()) > 0
+}
+
+// GetFieldSensitivity returns the sensitivity level for a field
+func (r *AccessRequest) GetFieldSensitivity(key string) SensitivityLevel {
+	if r.Manifest == nil {
+		return SensitivityMedium // Default to medium if unknown
+	}
+
+	for _, v := range r.Manifest.Variables {
+		if v.Key == key {
+			return v.Sensitivity
+		}
+	}
+	return SensitivityMedium
 }
 
 // ListPendingRequests returns all pending requests

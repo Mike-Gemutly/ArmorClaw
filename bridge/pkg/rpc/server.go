@@ -4841,10 +4841,11 @@ func (s *Server) handleLicenseSetKey(req *Request) *Response {
 // handleProfileCreate handles profile.create RPC method
 func (s *Server) handleProfileCreate(req *Request) *Response {
 	var params struct {
-		ProfileName string                 `json:"profile_name"`
-		ProfileType string                 `json:"profile_type"`
-		Data        map[string]interface{} `json:"data"`
-		IsDefault   bool                   `json:"is_default"`
+		ProfileName      string                 `json:"profile_name"`
+		ProfileType      string                 `json:"profile_type"`
+		Data             map[string]interface{} `json:"data"`
+		IsDefault        bool                   `json:"is_default"`
+		PCIAcknowledgment string                `json:"pci_acknowledgment"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -4871,6 +4872,37 @@ func (s *Server) handleProfileCreate(req *Request) *Response {
 
 	if params.ProfileType == "" {
 		params.ProfileType = "personal"
+	}
+
+	// Check for PCI fields and require acknowledgment
+	pciWarnings := s.checkPCIFields(params.ProfileType, params.Data)
+	if len(pciWarnings) > 0 {
+		// Require explicit acknowledgment for PCI violations
+		if params.PCIAcknowledgment != "I accept all risks and liability" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    -32099, // Custom error code for PCI acknowledgment required
+					Message: "PCI-DSS acknowledgment required",
+					Data: map[string]interface{}{
+						"pci_warnings":   pciWarnings,
+						"acknowledgment_required": "I accept all risks and liability",
+						"instructions":   "Include 'pci_acknowledgment' parameter with the exact phrase above",
+					},
+				},
+			}
+		}
+
+		// Log PCI violation acknowledgment
+		if s.securityLog != nil {
+			s.securityLog.LogPCIViolationAcknowledged(
+				s.ctx,
+				params.ProfileName,
+				params.ProfileType,
+				pciWarnings,
+			)
+		}
 	}
 
 	// Generate profile ID
@@ -4910,16 +4942,24 @@ func (s *Server) handleProfileCreate(req *Request) *Response {
 		}
 	}
 
+	result := map[string]interface{}{
+		"profile_id":   profileID,
+		"profile_name": params.ProfileName,
+		"profile_type": params.ProfileType,
+		"is_default":   params.IsDefault,
+		"field_count":  len(params.Data),
+	}
+
+	// Include PCI warnings in response if any
+	if len(pciWarnings) > 0 {
+		result["pci_warnings"] = pciWarnings
+		result["pci_acknowledged"] = true
+	}
+
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]interface{}{
-			"profile_id":   profileID,
-			"profile_name": params.ProfileName,
-			"profile_type": params.ProfileType,
-			"is_default":   params.IsDefault,
-			"field_count":  len(params.Data),
-		},
+		Result:  result,
 	}
 }
 
@@ -5012,29 +5052,39 @@ func (s *Server) handleProfileGet(req *Request) *Response {
 		data = make(map[string]interface{})
 	}
 
+	// Check for PCI fields and add warning
+	result := map[string]interface{}{
+		"id":            profile.ID,
+		"profile_name":  profile.ProfileName,
+		"profile_type":  profile.ProfileType,
+		"data":          data,
+		"created_at":    profile.CreatedAt,
+		"updated_at":    profile.UpdatedAt,
+		"last_accessed": profile.LastAccessed,
+		"is_default":    profile.IsDefault,
+	}
+
+	// Add PCI warnings if payment profile has sensitive fields
+	pciWarnings := s.checkPCIFields(profile.ProfileType, data)
+	if len(pciWarnings) > 0 {
+		result["pci_warnings"] = pciWarnings
+	}
+
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]interface{}{
-			"id":            profile.ID,
-			"profile_name":  profile.ProfileName,
-			"profile_type":  profile.ProfileType,
-			"data":          data,
-			"created_at":    profile.CreatedAt,
-			"updated_at":    profile.UpdatedAt,
-			"last_accessed": profile.LastAccessed,
-			"is_default":    profile.IsDefault,
-		},
+		Result:  result,
 	}
 }
 
 // handleProfileUpdate handles profile.update RPC method
 func (s *Server) handleProfileUpdate(req *Request) *Response {
 	var params struct {
-		ProfileID   string                 `json:"profile_id"`
-		ProfileName string                 `json:"profile_name"`
-		Data        map[string]interface{} `json:"data"`
-		IsDefault   *bool                  `json:"is_default"`
+		ProfileID         string                 `json:"profile_id"`
+		ProfileName       string                 `json:"profile_name"`
+		Data              map[string]interface{} `json:"data"`
+		IsDefault         *bool                  `json:"is_default"`
+		PCIAcknowledgment string                 `json:"pci_acknowledgment"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -5093,6 +5143,37 @@ func (s *Server) handleProfileUpdate(req *Request) *Response {
 		existingData[k] = v
 	}
 
+	// Check for PCI fields in the update
+	pciWarnings := s.checkPCIFields(existing.ProfileType, existingData)
+	if len(pciWarnings) > 0 {
+		// Require explicit acknowledgment for PCI violations
+		if params.PCIAcknowledgment != "I accept all risks and liability" {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    -32099, // Custom error code for PCI acknowledgment required
+					Message: "PCI-DSS acknowledgment required",
+					Data: map[string]interface{}{
+						"pci_warnings":   pciWarnings,
+						"acknowledgment_required": "I accept all risks and liability",
+						"instructions":   "Include 'pci_acknowledgment' parameter with the exact phrase above",
+					},
+				},
+			}
+		}
+
+		// Log PCI violation acknowledgment
+		if s.securityLog != nil {
+			s.securityLog.LogPCIViolationAcknowledged(
+				s.ctx,
+				profileName,
+				existing.ProfileType,
+				pciWarnings,
+			)
+		}
+	}
+
 	dataBytes, err := json.Marshal(existingData)
 	if err != nil {
 		return &Response{
@@ -5117,15 +5198,23 @@ func (s *Server) handleProfileUpdate(req *Request) *Response {
 		}
 	}
 
+	result := map[string]interface{}{
+		"profile_id":   params.ProfileID,
+		"profile_name": profileName,
+		"is_default":   isDefault,
+		"field_count":  len(existingData),
+	}
+
+	// Include PCI warnings in response if any
+	if len(pciWarnings) > 0 {
+		result["pci_warnings"] = pciWarnings
+		result["pci_acknowledged"] = true
+	}
+
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]interface{}{
-			"profile_id":   params.ProfileID,
-			"profile_name": profileName,
-			"is_default":   isDefault,
-			"field_count":  len(existingData),
-		},
+		Result:  result,
 	}
 }
 
@@ -5176,6 +5265,96 @@ func (s *Server) handleProfileDelete(req *Request) *Response {
 			"profile_id": params.ProfileID,
 		},
 	}
+}
+
+// checkPCIFields checks if the profile data contains PCI-sensitive fields
+// and returns warnings for each violation
+func (s *Server) checkPCIFields(profileType string, data map[string]interface{}) []map[string]string {
+	var warnings []map[string]string
+
+	// Only check payment profiles for PCI fields
+	if profileType != "payment" {
+		return warnings
+	}
+
+	// PCI field definitions with warning levels
+	pciFields := map[string]struct {
+		level       string
+		message     string
+		description string
+	}{
+		"card_number": {
+			level:       "violation",
+			message:     "Storing full card numbers requires PCI Level 1 certification",
+			description: "Card Number",
+		},
+		"card_cvv": {
+			level:       "prohibited",
+			message:     "CVV storage is EXPLICITLY PROHIBITED by PCI-DSS Requirement 3.2",
+			description: "CVV/CVC",
+		},
+		"card_expiry": {
+			level:       "caution",
+			message:     "Storing expiry dates may increase PCI compliance scope",
+			description: "Expiry Date",
+		},
+	}
+
+	for field, info := range pciFields {
+		if val, exists := data[field]; exists && val != "" && val != nil {
+			warning := map[string]string{
+				"field":       field,
+				"level":       info.level,
+				"description": info.description,
+				"message":     info.message,
+			}
+			warnings = append(warnings, warning)
+		}
+	}
+
+	return warnings
+}
+
+// checkPCIFieldsInRequest checks if any PCI-sensitive fields are being requested
+// This is used to warn users when skills request access to payment card data
+func (s *Server) checkPCIFieldsInRequest(requestedFields []string) []map[string]string {
+	var warnings []map[string]string
+
+	pciFields := map[string]struct {
+		level       string
+		message     string
+		description string
+	}{
+		"card_number": {
+			level:       "violation",
+			message:     "Card number access requires PCI Level 1 certification if stored",
+			description: "Card Number",
+		},
+		"card_cvv": {
+			level:       "prohibited",
+			message:     "CVV access is EXPLICITLY PROHIBITED by PCI-DSS Requirement 3.2",
+			description: "CVV/CVC",
+		},
+		"card_expiry": {
+			level:       "caution",
+			message:     "Expiry date access may increase PCI compliance scope",
+			description: "Expiry Date",
+		},
+	}
+
+	for _, field := range requestedFields {
+		if info, exists := pciFields[field]; exists {
+			warning := map[string]string{
+				"field":       field,
+				"level":       info.level,
+				"description": info.description,
+				"message":     info.message,
+			}
+			warnings = append(warnings, warning)
+		}
+	}
+
+	return warnings
 }
 
 // ============================================================================
@@ -5229,24 +5408,37 @@ func (s *Server) handlePIIRequestAccess(req *Request) *Response {
 	requestID := "pii_req_" + generateID()
 
 	// Extract requested fields
-	requestedFields := make([]string, len(params.Variables))
-	for i, v := range params.Variables {
+	requestedFields := make([]string, 0, len(params.Variables))
+	for _, v := range params.Variables {
 		if key, ok := v["key"].(string); ok {
-			requestedFields[i] = key
+			requestedFields = append(requestedFields, key)
 		}
+	}
+
+	// Check for PCI field requests (P0-CRIT-2: PCI-DSS compliance)
+	// These are sensitive fields that require special warning regardless of profile type
+	pciFieldsRequested := s.checkPCIFieldsInRequest(requestedFields)
+
+	result := map[string]interface{}{
+		"request_id":       requestID,
+		"skill_id":         params.SkillID,
+		"profile_id":       params.ProfileID,
+		"requested_fields": requestedFields,
+		"status":           "pending",
+		"message":          "Access request created. Use pii.approve_access or pii.reject_access to respond.",
+	}
+
+	// Add PCI warnings if PCI fields are requested
+	if len(pciFieldsRequested) > 0 {
+		result["pci_warnings"] = pciFieldsRequested
+		result["pci_notice"] = "WARNING: Request includes PCI-DSS sensitive fields. " +
+			"Approving access to card_number, card_cvv, or card_expiry may have compliance implications."
 	}
 
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]interface{}{
-			"request_id":       requestID,
-			"skill_id":         params.SkillID,
-			"profile_id":       params.ProfileID,
-			"requested_fields": requestedFields,
-			"status":           "pending",
-			"message":          "Access request created. Use pii.approve_access or pii.reject_access to respond.",
-		},
+		Result:  result,
 	}
 }
 
@@ -5284,15 +5476,27 @@ func (s *Server) handlePIIApproveAccess(req *Request) *Response {
 		params.UserID = "unknown"
 	}
 
+	// Check if approved fields include PCI-sensitive data
+	pciWarnings := s.checkPCIFieldsInRequest(params.ApprovedFields)
+
+	result := map[string]interface{}{
+		"approved":        true,
+		"request_id":      params.RequestID,
+		"approved_by":     params.UserID,
+		"approved_fields": params.ApprovedFields,
+	}
+
+	// Add PCI warnings if PCI fields are approved
+	if len(pciWarnings) > 0 {
+		result["pci_warnings"] = pciWarnings
+		result["pci_notice"] = "WARNING: You have approved access to PCI-DSS sensitive fields. " +
+			"This action is logged for compliance auditing."
+	}
+
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]interface{}{
-			"approved":        true,
-			"request_id":      params.RequestID,
-			"approved_by":     params.UserID,
-			"approved_fields": params.ApprovedFields,
-		},
+		Result:  result,
 	}
 }
 

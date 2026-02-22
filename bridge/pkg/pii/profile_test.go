@@ -337,3 +337,146 @@ func TestResolvedVariablesToSafeJSON(t *testing.T) {
 	// Verify that actual values are NOT in the output
 	// This is a critical security check
 }
+
+func TestPCIWarningLevels(t *testing.T) {
+	schema := GetStandardFieldSchema(ProfileTypePayment)
+	if schema == nil {
+		t.Fatal("Payment schema should not be nil")
+	}
+
+	// Find PCI fields
+	var cardNumberField, cardCVVField, cardExpiryField *FieldDescriptor
+	for i := range schema.Fields {
+		switch schema.Fields[i].Key {
+		case FieldCardNumber:
+			cardNumberField = &schema.Fields[i]
+		case FieldCardCVV:
+			cardCVVField = &schema.Fields[i]
+		case FieldCardExpiry:
+			cardExpiryField = &schema.Fields[i]
+		}
+	}
+
+	// Verify card number has violation warning
+	if cardNumberField == nil {
+		t.Error("card_number field should exist in payment profile")
+	} else if cardNumberField.PCIWarning != PCIWarningViolation {
+		t.Errorf("card_number should have PCIWarningViolation, got %s", cardNumberField.PCIWarning)
+	}
+
+	// Verify CVV has prohibited warning
+	if cardCVVField == nil {
+		t.Error("card_cvv field should exist in payment profile")
+	} else if cardCVVField.PCIWarning != PCIWarningProhibited {
+		t.Errorf("card_cvv should have PCIWarningProhibited, got %s", cardCVVField.PCIWarning)
+	}
+
+	// Verify expiry has caution warning
+	if cardExpiryField == nil {
+		t.Error("card_expiry field should exist in payment profile")
+	} else if cardExpiryField.PCIWarning != PCIWarningCaution {
+		t.Errorf("card_expiry should have PCIWarningCaution, got %s", cardExpiryField.PCIWarning)
+	}
+}
+
+func TestHasPCIViolationFields(t *testing.T) {
+	// Profile without PCI fields
+	profile1 := NewUserProfile("Personal", ProfileTypePersonal)
+	profile1.SetField(FieldFullName, "John Doe")
+	if profile1.HasPCIViolationFields() {
+		t.Error("Personal profile should not have PCI violations")
+	}
+
+	// Payment profile without card data
+	profile2 := NewUserProfile("Payment", ProfileTypePayment)
+	profile2.SetField(FieldFullName, "John Doe")
+	profile2.SetField("card_last_four", "4242")
+	if profile2.HasPCIViolationFields() {
+		t.Error("Payment profile without card number should not have PCI violations")
+	}
+
+	// Payment profile with card number (violation)
+	profile3 := NewUserProfile("Payment with Card", ProfileTypePayment)
+	profile3.SetField(FieldCardNumber, "4242424242424242")
+	if !profile3.HasPCIViolationFields() {
+		t.Error("Payment profile with card number should have PCI violations")
+	}
+
+	// Payment profile with CVV (prohibited)
+	profile4 := NewUserProfile("Payment with CVV", ProfileTypePayment)
+	profile4.SetField(FieldCardCVV, "123")
+	if !profile4.HasPCIViolationFields() {
+		t.Error("Payment profile with CVV should have PCI violations")
+	}
+}
+
+func TestGetPCIViolationMessage(t *testing.T) {
+	// Profile without violations
+	profile1 := NewUserProfile("Safe Payment", ProfileTypePayment)
+	profile1.SetField(FieldFullName, "John Doe")
+	msg1 := profile1.GetPCIViolationMessage()
+	if msg1 != "" {
+		t.Errorf("Profile without PCI fields should have empty message, got: %s", msg1)
+	}
+
+	// Profile with card number
+	profile2 := NewUserProfile("With Card", ProfileTypePayment)
+	profile2.SetField(FieldCardNumber, "4242424242424242")
+	msg2 := profile2.GetPCIViolationMessage()
+	if msg2 == "" {
+		t.Error("Profile with card number should have violation message")
+	}
+
+	// Profile with CVV
+	profile3 := NewUserProfile("With CVV", ProfileTypePayment)
+	profile3.SetField(FieldCardCVV, "123")
+	msg3 := profile3.GetPCIViolationMessage()
+	if msg3 == "" {
+		t.Error("Profile with CVV should have violation message")
+	}
+}
+
+func TestRequiresPCIAcknowledgment(t *testing.T) {
+	// Safe profile
+	profile1 := NewUserProfile("Safe", ProfileTypePayment)
+	profile1.SetField(FieldFullName, "John Doe")
+	if profile1.RequiresPCIAcknowledgment() {
+		t.Error("Safe profile should not require PCI acknowledgment")
+	}
+
+	// Profile with card number
+	profile2 := NewUserProfile("With Card", ProfileTypePayment)
+	profile2.SetField(FieldCardNumber, "4242424242424242")
+	if !profile2.RequiresPCIAcknowledgment() {
+		t.Error("Profile with card number should require PCI acknowledgment")
+	}
+
+	// Profile with expiry only (caution, not violation)
+	profile3 := NewUserProfile("With Expiry", ProfileTypePayment)
+	profile3.SetField(FieldCardExpiry, "12/28")
+	if profile3.RequiresPCIAcknowledgment() {
+		t.Error("Profile with only expiry should not require PCI acknowledgment (caution level)")
+	}
+}
+
+func TestGetPCIWarningLevel(t *testing.T) {
+	profile := NewUserProfile("Payment", ProfileTypePayment)
+
+	tests := []struct {
+		field    string
+		expected PCIWarningLevel
+	}{
+		{FieldFullName, PCIWarningNone},
+		{FieldCardExpiry, PCIWarningCaution},
+		{FieldCardNumber, PCIWarningViolation},
+		{FieldCardCVV, PCIWarningProhibited},
+		{"nonexistent", PCIWarningNone},
+	}
+
+	for _, tt := range tests {
+		level := profile.GetPCIWarningLevel(tt.field)
+		if level != tt.expected {
+			t.Errorf("GetPCIWarningLevel(%s) = %s, expected %s", tt.field, level, tt.expected)
+		}
+	}
+}

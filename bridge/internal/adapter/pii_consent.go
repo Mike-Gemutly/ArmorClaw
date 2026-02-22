@@ -60,6 +60,33 @@ func (f *PIIConsentFormatter) FormatConsentRequest(request *pii.AccessRequest) s
 		sb.WriteString("\n")
 	}
 
+	// PCI-DSS Warnings (P0-CRIT-2)
+	if len(request.PCIWarnings) > 0 {
+		sb.WriteString("### ⚠️ PCI-DSS Compliance Warning\n\n")
+		sb.WriteString("**CRITICAL:** This request includes payment card data fields.\n\n")
+
+		for _, warning := range request.PCIWarnings {
+			level := warning["level"]
+			message := warning["message"]
+			description := warning["description"]
+
+			var levelEmoji string
+			switch level {
+			case "prohibited":
+				levelEmoji = "🚫"
+			case "violation":
+				levelEmoji = "⚠️"
+			case "caution":
+				levelEmoji = "⚡"
+			default:
+				levelEmoji = "⚠️"
+			}
+
+			sb.WriteString(fmt.Sprintf("%s **%s (%s)**: %s\n", levelEmoji, description, level, message))
+		}
+		sb.WriteString("\n**⚠️ By approving this request, you acknowledge PCI-DSS compliance requirements.**\n\n")
+	}
+
 	// Expiration notice
 	expiresIn := time.Until(request.ExpiresAt).Round(time.Second)
 	sb.WriteString(fmt.Sprintf("⏱️ Expires in: %s\n\n", expiresIn))
@@ -75,11 +102,27 @@ func (f *PIIConsentFormatter) FormatConsentRequest(request *pii.AccessRequest) s
 
 // FormatConsentApproved formats an approval notification
 func (f *PIIConsentFormatter) FormatConsentApproved(request *pii.AccessRequest) string {
-	return fmt.Sprintf("✅ **PII Access Approved**\n\n"+
-		"Request `%s` has been approved.\n"+
-		"Approved fields: %s",
-		request.ID,
-		strings.Join(request.ApprovedFields, ", "))
+	var sb strings.Builder
+
+	sb.WriteString("✅ **PII Access Approved**\n\n")
+	sb.WriteString(fmt.Sprintf("Request `%s` has been approved.\n", request.ID))
+	sb.WriteString(fmt.Sprintf("Approved fields: %s\n", strings.Join(request.ApprovedFields, ", ")))
+
+	// Check if any approved fields are PCI-sensitive
+	pciFields := map[string]bool{"card_number": true, "card_cvv": true, "card_expiry": true}
+	hasPCIFields := false
+	for _, field := range request.ApprovedFields {
+		if pciFields[field] {
+			hasPCIFields = true
+			break
+		}
+	}
+
+	if hasPCIFields {
+		sb.WriteString("\n⚠️ **PCI-DSS Notice:** This approval includes payment card data and has been logged for compliance auditing.\n")
+	}
+
+	return sb.String()
 }
 
 // FormatConsentRejected formats a rejection notification

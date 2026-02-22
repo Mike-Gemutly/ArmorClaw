@@ -326,6 +326,49 @@ func (sl *SecurityLogger) LogPIIInjected(ctx context.Context, containerID, skill
 	sl.logger.SecurityEvent(ctx, string(PIIInjected), append(baseAttrs, attrs...)...)
 }
 
+// PCI-DSS Compliance events
+const (
+	PCIViolationDetected     SecurityEventType = "pci_violation_detected"
+	PCIViolationAcknowledged SecurityEventType = "pci_violation_acknowledged"
+)
+
+// LogPCIViolationAcknowledged logs when a user acknowledges PCI-DSS violations
+// This is critical for compliance auditing - tracks when users store prohibited data
+func (sl *SecurityLogger) LogPCIViolationAcknowledged(
+	ctx context.Context,
+	profileName string,
+	profileType string,
+	pciWarnings []map[string]string,
+	attrs ...slog.Attr,
+) {
+	// Extract warning levels for logging (never log actual values)
+	var violationFields []string
+	var prohibitedFields []string
+	var cautionFields []string
+
+	for _, w := range pciWarnings {
+		switch w["level"] {
+		case "prohibited":
+			prohibitedFields = append(prohibitedFields, w["field"])
+		case "violation":
+			violationFields = append(violationFields, w["field"])
+		case "caution":
+			cautionFields = append(cautionFields, w["field"])
+		}
+	}
+
+	baseAttrs := []slog.Attr{
+		slog.String("profile_name", profileName),
+		slog.String("profile_type", profileType),
+		slog.Any("violation_fields", violationFields),
+		slog.Any("prohibited_fields", prohibitedFields),
+		slog.Any("caution_fields", cautionFields),
+		slog.String("timestamp", time.Now().UTC().Format(time.RFC3339)),
+		slog.String("compliance_note", "User acknowledged PCI-DSS risks"),
+	}
+	sl.logger.SecurityEvent(ctx, string(PCIViolationAcknowledged), append(baseAttrs, attrs...)...)
+}
+
 // LogSecurityEvent logs a generic security event with custom event type
 // This provides flexibility for events that don't fit the predefined categories
 func (sl *SecurityLogger) LogSecurityEvent(eventType string, attrs ...slog.Attr) {

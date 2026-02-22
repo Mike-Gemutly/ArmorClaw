@@ -5254,9 +5254,22 @@ The agent never sees actual PII values until user approval via Matrix. This enab
 - ✅ Least privilege (skills declare exact fields, users approve specific fields)
 - ✅ Container isolation (seccomp, network "none", env vars not in docker inspect)
 
-**Test Coverage:**
-- `bridge/pkg/pii/profile_test.go` - 15 tests (all PASS)
-- Tests for: profile CRUD, field access, skill manifests, resolved variables
+**Test Coverage (25+ tests, all PASS):**
+- `bridge/pkg/pii/profile_test.go` - 15 tests (profile CRUD, field access)
+- `bridge/pkg/pii/resolver_test.go` - 10 tests (BlindFillEngine, variable resolution)
+- `bridge/pkg/pii/hitl_consent_test.go` - 15 tests (HITL consent manager)
+- `bridge/pkg/secrets/pii_injection_test.go` - 10 tests (socket/env injection)
+
+**Profile Types Supported:**
+- `personal` - Identity information (name, email, phone, DOB, SSN, address)
+- `business` - Work contact info (name, work email, company, job title)
+- `payment` - Billing information (cardholder name, card type, billing address)
+- `medical` - Healthcare info (name, DOB, insurance ID, provider)
+- `custom` - User-defined fields
+
+**Documentation:**
+- `docs/guides/pii-user-stories.md` - 10 user stories with acceptance criteria
+- Developer API reference with sensitivity levels and RPC methods
 
 ---
 

@@ -3,7 +3,7 @@
 > **Protocol:** JSON-RPC 2.0
 > **Transport:** Unix Domain Socket
 > **Socket:** `/run/armorclaw/bridge.sock`
-> **Version:** 0.2.0
+> **Version:** 1.11.0
 > **Last Updated:** 2026-02-21
 
 ---
@@ -364,6 +364,539 @@ Store a new API key in the encrypted keystore.
 **Error Codes:**
 - `-32602` (InvalidParams) - id, provider, and token are required
 - `-32603` (InternalError) - Storage or encryption failed
+
+---
+
+## Profile Methods (v1.11.0)
+
+Profile methods for managing encrypted PII (Personally Identifiable Information) profiles. These profiles are used by the Blind Fill capability to securely inject user data into skills with explicit consent.
+
+### profile.create
+
+Create a new encrypted PII profile.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "profile.create",
+  "params": {
+    "profile_name": "Personal",
+    "profile_type": "personal",
+    "data": {
+      "full_name": "John Doe",
+      "email": "john@example.com",
+      "phone": "555-1234"
+    },
+    "is_default": true
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| profile_name | string | ✅ Yes | Human-readable profile name |
+| profile_type | string | ❌ No | Profile type: "personal", "business", "payment", "medical", "custom" (default: "personal") |
+| data | object | ✅ Yes | PII data fields to store |
+| is_default | boolean | ❌ No | Set as default for this profile type (default: false) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "profile_abc123def456",
+    "profile_name": "Personal",
+    "profile_type": "personal",
+    "field_count": 3,
+    "is_default": true,
+    "created_at": 1738864000
+  }
+}
+```
+
+**Standard Field Keys:**
+- `full_name`, `first_name`, `last_name` - Identity
+- `email`, `phone` - Contact
+- `date_of_birth`, `ssn` - Sensitive identity (requires explicit consent)
+- `address`, `city`, `state`, `postal_code`, `country` - Location
+- `company`, `job_title` - Business
+- Custom fields allowed via `custom` object
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"profile.create","params":{"profile_name":"Personal","data":{"full_name":"John Doe","email":"john@example.com"}}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### profile.list
+
+List all stored profiles (without decrypting PII values).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "profile.list",
+  "params": {
+    "profile_type": "personal"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| profile_type | string | ❌ No | Filter by profile type |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "profiles": [
+      {
+        "id": "profile_abc123",
+        "profile_name": "Personal",
+        "profile_type": "personal",
+        "field_count": 5,
+        "is_default": true,
+        "created_at": 1738864000,
+        "updated_at": 1738864000
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+---
+
+### profile.get
+
+Retrieve a specific profile with decrypted PII values.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "profile.get",
+  "params": {
+    "id": "profile_abc123def456"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | string | ✅ Yes | Profile ID to retrieve |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "profile_abc123def456",
+    "profile_name": "Personal",
+    "profile_type": "personal",
+    "data": {
+      "full_name": "John Doe",
+      "email": "john@example.com",
+      "phone": "555-1234"
+    },
+    "field_schema": {
+      "profile_type": "personal",
+      "fields": [
+        {"key": "full_name", "label": "Full Name", "type": "text", "sensitive": false},
+        {"key": "email", "label": "Email Address", "type": "email", "sensitive": false}
+      ]
+    },
+    "is_default": true,
+    "created_at": 1738864000,
+    "updated_at": 1738864000
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - id parameter required
+- `-4` (ProfileNotFound) - Profile not found
+
+---
+
+### profile.update
+
+Update an existing profile.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "profile.update",
+  "params": {
+    "id": "profile_abc123def456",
+    "profile_name": "Personal Updated",
+    "data": {
+      "full_name": "John Doe",
+      "email": "john.doe@example.com",
+      "phone": "555-5678"
+    },
+    "is_default": true
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | string | ✅ Yes | Profile ID to update |
+| profile_name | string | ❌ No | New profile name |
+| data | object | ❌ No | Updated PII data (merges with existing) |
+| is_default | boolean | ❌ No | Set as default for this profile type |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "profile_abc123def456",
+    "profile_name": "Personal Updated",
+    "field_count": 3,
+    "is_default": true,
+    "updated_at": 1738865000
+  }
+}
+```
+
+---
+
+### profile.delete
+
+Delete a profile permanently.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "profile.delete",
+  "params": {
+    "id": "profile_abc123def456"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | string | ✅ Yes | Profile ID to delete |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "message": "Profile deleted"
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - id parameter required
+- `-4` (ProfileNotFound) - Profile not found
+
+---
+
+## PII Access Methods (v1.11.0)
+
+PII Access methods implement Human-in-the-Loop (HITL) consent for skill access to user PII. Skills must request access and users must approve before PII is injected.
+
+### pii.request_access
+
+Request access to PII fields from a profile. This triggers a Matrix notification for user approval.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "pii.request_access",
+  "params": {
+    "skill_id": "form-filler",
+    "skill_name": "Form Filler",
+    "profile_id": "profile_abc123def456",
+    "variables": [
+      {"key": "full_name", "description": "Your name for the form", "required": true, "sensitivity": "low"},
+      {"key": "email", "description": "Your email for notifications", "required": true, "sensitivity": "medium"},
+      {"key": "phone", "description": "Optional phone number", "required": false, "sensitivity": "medium"}
+    ],
+    "room_id": "!abc123:matrix.example.com"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| skill_id | string | ✅ Yes | Unique skill identifier |
+| skill_name | string | ✅ Yes | Human-readable skill name |
+| profile_id | string | ✅ Yes | Profile to access |
+| variables | array | ✅ Yes | Requested PII fields |
+| variables[].key | string | ✅ Yes | Field key (e.g., "full_name") |
+| variables[].description | string | ✅ Yes | Why this field is needed |
+| variables[].required | boolean | ❌ No | Is this field required (default: false) |
+| variables[].sensitivity | string | ❌ No | "low", "medium", "high", "critical" |
+| room_id | string | ❌ No | Matrix room for consent notification |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "request_id": "req_xyz789abc",
+    "skill_id": "form-filler",
+    "profile_id": "profile_abc123def456",
+    "status": "pending",
+    "requested_fields": ["full_name", "email", "phone"],
+    "required_fields": ["full_name", "email"],
+    "expires_at": 1738864600,
+    "message": "Access request created. Use pii.approve_access or pii.reject_access to respond."
+  }
+}
+```
+
+**Sensitivity Levels:**
+- `low` - Name, city (minimal risk)
+- `medium` - Email, phone (contact info)
+- `high` - DOB, address (identity)
+- `critical` - SSN, financial (maximum protection)
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"pii.request_access","params":{"skill_id":"form-filler","skill_name":"Form Filler","profile_id":"profile_abc123","variables":[{"key":"full_name","description":"Your name","required":true}]}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### pii.approve_access
+
+Approve a PII access request with specific fields.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "pii.approve_access",
+  "params": {
+    "request_id": "req_xyz789abc",
+    "approved_fields": ["full_name", "email"]
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| request_id | string | ✅ Yes | ID of the access request |
+| approved_fields | array | ✅ Yes | List of field keys to approve |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "request_id": "req_xyz789abc",
+    "status": "approved",
+    "approved_fields": ["full_name", "email"],
+    "denied_fields": ["phone"],
+    "approved_by": "@user:matrix.example.com",
+    "approved_at": 1738864050,
+    "resolved_variables": {
+      "full_name": "John Doe",
+      "email": "john@example.com"
+    }
+  }
+}
+```
+
+**Note:** All required fields from the original request must be approved, or the approval will fail.
+
+**Error Codes:**
+- `-32602` (InvalidParams) - request_id or approved_fields required
+- `-5` (RequestNotFound) - Access request not found
+- `-6` (RequestExpired) - Request has expired
+- `-7` (RequestAlreadyProcessed) - Request already approved/rejected
+- `-8` (RequiredFieldMissing) - Not all required fields approved
+
+---
+
+### pii.reject_access
+
+Reject a PII access request.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "pii.reject_access",
+  "params": {
+    "request_id": "req_xyz789abc",
+    "reason": "I don't want to share this information"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| request_id | string | ✅ Yes | ID of the access request |
+| reason | string | ❌ No | Reason for rejection |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "request_id": "req_xyz789abc",
+    "status": "rejected",
+    "rejected_by": "@user:matrix.example.com",
+    "rejected_at": 1738864050,
+    "reason": "I don't want to share this information"
+  }
+}
+```
+
+---
+
+### pii.list_requests
+
+List pending PII access requests.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "pii.list_requests",
+  "params": {
+    "status": "pending"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| status | string | ❌ No | Filter by status: "pending", "approved", "rejected", "expired" |
+| profile_id | string | ❌ No | Filter by profile ID |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "requests": [
+      {
+        "id": "req_xyz789abc",
+        "skill_id": "form-filler",
+        "skill_name": "Form Filler",
+        "profile_id": "profile_abc123",
+        "status": "pending",
+        "requested_fields": ["full_name", "email", "phone"],
+        "required_fields": ["full_name", "email"],
+        "created_at": "2026-02-21T12:00:00Z",
+        "expires_at": "2026-02-21T12:01:00Z"
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+---
+
+### PII Consent Flow (Matrix Integration)
+
+When a skill requests PII access, users receive a Matrix notification:
+
+```
+## 🔐 PII Access Request
+
+**Skill:** Form Filler (`form-filler`)
+**Request ID:** `req_xyz789abc`
+**Profile:** `profile_abc123`
+
+### Requested Fields
+
+**Required:**
+- full_name
+- email
+
+**Optional:**
+- phone
+
+⏱️ Expires in: 60s
+
+### Actions
+
+To approve all fields:
+```
+!armorclaw approve req_xyz789abc
+```
+
+To approve specific fields:
+```
+!armorclaw approve req_xyz789abc full_name,email
+```
+
+To reject:
+```
+!armorclaw reject req_xyz789abc [optional reason]
+```
+
+---
+
+### PII Access Error Codes
+
+| Code | Message | Description |
+|------|---------|-------------|
+| -4 | ProfileNotFound | Requested profile does not exist |
+| -5 | RequestNotFound | Access request does not exist |
+| -6 | RequestExpired | Request has expired (60s timeout) |
+| -7 | RequestAlreadyProcessed | Request already approved or rejected |
+| -8 | RequiredFieldMissing | Not all required fields were approved |
+
+---
+
+### PII Security Notes
+
+1. **Memory-Only Injection:** PII values are injected via Unix sockets, never written to disk
+2. **Never Logged:** Actual PII values are never logged - only field names
+3. **Consent Required:** Skills cannot access PII without explicit user approval
+4. **Time-Limited:** Access requests expire after 60 seconds
+5. **Least Privilege:** Users approve specific fields, not entire profiles
+6. **Audit Trail:** All PII access is logged in the audit system
 
 ---
 
@@ -2456,6 +2989,21 @@ Structured error codes for programmatic error handling. Each code follows the fo
 | BGT-001 | Warning | budget warning threshold reached | Monitor usage; consider adjusting limits |
 | BGT-002 | Critical | budget exceeded | Operation blocked; increase budget or wait for reset |
 
+### PII Errors (PII-XXX)
+
+| Code | Severity | Message | Help |
+|------|----------|---------|------|
+| PII-001 | Error | profile not found | Verify profile ID exists with profile.list |
+| PII-002 | Error | profile creation failed | Check profile data format and required fields |
+| PII-003 | Warning | field not found in profile | Requested field does not exist in profile |
+| PII-010 | Error | access request not found | Request may have expired or never existed |
+| PII-011 | Warning | access request expired | Request timed out (60s); create new request |
+| PII-012 | Error | access request already processed | Request was already approved or rejected |
+| PII-013 | Error | required field not approved | All required fields must be approved |
+| PII-020 | Critical | PII injection failed | Check container status and socket availability |
+| PII-021 | Warning | PII resolution expired | Resolved variables expired; create new request |
+| PII-030 | Critical | keystore decryption failed | Profile data cannot be decrypted |
+
 ### Voice/WebRTC Errors (VOX-XXX)
 
 | Code | Severity | Message | Help |
@@ -2466,5 +3014,5 @@ Structured error codes for programmatic error handling. Each code follows the fo
 
 ---
 
-**API Reference Last Updated:** 2026-02-17
-**Compatible with Bridge Version:** 1.9.0
+**API Reference Last Updated:** 2026-02-21
+**Compatible with Bridge Version:** 1.11.0
