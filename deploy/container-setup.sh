@@ -120,6 +120,7 @@ check_env_vars() {
         API_BASE_URL="${ARMORCLAW_API_BASE_URL:-https://api.openai.com/v1}"
         BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-bridge123}"
         LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
+        SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
     else
         NON_INTERACTIVE=false
     fi
@@ -359,13 +360,13 @@ rate_limit_window = "5m"
 retention_period = "24h"
 
 [compliance]
-enabled = false
-streaming_mode = true
-quarantine_enabled = false
-notify_on_quarantine = false
-audit_enabled = false
-audit_retention_days = 30
-tier = "basic"
+enabled = $([ "$SECURITY_TIER" = "maximum" ] && echo "true" || echo "false")
+streaming_mode = $([ "$SECURITY_TIER" = "maximum" ] && echo "false" || echo "true")
+quarantine_enabled = $([ "$SECURITY_TIER" = "maximum" ] && echo "true" || echo "false")
+notify_on_quarantine = true
+audit_enabled = $([ "$SECURITY_TIER" = "maximum" ] && echo "true" || echo "false")
+audit_retention_days = 90
+tier = "${SECURITY_TIER:-essential}"
 EOF
 
     chmod 600 "$CONFIG_FILE"
@@ -450,10 +451,12 @@ final_summary() {
     echo "  - Matrix URL: $MATRIX_URL"
     echo "  - API provider: $API_BASE_URL"
     echo "  - Log level: ${LOG_LEVEL:-info}"
+    echo "  - Security tier: ${SECURITY_TIER:-essential}"
     echo ""
     echo "Files:"
     echo "  - Config: $CONFIG_FILE"
     echo "  - Keystore: $DATA_DIR/keystore.db"
+    echo "  - SSL cert: $CONFIG_DIR/ssl/cert.pem"
     echo ""
 
     # Check if IP-based setup
@@ -464,10 +467,11 @@ final_summary() {
         echo "  3. Start DM with: @bridge:$MATRIX_SERVER"
         echo "  4. Send '!status' to verify connection"
         echo ""
-        echo "For SSL/Domain setup later:"
-        echo "  1. Point domain A record to this IP"
-        echo "  2. Run: certbot --nginx -d your-domain.com"
-        echo "  3. Update MATRIX_SERVER and restart"
+        echo "For SSL (ask the agent in ArmorChat):"
+        echo "  \"Set up a cloudflare tunnel\" - Free, trusted SSL"
+        echo ""
+        echo "To add more apps (ArmorTerminal):"
+        echo "  \"Install armorterminal\" - Terminal access to agents"
     else
         echo "Next steps:"
         echo "  1. Connect ArmorChat to: https://$MATRIX_SERVER"
@@ -478,6 +482,58 @@ final_summary() {
 
     # Mark setup complete
     touch "$SETUP_FLAG"
+}
+
+#=============================================================================
+# Post-Setup Options
+#=============================================================================
+
+configure_security_tier() {
+    if [ "$NON_INTERACTIVE" = true ]; then
+        SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-essential}"
+        print_info "Security tier: $SECURITY_TIER"
+        return
+    fi
+
+    echo -e "\n${YELLOW}Security Configuration${NC}"
+    echo "Select security tier:"
+    echo "  1) Essential - Basic isolation (development/testing)"
+    echo "  2) Enhanced  - + Seccomp, network isolation (recommended)"
+    echo "  3) Maximum   - + Audit logging, PII scrubbing (production)"
+    echo ""
+
+    local choice=$(prompt_input "Security tier" "2")
+
+    case "$choice" in
+        1) SECURITY_TIER="essential" ;;
+        2) SECURITY_TIER="enhanced" ;;
+        3) SECURITY_TIER="maximum" ;;
+        *) SECURITY_TIER="enhanced" ;;
+    esac
+
+    print_info "Security tier set to: $SECURITY_TIER"
+}
+
+offer_post_setup_options() {
+    if [ "$NON_INTERACTIVE" = true ]; then
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}Post-Setup Options${NC}"
+    echo ""
+
+    # Offer to install additional apps
+    if prompt_yes_no "Install ArmorTerminal for terminal access?" "n"; then
+        print_info "ArmorTerminal will be available after bridge starts"
+        print_info "Configure with: RPC URL = http://YOUR_IP:8443/rpc"
+        INSTALL_ARMORTERMINAL=true
+    fi
+
+    # Offer hardening
+    if [ "$SECURITY_TIER" != "essential" ]; then
+        print_info "Security hardening ($SECURITY_TIER tier) will be applied on bridge start"
+    fi
 }
 
 #=============================================================================
@@ -503,11 +559,15 @@ main() {
     configure_matrix
     configure_api
     configure_bridge
+    configure_security_tier
     write_config
     initialize_keystore
 
     # Start Matrix if available
     start_matrix_stack
+
+    # Offer post-setup options
+    offer_post_setup_options
 
     # Show summary
     final_summary
