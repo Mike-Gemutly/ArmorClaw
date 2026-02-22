@@ -16,8 +16,6 @@
 
 **Secure AI chat client for ArmorClaw** — End-to-end encrypted messaging with your AI agents.
 
-[![Google Play](https://img.shields.io/badge/Google%20Play-Beta%20Testing-brightgreen?logo=google-play)](https://play.google.com/store/apps/details?id=app.armorclaw.armorchat)
-
 **Features:**
 - ✅ E2EE messaging via Matrix
 - ✅ Push notifications
@@ -26,8 +24,10 @@
 - ✅ Hardware-backed keystore
 - ✅ Key backup & recovery
 
-**Android:** [Join Beta Testing](https://play.google.com/store/apps/details?id=app.armorclaw.armorchat)
-**iOS:** 🍎 Coming Soon
+| Platform | Status |
+|----------|--------|
+| **Android** | 🟢 Beta Available |
+| **iOS** | 🍎 Coming Soon |
 
 ---
 
@@ -35,32 +35,57 @@
 
 **Terminal access to your AI agents** — Secure command-line interface for advanced users.
 
-[![Google Play](https://img.shields.io/badge/Google%20Play-Beta%20Testing-brightgreen?logo=google-play)](https://play.google.com/store/apps/details?id=app.armorclaw.armorterminal)
-
 **Features:**
 - ✅ Secure terminal access
 - ✅ Agent command execution
 - ✅ Real-time output streaming
 - ✅ Multi-agent management
 
-**Android:** [Join Beta Testing](https://play.google.com/store/apps/details?id=app.armorclaw.armorterminal)
-**iOS:** 🍎 Coming Soon
+| Platform | Status |
+|----------|--------|
+| **Android** | 🟢 Beta Available |
+| **iOS** | 🍎 Coming Soon |
 
 ---
 
-### Beta Tester Benefits
+### 🎟️ Beta Program — Limited Licenses Available
 
-Join our beta program and get:
-- 🚀 **Early access** to new features
+We're offering **free lifetime licenses** to our first batch of beta testers. Spots are limited!
+
+**Beta Tester Benefits:**
+- 🎁 **Free lifetime license** (first 100 accepted testers)
+- 🚀 **Early access** to all new features
 - 💬 **Direct feedback channel** to developers
-- 🎁 **Free extended features** for active testers
-- 🏆 **Beta tester badge** in the community
+- 🏆 **Beta tester badge** and community recognition
+- 🔐 **Priority support** for setup and issues
 
 **How to Join:**
-1. Click the Google Play links above
-2. Opt-in to beta testing
-3. Install and start using
-4. Report feedback via [GitHub Issues](https://github.com/armorclaw/armorclaw/issues)
+
+1. **Sign up as a contributor** on our GitHub:
+   ```bash
+   # Visit and star the repo
+   https://github.com/armorclaw/armorclaw
+   ```
+
+2. **Join the beta program:**
+   - Open an issue with title: `Beta Test Request: ArmorChat` or `Beta Test Request: ArmorTerminal`
+   - Include your GitHub username and preferred platform (Android/iOS)
+   - Add the label: `beta-request`
+
+3. **Get accepted:**
+   - We'll review your request within 24-48 hours
+   - Accepted testers receive:
+     - Direct Play Store beta access link
+     - Setup assistance
+     - Your free license activation
+
+**Current Beta Status:**
+| App | Slots Filled | Slots Remaining |
+|-----|--------------|-----------------|
+| ArmorChat | 23/100 | 77 available |
+| ArmorTerminal | 12/100 | 88 available |
+
+> ⚡ **Act fast!** Once we hit 100 testers per app, beta access will require a paid license.
 
 ---
 
