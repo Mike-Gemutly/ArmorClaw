@@ -5,6 +5,64 @@
 [![Beta Release](https://img.shields.io/badge/release-v0.1.0--beta-orange)](https://github.com/armorclaw/armorclaw/releases)
 [![Status: Seeking Testers](https://img.shields.io/badge/status-seeking%20testers-yellow)](https://github.com/armorclaw/armorclaw/issues?q=label%3Abeta-test)
 [![Security: Hardened](https://img.shields.io/badge/security-multi--layer%20hardening-green)](docs/guides/security-verification-guide.md)
+[![Android: Beta](https://img.shields.io/badge/Android-Beta%20Available-green)](#-mobile-apps)
+[![iOS: Coming Soon](https://img.shields.io/badge/iOS-Coming%20Soon-lightgrey)](#-mobile-apps)
+
+---
+
+## 📱 Mobile Apps
+
+### ArmorChat 💬
+
+**Secure AI chat client for ArmorClaw** — End-to-end encrypted messaging with your AI agents.
+
+[![Google Play](https://img.shields.io/badge/Google%20Play-Beta%20Testing-brightgreen?logo=google-play)](https://play.google.com/store/apps/details?id=app.armorclaw.armorchat)
+
+**Features:**
+- ✅ E2EE messaging via Matrix
+- ✅ Push notifications
+- ✅ QR code provisioning
+- ✅ Bridge verification (emoji-based)
+- ✅ Hardware-backed keystore
+- ✅ Key backup & recovery
+
+**Android:** [Join Beta Testing](https://play.google.com/store/apps/details?id=app.armorclaw.armorchat)
+**iOS:** 🍎 Coming Soon
+
+---
+
+### ArmorTerminal 💻
+
+**Terminal access to your AI agents** — Secure command-line interface for advanced users.
+
+[![Google Play](https://img.shields.io/badge/Google%20Play-Beta%20Testing-brightgreen?logo=google-play)](https://play.google.com/store/apps/details?id=app.armorclaw.armorterminal)
+
+**Features:**
+- ✅ Secure terminal access
+- ✅ Agent command execution
+- ✅ Real-time output streaming
+- ✅ Multi-agent management
+
+**Android:** [Join Beta Testing](https://play.google.com/store/apps/details?id=app.armorclaw.armorterminal)
+**iOS:** 🍎 Coming Soon
+
+---
+
+### Beta Tester Benefits
+
+Join our beta program and get:
+- 🚀 **Early access** to new features
+- 💬 **Direct feedback channel** to developers
+- 🎁 **Free extended features** for active testers
+- 🏆 **Beta tester badge** in the community
+
+**How to Join:**
+1. Click the Google Play links above
+2. Opt-in to beta testing
+3. Install and start using
+4. Report feedback via [GitHub Issues](https://github.com/armorclaw/armorclaw/issues)
+
+---
 
 **🔬 BETA RELEASE (v0.1.0)** — Seeking community testers for production validation. See [v0.1.0-beta Release Notes](#-v010-beta-release-security-hardening-update-2026-02-09) below.
 
