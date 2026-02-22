@@ -68,7 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Docker client (for container orchestration)
     docker.io docker-compose-plugin \
     # System utilities
-    ca-certificates procps \
+    ca-certificates procps openssl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create ArmorClaw user
@@ -99,7 +99,8 @@ COPY --from=agent-builder /usr/bin/npx /usr/bin/npx
 COPY container/opt/openclaw/* /opt/armorclaw/agent/
 COPY container/openclaw/ /opt/armorclaw/agent/openclaw/
 
-# Copy setup wizard
+# Copy setup scripts
+COPY deploy/container-setup.sh /opt/armorclaw/
 COPY deploy/setup-wizard.sh /opt/armorclaw/
 COPY deploy/health-check.sh /opt/armorclaw/
 COPY deploy/create-matrix-admin.sh /opt/armorclaw/
@@ -121,7 +122,7 @@ COPY .env.template /opt/armorclaw/.env.template
 RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 #!/bin/bash
 # ArmorClaw Quick Start Entrypoint
-# Launches setup wizard on first run, then starts bridge
+# Launches container setup on first run, then starts bridge
 
 set -e
 
@@ -144,7 +145,7 @@ echo -e "${NC}"
 
 # Check if setup is needed
 if [ ! -f "$SETUP_FLAG" ]; then
-    echo -e "${CYAN}First run detected. Starting setup wizard...${NC}"
+    echo -e "${CYAN}First run detected. Starting container setup...${NC}"
     echo ""
 
     # Check for Docker socket
@@ -156,9 +157,9 @@ if [ ! -f "$SETUP_FLAG" ]; then
         exit 1
     fi
 
-    # Run setup wizard
+    # Run container setup (container-aware, no Go/systemctl required)
     cd /opt/armorclaw
-    ./setup-wizard.sh
+    ./container-setup.sh
 
     # Mark setup complete
     touch "$SETUP_FLAG"
@@ -167,7 +168,7 @@ fi
 # Check configuration exists
 if [ ! -f "$CONFIG_FILE" ]; then
     echo -e "${RED}ERROR: Configuration not found at $CONFIG_FILE${NC}"
-    echo -e "${RED}Run the setup wizard first: /opt/armorclaw/setup-wizard.sh${NC}"
+    echo -e "${RED}Run setup first: /opt/armorclaw/container-setup.sh${NC}"
     exit 1
 fi
 
