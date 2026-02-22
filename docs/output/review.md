@@ -6336,8 +6336,60 @@ See `docs/dockerfiles/README.md` for:
 
 ---
 
+## QR Provisioning Fix (v7.4.2)
+
+### Issue: QR Format Mismatch
+
+The `armorclaw-provision.sh` script was generating QR codes in a format that ArmorChat couldn't parse.
+
+| Component | Expected Format | Old Format (Broken) |
+|-----------|-----------------|---------------------|
+| **ArmorChat** | `armorclaw://config?d=<base64-json>` | N/A |
+| **ArmorClaw (old)** | N/A | `armorclaw://provision?host=X&port=Y&token=Z` |
+
+### Solution
+
+Updated `armorclaw-provision.sh` to generate ArmorChat-compatible QR format:
+
+**New Format:**
+```
+armorclaw://config?d=eyJtYXRyaXhfaG9tZXNlcnZlciI6Imh0dHBzOi8v...
+```
+
+**JSON Payload (base64 encoded):**
+```json
+{
+  "matrix_homeserver": "https://matrix.example.com:8448",
+  "rpc_url": "https://bridge.example.com:8443/api",
+  "ws_url": "wss://bridge.example.com:8443/ws",
+  "push_gateway": "https://bridge.example.com:5000",
+  "server_name": "My Server",
+  "expires_at": 1700000000
+}
+```
+
+### Features Added
+
+- Auto-detect TLS from config (https vs http)
+- Extract Matrix homeserver from config.toml
+- Build correct RPC URL with `/api` endpoint
+- Build WebSocket URL with `/ws` endpoint
+- Support both production (TLS) and local deployments
+
+### Files Modified in v7.4.2
+
+| File | Changes |
+|------|---------|
+| `deploy/armorclaw-provision.sh` | Complete rewrite to generate ArmorChat-compatible format |
+
+### Breaking Change
+
+**Old QR codes will not work with ArmorChat.** Users must regenerate QR codes after updating.
+
+---
+
 **Review Last Updated:** 2026-02-22
-**Status:** ✅ PHASE 7.4.1 COMPLETE - Docker CI/CD Fixes
+**Status:** ✅ PHASE 7.4.2 COMPLETE - QR Provisioning Fixed
 **Next Milestone:** First VPS Deployment - End-to-End E2EE Verification with Real Devices
 
 ---

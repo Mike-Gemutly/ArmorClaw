@@ -1473,6 +1473,44 @@ fi
 
 ---
 
+## ✅ Milestone: QR Provisioning Fix (2026-02-22)
+
+**Status:** COMPLETE
+**Version:** v7.4.2
+**Priority:** Critical - ArmorChat Integration
+
+**Goal:** Fix QR code format to match ArmorChat's expected format.
+
+**Issue:**
+- ArmorClaw generated: `armorclaw://provision?host=X&port=Y&token=Z`
+- ArmorChat expected: `armorclaw://config?d=<base64-json>`
+
+**Solution:**
+Updated `armorclaw-provision.sh` to generate ArmorChat-compatible format with JSON payload:
+
+```json
+{
+  "matrix_homeserver": "https://matrix.example.com:8448",
+  "rpc_url": "https://bridge.example.com:8443/api",
+  "ws_url": "wss://bridge.example.com:8443/ws",
+  "push_gateway": "https://bridge.example.com:5000",
+  "server_name": "My Server",
+  "expires_at": 1700000000
+}
+```
+
+**Features:**
+- Auto-detect TLS from config (https vs http)
+- Extract Matrix homeserver from config.toml
+- Build correct URLs: `/api`, `/ws` endpoints
+- Support production (TLS) and local deployments
+
+**Breaking Change:** Old QR codes must be regenerated.
+
+**Build Status:** ✅ Script updated and tested
+
+---
+
 ## Summary of Phase 1 Complete Status
 
 As of 2026-02-07, Phase 1 implementation is **COMPLETE** with all critical security gaps fixed and startup/configuration improvements applied.
