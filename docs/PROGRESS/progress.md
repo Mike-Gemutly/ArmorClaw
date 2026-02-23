@@ -5629,7 +5629,41 @@ armorclaw://config?d=<base64-encoded-json>
 
 ---
 
+### ✅ Milestone 33: Critical Bridge Startup Fix (Complete 2026-02-22)
+**Status:** COMPLETE
+**Priority:** CRITICAL (Hotfix)
+**Duration:** Immediate
+
+**Issue:**
+Bridge panicked on startup with "flag redefined: name" error, preventing socket creation and breaking all downstream clients (ArmorChat, ArmorTerminal, Element X).
+
+**Root Cause:**
+Duplicate flag registration in `main.go`:
+```go
+flag.StringVar(&cfg.addKeyDisplayName, "name", "", ...)    // Line 2122
+flag.StringVar(&cfg.agentName, "name", "", ...)            // Line 2129
+```
+
+**Fix:**
+Renamed conflicting flags to be command-specific:
+| Old Flag | New Flag | Command |
+|----------|----------|---------|
+| `--name` | `--display-name` | add-key |
+| `--name` | `--agent-name` | start-agent |
+| `--key` | `--agent-key` | start-agent |
+
+**Artifacts:**
+- `bridge/cmd/bridge/main.go` - Fixed duplicate flag registration
+
+**Verification:**
+- ✅ Go build succeeds
+- ✅ `armorclaw-bridge help` runs without panic
+- ✅ All Go tests pass
+- ✅ Committed and pushed to main
+
+---
+
 **Progress Log Last Updated:** 2026-02-22
-**Current Milestone:** ✅ INSTALLATION SECURITY REVIEW COMPLETE
-**Version:** v8.1.0
+**Current Milestone:** ✅ CRITICAL BRIDGE STARTUP FIX COMPLETE
+**Version:** v8.2.0
 **Next Milestone:** Production Deployment & End-to-End Testing
