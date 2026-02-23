@@ -2119,16 +2119,16 @@ func parseFlags() cliConfig {
 	flag.StringVar(&cfg.addKeyProvider, "provider", "", "Provider for add-key (openai, anthropic, openrouter, google, xai)")
 	flag.StringVar(&cfg.addKeyToken, "token", "", "API token for add-key (or use ARMORCLAW_API_KEY env var)")
 	flag.StringVar(&cfg.addKeyId, "id", "", "Key ID for add-key (default: <provider>-default)")
-	flag.StringVar(&cfg.addKeyDisplayName, "name", "", "Display name for add-key")
+	flag.StringVar(&cfg.addKeyDisplayName, "display-name", "", "Display name for add-key")
 	flag.StringVar(&cfg.startKeyId, "key", "", "Key ID for start command")
 	// QR code command flags
 	flag.StringVar(&cfg.qrHost, "host", "", "Host/domain for QR code (generate-qr command)")
 	flag.IntVar(&cfg.qrPort, "port", 0, "Port for QR code (generate-qr command)")
 	// Agent command flags
 	flag.StringVar(&cfg.agentType, "type", "assistant", "Agent type (start-agent command)")
-	flag.StringVar(&cfg.agentName, "name", "", "Agent display name (start-agent command)")
+	flag.StringVar(&cfg.agentName, "agent-name", "", "Agent display name (start-agent command)")
 	flag.StringVar(&cfg.agentRoom, "room", "", "Matrix room ID for agent (start-agent command)")
-	flag.StringVar(&cfg.agentKey, "key", "", "API key ID for agent (start-agent command)")
+	flag.StringVar(&cfg.agentKey, "agent-key", "", "API key ID for agent (start-agent command)")
 	flag.StringVar(&cfg.agentCapabilities, "capabilities", "chat", "Comma-separated capabilities (start-agent command)")
 
 	flag.Parse()
@@ -2195,7 +2195,7 @@ EXAMPLES:
 
     # Start an AI agent
     ./build/armorclaw-bridge start-agent --room '!room:matrix.example.com' --type assistant
-    ./build/armorclaw-bridge start-agent --room '!room:matrix.example.com' --type openclaw --key openai-default
+    ./build/armorclaw-bridge start-agent --room '!room:matrix.example.com' --type openclaw --agent-key openai-default
 
     # Generate QR code for ArmorChat
     ./build/armorclaw-bridge generate-qr --host bridge.example.com
