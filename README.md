@@ -1,183 +1,151 @@
 # ArmorClaw 🦞🔒
 
-> **Secure containment for powerful AI agents** — Run GPT-4, Claude, and other agents safely with hardened containers, ephemeral secrets, and strict isolation.
+## The Secure Containment Layer for AI Agents
 
-[![Beta Release](https://img.shields.io/badge/release-v0.1.0--beta-orange)](https://github.com/armorclaw/armorclaw/releases)
-[![Status: Seeking Testers](https://img.shields.io/badge/status-seeking%20testers-yellow)](https://github.com/armorclaw/armorclaw/issues?q=label%3Abeta-test)
-[![Security: Hardened](https://img.shields.io/badge/security-multi--layer%20hardening-green)](docs/guides/security-verification-guide.md)
-[![Android: Beta](https://img.shields.io/badge/Android-Beta%20Available-green)](#-mobile-apps)
-[![iOS: Coming Soon](https://img.shields.io/badge/iOS-Coming%20Soon-lightgrey)](#-mobile-apps)
+> **Deploy AI agents in production — without exposing your infrastructure.**
 
----
-
-## 📱 Mobile Apps
-
-### ArmorChat 💬
-
-**Secure AI chat client for ArmorClaw** — End-to-end encrypted messaging with your AI agents.
-
-**Features:**
-- ✅ E2EE messaging via Matrix
-- ✅ Push notifications
-- ✅ QR code provisioning
-- ✅ Bridge verification (emoji-based)
-- ✅ Hardware-backed keystore
-- ✅ Key backup & recovery
-
-| Platform | Status |
-|----------|--------|
-| **Android** | 🟢 Beta Available |
-| **iOS** | 🍎 Coming Soon |
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![Status](https://img.shields.io/badge/status-v0.1.0--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
+[![Security](https://img.shields.io/badge/security-hardened-green.svg)](docs/guides/security-verification-guide.md)
+[![Docker](https://img.shields.io/badge/docker-24%2B-blue.svg)](https://docs.docker.com/)
+[![Matrix](https://img.shields.io/badge/protocol-Matrix%20E2EE-purple.svg)](https://matrix.org/)
 
 ---
 
-### ArmorTerminal 💻
+## 🚨 Why ArmorClaw Exists
 
-**Terminal access to your AI agents** — Secure command-line interface for advanced users.
+AI agents are powerful. They can:
 
-**Features:**
-- ✅ Secure terminal access
-- ✅ Agent command execution
-- ✅ Real-time output streaming
-- ✅ Multi-agent management
+* Execute shell commands
+* Access local files
+* Make outbound network requests
+* Interact with APIs using sensitive keys
 
-| Platform | Status |
-|----------|--------|
-| **Android** | 🟢 Beta Available |
-| **iOS** | 🍎 Coming Soon |
+Most teams run agents:
 
----
+* Directly on their machine
+* Inside lightly configured Docker containers
+* With plaintext `.env` API keys
+* With open localhost ports
+* With no audit trail
 
-### 🎟️ Beta Program — Limited Licenses Available
+**This is a production security risk.**
 
-We're offering **free lifetime licenses** to our first batch of beta testers. Spots are limited!
-
-**Beta Tester Benefits:**
-- 🎁 **Free lifetime license** (first 100 accepted testers)
-- 🚀 **Early access** to all new features
-- 💬 **Direct feedback channel** to developers
-- 🏆 **Beta tester badge** and community recognition
-- 🔐 **Priority support** for setup and issues
-
-**How to Join:**
-
-1. **Sign up as a contributor** on our GitHub:
-   ```bash
-   # Visit and star the repo
-   https://github.com/armorclaw/armorclaw
-   ```
-
-2. **Join the beta program:**
-   - Open an issue with title: `Beta Test Request: ArmorChat` or `Beta Test Request: ArmorTerminal`
-   - Include your GitHub username and preferred platform (Android/iOS)
-   - Add the label: `beta-request`
-
-3. **Get accepted:**
-   - We'll review your request within 24-48 hours
-   - Accepted testers receive:
-     - Direct Play Store beta access link
-     - Setup assistance
-     - Your free license activation
-
-**Current Beta Status:**
-| App | Slots Filled | Slots Remaining |
-|-----|--------------|-----------------|
-| ArmorChat | 23/100 | 77 available |
-| ArmorTerminal | 12/100 | 88 available |
-
-> ⚡ **Act fast!** Once we hit 100 testers per app, beta access will require a paid license.
+ArmorClaw adds a **hardened containment boundary** between your AI agent and your infrastructure.
 
 ---
 
-**🔬 BETA RELEASE (v0.1.0)** — Seeking community testers for production validation. See [v0.1.0-beta Release Notes](#-v010-beta-release-security-hardening-update-2026-02-09) below.
+## 🛡 What ArmorClaw Provides
+
+### 1️⃣ Hardened Container Runtime
+
+Each agent runs in a locked-down environment with:
+
+| Security Layer            | Protection                            |
+| ------------------------- | ------------------------------------- |
+| `--network=none`          | Blocks outbound data exfiltration     |
+| `--cap-drop=ALL`          | Removes privilege escalation vectors  |
+| `--read-only` root        | Prevents filesystem modification      |
+| Seccomp syscall filtering | Kernel-level system call restrictions |
+| `chmod a-x` on binaries   | Prevents shell execution              |
+| LD_PRELOAD hooks          | Blocks runtime process spawning       |
+
+**Result:** Even if an agent is jailbroken, it is trapped.
+
+### 2️⃣ Ephemeral Secret Injection
+
+* API keys injected in-memory only
+* No plaintext `.env` files
+* Secrets vanish on shutdown
+* Hardware-backed keystore support
+
+**Result:** Compromised agent ≠ compromised credentials.
+
+### 3️⃣ Zero-Trust Architecture
+
+* No inbound ports
+* No Docker socket exposure
+* Pull-based activity visibility
+* Strict isolation boundaries
+
+ArmorClaw assumes the agent may fail — and designs for containment.
+
+### 4️⃣ Secure Mobile Access
+
+#### ArmorChat 💬
+
+**End-to-end encrypted messaging with your AI agents.**
+Powered by Matrix protocol — server cannot read message content.
+
+#### ArmorTerminal 💻
+
+**Secure terminal access with real-time streaming.**
+Multi-agent management from your mobile device.
+
+#### Client Applications
+
+| Platform      | Client         | E2EE | Status      |
+|---------------|----------------|------|-------------|
+| Android       | ArmorChat      | ✅   | Beta        |
+| Android       | ArmorTerminal  | ✅   | Beta        |
+| iOS           | ArmorChat      | ✅   | Coming Soon |
+| Desktop       | ArmorTerminal  | ✅   | In Dev      |
+| Any OS        | Element X      | ✅   | ✅ Works    |
+| Browser       | Element Web    | ✅   | ✅ Works    |
+
+Mobile access extends control without exposing your infrastructure.
 
 ---
 
-## 📢 v0.1.0-beta Release: Security Hardening Update (2026-02-09)
+## 🎯 Who ArmorClaw Is For
 
-**🔬 WE NEED TESTERS!** This beta release implements comprehensive security hardening to address critical container escape vulnerabilities. We need community testing to achieve **production-ready status**.
+ArmorClaw is built for teams running AI agents in production workflows:
 
-### What's New in v0.1.0-beta
+### 🔒 Security & Compliance Teams
 
-| Security Layer | Implementation | Threats Mitigated |
-|----------------|----------------|-------------------|
-| **Filesystem Hardening** | `chmod a-x` on all binaries (except Python/Node) | Shell escapes via `os.execl()`, `child_process.spawn()` |
-| **Network Isolation** | `--network=none` enforcement at bridge level | Data exfiltration via `urllib`, `fetch`, `curl` |
-| **Seccomp Filtering** | Kernel-level syscall blocking profile | Bypass attempts via raw syscalls |
-| **LD_PRELOAD Hook** | Library-level function interception | Runtime shell spawning attempts |
-| **Capability Dropping** | `--cap-drop=ALL` on all containers | Privilege escalation vectors |
-| **Read-Only Root** | `--read-only` filesystem flag | Filesystem modification attacks |
+* Testing AI safely before internal rollout
+* Enforcing containment policies
+* Reducing data exfiltration risk
 
-### Test Results Summary
+### 🚀 AI-Native Startups
 
-| Test Category | Before Fix | After Fix | Status |
-|---------------|-----------|-----------|--------|
-| Python `os.execl('/bin/sh')` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
-| Node `child_process.exec('/bin/sh')` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
-| Python `urllib.urlopen()` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
-| Node `fetch()` | ❌ WORKED (CRITICAL) | ✅ BLOCKED | PASS |
-| Direct `/bin/sh` execution | ✅ BLOCKED | ✅ BLOCKED | PASS |
-| `/bin/bash` execution | ✅ BLOCKED | ✅ BLOCKED | PASS |
+* Running RAG systems with internal documents
+* Deploying agents connected to company APIs
+* Needing security approval before production use
 
-**Total Tests:** 26 | **Passed:** 22 | **Failed:** 0 (after fixes)
+### 🏢 Engineering Teams
 
-### Call for Beta Testers
+* Building internal copilots
+* Connecting agents to databases
+* Handling sensitive business logic
 
-We need **community testers** to validate the security hardening across different environments:
-
-**Test Environments Needed:**
-- [ ] Linux (Ubuntu, Debian, Fedora)
-- [ ] WSL2 on Windows
-- [ ] macOS (Docker Desktop)
-- [ ] Windows (Docker Desktop, PowerShell)
-- [ ] ARM64 platforms (Raspberry Pi, AWS Graviton)
-
-**How to Test:**
-```bash
-# Quick verification
-./tests/verify-security.sh
-
-# Full exploit suite
-./tests/test-exploits.sh
-
-# PowerShell (Windows)
-.\tests\test-exploits.ps1
-```
-
-**Report Issues:** [GitHub Issues](https://github.com/armorclaw/armorclaw/issues) with label `beta-test`
-
-**Path to Production:**
-1. ✅ Security hardening implemented (v0.1.0-beta)
-2. 🔬 **YOU ARE HERE** — Community testing & validation
-3. 📦 Production release (v1.0.0) — After test sign-off
-
-### Documentation
-
-- **[Security Verification Guide](docs/guides/security-verification-guide.md)** — Complete manual verification instructions
-- **[Test Suites](tests/)** — Automated security validation scripts
+**If your AI agents access proprietary data, you need containment.**
 
 ---
 
-## 🎯 Why ArmorClaw?
+## 🧪 Current Status
 
-**Standard AI setups are risky:**
-- Agents run directly on your computer with full filesystem access
-- API keys stored in plaintext `.env` files
-- Open localhost ports can be exploited
-- No audit trail of what agents do
+**v0.1.0-beta — Security Hardening Release**
 
-**ArmorClaw 🦞🔒 solves this:**
-- ✅ **Hardened container** — Agent runs in a locked Docker container (non-root, no shell)
-- ✅ **Ephemeral secrets** — API keys injected into memory only, vanish on shutdown
-- ✅ **Strict isolation** — No inbound ports, no Docker socket exposure
-- ✅ **Pull-based visibility** — See agent activity through a signed Local Bridge
-- ✅ **Zero-trust architecture** — Even if the agent is compromised, it's trapped
+This release implements multi-layer defense against:
 
-**Who uses ArmorClaw 🦞🔒 ?**
-- 🔒 **Security teams** — Test AI tools safely without risking company data
-- 🏢 **Professionals** — Draft sensitive documents, analyze reports, brainstorm ideas
-- 🏠 **Home users** — Run powerful AI locally without exposing your whole computer
-- 🎓 **Students & Researchers** — Experiment with AI in a controlled environment
+* Shell escape attempts
+* Process spawning
+* Outbound network exfiltration
+* Filesystem abuse
+* Raw syscall bypass attempts
+
+### Test Results
+
+| Test Category                 | Result    |
+| ----------------------------- | --------- |
+| Python shell spawn            | ✅ Blocked |
+| Node process spawn            | ✅ Blocked |
+| urllib/fetch exfiltration     | ✅ Blocked |
+| Direct shell execution        | ✅ Blocked |
+| Privilege escalation attempts | ✅ Blocked |
+
+Community validation in progress before v1.0 production release.
 
 ---
 
@@ -189,169 +157,25 @@ We need **community testers** to validate the security hardening across differen
 |-------------|---------|-------------|
 | **OS** | Ubuntu 22.04, Debian 12 | Ubuntu 24.04 |
 | **RAM** | 1 GB | 2 GB |
-| **Disk** | 2 GB | 5 GB |
 | **Docker** | 24.0+ | Latest |
 | **Go** | 1.21+ | 1.24+ |
 
----
-
-### Method 1: Quick Setup ⚡ (Recommended)
-
-The fastest way to get ArmorClaw running with secure defaults:
+### Install (2-3 minutes)
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/armorclaw/armorclaw.git
 cd armorclaw
 
-# 2. Run quick setup (2-3 minutes)
+# 2. Run quick setup
 sudo ./deploy/setup-quick.sh
-```
 
-**What happens automatically:**
-- ✅ Prerequisites check (Docker, memory, disk)
-- ✅ Bridge build from source
-- ✅ System user creation (non-root, no shell)
-- ✅ Encrypted keystore initialization (hardware-bound)
-- ✅ Systemd service with hardening (NoNewPrivileges, PrivateTmp, ProtectSystem)
-- ✅ QR code generation for device provisioning
-
-**After setup completes:**
-
-```bash
 # 3. Add your API key
 sudo armorclaw-bridge add-key --provider openai --token sk-...
 
-# 4. Scan the QR code with ArmorChat (or run again for new devices)
-sudo ./deploy/armorclaw-provision.sh
-
-# 5. Start an agent
+# 4. Start an agent
 sudo armorclaw-bridge start --key openai-main
 ```
-
-**Time:** 2-3 minutes | **Experience Level:** Beginner
-
----
-
-### Method 2: Docker Image ⚡ (No Build Required)
-
-Pull and run with automatic setup wizard:
-
-```bash
-# Pull the image
-docker pull mikegemut/armorclaw:latest
-
-# Run with Docker socket
-docker run -it \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v armorclaw-config:/etc/armorclaw \
-  -v armorclaw-data:/var/lib/armorclaw \
-  -p 8443:8443 -p 5000:5000 -p 6167:6167 \
-  mikegemut/armorclaw:latest
-```
-
-**Non-interactive mode (CI/CD):**
-```bash
-docker run -d \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v armorclaw-config:/etc/armorclaw \
-  -e ARMORCLAW_MATRIX_SERVER=matrix.yourdomain.com \
-  -e ARMORCLAW_API_KEY=your-api-key \
-  -p 8443:8443 -p 5000:5000 -p 6167:6167 \
-  mikegemut/armorclaw:latest
-```
-
-**Time:** 2 minutes | **Experience Level:** Beginner | **Requirements:** Docker only
-
----
-
-### Method 3: Element X Mobile ⭐
-
-Connect via Element X mobile app:
-
-```bash
-git clone https://github.com/armorclaw/armorclaw.git
-cd armorclaw
-./deploy/launch-element-x.sh
-```
-
-Scan the QR code with Element X and start chatting.
-
-**Time:** 5 minutes | **Experience Level:** Beginner | **Platform:** Mobile
-
----
-
-### Method 4: VPS Deployment 🌐
-
-Deploy to a remote VPS (Hostinger, DigitalOcean, AWS, etc.):
-
-```bash
-# 1. Create deployment tarball
-cd armorclaw
-tar -czf armorclaw-deploy.tar.gz --exclude='.git' --exclude='bridge/build' .
-
-# 2. Transfer to VPS
-scp deploy/vps-deploy.sh armorclaw-deploy.tar.gz user@your-vps-ip:/tmp/
-
-# 3. Run deployment on VPS
-ssh user@your-vps-ip
-chmod +x /tmp/vps-deploy.sh
-sudo bash /tmp/vps-deploy.sh
-```
-
-**Time:** 10-15 minutes | **Experience Level:** Intermediate | **Platform:** VPS
-
----
-
-### Connecting ArmorChat
-
-After setup, connect your ArmorChat app:
-
-1. **Generate QR code:**
-   ```bash
-   sudo ./deploy/armorclaw-provision.sh
-   ```
-
-2. **Scan with ArmorChat:**
-   - Open ArmorChat app
-   - Tap "Scan QR Code" or enter URL manually
-   - Connection configured automatically
-
-3. **QR Code Format:**
-   ```
-   armorclaw://config?d=<base64-encoded-json>
-
-   Contains:
-   - Matrix homeserver URL
-   - Bridge RPC URL
-   - WebSocket URL
-   - Push gateway URL
-   - Server name
-   - Expiry (5 min default)
-   ```
-
----
-
-### Post-Setup: Production Hardening
-
-For production deployments:
-
-```bash
-# 1. Enable Matrix with TLS (recommended)
-sudo ./deploy/setup-matrix.sh
-
-# 2. Apply system hardening
-sudo ./deploy/armorclaw-harden.sh
-```
-
-**Hardening includes:**
-- UFW firewall (deny-all default)
-- SSH hardening (key-only, no root)
-- Fail2Ban (brute-force protection)
-- Automatic security updates
-- Production logging (JSON format)
-
----
 
 ### Verify Installation
 
@@ -359,253 +183,245 @@ sudo ./deploy/armorclaw-harden.sh
 # Check bridge status
 sudo systemctl status armorclaw-bridge
 
-# Verify health via RPC
+# Test health via RPC
 echo '{"jsonrpc":"2.0","method":"health","id":1}' | \
   sudo socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
 
-# Check systemd hardening
-systemctl show armorclaw-bridge | grep -E "NoNewPrivileges|PrivateTmp|ProtectSystem"
+**Time to production:** ~3 minutes.
+
+---
+
+## 🌐 Deployment Options
+
+| Method       | Domain Required | SSL      | Use Case           |
+|--------------|-----------------|----------|---------------------|
+| **Docker One-Command** | No | Self-signed | Simplest setup |
+| Quick Setup  | No              | Self-signed | Development, testing |
+| Standard     | Yes             | Let's Encrypt | Production        |
+| Docker Stack | Optional        | Built-in | Full infrastructure |
+| VPS Deploy   | Optional        | Configurable | Remote hosting    |
+
+### Docker One-Command (Simplest)
+
+**No YAML files. No manual config. Just run and answer questions.**
+
+```bash
+docker run -it --name armorclaw \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-data:/etc/armorclaw \
+  -p 8443:8443 -p 6167:6167 -p 5000:5000 \
+  mikegemut/armorclaw:latest
+```
+
+**The setup wizard asks:**
+1. Server name (domain or IP)
+2. API key (OpenAI, Anthropic, etc.)
+3. Matrix enabled? (optional for remote access)
+
+**After setup completes:**
+- ✅ Bridge running
+- ✅ QR code displayed for ArmorChat
+- ✅ All configs auto-generated
+
+**Non-interactive (CI/CD):**
+```bash
+docker run -d --name armorclaw \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-data:/etc/armorclaw \
+  -p 8443:8443 -p 6167:6167 -p 5000:5000 \
+  -e ARMORCLAW_SERVER_NAME=your-domain.com \
+  -e ARMORCLAW_API_KEY=sk-your-key \
+  mikegemut/armorclaw:latest
+```
+
+### IP-Only Deployment (No Domain Required)
+
+ArmorClaw supports deployment without a domain:
+- Uses HTTP mode for IP addresses
+- Auto-generates self-signed certificates
+- QR provisioning works with IP address
+
+```bash
+# During setup, enter IP instead of domain
+# Example: 123.45.67.89 instead of matrix.example.com
 ```
 
 ---
 
-That's it! The agent will be running in a hardened container, and you can connect via **Element X** (Matrix) or any compatible client.
+## 🏗 Architecture Overview
 
----
-
-## 🆕 New Features (v1.2)
-
-### Shell Completion
-
-Tab completion for bash/zsh - type less, do more:
-
-```bash
-./build/armorclaw-bridge completion bash > ~/.bash_completion.d/armorclaw-bridge
-source ~/.bash_completion.d/armorclaw-bridge
-./build/armorclaw-bridge <TAB>  # Auto-complete commands
-```
-
-### Daemon Mode
-
-Run the bridge as a background service:
-
-```bash
-./build/armorclaw-bridge daemon start   # Start in background
-./build/armorclaw-bridge daemon status  # Check status
-```
-
-### Enhanced Help
-
-Every command has detailed help with examples:
-
-```bash
-./build/armorclaw-bridge --help            # Overview with examples
-./build/armorclaw-bridge add-key --help    # Command-specific guide
-```
-
-### Element X Integration
-
-Connect via Element X mobile app - chat with your agent from anywhere:
-
-```bash
-./deploy/launch-element-x.sh    # Launch Matrix + Bridge
-# Scan QR code with Element X mobile app
-```
-
----
-
-## 🏗️ Architecture
+ArmorClaw separates responsibilities across secure layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Your Computer                           │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │            Local Bridge (Go Binary)                   │  │
-│  │  • Unix socket: /run/armorclaw/bridge.sock          │  │
-│  │  • Encrypted keystore (hardware-bound)                │  │
-│  │  • Matrix client for remote communication           │  │
-│  └───────────────┬───────────────────────────────────────┘  │
-│                  │ Pull-based communication               │
-│                  │ File descriptor passing (secrets)       │
-│                  ▼                                         │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │         Docker Container (Hardened)                   │  │
-│  │  • Base: debian:bookworm-slim                        │  │
-│  │  • User: UID 10001 (non-root)                          │  │
-│  │  • No shell, no network tools, no destructive commands  │  │
-│  │  • Secrets: Memory-only (never on disk)                 │  │
-│  │  • No Docker socket, no inbound ports                    │  │
-│  └───────────────────────────────────────────────────────┘  │
+│                     CLIENT LAYER                             │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐   │
+│  │  ArmorChat    │  │ ArmorTerminal │  │  Element X    │   │
+│  │  (Android)    │  │  (Desktop)    │  │  (Any OS)     │   │
+│  │  ✅ Full E2EE │  │  ✅ Full E2EE  │  │  ✅ Full E2EE  │   │
+│  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘   │
+└──────────┼──────────────────┼──────────────────┼───────────┘
+           │                  │                  │
+           ▼                  ▼                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  COMMUNICATION LAYER                         │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Matrix Protocol (E2EE) + JSON-RPC 2.0 + WebSocket  │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   LOCAL BRIDGE (Go)                          │
+│  • Unix socket: /run/armorclaw/bridge.sock                  │
+│  • Encrypted keystore (hardware-bound)                       │
+│  • Docker client (scoped operations)                         │
+│  • Matrix adapter (E2EE support)                             │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ Pull-based communication
+                           │ File descriptor passing (secrets)
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│              HARDENED CONTAINER (Docker)                     │
+│  • Base: debian:bookworm-slim                               │
+│  • User: UID 10001 (non-root)                               │
+│  • No shell, no network tools, no destructive commands      │
+│  • Secrets: Memory-only (never on disk)                     │
+│  • No Docker socket, no inbound ports                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 🔒 Security Features
-
-| Feature | How It Works | Benefit |
-|---------|--------------|---------|
-| **Multi-Layer Container Hardening** 🆕 v0.1.0-beta | chmod a-x + seccomp + LD_PRELOAD + --network=none | Blocks shell escapes, network exfiltration, and privilege escalation |
-| **Filesystem Hardening** 🆕 v0.1.0-beta | All binaries non-executable except runtime | Python/Node cannot spawn shells or child processes |
-| **Network Isolation** 🆕 v0.1.0-beta | --network=none enforced at bridge level | No data exfiltration via urllib, fetch, or network tools |
-| **Seccomp Syscall Filtering** 🆕 v0.1.0-beta | Kernel-level syscall blocking | Additional layer against bypass attempts |
-| **Container Hardening** | Non-root user, removed shell/tools, seccomp profile | Agent can't escape even if exploited |
-| **Ephemeral Secrets** | API keys injected via file descriptor, never written to disk | No secrets in logs, docker inspect, or disk |
-| **Hardware-Bound Keystore** | Master key derived from machine-id, DMI UUID, MAC | Database useless if stolen/moved |
-| **Zero-Touch Reboot** | Salt persistence enables automatic key derivation | No manual intervention after reboot |
-| **Pull-Based Visibility** | All communication through signed Local Bridge | No direct agent access, full audit trail |
-| **No Inbound Ports** | Container has no exposed network services | Can't be attacked from outside |
-| **Zero-Trust Filtering** | Trusted Matrix senders/rooms allowlist | Only authorized users can control agents |
-| **Budget Guardrails** | Daily/monthly spending limits with hard-stop | Prevent unexpected API costs |
-| **PII Data Scrubbing** | Auto-redacts emails, SSNs, API keys, credit cards | Protects sensitive data in prompts/responses |
-| **Container TTL** | Auto-removes idle containers (10 min default) | Prevents resource leaks |
-| **Host Hardening** | Automated firewall (UFW) & SSH hardening | Production-ready security baseline |
-
-> **Build Process Note**: The Docker container build process has been optimized to prevent circular dependencies in security hardening while maintaining all security protections.
->
-> **Fix Applied**: Resolved circular dependency bug where the `rm` command was trying to delete itself during the security hardening phase. The fix removes `/bin/rm` from the list of files to delete in the Docker build process (line 88 of Dockerfile).
->
-> **Fix Details**: 
-> - Previously, line 88 of Dockerfile contained: `RUN /bin/rm -f /bin/bash /bin/sh /bin/dash /bin/mv /bin/find && \` 
-> - The `/bin/rm` command was attempting to delete itself while executing, causing the build to fail with exit code 125
-> - Solution: Removed `/bin/rm` from the deletion list to prevent the self-deletion loop
-
-**Compliance Ready:** Supports GDPR, HIPAA, SOC 2 requirements through data isolation, audit logging, and access controls.
-
-> **📖 Security Configuration Guide:** See [docs/guides/security-configuration.md](docs/guides/security-configuration.md) for complete security feature documentation.
-
----
-
-## 🔐 Installation Security
-
-The setup process is **secure by design**:
-
-| Security Aspect | Implementation | Status |
-|-----------------|----------------|--------|
-| **Privilege Separation** | Dedicated `armorclaw` user (no shell) | ✅ Secure |
-| **File Permissions** | Config 640, Data 750 | ✅ Secure |
-| **Keystore Encryption** | SQLCipher + XChaCha20-Poly1305 | ✅ Secure |
-| **Hardware Binding** | machine-id + DMI UUID + MAC | ✅ Secure |
-| **Systemd Hardening** | NoNewPrivileges, PrivateTmp, ProtectSystem | ✅ Secure |
-| **QR Code Expiry** | 5 min default, 1 hour max | ✅ Secure |
-| **IP Detection** | Local `hostname -I` (no external calls) | ✅ Secure |
-
-### What Gets Created
-
-| Path | Purpose | Permissions |
-|------|---------|-------------|
-| `/opt/armorclaw/armorclaw-bridge` | Bridge binary | 755 (root:root) |
-| `/etc/armorclaw/config.toml` | Configuration | 640 (armorclaw:armorclaw) |
-| `/var/lib/armorclaw/keystore.db` | Encrypted keystore | 600 (armorclaw:armorclaw) |
-| `/run/armorclaw/bridge.sock` | Unix socket | 660 (armorclaw:armorclaw) |
-
-### Systemd Service Hardening
-
-```ini
-[Service]
-User=armorclaw
-NoNewPrivileges=true        # No setuid/escalation
-PrivateTmp=true             # Isolated /tmp
-ProtectSystem=strict        # Read-only /usr, /boot
-ProtectHome=true            # Cannot access /home
-MemoryMax=512M              # Resource limit
-CPUQuota=50%                # Resource limit
-```
-
-> **📖 Full Security Review:** See [docs/output/review.md](docs/output/review.md) for complete security analysis.
-
----
-
-## 🚀 Usage
-
-### Start an Agent
-
-```bash
-# Via Local Bridge socket
-echo '{"jsonrpc":"2.0","method":"start","params":{"name":"my-agent"},"id":1}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
-```
-
-### Check Status
-
-```bash
-# Service status
-docker-compose -f docker-compose-stack.yml ps
-
-# Bridge status
-echo '{"jsonrpc":"2.0","method":"status","id":1}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
-```
-
-### Stop an Agent
-
-```bash
-echo '{"jsonrpc":"2.0","method":"stop","params":{"name":"my-agent"},"id":1}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
-```
+**No direct system access. No exposed sockets. No unsafe defaults.**
 
 ---
 
 ## 📚 Documentation
 
-### Quick Start
-- **[Quick Start Guide](docs/guides/element-x-quickstart.md)** ⭐ — Get started in 5 minutes with Element X
-- **[Setup Guide](docs/guides/setup-guide.md)** — Comprehensive setup with multiple methods
-- **[Element X Connection](docs/guides/element-x-quickstart.md)** — Connect to agents via Element X app
-
-### Deployment
-- **[Hostinger VPS Deployment](docs/guides/hostinger-deployment.md)** 🆓 — Build .tar and deploy to Hostinger VPS
-- **[Hostinger Docker Deployment](docs/guides/hostinger-docker-deployment.md)** 🆓 — Complete Docker deployment guide for Hostinger VPS (Docker Manager + CLI)
+### Getting Started
+- **[Setup Guide](docs/guides/setup-guide.md)** — Get started in 2-3 minutes
+- **[Element X Quick Start](docs/guides/element-x-quickstart.md)** — Connect via mobile app
 
 ### Architecture & Design
-- **[Documentation Hub](docs/index.md)** — Central navigation to all documentation
-- **[V1 Architecture](docs/plans/2026-02-05-armorclaw-v1-design.md)** — Complete system design and architecture
-- **[Architecture Review](docs/output/review.md)** — Implementation snapshot with all functions
+- **[Architecture Overview](docs/plans/2026-02-05-armorclaw-v1-design.md)** — How it works
+- **[Architecture Review](docs/output/review.md)** — Implementation snapshot
 
-### Security (v0.1.0-beta)
-- **[Security Verification Guide](docs/guides/security-verification-guide.md)** 🆕 — Manual verification of all security layers
-- **[Security Configuration](docs/guides/security-configuration.md)** — Zero-trust, guardrails, PII scrubbing
+### API Reference
+- **[RPC API Reference](docs/reference/rpc-api.md)** — Complete JSON-RPC 2.0 API
+- **[Error Catalog](docs/guides/error-catalog.md)** — Search errors by text (LLM-friendly)
 
-### Reference
-- **[RPC API Reference](docs/reference/rpc-api.md)** — Complete JSON-RPC 2.0 API documentation
-- **[Infrastructure Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md)** — Comprehensive deployment documentation
+### Deployment
+- **[VPS Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md)** — Deploy to any VPS
+- **[Hostinger Deployment](docs/guides/hostinger-deployment.md)** — Step-by-step for Hostinger
 
-### Navigation Path for LLMs
-**README** → **[Documentation Hub](docs/index.md)** → **[V1 Architecture](docs/plans/2026-02-05-armorclaw-v1-design.md)** → **[Reference Docs](docs/reference/)** → **[Function Catalog](docs/output/review.md)**
-> 💡 **See [Navigation Guide](docs/NAVIGATION.md)** for complete LLM navigation documentation (README → Architecture → Feature → Functions)
+### Security
+- **[Security Verification Guide](docs/guides/security-verification-guide.md)** — Manual verification
+- **[Security Configuration](docs/guides/security-configuration.md)** — Zero-trust setup
+
+---
+
+## 🛣 Roadmap to v1.0
+
+| Version | Feature                    | Target    | Status |
+|---------|---------------------------|-----------|--------|
+| v0.1.0  | Multi-layer security hardening | 2026-02-09 | ✅ Complete |
+| v0.2.0  | Policy engine             | Q1 2026   | 🚧 In Progress |
+| v0.3.0  | Audit logs & compliance   | Q2 2026   | 📋 Planned |
+| v0.4.0  | Team management           | Q2 2026   | 📋 Planned |
+| v1.0.0  | Enterprise ready          | Q3 2026   | 📋 Planned |
+
+ArmorClaw is evolving from **secure runtime** → **enterprise AI containment platform**.
+
+---
+
+## 💰 Licensing
+
+| Tier | Use Case | Price |
+|------|----------|-------|
+| **Community** | Local development, testing | Free |
+| **Pro** | Individual builders | $29/mo |
+| **Team** | Startups & small orgs | $99/mo |
+| **Enterprise** | Security & compliance teams | Custom |
+
+**[Join the Beta Program](#-beta-program)** — Free lifetime licenses for first 100 testers.
+
+---
+
+## 🎟️ Beta Program — Limited Licenses Available
+
+We're offering **free lifetime licenses** to our first batch of beta testers. Spots are limited!
+
+**Beta Tester Benefits:**
+- 🎁 **Free lifetime license** (first 100 accepted testers per app)
+- 🚀 **Early access** to all new features
+- 💬 **Direct feedback channel** to developers
+- 🏆 **Beta tester badge** and community recognition
+- 🔐 **Priority support** for setup and issues
+
+**How to Join:**
+
+1. Star the repo: [github.com/armorclaw/armorclaw](https://github.com/armorclaw/armorclaw)
+2. Open an issue with title: `Beta Test Request: ArmorChat` or `Beta Test Request: ArmorTerminal`
+3. Add the label: `beta-request`
+
+**Current Beta Status:**
+
+| App | Slots Filled | Slots Remaining |
+|-----|--------------|-----------------|
+| ArmorChat | 23/100 | 77 available |
+| ArmorTerminal | 12/100 | 88 available |
+
+> ⚡ **Act fast!** Once we hit 100 testers per app, beta access will require a paid license.
+
+---
+
+## 📦 Why Not Just Use Docker?
+
+Docker provides isolation.
+ArmorClaw provides:
+
+| Feature | Docker | ArmorClaw |
+|---------|--------|-----------|
+| AI-specific hardening | ❌ | ✅ |
+| Multi-layer defense | ❌ | ✅ |
+| Exploit-tested containment | ❌ | ✅ |
+| Secret lifecycle control | ❌ | ✅ |
+| Secure mobile interface | ❌ | ✅ |
+| E2EE messaging | ❌ | ✅ |
+| Agent-focused security model | ❌ | ✅ |
+
+ArmorClaw is **purpose-built for AI agents** — not generic containers.
+
+---
+
+## 🤝 Contributing
+
+We are actively seeking:
+
+* Security researchers
+* AI engineers running agents in production
+* Compliance-focused teams
+
+**Open an issue** labeled `beta-test` to participate.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
 ## 🧪 Testing
 
-ArmorClaw includes comprehensive security validation:
-
-### Quick Security Verification (v0.1.0-beta)
-
 ```bash
-# Quick verification of all security layers
+# Quick security verification
 ./tests/verify-security.sh
 
-# Full exploit simulation suite (26 tests)
+# Full exploit suite (26 tests)
 ./tests/test-exploits.sh
 
-# PowerShell (Windows)
-.\tests\test-exploits.ps1
-```
-
-### Test Suites
-
-```bash
 # Run all tests
 make test-all
-
-# Individual test suites
-make test-hardening      # Container hardening validation
-make test-secrets        # Secrets isolation tests
-make test-attach         # Config attachment tests
-make test-exploits       # Exploit mitigation tests (NEW in v0.1.0-beta)
-make test-e2e            # End-to-end integration tests
 ```
 
-### Security Test Results (v0.1.0-beta)
+### Security Test Results
 
 | Test Group | Tests | Status |
 |------------|-------|--------|
@@ -616,85 +432,25 @@ make test-e2e            # End-to-end integration tests
 | Privilege Escalation | 3 | ✅ All Blocked |
 | Dangerous Tools | 9 | ✅ All Removed |
 
-**For detailed verification procedures:** See [Security Verification Guide](docs/guides/security-verification-guide.md)
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## 📜 License
-
-MIT License - see [LICENSE.md](LICENSE.md) file for details.
-
----
-
-## 🙋 Acknowledgments
-
-- **Container base:** [debian:bookworm-slim](https://hub.docker.com/_/debian/)
-- **Matrix homeserver:** [Conduit](https://conduit.rs/)
-- **Inspired by:** [OpenClaw](https://github.com/realOpenClaw/openclaw) and security research on container isolation
-
 ---
 
 ## 📮 Support
 
 - **Issues:** [GitHub Issues](https://github.com/armorclaw/armorclaw/issues)
-- **Documentation:** [Full Documentation](docs/index.md)
+- **Documentation:** [docs/index.md](docs/index.md)
 - **License:** [MIT License](LICENSE.md)
 
 ---
 
-## 🔬 Beta Testing Call (v0.1.0-beta)
+## 🔐 Final Thought
 
-**We need YOUR help to reach production status!**
+AI agents are not static tools.
 
-ArmorClaw v0.1.0-beta implements comprehensive security hardening against container escape and data exfiltration. We need community testing across diverse environments to validate the security measures.
+They reason.
+They execute.
+They improvise.
 
-### How to Participate
-
-**1. Run the Verification Script**
-```bash
-git clone https://github.com/armorclaw/armorclaw.git
-cd armorclaw
-./tests/verify-security.sh
-```
-
-**2. Test on Your Platform**
-- Linux (Ubuntu, Debian, Fedora, Arch)
-- WSL2 on Windows
-- macOS (Docker Desktop)
-- Windows (PowerShell)
-- ARM64 (Raspberry Pi, cloud instances)
-
-**3. Report Your Results**
-Create a GitHub issue with:
-- Platform/OS details
-- Docker version
-- Test output (`./tests/verify-security.sh > results.txt`)
-- Any issues encountered
-
-**Label your issue:** `beta-test`
-
-### Test Checklist
-
-- [ ] Container builds successfully
-- [ ] Verification script passes all checks
-- [ ] Exploit tests pass (26/26)
-- [ ] Element X integration works
-- [ ] No unexpected errors or crashes
-
-### Path to Production
-
-| Milestone | Status | Target Date |
-|-----------|--------|-------------|
-| Security hardening implementation | ✅ Complete | 2026-02-09 |
-| Community beta testing | 🔬 **IN PROGRESS** | 2026-02-23 |
-| Cross-platform validation | ⏳ Pending | After beta sign-off |
-| Production release (v1.0.0) | ⏳ Planned | 2026-03-01 |
+**ArmorClaw ensures they cannot escape.**
 
 ---
 
@@ -702,5 +458,5 @@ Create a GitHub issue with:
 
 **🙏 Thank you for helping us make AI safer for everyone!**
 
-© 2026 Gemutly  
+© 2026 Gemutly
 [armorclaw.com](https://armorclaw.com)

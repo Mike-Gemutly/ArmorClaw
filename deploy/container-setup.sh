@@ -102,25 +102,28 @@ prompt_yes_no() {
 
 # Check for environment variables (non-interactive mode)
 check_env_vars() {
-    local has_all=true
-
-    if [ -z "$ARMORCLAW_MATRIX_SERVER" ]; then
-        has_all=false
-    fi
-    if [ -z "$ARMORCLAW_API_KEY" ]; then
-        has_all=false
-    fi
-
-    if [ "$has_all" = true ]; then
+    # Check for minimal required env vars for non-interactive mode
+    # Only SERVER_NAME and API_KEY are required - everything else has defaults
+    if [ -n "$ARMORCLAW_SERVER_NAME" ] || [ -n "$ARMORCLAW_API_KEY" ]; then
         print_info "Environment variables detected - using non-interactive mode"
         NON_INTERACTIVE=true
-        MATRIX_SERVER="${ARMORCLAW_MATRIX_SERVER}"
+
+        # Server name - auto-detect if not provided
+        SERVER_NAME="${ARMORCLAW_SERVER_NAME:-$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')}"
+
+        # Matrix config - use internal by default
+        MATRIX_SERVER="${ARMORCLAW_MATRIX_SERVER:-$SERVER_NAME:6167}"
         MATRIX_URL="${ARMORCLAW_MATRIX_URL:-http://localhost:6167}"
-        API_KEY="${ARMORCLAW_API_KEY}"
+
+        # API config
+        API_KEY="${ARMORCLAW_API_KEY:-}"
         API_BASE_URL="${ARMORCLAW_API_BASE_URL:-https://api.openai.com/v1}"
-        BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-bridge123}"
+
+        # Bridge config
+        BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || echo 'bridge123')}"
         LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
         SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
+        SOCKET_PATH="${ARMORCLAW_SOCKET_PATH:-/run/armorclaw/bridge.sock}"
     else
         NON_INTERACTIVE=false
     fi
