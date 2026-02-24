@@ -1,8 +1,8 @@
 # ArmorClaw Progress Log
 
 > This file tracks completed milestones and their delivery dates.
-> **Last Updated:** 2026-02-21
-> **Current Phase:** Phase 8 Complete - Security & Deployment Enhancements (v8.0.0)
+> **Last Updated:** 2026-02-23
+> **Current Phase:** Phase 9 Complete - Production Installer v4 (v9.0.0)
 
 ---
 
@@ -813,6 +813,138 @@ FLAGS:
 - System tray icon
 - Web dashboard
 - Mobile app
+
+---
+
+## Milestone 34: Production Installer v4 (Complete 2026-02-23)
+
+### Self-Aware, Deterministic, Hardened Deployment
+
+**Status:** COMPLETE
+**Duration:** Day 1
+**Deliverables:**
+- Production installer with 13 detection modules
+- Blue-green deployment with zero-downtime upgrades
+- Hardened nginx template with rate limiting
+- Rollback mechanism with state tracking
+
+**Implementation:**
+
+1. **installer-v4.sh** (`deploy/installer-v4.sh`)
+   - 13 environment detection modules
+   - Deterministic execution (same inputs → same result)
+   - Non-root execution (armorclaw user)
+   - Binary verification (SHA256 checksums)
+   - Cloud provider detection (AWS, GCP, DO, Hetzner, Vultr, Hostinger)
+
+2. **Nginx Template** (`configs/nginx/armorclaw.conf`)
+   - Rate limiting zones (general: 10r/s, matrix: 5r/s)
+   - Blue-green upstream configuration
+   - Localhost-only bridge access (`allow 127.0.0.1; deny all`)
+   - Security headers (HSTS, X-Frame-Options, X-Content-Type-Options)
+   - Matrix client/federation endpoints
+
+3. **Documentation** (`docs/operations/installer-v4.md`)
+   - Quick start commands
+   - 13 detection modules reference
+   - Blue-green deployment explanation
+   - Rollback mechanism
+   - Test matrix
+
+**13 Detection Modules:**
+| # | Module | Purpose |
+|---|--------|---------|
+| 1 | `detect_system_environment()` | Container/systemd/root check |
+| 2 | `detect_provider()` | Cloud provider identification |
+| 3 | `detect_public_ip()` | Public IPv4 detection |
+| 4 | `detect_nat_private_ip_trap()` | NAT detection |
+| 5 | `detect_docker_mode()` | Docker installation check |
+| 6 | `detect_firewall()` | UFW/firewalld detection |
+| 7 | `detect_resources()` | RAM/CPU/disk validation |
+| 8 | `check_reverse_dns()` | PTR record check |
+| 9 | `detect_domain_vs_ip_mode()` | Domain vs IP mode |
+| 10 | `validate_environment()` | Combined validation |
+| 11 | `enforce_reverse_proxy()` | Nginx installation/config |
+| 12 | `deploy_blue_green()` | Systemd service creation |
+| 13 | `smoke_test_rpc_health()` | Real JSON-RPC health check |
+
+**Non-Negotiable Security Constraints:**
+| Constraint | Enforcement |
+|------------|-------------|
+| NEVER bind bridge to public interface | Nginx `allow 127.0.0.1; deny all;` |
+| NEVER run bridge as root | Systemd `User=armorclaw` |
+| NEVER git clone during installation | Binary download with checksum |
+| NEVER naive health checks | Real JSON-RPC `{"method":"health"}` |
+| ALWAYS require explicit telemetry consent | `--telemetry` flag required |
+
+**Systemd Service Hardening:**
+```ini
+[Service]
+User=armorclaw
+Group=armorclaw
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=512M
+CPUQuota=50%
+```
+
+**Command Line Options:**
+```bash
+--yes, --non-interactive   # Skip confirmation prompts
+--dry-run                  # Validate only, no changes
+--domain=DOMAIN            # Force domain mode
+--bridge-port=PORT         # Custom port (default: 9000)
+--upgrade                  # Trigger blue/green upgrade
+--rollback                 # Restore last backup
+--telemetry                # Enable anonymous telemetry
+--help, -h                 # Show help
+```
+
+**Quick Start:**
+```bash
+# Fresh install with domain
+curl -fsSL https://install.armorclaw.com | bash -s -- --yes --domain=example.com
+
+# IP-only mode (self-signed certs)
+curl -fsSL https://install.armorclaw.com | bash -s -- --yes
+
+# Dry run (validate only)
+curl -fsSL https://install.armorclaw.com | bash -s -- --dry-run
+
+# Upgrade existing
+./installer-v4.sh --yes --upgrade
+
+# Rollback
+./installer-v4.sh --yes --rollback
+```
+
+**Artifacts:**
+- `deploy/installer-v4.sh` (900+ lines)
+- `configs/nginx/armorclaw.conf` (250+ lines)
+- `docs/operations/installer-v4.md` (400+ lines)
+
+**Architecture:**
+```
+Internet
+   ↓ (80 → 443 redirect + TLS)
+Nginx (public IP / domain)
+   ├─ strict security headers + HSTS + rate limiting
+   └─ upstream armorclaw_active {
+         server 127.0.0.1:9000;           # active (blue)
+         server 127.0.0.1:9001 backup;    # standby (green)
+      }
+   ↓ localhost only
+Active bridge binary (non-root user: armorclaw)
+   ↓ Unix socket /run/armorclaw/bridge.sock (0660)
+Matrix stack (Docker Compose)
+```
 
 ---
 

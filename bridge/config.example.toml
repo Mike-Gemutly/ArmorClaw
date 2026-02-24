@@ -110,18 +110,6 @@ output = "/var/log/armorclaw/bridge.log"
 # Enable WebRTC voice call support
 enabled = false
 
-[webrtc.signaling]
-# WebSocket server address for WebRTC signaling
-listen_address = "0.0.0.0:8443"
-
-# WebSocket path for signaling connections
-path = "/webrtc"
-
-# TLS certificate for secure WebSocket (wss://)
-# Leave empty to use unencrypted WebSocket (not recommended for production)
-tls_cert = "/etc/armorclaw/cert.pem"
-tls_key = "/etc/armorclaw/key.pem"
-
 [webrtc.session]
 # Default session TTL (time-to-live)
 # Valid units: s (seconds), m (minutes), h (hours)
@@ -320,7 +308,7 @@ inactivity_timeout = "30m"
 enabled = false
 
 # WebSocket listen address (e.g., "0.0.0.0:8443")
-addr = "0.0.0.0:8443"
+listen_address = "0.0.0.0:8443"
 
 # WebSocket path (e.g., "/webrtc")
 path = "/webrtc"

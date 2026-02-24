@@ -1,6 +1,6 @@
 # ArmorClaw Documentation
 
-> **Version:** 0.2.1 | **Last Updated:** 2026-02-22 | **Status:** Production Testing
+> **Version:** 0.2.2 | **Last Updated:** 2026-02-23 | **Status:** Production Testing
 
 ---
 
@@ -8,16 +8,38 @@
 
 | What | Link | Time |
 |------|------|------|
-| **Quick Setup** ⚡ | [Express Installation](guides/setup-guide.md#method-1-quick-setup--recommended-for-beginners) | 2 min |
+| **Production Install** ⚡ | [Installer v4](operations/installer-v4.md) | 5 min |
+| **Quick Setup** | [Express Installation](guides/setup-guide.md#method-1-quick-setup--recommended-for-beginners) | 2 min |
 | **Docker Quick Start** | [Docker Image Guide](guides/quickstart-docker.md) | 2 min |
 | First VPS deployment? | [First Deployment Checklist](guides/first-deployment-checklist.md) ⭐ | 30 min |
 | New to ArmorClaw? | [Getting Started Guide](guides/getting-started.md) | 5 min |
 | Deploy to production | [Hostinger VPS Deployment](guides/hostinger-vps-deployment.md) | 15 min |
 
+## Production Installer (Recommended)
+
+| Feature | Description |
+|---------|-------------|
+| **13 Detection Modules** | Cloud provider, resources, NAT, firewall detection |
+| **Blue-Green Deployment** | Zero-downtime upgrades with instant rollback |
+| **Systemd Hardening** | Non-root, sandboxed, resource-limited |
+| **Nginx Template** | Rate limiting, localhost-only bridge, HSTS |
+
+```bash
+# One-command production install
+curl -fsSL https://install.armorclaw.com | bash -s -- --yes --domain=example.com
+
+# IP-only mode (self-signed certs)
+curl -fsSL https://install.armorclaw.com | bash -s -- --yes
+
+# Dry run (validate only)
+curl -fsSL https://install.armorclaw.com | bash -s -- --dry-run
+```
+
 ## Post-Setup Scripts
 
 | Script | Purpose | Command |
 |--------|---------|---------|
+| **Production Installer** ⚡ | Deterministic, hardened, blue-green | `sudo ./deploy/installer-v4.sh --yes` |
 | **Quick Setup** | 2-minute express installation | `sudo ./deploy/setup-quick.sh` |
 | **Setup Wizard** | Mode-based setup (Quick/Standard/Expert) | `sudo ./deploy/setup-wizard.sh` |
 | **Matrix Setup** | Enable Matrix communication | `sudo ./deploy/setup-matrix.sh` |
@@ -548,6 +570,7 @@ read_only_on_grace = false
 
 | Document | Purpose |
 |----------|---------|
+| [Production Installer v4](operations/installer-v4.md) | Deterministic, hardened deployment |
 | [RPC API Reference](reference/rpc-api.md) | Complete JSON-RPC 2.0 API (24 methods) |
 | [Error Catalog](guides/error-catalog.md) | Every error with solutions |
 | [Security Configuration](guides/security-configuration.md) | Zero-trust, budget, PII |

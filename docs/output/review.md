@@ -1,11 +1,11 @@
 # ArmorClaw Architecture Review - Complete
 
-> **Date:** 2026-02-21
-> **Version:** 8.0.0
-> **Milestone:** Security & Deployment Enhancements Complete
+> **Date:** 2026-02-23
+> **Version:** 9.0.0
+> **Milestone:** Production Installer v4 with Blue-Green Deployment
 > **Edition:** **Slack Enterprise Edition** (Discord/Teams/WhatsApp planned - see [ROADMAP.md](ROADMAP.md))
 > **Status:** PRODUCTION READY - Enterprise Security with Zero-Trust Enforcement
-> **Security Hardening:** v8.0.0 includes PCI-DSS compliance, SSL tunnel skills, and enhanced onboarding
+> **Security Hardening:** v9.0.0 includes deterministic installer, blue-green deployment, and rollback support
 
 ---
 
@@ -305,6 +305,77 @@ JSON Payload:
   "server_name": "hostname",
   "expires_at": <unix_timestamp>
 }
+```
+
+### v9.0: Production Installer v4 (2026-02-23)
+
+| Component | Description | Status |
+|-----------|---------|--------|
+| **installer-v4.sh** | Self-aware, deterministic, hardened deployment script | ✅ Implemented |
+| **13 Detection Modules** | Comprehensive environment validation | ✅ Implemented |
+| **Blue-Green Deployment** | Zero-downtime upgrades with instant rollback | ✅ Implemented |
+| **Systemd Hardening** | NoNewPrivileges, PrivateTmp, ProtectSystem, MemoryMax, CPUQuota | ✅ Implemented |
+| **Nginx Template** | Rate limiting, localhost-only bridge, HSTS, security headers | ✅ Implemented |
+| **Binary Verification** | SHA256 checksum validation before installation | ✅ Implemented |
+| **Provider Detection** | AWS, GCP, DigitalOcean, Hetzner, Vultr, Hostinger | ✅ Implemented |
+| **Rollback Mechanism** | State tracking with clean uninstall | ✅ Implemented |
+
+**Key Features:**
+- **Deterministic**: Same inputs always produce same result
+- **Self-Aware**: Detects cloud provider, resources, network topology
+- **Hardened**: Non-root execution, localhost-only binding, systemd sandboxing
+- **Zero-Downtime**: Blue-green deployment for upgrades
+- **Rollback-Ready**: State tracking enables clean uninstall
+
+**Non-Negotiable Constraints:**
+| Constraint | Enforcement |
+|------------|-------------|
+| NEVER bind bridge to public interface | Nginx `allow 127.0.0.1; deny all;` |
+| NEVER run bridge as root | Systemd `User=armorclaw` |
+| NEVER git clone during installation | Binary download with checksum |
+| NEVER naive health checks | Real JSON-RPC `{"method":"health"}` |
+| ALWAYS require explicit consent for telemetry | `--telemetry` flag required |
+
+**Installer Detection Modules:**
+| # | Module | Purpose |
+|---|--------|---------|
+| 1 | `detect_system_environment()` | Container/systemd/root check |
+| 2 | `detect_provider()` | Cloud provider identification |
+| 3 | `detect_public_ip()` | Public IPv4 detection |
+| 4 | `detect_nat_private_ip_trap()` | NAT detection |
+| 5 | `detect_docker_mode()` | Docker installation check |
+| 6 | `detect_firewall()` | UFW/firewalld detection |
+| 7 | `detect_resources()` | RAM/CPU/disk validation |
+| 8 | `check_reverse_dns()` | PTR record check |
+| 9 | `detect_domain_vs_ip_mode()` | Domain vs IP mode selection |
+| 10 | `validate_environment()` | Combined validation + summary |
+| 11 | `enforce_reverse_proxy()` | Nginx installation/config |
+| 12 | `deploy_blue_green()` | Systemd service creation |
+| 13 | `smoke_test_rpc_health()` | Real JSON-RPC health check |
+
+**Files Created:**
+| File | Purpose |
+|------|---------|
+| `deploy/installer-v4.sh` | Main installer script |
+| `configs/nginx/armorclaw.conf` | Hardened nginx template |
+| `docs/operations/installer-v4.md` | Documentation |
+
+**Quick Start:**
+```bash
+# Fresh install with domain
+curl -fsSL https://install.armorclaw.com | bash -s -- --yes --domain=example.com
+
+# IP-only mode (self-signed certs)
+curl -fsSL https://install.armorclaw.com | bash -s -- --yes
+
+# Dry run (validate only)
+curl -fsSL https://install.armorclaw.com | bash -s -- --dry-run
+
+# Upgrade existing
+./installer-v4.sh --yes --upgrade
+
+# Rollback
+./installer-v4.sh --yes --rollback
 ```
 
 ---
