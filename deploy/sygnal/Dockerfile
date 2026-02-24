@@ -23,9 +23,9 @@ RUN pip install --no-cache-dir matrix-sygnal
 RUN mkdir -p /data /etc/sygnal && \
     chown -R sygnal:sygnal /data /etc/sygnal
 
-# Copy configuration
-COPY sygnal.yaml /etc/sygnal/sygnal.yaml
-RUN chown sygnal:sygnal /etc/sygnal/sygnal.yaml
+# Configuration is mounted at runtime via docker-compose volumes
+# e.g., ./configs/sygnal.yaml:/app/sygnal.yaml:ro
+RUN chown sygnal:sygnal /etc/sygnal
 
 # Switch to sygnal user
 USER sygnal

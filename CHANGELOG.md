@@ -1,9 +1,67 @@
 # ArmorClaw Changelog
 
-> **Last Updated:** 2026-02-19
-> **Current Version:** 4.0.0
+> **Last Updated:** 2026-02-24
+> **Current Version:** 4.2.0
 
 All notable changes to ArmorClaw are documented here with commit references.
+
+---
+
+## [4.2.0] - 2026-02-24 - Docker Quickstart Admin & Hangup Fixes (Pass 6)
+
+### Fixed
+- **Bridge user never created on Conduit** — Setup wizard collected bridge credentials but never registered the user; bridge `matrix.Login()` fatally crashed the container on every first run
+- **No admin user for Element X / ArmorChat** — `create-matrix-admin.sh` was copied but never called; chicken-and-egg problem with admin token requirement made it unusable
+- **No Conduit health check after `docker compose up`** — Replaced `sleep 5` with a 120-second polling loop on `/_matrix/client/versions`, with progress indicators
+- **`conduit.toml` server_name hardcoded** — Template always said `matrix.armorclaw.com`; now dynamically updated via `sed` to match user's domain/IP before copying to host
+- **`set -e` in both scripts** — Removed from `container-setup.sh` and `quickstart.sh`; transient failures (curl timeouts, docker commands) no longer kill the container
+- **`docker compose up -d` errors silently swallowed** — Replaced `2>/dev/null || true` with captured output that shows errors on failure
+- **`create-matrix-admin.sh` broken API path** — Rewrote (v2.0.0) to use Conduit's Synapse-compatible shared-secret registration API instead of admin token/CLI dependency
+- **Redundant setup flag** — Removed duplicate `touch $SETUP_FLAG` from `container-setup.sh`; `quickstart.sh` already handles it
+
+### Added
+- **Shared-secret user registration** — `register_matrix_user()` function uses Conduit's `/_synapse/admin/v1/register` endpoint with HMAC-SHA1 nonce authentication
+- **Admin user creation in setup flow** — `configure_admin_user()` prompts for admin credentials; `register_users()` creates both bridge bot and admin user on Conduit
+- **Conduit health check loop** — `wait_for_conduit()` polls for up to 120s with progress dots, handles first-run image pulls
+- **Admin credentials in final summary** — Setup complete screen now shows Element X / ArmorChat login credentials with homeserver URL
+- **Security: shared secret auto-cleanup** — Registration shared secret is injected into conduit.toml for user creation, then removed and Conduit restarted
+
+### Changed
+- **`create-matrix-admin.sh`** — Rewritten from v1.0.0 to v2.0.0; now uses shared-secret registration instead of admin token/CLI
+- **`final_summary()`** — Now shows admin credentials, homeserver URL, and explicit Element X / ArmorChat login steps
+- **`configs/conduit.toml`** — Added documented `registration_shared_secret` placeholder with usage instructions
+
+---
+
+## [4.1.0] - 2026-02-24 - Docker Deployment Hardening (5-Pass Review)
+
+### Fixed
+- **LD_PRELOAD security hook** — `security_hook.c` now checks `addr->sa_family` and allows `AF_UNIX` through, preventing bridge socket communication from being silently blocked
+- **CGO_ENABLED=0 panic** — Bridge Dockerfile stages now build with `CGO_ENABLED=1` and include `gcc`, `libc-dev`, `libsqlite3-dev` for go-sqlcipher compatibility
+- **Dockerfile.openclaw rewrite** — Removed invalid multi-stage references (`COPY --from=openclaw-src`), consolidated to working image
+- **Coturn shell expansion** — Replaced YAML command array with shell form entrypoint for runtime expression evaluation
+- **OpenClaw healthcheck** — Switched from `.sh` file with Python shebang to inline `CMD ["python3", "-c", "..."]`
+- **RPC method mismatch** — Setup scripts used `keystore.add_provider` but bridge only handles `store_key`; fixed method name and added missing `id` param
+- **Docker Compose V2 plugin path** — Installed to `/usr/lib/docker/cli-plugins/` instead of invalid symlink with space in name
+- **ARMORCLAW_CONFIG env var** — Implemented in `parseFlags()` so documented env var actually works
+- **Dockerfile COPY of non-existent file** — Removed `COPY deploy/setup-wizard.sh` that referenced a file that doesn't exist at that path
+- **Docker bind mount host path resolution** — Parameterized compose paths with `${ARMORCLAW_CONFIGS:-./configs}` and added host-copy helper
+- **External curl calls with no timeout** — All `curl` calls in setup scripts now include `--connect-timeout 5`
+- **Socket path string slicing** — Replaced hardcoded length arithmetic with `filepath.Dir()`
+- **Missing libsqlite3-0** — Added to runtime stage so bridge binary can dynamically link against SQLite
+- **Provider detection lost** — `API_PROVIDER` now persisted to temp file and used in dynamic RPC calls instead of hardcoded `"openai"`
+- **MATRIX_SERVER_NAME not exported** — Now exported before `docker compose up` so Conduit gets the user's actual server name
+- **TURN_SECRET not generated** — Now generated via `openssl rand -hex 32` instead of using the placeholder default
+- **API key shell expansion** — Switched from unquoted heredoc to `printf '%s'` to prevent `$` in keys from being interpreted
+- **Interactive prompts exit on invalid input** — All required prompts (Matrix server, provider selection, API key, custom URL) now use retry loops with `print_warning` instead of `exit 1`
+
+### Changed
+- **nginx** — Added `profiles: ["frontend"]` so it only starts when explicitly requested
+- **Setup wizard UX** — Invalid input re-prompts instead of killing the container; no single typo forces full restart
+
+### Documentation
+- Created `doc/LESSONS_LEARNED.md` — 18 lessons from all 5 review passes
+- Moved `DOCKER-HUB-HOSTINGER-DEPLOYMENT.md` and `GITHUB-ACTIONS-DOCKERHUB-SETUP.md` to `doc/`
 
 ---
 

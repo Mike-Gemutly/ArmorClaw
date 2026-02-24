@@ -1,11 +1,11 @@
 # ArmorClaw Architecture Review - Complete
 
-> **Date:** 2026-02-23
-> **Version:** 9.0.0
-> **Milestone:** Production Installer v4 with Blue-Green Deployment
-> **Edition:** **Slack Enterprise Edition** (Discord/Teams/WhatsApp planned - see [ROADMAP.md](ROADMAP.md))
-> **Status:** PRODUCTION READY - Enterprise Security with Zero-Trust Enforcement
-> **Security Hardening:** v9.0.0 includes deterministic installer, blue-green deployment, and rollback support
+> **Date:** 2026-02-24
+> **Version:** 4.1.0
+> **Milestone:** Docker Deployment Hardening (5-Pass Review)
+> **Edition:** **Zero-Trust AI Agent Containment Platform** (Slack ready; Discord/Telegram/WhatsApp available via mautrix profiles; Teams planned - see [ROADMAP.md](../../ROADMAP.md))
+> **Status:** BETA - Enterprise Security with Zero-Trust Enforcement
+> **Security Hardening:** v4.1.0 includes Docker quickstart hardening, retry-friendly setup wizard, and 19 deployment fixes
 
 ---
 
@@ -70,7 +70,7 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 │   │   ┌─────────────────────────────────────────────────────────────┐    │   │
 │   │   │                     JSON-RPC 2.0 Server                      │    │   │
 │   │   │                                                              │    │   │
-│   │   │  Unix Socket: /run/armorclaw/bridge.sock (114 methods)      │    │   │
+│   │  Unix Socket: /run/armorclaw/bridge.sock (114 methods)      │    │   │
 │   │   │  HTTPS:       https://bridge.armorclaw.app/rpc              │    │   │
 │   │   │  WebSocket:   wss://bridge.armorclaw.app/ws (events)        │    │   │
 │   │   │                                                              │    │   │
@@ -86,9 +86,9 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 │   │   │  ├─ pii.*        (request_access, approve, reject)          │    │   │
 │   │   │  ├─ push.*       (register_token, unregister, settings)     │    │   │
 │   │   │  ├─ recovery.*   (generate, store, verify, complete)        │    │   │
+│   │   │  ├─ provisioning.* (start, claim, status, rotate, cancel)  │    │   │
 │   │   │  ├─ license.*    (validate, status, features, check)        │    │   │
 │   │   │  └─ platform.*   (connect, disconnect, list, status)        │    │   │
-│   │   │  └─ provisioning.* (start, status, cancel, claim, rotate)   │    │   │
 │   │   └─────────────────────────────────────────────────────────────┘    │   │
 │   │                                   │                                   │   │
 │   │   ┌───────────────┐  ┌───────────┴───────────┐  ┌───────────────┐   │   │
@@ -154,7 +154,21 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 | `applications/ArmorChat/` | Android client source |
 | `docs/` | Documentation |
 
-### Deployment Checklist (Quick Reference)
+### Deployment Options (Quick Reference)
+
+#### Option A: Docker One-Command (Simplest — recommended for first-time setup)
+
+```bash
+docker run -it --name armorclaw \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-data:/etc/armorclaw \
+  -p 8443:8443 -p 6167:6167 -p 5000:5000 \
+  mikegemut/armorclaw:latest
+```
+
+The interactive setup wizard runs automatically on first boot. All prompts have retry-on-error — a typo re-prompts instead of killing the container. Supports non-interactive mode via env vars (`ARMORCLAW_SERVER_NAME`, `ARMORCLAW_API_KEY`).
+
+#### Option B: VPS Manual Setup
 
 > **Full Guide:** See "Complete VPS Deployment Guide" section below for detailed steps.
 
@@ -171,7 +185,8 @@ This section provides AI agents with a complete understanding of ArmorClaw.
 
 **Key Scripts:**
 - `deploy/create-matrix-admin.sh` - Secure admin creation (NO registration window!)
-- `deploy/setup-wizard.sh` - Interactive setup wizard
+- `deploy/setup-wizard.sh` - Interactive setup wizard (VPS path)
+- `deploy/container-setup.sh` - Docker container setup wizard (Docker path)
 - `deploy/health-check.sh` - Stack health verification
 
 ### Quick Test Commands
@@ -189,11 +204,13 @@ curl -f http://localhost:5000/_matrix/push/v1/notify
 
 ### Critical Security Principles
 
-1. **Never expose Docker socket** to containers
-2. **Never write secrets to disk** — always use memory-only injection
+1. **Never expose Docker socket** to agent containers (the quickstart container needs it for orchestration, but agent containers do not)
+2. **Never write secrets to disk** — always use memory-only injection via Unix sockets
 3. **All host interaction is pull-based** — agent requests, bridge validates
 4. **Principle of least privilege** — containers have minimal necessary access
 5. **E2EE by default** — all Matrix messages encrypted
+6. **Never exit on recoverable input errors** — interactive prompts use retry loops, not `exit 1`
+7. **LD_PRELOAD hooks must allow AF_UNIX** — blocking all socket families breaks bridge communication
 
 ---
 
@@ -294,18 +311,51 @@ All 10 gaps from the Split-Brain analysis have been resolved:
 
 **QR Format (Standardized):**
 ```
-armorclaw://config?d=<base64-encoded-json>
+armorclaw://config?d=<base64url-encoded-json>
 
 JSON Payload:
 {
+  "version": 1,
+  "setup_token": "stp_<48-hex-chars>",
   "matrix_homeserver": "http://IP:8448",
   "rpc_url": "http://IP:8443/api",
   "ws_url": "ws://IP:8443/ws",
   "push_gateway": "http://IP:5000",
   "server_name": "hostname",
-  "expires_at": <unix_timestamp>
+  "region": "us-east-1",
+  "bridge_public_key": "<optional-TOFU-key>",
+  "expires_at": <unix_timestamp>,
+  "signature": "hmac-sha256:<hex-digest>"
 }
 ```
+
+- `setup_token`: Present only during first-boot (no admin exists yet); omitted on subsequent provisioning. Generated via `provisioning.start` RPC on the bridge — **not** independently by deploy scripts.
+- `signature`: HMAC-SHA256 over the canonical JSON payload using the provisioning signing secret
+- `token_id`: NOT included in the QR payload (internal only, excluded via `json:"-"` tag)
+- Encoding: base64 URL-safe without padding (`base64.RawURLEncoding`). Deploy scripts use `base64 -w0` to prevent line wrapping.
+
+### v4.1.0: Docker Deployment Hardening (2026-02-24)
+
+19 fixes across 5 review passes ensuring the Docker quickstart image builds, runs, and guides users through setup without getting stuck.
+
+| Category | Fixes | Key Changes |
+|----------|-------|-------------|
+| **Build** | 4 | CGO_ENABLED=1, libsqlite3-0, removed invalid COPY, Dockerfile.openclaw rewrite |
+| **Security** | 3 | AF_UNIX in LD_PRELOAD hook, API key shell expansion, TURN_SECRET generation |
+| **Docker Compose** | 3 | V2 plugin path, parameterized bind mounts, MATRIX_SERVER_NAME export |
+| **RPC/Config** | 3 | store_key method name, ARMORCLAW_CONFIG env var, provider detection |
+| **Setup UX** | 5 | Retry loops on all required prompts, custom URL validation, curl timeouts |
+| **Code Quality** | 1 | filepath.Dir() for socket path extraction |
+
+**Files Modified:**
+- `Dockerfile.quickstart` — Build stages, runtime deps, embedded quickstart.sh
+- `deploy/container-setup.sh` — All interactive prompts now retry instead of exit
+- `docker-compose.matrix.yml` — Parameterized paths, env var passthrough
+- `bridge/cmd/bridge/main.go` — ARMORCLAW_CONFIG support in parseFlags()
+- `bridge/pkg/rpc/server.go` — filepath.Dir() for socket cleanup
+- `container/security_hook.c` — AF_UNIX allowlist
+
+**Lessons Learned:** See `doc/LESSONS_LEARNED.md` (22+ lessons from all 5 passes).
 
 ### v9.0: Production Installer v4 (2026-02-23)
 
@@ -382,13 +432,14 @@ curl -fsSL https://install.armorclaw.com | bash -s -- --dry-run
 
 ## Executive Summary
 
-ArmorClaw **Slack Enterprise Edition** has completed a comprehensive review of its user journey and addressed all 11 identified gaps. The system is now fully documented with guides covering setup, security, multi-device support, monitoring, and progressive security tiers.
+ArmorClaw is a **zero-trust AI agent containment platform** that has completed a comprehensive review of its user journey and addressed all 11 identified gaps. The system is now fully documented with guides covering setup, security, multi-device support, monitoring, and progressive security tiers.
+
+**v4.1.0 Docker Deployment Hardening:** The Docker quickstart image (`Dockerfile.quickstart`) and setup wizard (`deploy/container-setup.sh`) have undergone 5 review passes with 19 fixes covering build correctness, security, Docker Compose integration, RPC method alignment, and interactive UX. Users can no longer get stuck at prompts — all required inputs retry on invalid input instead of killing the container.
 
 **Platform Support:**
-- ✅ **Slack** - Production Ready (Full API support)
-- ··· **Discord** - Planned (v4.5.0)
+- ✅ **Slack** - Ready (SDTW adapter interface)
+- ✅ **Discord/Telegram/WhatsApp** - Available via mautrix bridge profiles
 - ··· **Teams** - Planned (v5.0.0)
-- ··· **WhatsApp** - Planned (v5.1.0)
 
 ### Journey Health: ✅ COMPLETE
 
@@ -507,6 +558,405 @@ The bridge provides:
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Complete Bridge Pipeline
+
+This section maps every Go package to its role in the pipeline and documents the exact initialization and request-processing order.
+
+#### Bridge Startup Initialization Pipeline
+
+The bridge binary (`cmd/bridge/main.go → runBridgeServer`) initializes subsystems in strict dependency order. Each step depends on the ones above it.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    BRIDGE STARTUP PIPELINE (Initialization Order)                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  Phase 1: CONFIGURATION & PREFLIGHT                                             │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 1  │ pkg/config         Load config.toml (TOML parser + CLI flag overrides   │
+│  │    │                    + ARMORCLAW_CONFIG env var). Validate merged config.  │
+│  ├────┤                                                                          │
+│  │ 2  │ pkg/logger         Initialize structured logging (slog-based). Create   │
+│  │    │   + logger/security SecurityLogger for audit trail entries.              │
+│  ├────┤                                                                          │
+│  │ 3  │ pkg/docker         Pre-flight: docker.IsAvailable() checks daemon.      │
+│  │    │                    Fail fast if Docker not running.                      │
+│  ├────┤                                                                          │
+│  │ 4  │ (os.MkdirAll)      Create runtime dirs: /run/armorclaw/,                │
+│  │    │                    /run/armorclaw/containers/, /run/armorclaw/secrets/   │
+│  └────┘                                                                          │
+│                                                                                  │
+│  Phase 2: CORE SECURITY SUBSYSTEMS                                              │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 5  │ pkg/keystore       Open encrypted keystore (SQLCipher DB).              │
+│  │    │   + pkg/crypto      Hardware-derived master key (XChaCha20-Poly1305).   │
+│  │    │   + pkg/securerandom CSPRNG for key derivation.                         │
+│  ├────┤                                                                          │
+│  │ 6  │ pkg/errors         Initialize error handling system: store, rate        │
+│  │    │                    limiter, escalation routing, admin MXID resolution.   │
+│  └────┘                                                                          │
+│                                                                                  │
+│  Phase 3: REAL-TIME COMMUNICATION                                               │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 7  │ pkg/webrtc         Create SessionManager, TokenManager, Engine.         │
+│  │    │   + pkg/turn        Create TURN Manager (Coturn credentials).           │
+│  │    │   + pkg/audio       Opus/PCM codec support registered.                  │
+│  ├────┤                                                                          │
+│  │ 8  │ pkg/budget         Create BudgetTracker (daily/monthly USD limits,      │
+│  │    │   + budget/persist  token counting, alert thresholds, hard-stop).       │
+│  ├────┤                                                                          │
+│  │ 9  │ pkg/docker         Create Docker client (scoped: Create/Exec/Remove).   │
+│  │    │   + docker/resource ResourceGovernor for CPU/memory/PID limits.          │
+│  │    │   + docker/pii_mounts PII volume mount helpers.                          │
+│  └────┘                                                                          │
+│                                                                                  │
+│  Phase 4: MONITORING & EVENTS                                                   │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 10 │ pkg/notification   Create Notifier (Matrix room alerts).                │
+│  ├────┤                                                                          │
+│  │ 11 │ pkg/health         Create HealthMonitor. Set failure handler →          │
+│  │    │                    notifier. Start polling loop.                         │
+│  ├────┤                                                                          │
+│  │ 12 │ pkg/eventbus       Create EventBus (WebSocket fan-out).                 │
+│  │    │   + pkg/websocket   Start WS endpoint (wss://.../ws).                   │
+│  ├────┤                                                                          │
+│  │ 13 │ pkg/webrtc         Start SignalingServer (WSS endpoint for SDP/ICE).    │
+│  │    │   (signaling)                                                            │
+│  └────┘                                                                          │
+│                                                                                  │
+│  Phase 5: RPC SERVER & ADAPTERS                                                 │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 14 │ pkg/rpc            Create JSON-RPC 2.0 Server. Wires in ALL components: │
+│  │    │                    keystore, docker, session/token/engine/TURN managers, │
+│  │    │                    budget, health, notifier, event bus, error system.    │
+│  │    │                                                                          │
+│  │    │   Sub-init inside rpc.New():                                             │
+│  │    │   ├─ pkg/secrets       SecretInjector (memory-only Unix sockets)        │
+│  │    │   ├─ pkg/trust         TrustMiddleware (zero-trust enforcement)          │
+│  │    │   ├─ pkg/plugin        PluginManager (dynamic adapter loading)           │
+│  │    │   ├─ pkg/license       LicenseClient (feature gate validation)           │
+│  │    │   ├─ pkg/provisioning  ProvisioningManager (first-boot claim flow)       │
+│  │    │   ├─ pkg/qr            QRManager (config URL/deep-link generation)       │
+│  │    │   ├─ pkg/audit         AuditLog (tamper-evident logging)                │
+│  │    │   ├─ pkg/appservice    AppService + BridgeManager (SDTW bridging)       │
+│  │    │   └─ pkg/recovery      RecoveryManager (BIP39 phrase flow)              │
+│  │    │                                                                          │
+│  │    │   internal/adapter:                                                      │
+│  │    │   ├─ MatrixAdapter     E2EE messaging, sync, room management            │
+│  │    │   ├─ SlackAdapter      Slack API integration                             │
+│  │    │   ├─ TrustIntegration  Zero-trust ↔ Matrix adapter wiring               │
+│  │    │   ├─ PIIConsent        PII consent ↔ Matrix notification bridge          │
+│  │    │   ├─ KeyIngestion      Megolm key import/export                          │
+│  │    │   └─ CommandsInteg     Matrix command handler (!approve, !reject, etc.) │
+│  │    │                                                                          │
+│  │    │   internal/sdtw:                                                         │
+│  │    │   ├─ SlackAdapter      Slack Bot/Events API                              │
+│  │    │   ├─ DiscordAdapter    Discord Gateway (planned)                         │
+│  │    │   ├─ TeamsAdapter      MS Graph API (planned)                            │
+│  │    │   └─ WhatsAppAdapter   WhatsApp Business API (planned)                   │
+│  ├────┤                                                                          │
+│  │ 15 │ pkg/rpc.Start()    Listen on Unix socket /run/armorclaw/bridge.sock     │
+│  │    │   + pkg/http        Optional HTTPS listener for remote access.           │
+│  └────┘                                                                          │
+│                                                                                  │
+│  Phase 6: POST-START WIRING                                                     │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 16 │ Wire Notifier → MatrixAdapter (admin room alerts via Matrix)            │
+│  ├────┤                                                                          │
+│  │ 17 │ Wire ErrorSystem → MatrixAdapter (error escalation via Matrix)          │
+│  ├────┤                                                                          │
+│  │ 18 │ pkg/discovery      Start mDNS server (_armorclaw._tcp.local.)           │
+│  │    │                    Advertises bridge on local network for ArmorChat.     │
+│  └────┘                                                                          │
+│                                                                                  │
+│  Phase 7: READY                                                                  │
+│  ════════════════════════════════════                                            │
+│  ┌────┐                                                                          │
+│  │ 19 │ Signal handler     SIGINT/SIGTERM → graceful shutdown in reverse order: │
+│  │    │                    mDNS → Signaling → EventBus → Health → Notifier →    │
+│  │    │                    Errors → WebRTC Engine → cancel context               │
+│  └────┘                                                                          │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Complete Package Map
+
+Every Go package in the bridge and its pipeline role:
+
+**Core Runtime (`pkg/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `config` | Load & validate TOML config, CLI overrides, env vars | — |
+| `logger` | Structured slog logging, security audit trail | config |
+| `securerandom` | CSPRNG for IDs, keys, tokens | — |
+| `keystore` | SQLCipher encrypted credential vault | config, securerandom, crypto |
+| `crypto` | KeystoreBackedStore for persistent Megolm sessions | keystore |
+| `rpc` | JSON-RPC 2.0 server, method dispatch (114+ methods) | all packages |
+| `http` | HTTPS server for remote RPC access | rpc |
+| `socket` | Unix domain socket server primitives | — |
+
+**Container & Secrets (`pkg/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `docker` | Container create/start/stop, resource governor, PII mounts | config |
+| `secrets` | Memory-only secret injection via Unix sockets, PII injection | keystore, docker |
+
+**Communication (`pkg/` + `internal/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `matrix` (pkg) | Low-level Matrix client HTTP calls | config |
+| `adapter` (internal) | Matrix E2EE adapter, Slack adapter, trust/PII/key wiring | matrix, trust, pii |
+| `sdtw` (internal) | SDTW platform adapters: Slack, Discord, Teams, WhatsApp | adapter |
+| `appservice` | Matrix AppService API for SDTW ghost users | adapter |
+| `ghost` | Ghost user lifecycle for bridged platform users | appservice |
+| `matrixcmd` | Matrix `!command` handler (!approve, !reject, etc.) | adapter |
+| `eventbus` | Real-time event fan-out to WebSocket subscribers | websocket |
+| `websocket` | WebSocket server for ArmorTerminal events | — |
+
+**Voice & Media (`pkg/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `webrtc` | WebRTC engine, session manager, signaling, token manager | turn |
+| `turn` | TURN/STUN credential generation (Coturn) | config |
+| `audio` | Opus encoder/decoder, PCM processing | — |
+| `voice` | Voice call manager: budget, security, Matrix integration | webrtc, turn, budget |
+
+**Security & Compliance (`pkg/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `trust` | Zero-trust enforcement: device fingerprint, middleware | config |
+| `enforcement` | Policy enforcement engine, RPC middleware, bridge integration | trust |
+| `lockdown` | Device bonding, hardware lockdown | trust |
+| `auth` | Matrix authentication helpers | matrix |
+| `sso` | Single sign-on integration | auth |
+| `audit` | Tamper-evident audit logging, compliance checks | logger |
+| `pii` | Blind Fill PII: profiles, resolver, scrubber, HIPAA, HITL consent, skill manifests, media scanner, LLM compliance | keystore, secrets |
+| `security` | Content categories, website guard | — |
+
+**Operational (`pkg/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `errors` | Error system: store, rate limiter, escalation, admin notification | logger, adapter |
+| `health` | Container health polling, failure callback → notifier | docker |
+| `notification` | Matrix room alert delivery (container failures, budget) | adapter |
+| `budget` | Token/cost tracking, daily/monthly limits, hard-stop | config |
+| `ttl` | Session TTL enforcement (WebRTC, containers) | — |
+| `recovery` | BIP39 recovery phrase generation, verification, state machine | keystore |
+| `push` | FCM/APNS push gateway (Sygnal integration) | config |
+
+**Admin & Provisioning (`pkg/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `provisioning` | First-boot claim flow, HMAC-signed QR tokens, role persistence | securerandom, config |
+| `qr` | Config URL / deep-link generation for ArmorChat/ArmorTerminal | provisioning |
+| `admin` | Admin claim logic | provisioning |
+| `invite` | Role definitions for provisioned users | — |
+| `license` | Feature-gate validation, tier enforcement | config |
+| `plugin` | Dynamic adapter loading (.so/.plugin) | — |
+| `dashboard` | Admin web dashboard | rpc |
+| `discovery` | mDNS advertisement (_armorclaw._tcp.local.) | config |
+| `adapters` | Permission mapping helpers | — |
+| `ffi` | Kotlin ↔ Go boundary (ArmorChat FFI) | — |
+
+**Internal Support (`internal/`)**
+
+| Package | Pipeline Role | Depends On |
+|---------|---------------|------------|
+| `queue` | In-memory message queue with metrics | — |
+
+#### Complete Request Pipeline (End-to-End)
+
+A user message flows through these layers in order:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│             COMPLETE REQUEST PIPELINE (User → Agent → Response)                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ── OUTBOUND (User sends message to AI agent) ──────────────────────────────── │
+│                                                                                  │
+│  ┌─────────────┐  E2EE (Olm/Megolm)   ┌─────────────┐  Client-Server API      │
+│  │  Client     │ ────────────────────▶ │   Matrix    │                         │
+│  │  (ArmorChat │                       │ Homeserver  │                         │
+│  │  /Element X)│                       │ (Conduit)   │                         │
+│  └─────────────┘                       └──────┬──────┘                         │
+│                                                │                                │
+│                                                │ AppService txn / /sync poll    │
+│                                                ▼                                │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  BRIDGE: internal/adapter/matrix.go (MatrixAdapter)                      │   │
+│  │  ├─ Receive encrypted event from Matrix                                  │   │
+│  │  ├─ Decrypt with Olm/Megolm (keys from pkg/crypto/keystore_store.go)   │   │
+│  │  ├─ pkg/pii/scrubber.go — Scrub any PII from plaintext (HIPAA/GDPR)    │   │
+│  │  ├─ pkg/pii/media_scanner.go — Scan media attachments                   │   │
+│  │  ├─ pkg/pii/llm_compliance.go — Check LLM compliance rules              │   │
+│  │  ├─ pkg/audit/audit.go — Log event (tamper-evident)                      │   │
+│  │  └─ pkg/trust/middleware.go — Zero-trust sender/room validation          │   │
+│  └──────────────────────────────┬──────────────────────────────────────────┘   │
+│                                 │                                               │
+│                                 │ Validated event                               │
+│                                 ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  BRIDGE: pkg/rpc/server.go (JSON-RPC Dispatch)                           │   │
+│  │  ├─ Route to handler by method name (114+ methods)                       │   │
+│  │  ├─ pkg/enforcement/middleware.go — Policy enforcement                    │   │
+│  │  ├─ pkg/budget/tracker.go — Check token budget (hard-stop if exceeded)  │   │
+│  │  ├─ pkg/license/client.go — Validate feature gate for method            │   │
+│  │  └─ pkg/errors/context.go — Error context enrichment                     │   │
+│  └──────────────────────────────┬──────────────────────────────────────────┘   │
+│                                 │                                               │
+│                                 │ Dispatched to container                       │
+│                                 ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  BRIDGE → CONTAINER DELIVERY                                             │   │
+│  │  ├─ pkg/docker/client.go — Route to running container                    │   │
+│  │  ├─ pkg/secrets/socket.go — Deliver secrets via memory-only socket       │   │
+│  │  ├─ pkg/docker/pii_mounts.go — Mount PII socket if Blind Fill active    │   │
+│  │  └─ Unix socket IPC: /run/armorclaw/containers/<name>.sock               │   │
+│  └──────────────────────────────┬──────────────────────────────────────────┘   │
+│                                 │                                               │
+│                                 ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  AGENT CONTAINER (Isolated Docker — UID 10001, seccomp, AppArmor)        │   │
+│  │  ├─ Receive message via Unix socket                                      │   │
+│  │  ├─ Read API key from /run/secrets/socket (memory-only)                  │   │
+│  │  ├─ Call LLM provider (OpenAI/Anthropic/Google/xAI/OpenRouter)          │   │
+│  │  ├─ Process response                                                     │   │
+│  │  └─ Return result via Unix socket                                        │   │
+│  └──────────────────────────────┬──────────────────────────────────────────┘   │
+│                                 │                                               │
+│  ── INBOUND (Agent response back to user) ──────────────────────────────────── │
+│                                 │                                               │
+│                                 ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  BRIDGE: Response Processing                                             │   │
+│  │  ├─ pkg/pii/scrubber.go — Scrub outbound PII (prevent data leakage)    │   │
+│  │  ├─ pkg/budget/tracker.go — Record token usage + cost                    │   │
+│  │  ├─ pkg/audit/audit.go — Log response (tamper-evident)                   │   │
+│  │  ├─ pkg/notification/notifier.go — Send alerts if budget threshold hit  │   │
+│  │  └─ internal/adapter/matrix.go — Encrypt + send to Matrix room          │   │
+│  └──────────────────────────────┬──────────────────────────────────────────┘   │
+│                                 │                                               │
+│                                 │ E2EE (Megolm)                                │
+│                                 ▼                                               │
+│  ┌─────────────┐  Matrix /sync   ┌─────────────┐                               │
+│  │   Matrix    │ ───────────────▶│   Client    │                               │
+│  │ Homeserver  │                 │  (ArmorChat) │                               │
+│  └─────────────┘                 └─────────────┘                               │
+│                                                                                  │
+│  ── SIDE CHANNELS (parallel to message flow) ───────────────────────────────── │
+│                                                                                  │
+│  pkg/eventbus → WebSocket → ArmorTerminal  (agent.status, workflow.progress)   │
+│  pkg/push → Sygnal → FCM/APNS → Mobile    (background wake-up)                │
+│  pkg/health → Docker API → Notifier        (container failure alerts)          │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Complete Container Lifecycle Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│              CONTAINER LIFECYCLE PIPELINE (Create → Destroy)                     │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  1. CREATE REQUEST                                                              │
+│     RPC: start {key_id, agent_type, image}                                      │
+│     ├─ pkg/keystore — Retrieve + decrypt credential (in-memory only)            │
+│     ├─ pkg/logger/security — Log secret access                                  │
+│     ├─ pkg/secrets/injection — Create Unix socket for secret delivery            │
+│     ├─ pkg/docker/resource_governor — Apply resource profile (CPU/mem/PIDs)     │
+│     └─ pkg/docker/client — CreateAndStartContainer with:                        │
+│        ├─ Secret socket mount (/run/secrets/socket:ro)                           │
+│        ├─ Env: ARMORCLAW_KEY_ID, ARMORCLAW_ENDPOINT, ARMORCLAW_SECRET_SOCKET    │
+│        ├─ Seccomp profile + AppArmor                                             │
+│        ├─ Non-root UID 10001                                                     │
+│        └─ AutoRemove=true                                                        │
+│                                                                                  │
+│  2. RUNNING                                                                      │
+│     ├─ pkg/health/monitor — Periodic health checks via Docker API               │
+│     ├─ pkg/budget/tracker — Token usage accumulation                             │
+│     ├─ pkg/ttl/manager — Session TTL enforcement                                │
+│     ├─ pkg/secrets/injection — UpdateSecrets for credential rotation             │
+│     └─ pkg/eventbus — Broadcast agent.status_changed events                     │
+│                                                                                  │
+│  3. PII ACCESS (if Blind Fill active)                                           │
+│     ├─ pkg/pii/skill_manifest — Validate skill's declared PII needs             │
+│     ├─ pkg/pii/hitl_consent — Send HITL approval request to user via Matrix     │
+│     ├─ User approves/rejects via Matrix command (!approve/!reject)              │
+│     ├─ pkg/pii/resolver — Resolve approved fields from encrypted profile         │
+│     ├─ pkg/pii/hipaa — HIPAA compliance check on PHI fields                     │
+│     ├─ pkg/secrets/pii_injection — Inject PII via memory-only socket             │
+│     └─ pkg/audit — Log field access (names only, never values)                  │
+│                                                                                  │
+│  4. FAILURE HANDLING                                                             │
+│     ├─ pkg/health/monitor — Detect unhealthy container                           │
+│     ├─ pkg/notification/notifier — Alert admin via Matrix                        │
+│     ├─ pkg/errors — Record error + escalate if critical                          │
+│     └─ pkg/recovery — Recovery flow if device bonding broken                    │
+│                                                                                  │
+│  5. SHUTDOWN                                                                     │
+│     RPC: stop {container_id}                                                    │
+│     ├─ pkg/docker/client — RemoveContainer (force)                               │
+│     ├─ pkg/secrets/injection — Cleanup secret socket                             │
+│     ├─ pkg/logger/security — Log container stop                                  │
+│     ├─ pkg/budget/tracker — Finalize token usage for session                    │
+│     └─ pkg/eventbus — Broadcast agent.status_changed (stopped)                  │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### SDTW Bridging Pipeline
+
+External platform messages (Slack, Discord, Teams, WhatsApp) traverse this path:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│             SDTW BRIDGING PIPELINE (External Platform ↔ Matrix)                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  Slack/Discord/Teams/WhatsApp                                                   │
+│         │                                                                        │
+│         ▼                                                                        │
+│  internal/sdtw/{slack,discord,teams,whatsapp}.go                                │
+│  ├─ Receive platform event (webhook / WebSocket / polling)                      │
+│  ├─ Normalize to internal Message struct                                        │
+│  └─ Pass to internal/sdtw/adapter.go (SDTWAdapter interface)                    │
+│         │                                                                        │
+│         ▼                                                                        │
+│  pkg/appservice/bridge.go (BridgeManager)                                       │
+│  ├─ Map platform user → Matrix ghost user (@_slack_U123:server)                 │
+│  ├─ pkg/ghost/manager.go — Create/update ghost user profile                     │
+│  ├─ Map platform channel → Matrix room                                          │
+│  └─ Forward as Matrix event via AppService transaction API                      │
+│         │                                                                        │
+│         ▼                                                                        │
+│  Matrix Homeserver (Conduit/Synapse)                                            │
+│  ├─ Delivers to all room members (E2EE where applicable)                        │
+│  └─ Reaches ArmorChat/Element X via /sync                                       │
+│                                                                                  │
+│  ── Reverse path (Matrix → Platform) ──                                         │
+│                                                                                  │
+│  Matrix room message → AppService txn → BridgeManager → SDTWAdapter            │
+│  → platform API (post message as bot / webhook)                                 │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Communication Protocol Stack
 
 | Layer | Protocol | Purpose |
@@ -569,6 +1019,54 @@ ArmorClaw uses **memory-only** secret injection. Credentials are NEVER written t
 ## Connecting ArmorTerminal/ArmorChat to ArmorClaw
 
 This section explains how client applications connect to and communicate with ArmorClaw.
+
+### How Communication is Established During ArmorClaw Setup
+
+This is the single most important section for understanding ArmorClaw ↔ ArmorChat communication. During a fresh ArmorClaw installation, there is no admin user, no trusted device, and no existing Matrix session. Communication must be bootstrapped from nothing. Here is how it works end-to-end:
+
+**Phase 1 — Server Installation (no client involvement)**
+1. User runs `docker run ... mikegemut/armorclaw:latest` (or VPS `setup-quick.sh`)
+2. Setup wizard generates a **provisioning signing secret** (32-byte hex) → stored in `/etc/armorclaw/config.toml` under `[provisioning]`
+3. Bridge binary starts → `provisioning.Manager` initialized with signing secret + `DataDir` for role persistence
+4. Deploy script calls `provisioning.start` via bridge Unix socket RPC → bridge creates a **Token** containing:
+   - `setup_token` — unique random string (`stp_<48-hex-chars>`) for ArmorChat to claim
+   - Server URLs — `matrix_homeserver`, `rpc_url`, `ws_url`, `push_gateway`
+   - HMAC-SHA256 `signature` over the config payload
+   - `expires_at` — short TTL (default 60s, max 300s)
+5. QR code is displayed on the server terminal: `armorclaw://config?d=<base64url-encoded-signed-json>`
+
+**Phase 2 — QR Scan (client receives server coordinates)**
+1. User opens ArmorChat on their Android device and scans the QR code
+2. ArmorChat's `SignedConfigParser.parse()` decodes the base64url payload and extracts:
+   - Server URLs → stored in `ServerConfig`
+   - `setup_token` → held in memory for the claim RPC
+   - `expires_at` → validated (reject if expired)
+   - `signature` → optional TOFU verification
+3. ArmorChat now knows **where** the bridge is and **how** to reach it
+4. ArmorChat initializes `BridgeApi` with the extracted `rpc_url`
+
+**Phase 3 — Provisioning Claim (client becomes admin)**
+1. ArmorChat calls `provisioning.claim` via JSON-RPC to the bridge's `rpc_url`:
+   ```json
+   {"method": "provisioning.claim", "params": {"setup_token": "stp_...", "device_name": "Pixel 7", "device_type": "android"}}
+   ```
+2. Bridge resolves `setup_token` → finds the matching Token in memory
+3. Bridge validates: token pending? not expired? not already claimed?
+4. **First claim ever** → bridge auto-assigns **OWNER** role (subsequent claims get NONE)
+5. Bridge persists role assignment to `{data_dir}/provisioning_roles.json` (survives restart)
+6. Bridge returns: `{success: true, role: "OWNER", admin_token: "...", user_id: "...", device_id: "..."}`
+7. ArmorChat stores the `admin_token` and `role` → setup complete → enters main UI as admin
+
+**After Setup — Ongoing Communication**
+Once provisioned, ArmorChat communicates via three channels:
+- **Matrix /sync** — all real-time E2EE messaging (primary channel)
+- **JSON-RPC** — admin operations (`bridge.status`, `agent.start`, etc.) using the `admin_token`
+- **FCM Push** — background wake-up when app is backgrounded
+
+ArmorChat does NOT use the Bridge WebSocket channel — that's ArmorTerminal only.
+
+**Fallback Path (older bridge without provisioning)**
+If `provisioning.claim` returns RPC error `-32601` (method not found), ArmorChat falls back to `bridge.status` with `{user_id: "@user:server"}` and reads the `user_role` field from the response. This handles bridges that pre-date the provisioning system.
 
 ### Client Types
 
@@ -645,14 +1143,37 @@ This section explains how client applications connect to and communicate with Ar
 │  │  └─ Backup: Optional key backup to SSSS                         │            │
 │  └─────────────────────────────────────────────────────────────────┘            │
 │                                                                                  │
-│  STEP 4: BRIDGE REGISTRATION (Link Device to Bridge)                            │
-│  ══════════════════════════════════════════════════                             │
+│  STEP 4: FIRST-BOOT PROVISIONING (If setup_token present in QR)                │
+│  ══════════════════════════════════════════════════════════════                 │
 │  ┌─────────────┐                          ┌─────────────┐                        │
-│  │  ArmorChat  │ ── 7. Register Device ─▶ │   Bridge    │                        │
-│  │  (Android)  │    (via Bridge RPC)      │   RPC       │                        │
+│  │  ArmorChat  │ ── 7. provisioning.claim ▶│   Bridge    │                        │
+│  │  (Android)  │    {setup_token,          │ Provisioning│                        │
+│  │             │     device_name,          │   RPC       │                        │
+│  │             │     device_type}          └──────┬──────┘                        │
+│  └──────┬──────┘                                  │                               │
+│         │                                         │                               │
+│         │ ◀── 8. Claim Response ──────────────────                               │
+│         │     {success: true, role: "OWNER",                                     │
+│         │      admin_token, user_id, device_id}                                  │
+│         │                                                                        │
+│         ▼                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐            │
+│  │ Admin Provisioned (First Boot):                                  │            │
+│  │  ├─ Role: OWNER (first claim always gets OWNER)                 │            │
+│  │  ├─ User ID: @admin:matrix.example.com                          │            │
+│  │  ├─ Device ID: auto-generated from device_name + device_type    │            │
+│  │  ├─ Admin Token: JWT session for Bridge RPC access              │            │
+│  │  └─ Token invalidated after first successful claim              │            │
+│  └─────────────────────────────────────────────────────────────────┘            │
+│                                                                                  │
+│  STEP 4b: BRIDGE REGISTRATION (Non-first-boot / Fallback)                       │
+│  ═════════════════════════════════════════════════════════                       │
+│  ┌─────────────┐                          ┌─────────────┐                        │
+│  │  ArmorChat  │ ── 7b. Register Device ─▶│   Bridge    │                        │
+│  │  (Android)  │    (via device.register) │   RPC       │                        │
 │  └──────┬──────┘                          └──────┬──────┘                        │
 │         │                                        │                               │
-│         │    8. Wait for Admin Approval (HITL)                                   │
+│         │    Wait for Admin Approval (HITL)                                      │
 │         │    ┌─────────────────────────────────────────────────┐                │
 │         │    │ Admin receives Matrix notification:              │                │
 │         │    │ "New device registration request from            │                │
@@ -661,7 +1182,7 @@ This section explains how client applications connect to and communicate with Ar
 │         │    │ Admin clicks "Approve" or "Reject"               │                │
 │         │    └─────────────────────────────────────────────────┘                │
 │         │                                        │                               │
-│         │ ◀── 9. Approval Response ───────────────                               │
+│         │ ◀── Approval Response ──────────────────                               │
 │         │     {status: "approved", session_token}                                │
 │         │                                                                        │
 │         ▼                                                                        │
@@ -704,6 +1225,143 @@ This section explains how client applications connect to and communicate with Ar
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### First-Boot Provisioning: ArmorClaw ↔ ArmorChat Communication Setup
+
+This is the most critical communication path during ArmorClaw installation. When a user sets up ArmorClaw for the first time, ArmorChat must be provisioned as the admin device. This section documents the complete end-to-end flow.
+
+**Provisioning Architecture:**
+- `bridge/pkg/provisioning/manager.go` — Token lifecycle, HMAC signing, role assignment, QR encoding, **role persistence** to `{data_dir}/provisioning_roles.json`
+- `bridge/pkg/provisioning/rpc.go` — JSON-RPC handlers for `provisioning.*` methods. Business logic errors (invalid token, expired, already claimed) return `{success: false, message: "..."}` — not RPC-level errors.
+- `bridge/pkg/provisioning/config.go` — `ConfigLoader` with `DataDir` for role persistence wiring
+- `bridge/pkg/rpc/server.go` — Dispatches `provisioning.*` calls to the provisioning handler. Wires `DataDir` from server `Config` through to `ManagerConfig`.
+- `bridge/pkg/rpc/bridge_handlers.go` — `bridge.status` handler returns `user_role` from provisioning manager. `GetUserRole()` supports both internal user IDs (`u_<hex>`) and Matrix-style user IDs (`@user:server`) via fallback scan.
+- `deploy/container-setup.sh` — Generates provisioning secret in `[provisioning]` config section
+- `deploy/armorclaw-provision.sh` / `deploy/setup-quick.sh` — QR generation. These scripts **call the bridge RPC** (`provisioning.start`) to register tokens with the running bridge. Falls back to local generation with a warning if the bridge is unreachable.
+
+**End-to-End First-Boot Sequence:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│            FIRST-BOOT PROVISIONING FLOW (ArmorClaw ↔ ArmorChat)                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  PHASE 1: ARMORCLAW SETUP (Server-Side)                                         │
+│  ═══════════════════════════════════════                                         │
+│  1. User runs Docker quickstart or VPS setup wizard                             │
+│  2. Setup wizard generates provisioning signing secret (32-byte hex)            │
+│     → Stored in config.toml under [provisioning] section                        │
+│  3. Bridge starts → provisioning.Manager initialized with signing secret        │
+│  4. provisioning.start creates a Token with:                                    │
+│     ├─ setup_token (unique per-token, for ArmorChat to claim)                   │
+│     ├─ server URLs (matrix_homeserver, rpc_url, ws_url, push_gateway)           │
+│     ├─ HMAC-SHA256 signature over the config payload                            │
+│     └─ expires_at (default 60s, max 300s)                                       │
+│  5. QR code displayed: armorclaw://config?d=<base64url-encoded-signed-json>     │
+│                                                                                  │
+│  PHASE 2: ARMORCHAT SCAN + PARSE (Client-Side)                                  │
+│  ══════════════════════════════════════════════                                  │
+│  1. User scans QR code with ArmorChat                                           │
+│  2. ArmorChat's SignedConfigParser.parse() extracts:                             │
+│     ├─ Server URLs → stored in ServerConfig                                     │
+│     ├─ setup_token → held in memory for provisioning.claim                      │
+│     └─ expires_at → validated (reject if expired)                               │
+│  3. ArmorChat initializes BridgeApi with extracted rpc_url                       │
+│                                                                                  │
+│  PHASE 3: AUTHENTICATION (ArmorChat → Matrix Homeserver)                        │
+│  ════════════════════════════════════════════════════════                        │
+│  1. ArmorChat calls bridge.start {user_id, device_id}                           │
+│  2. ArmorChat calls matrix.login {homeserver, username, password}               │
+│  3. Matrix returns {access_token, device_id, user_id}                           │
+│  4. E2EE keys generated and stored in Android Keystore                          │
+│                                                                                  │
+│  PHASE 4: PROVISIONING CLAIM (ArmorChat → Bridge)                               │
+│  ═════════════════════════════════════════════════                               │
+│  1. ArmorChat checks: does setup_token exist in parsed QR config?               │
+│     ├─ YES → call provisioning.claim                                            │
+│     └─ NO  → skip to Phase 5 fallback                                           │
+│  2. ArmorChat sends:                                                            │
+│     {                                                                            │
+│       "method": "provisioning.claim",                                           │
+│       "params": {                                                               │
+│         "setup_token": "<from-QR>",                                             │
+│         "device_name": "Pixel 7 Pro",                                           │
+│         "device_type": "android",                                               │
+│         "correlation_id": "<uuid>"                                              │
+│       }                                                                          │
+│     }                                                                            │
+│  3. Bridge resolves setup_token → finds matching provisioning Token              │
+│  4. Bridge validates: token pending? not expired? not already claimed?           │
+│  5. Bridge auto-generates device_id from device_name + device_type              │
+│  6. First claim → role = OWNER; token marked as claimed; token invalidated      │
+│  7. Bridge returns:                                                              │
+│     {                                                                            │
+│       "success": true,                                                           │
+│       "role": "OWNER",                                                           │
+│       "admin_token": "<jwt-session>",                                           │
+│       "user_id": "@admin:matrix.example.com",                                   │
+│       "device_id": "AC_PIXEL7PRO_A1B2",                                         │
+│       "message": "Admin role claimed successfully"                               │
+│     }                                                                            │
+│                                                                                  │
+│  PHASE 5: FALLBACK (When provisioning.claim unavailable)                        │
+│  ════════════════════════════════════════════════════════                        │
+│  If provisioning.claim returns RPC error -32601 (method not found):             │
+│  1. ArmorChat calls bridge.status                                                │
+│  2. Bridge returns {status, version, user_role}                                  │
+│  3. ArmorChat uses user_role to determine admin privileges                       │
+│  4. Setup completes (possibly as non-admin)                                      │
+│                                                                                  │
+│  PHASE 6: READY                                                                  │
+│  ══════════                                                                      │
+│  ArmorChat stores role + admin_token → setup complete → enters main UI           │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Role Values (ArmorChat `AdminLevel` enum):**
+
+| Role | Meaning | When Assigned |
+|------|---------|---------------|
+| `OWNER` | Full admin, first claimer | First `provisioning.claim` on a fresh install |
+| `ADMIN` | Admin privileges | Explicitly assigned by OWNER |
+| `MODERATOR` | Limited moderation | Explicitly assigned |
+| `NONE` | No admin privileges | Default for non-provisioned devices |
+
+**Error Handling During Provisioning:**
+
+| Scenario | Bridge Response | ArmorChat Behavior |
+|----------|-----------------|--------------------|
+| Valid first claim | `{success: true, role: "OWNER"}` | Stores role, enters admin mode |
+| Already claimed | `{success: false, message: "already claimed by @..."}` | Shows `AlreadyClaimed` state, falls back to `bridge.status` |
+| Expired token | `{success: false, message: "invalid or expired setup_token"}` | Shows error, prompts to re-scan QR |
+| Method not found | RPC error `-32601` | Falls back to `bridge.status` role check |
+| Network error | Connection timeout | Retries with exponential backoff |
+
+**Security Properties:**
+1. **One-time use**: After successful claim, the setup_token is invalidated; replay attacks return `{success: false}`
+2. **HMAC-SHA256 signature**: QR payload signed with provisioning secret; ArmorChat can verify integrity (TOFU model)
+3. **Short TTL**: Provisioning tokens expire quickly (default 60s, max 300s) to minimize exposure window
+4. **No device_id required**: ArmorChat only sends `device_name` + `device_type`; bridge auto-generates the `device_id` from a SHA256 hash
+5. **Tokens in-memory, roles on disk**: Provisioning **tokens** (short-lived, one-time) are in-memory only. **Role assignments** and the `ownerClaimed` flag are persisted to `{data_dir}/provisioning_roles.json` via atomic write (write-to-temp + rename) so they survive bridge restarts. Without persistence, a restart would allow a second device to re-claim OWNER.
+6. **No token_id in QR**: The internal `token_id` is excluded from the QR payload (`json:"-"`) to avoid leaking internal identifiers to clients
+7. **Business errors in result, not RPC errors**: `provisioning.claim` returns `{success: false, message: "..."}` for business logic failures (expired, already claimed, invalid token). Only infrastructure failures use RPC error objects. This ensures ArmorChat can always read `result.success`.
+8. **User ID format tolerance**: `GetUserRole()` accepts both internal hash IDs (`u_<hex>`) and Matrix-style IDs (`@user:server`) via fallback scan, preventing role lookup mismatches across the client-server boundary
+
+**Key Implementation Files:**
+
+| File | Purpose |
+|------|---------|
+| `bridge/pkg/provisioning/manager.go` | Token generation, HMAC signing, claim logic, role assignment, **role persistence** (save/load JSON) |
+| `bridge/pkg/provisioning/rpc.go` | JSON-RPC request/response types and handler dispatch |
+| `bridge/pkg/provisioning/config.go` | `ConfigLoader` with `DataDir` wiring to `ManagerConfig` |
+| `bridge/pkg/rpc/server.go` | Wires `provisioning.*` methods into main RPC dispatch, passes `DataDir` to provisioning |
+| `bridge/pkg/rpc/bridge_handlers.go` | `bridge.status` returns `user_role` for fallback path (supports Matrix-style user IDs) |
+| `deploy/container-setup.sh` | Generates `[provisioning]` config section with signing secret |
+| `deploy/armorclaw-provision.sh` | QR generation — calls bridge RPC `provisioning.start` to register tokens |
+| `deploy/setup-quick.sh` | Inline QR fallback — also calls bridge RPC with local generation fallback |
+
+---
 
 ### Bridge RPC Methods for Clients
 
@@ -864,6 +1522,8 @@ This section provides a complete reference for how **ArmorChat** and **ArmorTerm
 │  ├─ bridge.start/stop/status - Bridge lifecycle                                │
 │  ├─ matrix.login - Authentication (proxied through bridge)                     │
 │  ├─ matrix.send - Send messages (when direct API unavailable)                  │
+│  ├─ provisioning.claim - First-boot admin claim (setup_token from QR)          │
+│  ├─ provisioning.start/status/rotate/cancel - Provisioning management          │
 │  ├─ platform.connect/list/status - External platform bridging                  │
 │  ├─ push.register_token/unregister_token - Push notification setup             │
 │  ├─ recovery.* - Account recovery operations                                   │
@@ -993,6 +1653,18 @@ This section provides a complete reference for how **ArmorChat** and **ArmorTerm
 | `container.stop` | Stop a container |
 | `container.list` | List all containers |
 | `container.status` | Get container status |
+
+#### Provisioning Methods (ArmorChat/Admin)
+
+| Method | ArmorChat | ArmorTerminal | Description |
+|--------|-----------|---------------|-------------|
+| `provisioning.start` | ❌ | ✅ | Generate new provisioning token + QR data |
+| `provisioning.claim` | ✅ | ❌ | Claim admin role using setup_token from QR |
+| `provisioning.status` | ❌ | ✅ | Check provisioning token status |
+| `provisioning.rotate` | ❌ | ✅ | Rotate signing secret, invalidate existing tokens |
+| `provisioning.cancel` | ❌ | ✅ | Cancel a pending provisioning session |
+| `provisioning.list` | ❌ | ✅ | List all provisioning tokens |
+| `provisioning.get_qr` | ❌ | ✅ | Get QR data for an existing token |
 
 #### Matrix Methods (ArmorChat/ArmorTerminal)
 
@@ -1516,7 +2188,7 @@ ArmorClaw is a zero-trust security platform that bridges AI agents to external c
 
 **Key Differentiators:**
 - **Zero-Trust Security:** Memory-only secret injection, hardware-bound encryption (SQLCipher + XChaCha20-Poly1305), no persistent credential storage
-- **Slack Enterprise Bridging:** Full Matrix-based Slack integration with message queuing, rate limiting, and bidirectional sync
+- **Multi-Platform Bridging:** Matrix-based platform integration via SDTW adapters (Slack ready, Discord/Telegram/WhatsApp via mautrix profiles, Teams planned)
 - **Voice Communication:** Full WebRTC/TURN stack enables real-time voice with fallback relay support
 - **Token Budget Guardrails:** Pre-validation pipeline with quota checking and cost controls prevents runaway API costs
 - **Progressive Security Tiers:** Three-tier model (Essential → Enhanced → Maximum) with FIDO2 hardware key support for maximum security
@@ -1529,7 +2201,7 @@ ArmorClaw is a zero-trust security platform that bridges AI agents to external c
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                          ARMORCLAW ARCHITECTURE                                  │
-│                    (Slack Edition - v5.0.0)                                      │
+│                    (v4.1.0-beta)                                                 │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
 │   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐                   │
@@ -1582,7 +2254,7 @@ ArmorClaw is a zero-trust security platform that bridges AI agents to external c
 | Component | Role | Technology | Status |
 |-----------|------|------------|--------|
 | **Bridge Binary** | Core orchestrator - handles RPC, keystore, budget, errors | Go 1.24+ | ✅ Live |
-| **Slack Adapter** | Slack Enterprise integration via bot API | Go interfaces | ✅ Live |
+| **Slack Adapter** | Slack integration via SDTW adapter interface | Go interfaces | ✅ Live |
 | **Discord Adapter** | Discord bot integration | Go interfaces | ··· Planned |
 | **Teams Adapter** | Microsoft Teams integration | Go interfaces | ··· Planned |
 | **WhatsApp Adapter** | WhatsApp Business API integration | Go interfaces | ··· Planned |
@@ -1881,7 +2553,7 @@ Bridge Bot (@armorclaw:server) posts to Slack:
 │                                                                  │
 │  9. RPC SERVER START                                              │
 │     ├─ Create Unix socket at /run/armorclaw/bridge.sock          │
-│     ├─ Register all RPC method handlers (24 methods)             │
+│     ├─ Register all RPC method handlers (~118 methods)           │
 │     ├─ Start accepting connections                               │
 │     └─ Enable health check endpoint                              │
 │                                                                  │
@@ -2081,7 +2753,7 @@ Matrix Room → Bridge → Queue → SDTW Adapter → External Platform
 | **Security Tiers** | Essential → Enhanced → Maximum with FIDO2 support | ✅ Production |
 | **Alert Integration** | Matrix notifications for critical events | ✅ Production |
 | **Blind Fill PII** | Encrypted profile vault with HITL consent flow | ✅ Production |
-| **40+ RPC Methods** | Complete JSON-RPC 2.0 API for all operations | ✅ Production |
+| **114 RPC Methods** | Complete JSON-RPC 2.0 API for all operations | ✅ Production |
 
 ### Voice Use Cases
 

@@ -1844,6 +1844,13 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	// Initialize RPC server
 	log.Printf("Starting JSON-RPC server on %s", cfg.Server.SocketPath)
+	// Compute data dir for provisioning role persistence
+	provisioningDataDir := cfg.Provisioning.DataDir
+	if provisioningDataDir == "" && cfg.Keystore.DBPath != "" {
+		// Default to same directory as keystore for persistence
+		provisioningDataDir = filepath.Dir(cfg.Keystore.DBPath)
+	}
+
 	server, err := rpc.New(rpc.Config{
 		SocketPath:       cfg.Server.SocketPath,
 		Keystore:         ks,
@@ -1863,6 +1870,9 @@ func runBridgeServer(cliCfg cliConfig) {
 		Notifier:          notifier, // Notifications
 		EventBus:          eventBus, // Event push mechanism
 		ErrorSystem:       errorSystem, // Error handling system
+		// Provisioning (ArmorChat first-boot claim)
+		ProvisioningSecret: cfg.Provisioning.SigningSecret,
+		DataDir:            provisioningDataDir,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -2137,6 +2147,13 @@ func parseFlags() cliConfig {
 	args := flag.Args()
 	if len(args) > 0 {
 		cfg.command = args[0]
+	}
+
+	// Apply ARMORCLAW_CONFIG env var if --config flag was not explicitly set
+	if cfg.configPath == "" {
+		if envPath := os.Getenv("ARMORCLAW_CONFIG"); envPath != "" {
+			cfg.configPath = envPath
+		}
 	}
 
 	// Set verbose flag if -v is used

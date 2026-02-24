@@ -1,16 +1,22 @@
 #!/bin/bash
 # ArmorClaw Matrix Admin User Creation
-# Creates admin user via Conduit CLI (no registration window needed)
-# Version: 1.0.0
+# Creates admin user via Conduit's shared-secret registration API
+# Version: 2.0.0
 #
 # Usage:
 #   ./deploy/create-matrix-admin.sh [username] [password]
-#   ./deploy/create-matrix-admin.sh admin  # prompts for password
+#   ./deploy/create-matrix-admin.sh admin MySecurePass123
+#   ./deploy/create-matrix-admin.sh                         # prompts for both
 #
-# Security: This script keeps allow_registration=false and creates users
-# via the admin CLI, eliminating the registration window vulnerability.
+# Security: Uses Synapse-compatible shared-secret registration.
+# Requires registration_shared_secret to be set in conduit.toml.
+# The setup wizard handles this automatically during first-run setup.
+#
+# For post-setup use, temporarily add to conduit.toml:
+#   registration_shared_secret = "your-secret-here"
+# Then restart Conduit, run this script, and remove the line.
 
-set -e
+# NOTE: Do NOT use set -e. We handle errors explicitly.
 
 # Colors
 RED='\033[0;31m'
@@ -20,166 +26,169 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
+CONDUIT_URL="${CONDUIT_URL:-http://localhost:6167}"
 CONTAINER_NAME="${CONDUIT_CONTAINER:-armorclaw-conduit}"
 SERVER_NAME="${MATRIX_SERVER_NAME:-matrix.armorclaw.com}"
+SHARED_SECRET="${REGISTRATION_SHARED_SECRET:-}"
 
 # Parse arguments
-USERNAME="${1:-admin}"
-PASSWORD="$2"
+USERNAME="${1:-}"
+PASSWORD="${2:-}"
 
 echo -e "${CYAN}ArmorClaw Matrix Admin Creation${NC}"
 echo "=================================="
 echo ""
 
-# Check if container is running
-if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo -e "${RED}Error: Container '$CONTAINER_NAME' is not running${NC}"
-    echo "Start the Matrix stack first:"
+# Check if Conduit is reachable
+if ! curl -sf --connect-timeout 5 "${CONDUIT_URL}/_matrix/client/versions" >/dev/null 2>&1; then
+    echo -e "${RED}Error: Conduit is not reachable at ${CONDUIT_URL}${NC}"
+    echo ""
+    echo "Make sure Conduit is running:"
+    echo "  docker logs ${CONTAINER_NAME}"
     echo "  docker compose -f docker-compose.matrix.yml up -d"
     exit 1
 fi
 
-# Check if conduit-admin is available
-if ! docker exec "$CONTAINER_NAME" which conduit-admin &>/dev/null; then
-    echo -e "${YELLOW}Note: conduit-admin not found in container${NC}"
-    echo "Using Conduit API for user creation..."
-    USE_API=true
-else
-    USE_API=false
+echo -e "${GREEN}✓ Conduit is reachable at ${CONDUIT_URL}${NC}"
+
+# Get shared secret if not provided
+if [ -z "$SHARED_SECRET" ]; then
+    echo ""
+    echo -e "${YELLOW}No REGISTRATION_SHARED_SECRET environment variable set.${NC}"
+    echo ""
+    echo "To use this script, you need a registration_shared_secret in conduit.toml."
+    echo ""
+    echo "Steps:"
+    echo "  1. Generate a secret: openssl rand -hex 32"
+    echo "  2. Add to conduit.toml: registration_shared_secret = \"<secret>\""
+    echo "  3. Restart Conduit: docker restart ${CONTAINER_NAME}"
+    echo "  4. Set the env var: export REGISTRATION_SHARED_SECRET=\"<secret>\""
+    echo "  5. Run this script again"
+    echo "  6. REMOVE the line from conduit.toml and restart Conduit"
+    echo ""
+    read -p "Enter shared secret (or press Enter to exit): " SHARED_SECRET
+    if [ -z "$SHARED_SECRET" ]; then
+        exit 1
+    fi
+fi
+
+# Get username if not provided
+if [ -z "$USERNAME" ]; then
+    echo ""
+    read -p "Username [admin]: " USERNAME
+    USERNAME="${USERNAME:-admin}"
 fi
 
 # Get password if not provided
 if [ -z "$PASSWORD" ]; then
+    echo ""
     echo -e "${CYAN}Creating admin user: @${USERNAME}:${SERVER_NAME}${NC}"
     echo ""
-    read -s -p "Enter password (min 8 chars): " PASSWORD
-    echo ""
-    read -s -p "Confirm password: " PASSWORD_CONFIRM
-    echo ""
 
-    if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
-        echo -e "${RED}Error: Passwords do not match${NC}"
-        exit 1
-    fi
+    while true; do
+        read -s -p "Enter password (min 8 chars): " PASSWORD
+        echo ""
 
-    if [ ${#PASSWORD} -lt 8 ]; then
-        echo -e "${RED}Error: Password must be at least 8 characters${NC}"
-        exit 1
-    fi
+        if [ ${#PASSWORD} -lt 8 ]; then
+            echo -e "${RED}Error: Password must be at least 8 characters${NC}"
+            continue
+        fi
+
+        read -s -p "Confirm password: " PASSWORD_CONFIRM
+        echo ""
+
+        if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then
+            echo -e "${RED}Error: Passwords do not match${NC}"
+            continue
+        fi
+
+        break
+    done
 fi
 
-# Validate password strength
-STRENGTH=0
-if [[ ${#PASSWORD} -ge 12 ]]; then ((STRENGTH++)); fi
-if [[ "$PASSWORD" =~ [A-Z] ]]; then ((STRENGTH++)); fi
-if [[ "$PASSWORD" =~ [a-z] ]]; then ((STRENGTH++)); fi
-if [[ "$PASSWORD" =~ [0-9] ]]; then ((STRENGTH++)); fi
-if [[ "$PASSWORD" =~ [^A-Za-z0-9] ]]; then ((STRENGTH++)); fi
-
-if [ $STRENGTH -lt 3 ]; then
-    echo -e "${YELLOW}Warning: Weak password. Consider using:${NC}"
-    echo "  - 12+ characters"
-    echo "  - Mix of uppercase, lowercase, numbers, symbols"
-    echo ""
-    read -p "Continue with weak password? [y/N]: " CONTINUE
-    if [[ ! "$CONTINUE" =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+# Validate password length
+if [ ${#PASSWORD} -lt 8 ]; then
+    echo -e "${RED}Error: Password must be at least 8 characters${NC}"
+    exit 1
 fi
 
-# Create user
-FULL_USER_ID="@${USERNAME}:${SERVER_NAME}"
+# Register user via Synapse-compatible shared-secret registration API
+# Step 1: Get nonce
 echo ""
-echo -e "${CYAN}Creating user: ${FULL_USER_ID}${NC}"
+echo -e "${CYAN}Registering user @${USERNAME}:${SERVER_NAME}...${NC}"
 
-if [ "$USE_API" = true ]; then
-    # Use Conduit's registration API with shared secret (if available)
-    # or fallback to admin API
-    echo -e "${YELLOW}Using Conduit admin API...${NC}"
+NONCE_RESPONSE=$(curl -sf --connect-timeout 10 "${CONDUIT_URL}/_synapse/admin/v1/register" 2>/dev/null)
+if [ $? -ne 0 ] || [ -z "$NONCE_RESPONSE" ]; then
+    echo -e "${RED}Error: Failed to get registration nonce${NC}"
+    echo "This may mean registration_shared_secret is not set in conduit.toml"
+    exit 1
+fi
 
-    # Check for admin token
-    ADMIN_TOKEN="${CONDUIT_ADMIN_TOKEN:-}"
-    if [ -z "$ADMIN_TOKEN" ]; then
-        # Try to get token from environment or generate one
-        echo -e "${YELLOW}No admin token found. Setting up shared secret registration...${NC}"
+NONCE=$(echo "$NONCE_RESPONSE" | jq -r '.nonce // empty' 2>/dev/null)
+if [ -z "$NONCE" ]; then
+    echo -e "${RED}Error: Invalid nonce response: $NONCE_RESPONSE${NC}"
+    exit 1
+fi
 
-        # This is a temporary approach - in production, use a pre-configured admin token
-        echo ""
-        echo -e "${CYAN}IMPORTANT: You need to enable admin API in conduit.toml:${NC}"
-        echo "  [global.admin]"
-        echo "  enable = true"
-        echo "  # conduit_admin_token = \"your-secure-token\""
-        echo ""
-        echo -e "${CYAN}Or use shared secret registration:${NC}"
-        echo "  [global.matrix]"
-        echo "  registration_shared_secret = \"$(openssl rand -hex 32)\""
-        echo ""
-        echo "After configuration, restart Conduit and run this script again."
-        echo ""
-        echo -e "${CYAN}Alternatively, register manually:${NC}"
-        echo "  1. Temporarily set allow_registration = true in configs/conduit.toml"
-        echo "  2. Restart: docker compose -f docker-compose.matrix.yml restart"
-        echo "  3. Register via Element X or curl"
-        echo "  4. IMMEDIATELY set allow_registration = false"
-        echo "  5. Restart again"
-        echo ""
-        exit 1
-    fi
+# Step 2: Compute HMAC-SHA1
+# Format: nonce + \0 + username + \0 + password + \0 + "admin"
+MAC=$(printf '%s\0%s\0%s\0%s' "$NONCE" "$USERNAME" "$PASSWORD" "admin" | \
+    openssl dgst -sha1 -hmac "$SHARED_SECRET" | awk '{print $NF}')
 
-    # Create user via admin API
-    RESPONSE=$(curl -s -X POST "http://localhost:6167/_matrix/admin/v1/users/@${USERNAME}:${SERVER_NAME}" \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"password\":\"$PASSWORD\",\"admin\":true}" 2>/dev/null || echo '{"error":"failed"}')
+if [ -z "$MAC" ]; then
+    echo -e "${RED}Error: Failed to compute HMAC${NC}"
+    exit 1
+fi
 
-    if echo "$RESPONSE" | grep -q '"error"'; then
-        echo -e "${RED}Failed to create user: $RESPONSE${NC}"
+# Step 3: Register with HMAC
+REG_RESPONSE=$(curl -s --connect-timeout 10 -X POST \
+    "${CONDUIT_URL}/_synapse/admin/v1/register" \
+    -H "Content-Type: application/json" \
+    -d "{\"nonce\":\"$NONCE\",\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\",\"admin\":true,\"mac\":\"$MAC\"}" 2>/dev/null)
+
+# Check for errors
+ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.error // empty' 2>/dev/null)
+if [ -n "$ERROR_MSG" ]; then
+    if echo "$ERROR_MSG" | grep -qi "exists\|already"; then
+        echo -e "${YELLOW}User @${USERNAME}:${SERVER_NAME} already exists${NC}"
+    else
+        echo -e "${RED}Error: $ERROR_MSG${NC}"
         exit 1
     fi
 else
-    # Use conduit-admin CLI
-    echo "$PASSWORD" | docker exec -i "$CONTAINER_NAME" conduit-admin register "$FULL_USER_ID" --password-stdin --admin 2>/dev/null
-
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}User created successfully via CLI${NC}"
+    USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // empty' 2>/dev/null)
+    if [ -n "$USER_ID" ]; then
+        echo -e "${GREEN}✓ User created: $USER_ID${NC}"
     else
-        echo -e "${YELLOW}CLI creation failed, user may already exist or CLI not available${NC}"
+        echo -e "${YELLOW}Warning: Unexpected response: $REG_RESPONSE${NC}"
     fi
 fi
 
-# Verify user was created
+# Verify login
 echo ""
-echo -e "${CYAN}Verifying user creation...${NC}"
-
-# Try to login with the new user
-LOGIN_RESPONSE=$(curl -s -X POST "http://localhost:6167/_matrix/client/v3/login" \
+echo -e "${CYAN}Verifying login...${NC}"
+LOGIN_RESPONSE=$(curl -s --connect-timeout 10 -X POST "${CONDUIT_URL}/_matrix/client/v3/login" \
     -H "Content-Type: application/json" \
-    -d "{
-        \"type\":\"m.login.password\",
-        \"user\":\"$USERNAME\",
-        \"password\":\"$PASSWORD\"
-    }" 2>/dev/null || echo '{"error":"failed"}')
+    -d "{\"type\":\"m.login.password\",\"user\":\"$USERNAME\",\"password\":\"$PASSWORD\"}" 2>/dev/null)
 
 if echo "$LOGIN_RESPONSE" | grep -q '"access_token"'; then
-    echo -e "${GREEN}✓ User verified: ${FULL_USER_ID}${NC}"
-    echo ""
-    echo -e "${CYAN}You can now login with:${NC}"
-    echo "  Username: @${USERNAME}:${SERVER_NAME}"
-    echo "  Server:   https://${SERVER_NAME}"
+    echo -e "${GREEN}✓ Login verified: @${USERNAME}:${SERVER_NAME}${NC}"
 else
-    echo -e "${YELLOW}Warning: Could not verify user creation${NC}"
+    echo -e "${YELLOW}Warning: Login verification failed${NC}"
     echo "Response: $LOGIN_RESPONSE"
 fi
 
 # Security reminder
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}Security Status:${NC}"
+echo -e "${GREEN}Security Reminder:${NC}"
 echo ""
-echo -e "  ${GREEN}✓${NC} User created without enabling registration"
-echo -e "  ${GREEN}✓${NC} No registration window exposure"
+echo -e "  ${GREEN}✓${NC} User created via shared-secret registration (no open registration)"
+echo -e "  ${YELLOW}⚠${NC} Remove registration_shared_secret from conduit.toml"
+echo -e "  ${YELLOW}⚠${NC} Restart Conduit after removing the secret"
 echo ""
-echo -e "${CYAN}Verify registration is disabled:${NC}"
-echo "  grep 'allow_registration' configs/conduit.toml"
-echo "  # Should show: allow_registration = false"
+echo "Connect with Element X or ArmorChat:"
+echo "  Homeserver: ${CONDUIT_URL}"
+echo "  Username:   @${USERNAME}:${SERVER_NAME}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+

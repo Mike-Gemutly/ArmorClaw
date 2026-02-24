@@ -549,12 +549,28 @@ generate_qr_code() {
         local ws_url="ws://${ip_address}:8443/ws"
         local push_url="http://${ip_address}:5000"
 
+        # Try to register token via bridge RPC so it's recognized during claim
+        local setup_token=""
+        if [[ -S "$SOCKET_PATH" ]]; then
+            local rpc_cmd='{"jsonrpc":"2.0","method":"provisioning.start","params":{"expiry_seconds":300},"id":1}'
+            local rpc_result
+            rpc_result=$(echo "$rpc_cmd" | socat - UNIX-CONNECT:"$SOCKET_PATH" 2>/dev/null) || true
+            if [[ -n "$rpc_result" ]]; then
+                setup_token=$(echo "$rpc_result" | grep -oP '"setup_token":\s*"\K[^"]+' 2>/dev/null || true)
+            fi
+        fi
+        if [[ -z "$setup_token" ]]; then
+            setup_token="stp_$(openssl rand -hex 24)"
+            print_warning "Bridge not reachable — token may not be recognized"
+        fi
+
         local config_json=$(cat <<EOF
-{"matrix_homeserver":"${matrix_url}","rpc_url":"${rpc_url}","ws_url":"${ws_url}","push_gateway":"${push_url}","server_name":"${hostname}","expires_at":${expiry}}
+{"matrix_homeserver":"${matrix_url}","rpc_url":"${rpc_url}","ws_url":"${ws_url}","push_gateway":"${push_url}","server_name":"${hostname}","setup_token":"${setup_token}","expires_at":${expiry}}
 EOF
 )
-        # Base64 encode (URL-safe) - matches armorclaw-provision.sh format
-        local config_b64=$(echo -n "$config_json" | base64 | tr '+/' '-_' | tr -d '=')
+        # Base64 encode (URL-safe, single-line)
+        local config_b64=$(echo -n "$config_json" | base64 -w0 2>/dev/null || echo -n "$config_json" | base64 | tr -d '\n')
+        config_b64=$(echo -n "$config_b64" | tr '+/' '-_' | tr -d '=')
         local provision_url="armorclaw://config?d=${config_b64}"
 
         echo ""

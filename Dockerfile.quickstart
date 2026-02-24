@@ -7,6 +7,11 @@
 # ============================================================================
 FROM golang:1.24-bookworm AS bridge-builder
 
+# Install CGO dependencies required by SQLCipher keystore
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libc-dev libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
 
 # Copy Go module files first for caching
@@ -16,8 +21,8 @@ RUN go mod download
 # Copy bridge source
 COPY bridge/ ./
 
-# Build static binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o armorclaw-bridge ./cmd/bridge
+# Build with CGO enabled (required for go-sqlcipher)
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o armorclaw-bridge ./cmd/bridge
 
 # ============================================================================
 # Stage 2: Agent Runtime Builder
@@ -67,15 +72,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget jq socat \
     # Docker CLI client (container uses host's Docker socket)
     docker.io \
+    # SQLite runtime library (bridge binary may dynamically link against it)
+    libsqlite3-0 \
     # System utilities
     ca-certificates procps openssl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Docker Compose (standalone) for container orchestration
-# Note: docker-compose-plugin is not in Debian repos, use standalone binary
+# Install Docker Compose V2 as both standalone binary and CLI plugin
+# The CLI plugin path enables 'docker compose' (V2 subcommand form)
 RUN curl -fsSL "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose && \
     chmod +x /usr/local/bin/docker-compose && \
-    ln -sf /usr/local/bin/docker-compose /usr/local/bin/docker compose 2>/dev/null || true
+    mkdir -p /usr/lib/docker/cli-plugins && \
+    ln -sf /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose
 
 # Create ArmorClaw user
 RUN groupadd -g 10001 armorclaw && \
@@ -107,7 +115,6 @@ COPY container/openclaw/ /opt/armorclaw/agent/openclaw/
 
 # Copy setup scripts
 COPY deploy/container-setup.sh /opt/armorclaw/
-COPY deploy/setup-wizard.sh /opt/armorclaw/
 COPY deploy/health-check.sh /opt/armorclaw/
 COPY deploy/create-matrix-admin.sh /opt/armorclaw/
 RUN chmod +x /opt/armorclaw/*.sh
@@ -130,7 +137,8 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 # ArmorClaw Quick Start Entrypoint
 # Launches container setup on first run, then starts bridge
 
-set -e
+# NOTE: Do NOT use set -e. Transient failures must not kill the container.
+# Critical commands check errors explicitly.
 
 CONFIG_FILE="/etc/armorclaw/config.toml"
 SETUP_FLAG="/etc/armorclaw/.setup_complete"
@@ -239,8 +247,10 @@ if [ -S /run/armorclaw/bridge.sock ]; then
         source "$API_KEY_TEMP" 2>/dev/null || true
 
         if [ -n "$api_key" ]; then
-            # Add API key via RPC
-            RESPONSE=$(echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"keystore.add_provider\",\"params\":{\"provider\":\"openai\",\"token\":\"$api_key\",\"display_name\":\"Default API\"}}" | \
+            # Use provider from temp file, default to openai
+            key_provider="${provider:-openai}"
+            # Add API key via RPC (method: store_key, requires id + provider + token)
+            RESPONSE=$(echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"store_key\",\"params\":{\"id\":\"${key_provider}-default\",\"provider\":\"${key_provider}\",\"token\":\"$api_key\",\"display_name\":\"Default API\"}}" | \
                 socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{"error":"failed"}')
 
             if echo "$RESPONSE" | grep -q '"result"'; then
@@ -248,18 +258,83 @@ if [ -S /run/armorclaw/bridge.sock ]; then
                 rm -f "$API_KEY_TEMP"
             else
                 echo -e "${YELLOW}Warning: Could not inject API key automatically${NC}"
-                echo -e "${YELLOW}Add manually via RPC: keystore.add_provider${NC}"
+                echo -e "${YELLOW}Add manually via RPC: store_key${NC}"
             fi
         fi
     fi
 
     echo ""
+    # ── Auto-claim OWNER role for setup admin user ──
+    ADMIN_INFO_FILE="/var/lib/armorclaw/.admin_user"
+    if [ -f "$ADMIN_INFO_FILE" ]; then
+        ADMIN_USER=$(sed -n '1p' "$ADMIN_INFO_FILE")
+        ADMIN_SERVER=$(sed -n '2p' "$ADMIN_INFO_FILE")
+        ADMIN_MATRIX_ID="@${ADMIN_USER}:${ADMIN_SERVER}"
+
+        echo -e "${CYAN}Assigning OWNER role to admin user...${NC}"
+
+        # Step 1: Create provisioning token
+        TOKEN_RESP=$(echo '{"jsonrpc":"2.0","id":10,"method":"provisioning.start","params":{}}' | \
+            socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
+
+        SETUP_TOKEN=$(echo "$TOKEN_RESP" | jq -r '.result.setup_token // empty' 2>/dev/null)
+
+        if [ -n "$SETUP_TOKEN" ]; then
+            # Step 2: Claim with admin's Matrix ID as device_id → first claim = OWNER
+            CLAIM_RESP=$(printf '{"jsonrpc":"2.0","id":11,"method":"provisioning.claim","params":{"setup_token":"%s","device_id":"%s","device_name":"Admin (setup)","device_type":"element-x"}}' \
+                "$SETUP_TOKEN" "$ADMIN_MATRIX_ID" | \
+                socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
+
+            CLAIM_ROLE=$(echo "$CLAIM_RESP" | jq -r '.result.role // empty' 2>/dev/null)
+            if [ "$CLAIM_ROLE" = "OWNER" ]; then
+                echo -e "${GREEN}✓ Admin ${ADMIN_MATRIX_ID} assigned OWNER role${NC}"
+            else
+                echo -e "${YELLOW}⚠ Admin role claim returned: ${CLAIM_ROLE:-unknown}${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠ Provisioning not available — admin can claim OWNER via ArmorChat QR${NC}"
+        fi
+
+        # Step 3: Generate a second token for ArmorChat QR code
+        QR_RESP=$(echo '{"jsonrpc":"2.0","id":12,"method":"provisioning.start","params":{}}' | \
+            socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
+
+        QR_DATA=$(echo "$QR_RESP" | jq -r '.result.qr_data // empty' 2>/dev/null)
+        QR_SETUP_TOKEN=$(echo "$QR_RESP" | jq -r '.result.setup_token // empty' 2>/dev/null)
+
+        if [ -n "$QR_DATA" ]; then
+            echo ""
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${BOLD}ArmorChat Provisioning QR${NC}"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+            echo "  Scan this link with ArmorChat to connect:"
+            echo -e "  ${GREEN}${QR_DATA}${NC}"
+            echo ""
+            if command -v qrencode >/dev/null 2>&1; then
+                echo "$QR_DATA" | qrencode -t UTF8 2>/dev/null || true
+            else
+                echo "  (Install qrencode for ASCII QR: apt-get install qrencode)"
+            fi
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        fi
+
+        # Clean up admin info file
+        rm -f "$ADMIN_INFO_FILE"
+    fi
+
+    echo ""
     echo -e "${GREEN}ArmorClaw Bridge is running!${NC}"
     echo ""
-    echo "To connect:"
-    echo "  1. Open ArmorChat app"
-    echo "  2. Enter homeserver URL"
-    echo "  3. Start DM with @bridge:your-domain"
+    echo "To connect with Element X:"
+    echo "  1. Open Element X"
+    echo "  2. Set homeserver URL (shown during setup)"
+    echo "  3. Log in with admin credentials"
+    echo "  4. Open 'ArmorClaw Bridge' room and send !status"
+    echo ""
+    echo "To connect with ArmorChat:"
+    echo "  Scan the QR code above, or run:"
+    echo "    armorclaw-bridge generate-qr"
     echo ""
 
     # Wait for bridge process

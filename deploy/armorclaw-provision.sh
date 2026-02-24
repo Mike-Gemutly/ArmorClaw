@@ -59,10 +59,12 @@ fail() {
     exit 1
 }
 
-# URL-safe base64 encoding
+# URL-safe base64 encoding (single-line, no wrapping)
 base64_url_encode() {
     local input="$1"
-    echo -n "$input" | base64 | tr '+/' '-_' | tr -d '='
+    local b64
+    b64=$(echo -n "$input" | base64 -w0 2>/dev/null || echo -n "$input" | base64 | tr -d '\n')
+    echo -n "$b64" | tr '+/' '-_' | tr -d '='
 }
 
 #=============================================================================
@@ -200,17 +202,35 @@ generate_qr_config() {
     local now=$(date +%s)
     local expiry=$((now + EXPIRY_SECONDS))
 
+    # Try to generate setup_token via bridge RPC (so the bridge recognizes it)
+    local socket_path="/run/armorclaw/bridge.sock"
+    SETUP_TOKEN=""
+
+    if [[ -S "$socket_path" ]]; then
+        # Call provisioning.start via bridge RPC to get a registered token
+        local rpc_cmd='{"jsonrpc":"2.0","method":"provisioning.start","params":{"expiry_seconds":'"$EXPIRY_SECONDS"'},"id":1}'
+        local rpc_result
+        rpc_result=$(echo "$rpc_cmd" | socat - UNIX-CONNECT:"$socket_path" 2>/dev/null) || true
+
+        if [[ -n "$rpc_result" ]]; then
+            # Extract setup_token from JSON response
+            SETUP_TOKEN=$(echo "$rpc_result" | grep -oP '"setup_token":\s*"\K[^"]+' 2>/dev/null || true)
+            if [[ -n "$SETUP_TOKEN" ]]; then
+                print_success "Token registered with bridge via RPC"
+            fi
+        fi
+    fi
+
+    if [[ -z "$SETUP_TOKEN" ]]; then
+        # Fallback: generate local token (bridge won't recognize it until restart)
+        SETUP_TOKEN="stp_$(openssl rand -hex 24)"
+        print_warning "Bridge not reachable — generated local token (claim may fail until bridge registers it)"
+    fi
+
     # Build JSON config for ArmorChat
     # This format matches what ArmorChat's parseConfigDeepLink() expects
     CONFIG_JSON=$(cat <<EOF
-{
-  "matrix_homeserver": "${MATRIX_URL}",
-  "rpc_url": "${RPC_URL}",
-  "ws_url": "${WS_URL}",
-  "push_gateway": "${PUSH_URL}",
-  "server_name": "${SERVER_NAME:-$HOST}",
-  "expires_at": ${expiry}
-}
+{"matrix_homeserver":"${MATRIX_URL}","rpc_url":"${RPC_URL}","ws_url":"${WS_URL}","push_gateway":"${PUSH_URL}","server_name":"${SERVER_NAME:-$HOST}","setup_token":"${SETUP_TOKEN}","expires_at":${expiry}}
 EOF
 )
 

@@ -5,7 +5,7 @@
 > **Deploy AI agents in production — without exposing your infrastructure.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-[![Status](https://img.shields.io/badge/status-v0.1.0--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
+[![Status](https://img.shields.io/badge/status-v4.1.0--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
 [![Security](https://img.shields.io/badge/security-hardened-green.svg)](docs/guides/security-verification-guide.md)
 [![Docker](https://img.shields.io/badge/docker-24%2B-blue.svg)](https://docs.docker.com/)
 [![Matrix](https://img.shields.io/badge/protocol-Matrix%20E2EE-purple.svg)](https://matrix.org/)
@@ -125,7 +125,7 @@ ArmorClaw is built for teams running AI agents in production workflows:
 
 ## 🧪 Current Status
 
-**v0.1.0-beta — Security Hardening Release**
+**v4.1.0-beta — Docker Deployment Hardening Release**
 
 This release implements multi-layer defense against:
 
@@ -216,8 +216,10 @@ docker run -it --name armorclaw \
 
 **The setup wizard asks:**
 1. Server name (domain or IP)
-2. API key (OpenAI, Anthropic, etc.)
+2. API provider and key (OpenAI, Anthropic, GLM-5, or custom)
 3. Matrix enabled? (optional for remote access)
+
+All prompts have retry-on-error — a typo re-prompts instead of killing the container.
 
 **After setup completes:**
 - ✅ Bridge running
@@ -325,9 +327,9 @@ ArmorClaw separates responsibilities across secure layers:
 | Version | Feature                    | Target    | Status |
 |---------|---------------------------|-----------|--------|
 | v0.1.0  | Multi-layer security hardening | 2026-02-09 | ✅ Complete |
-| v0.2.0  | Policy engine             | Q1 2026   | 🚧 In Progress |
-| v0.3.0  | Audit logs & compliance   | Q2 2026   | 📋 Planned |
-| v0.4.0  | Team management           | Q2 2026   | 📋 Planned |
+| v4.0.0  | Zero-trust & audit system | 2026-02-19 | ✅ Complete |
+| v4.1.0  | Docker deployment hardening | 2026-02-24 | ✅ Complete |
+| v0.5.0  | Policy engine             | Q1 2026   | 🚧 In Progress |
 | v1.0.0  | Enterprise ready          | Q3 2026   | 📋 Planned |
 
 ArmorClaw is evolving from **secure runtime** → **enterprise AI containment platform**.

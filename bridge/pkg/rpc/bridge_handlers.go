@@ -90,20 +90,31 @@ func (s *Server) handleBridgeStop(req *Request) *Response {
 
 // handleBridgeStatus returns bridge manager status
 func (s *Server) handleBridgeStatus(req *Request) *Response {
+	var stats map[string]interface{}
+
 	if s.bridgeMgr == nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: map[string]interface{}{
-				"enabled": false,
-				"status":  "not_configured",
-			},
+		stats = map[string]interface{}{
+			"enabled": false,
+			"status":  "not_configured",
 		}
+	} else {
+		stats = s.bridgeMgr.GetStats()
+		stats["enabled"] = true
+		stats["status"] = "running"
 	}
 
-	stats := s.bridgeMgr.GetStats()
-	stats["enabled"] = true
-	stats["status"] = "running"
+	// Always include user_role from provisioning manager (ArmorChat fallback path)
+	if s.provisioningMgr != nil {
+		var params struct {
+			UserID string `json:"user_id"`
+		}
+		if len(req.Params) > 0 {
+			json.Unmarshal(req.Params, &params)
+		}
+		if params.UserID != "" {
+			stats["user_role"] = string(s.provisioningMgr.GetUserRole(params.UserID))
+		}
+	}
 
 	return &Response{
 		JSONRPC: "2.0",

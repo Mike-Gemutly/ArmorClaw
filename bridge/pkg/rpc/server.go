@@ -28,6 +28,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/secrets"
 	"github.com/armorclaw/bridge/pkg/securerandom"
 	"github.com/armorclaw/bridge/pkg/plugin"
+	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/qr"
 	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
@@ -200,6 +201,10 @@ type Server struct {
 
 	// QR manager for config URL generation
 	qrManager *qr.QRManager
+
+	// Provisioning manager for ArmorChat first-boot claim
+	provisioningHandler *provisioning.RPCHandler
+	provisioningMgr     *provisioning.Manager
 }
 
 // ContainerInfo holds information about a running container
@@ -247,6 +252,13 @@ type Config struct {
 	LicenseKey     string
 	LicenseServer  string
 	OfflineMode    bool
+
+	// Provisioning configuration
+	ProvisioningSecret string
+	ProvisioningRPCURL string
+	ProvisioningWSURL  string
+	ProvisioningPushGW string
+	DataDir            string // Data directory for persistent state (roles, etc.)
 
 	// AppService configuration (for SDTW bridging)
 	AppServiceConfig *appservice.Config
@@ -338,6 +350,38 @@ func New(cfg Config) (*Server, error) {
 	}
 	server.licenseClient = licenseClient
 
+	// Compute server name (used by both provisioning and QR manager)
+	serverName := "ArmorClaw"
+	if cfg.Region != "" {
+		serverName = "ArmorClaw (" + cfg.Region + ")"
+	}
+
+	// Initialize provisioning manager (ArmorChat first-boot flow)
+	if cfg.ProvisioningSecret != "" {
+		// Build ServerConfigProvider from server config
+		provServerCfg := &provisioning.ConfigLoader{
+			SigningSecret:     cfg.ProvisioningSecret,
+			DefaultExpirySecs: 60,
+			MaxExpirySecs:     300,
+			OneTimeUse:        true,
+			MatrixHomeserver:  cfg.MatrixHomeserver,
+			RPCURL:            cfg.ProvisioningRPCURL,
+			WSURL:             cfg.ProvisioningWSURL,
+			PushGateway:       cfg.ProvisioningPushGW,
+			ServerName:        serverName,
+			Region:            cfg.Region,
+			DataDir:           cfg.DataDir,
+		}
+		provCfg := provServerCfg.ToManagerConfig()
+		provMgr, err := provisioning.NewManager(provCfg)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create provisioning manager: %w", err)
+		}
+		server.provisioningMgr = provMgr
+		server.provisioningHandler = provisioning.NewRPCHandler(provMgr)
+	}
+
 	// Initialize QR manager for config URL generation
 	// Used for ArmorTerminal/ArmorChat automatic configuration
 	signingKey := securerandom.MustBytes(32)
@@ -349,10 +393,6 @@ func New(cfg Config) (*Server, error) {
 	if cfg.MatrixHomeserver != "" {
 		// Derive bridge URL from Matrix homeserver
 		bridgeURL = cfg.MatrixHomeserver
-	}
-	serverName := "ArmorClaw"
-	if cfg.Region != "" {
-		serverName = "ArmorClaw (" + cfg.Region + ")"
 	}
 	server.qrManager = qr.NewQRManager(
 		signingKey,
@@ -394,7 +434,7 @@ func (s *Server) Start() error {
 	defer s.mu.Unlock()
 
 	// Ensure socket directory exists
-	socketDir := s.socketPath[:len(s.socketPath)-len("/bridge.sock")]
+	socketDir := filepath.Dir(s.socketPath)
 	if err := os.MkdirAll(socketDir, 0750); err != nil {
 		return fmt.Errorf("failed to create socket directory: %w", err)
 	}
@@ -847,6 +887,12 @@ func (s *Server) handleRequest(req *Request) *Response {
 	case "qr.config":
 		return s.handleQRConfig(req)
 
+	// Provisioning methods (ArmorChat first-boot flow)
+	case "provisioning.start", "provisioning.status", "provisioning.cancel",
+		"provisioning.claim", "provisioning.rotate", "provisioning.list",
+		"provisioning.get_qr":
+		return s.handleProvisioning(req)
+
 	default:
 		return &Response{
 			JSONRPC: "2.0",
@@ -899,6 +945,43 @@ func (s *Server) HandleRequest(ctx context.Context, body []byte) []byte {
 // generateID generates a random ID string
 func generateID() string {
 	return securerandom.MustID(16)
+}
+
+// handleProvisioning delegates provisioning.* methods to the provisioning handler
+func (s *Server) handleProvisioning(req *Request) *Response {
+	if s.provisioningHandler == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "Provisioning not configured (set provisioning_secret in config)",
+			},
+		}
+	}
+
+	provReq := &provisioning.RPCRequest{
+		JSONRPC: req.JSONRPC,
+		Method:  req.Method,
+		Params:  req.Params,
+		ID:      req.ID,
+	}
+
+	provResp := s.provisioningHandler.Handle(s.ctx, provReq)
+
+	// Convert provisioning response to server response
+	resp := &Response{
+		JSONRPC: provResp.JSONRPC,
+		ID:      provResp.ID,
+		Result:  provResp.Result,
+	}
+	if provResp.Error != nil {
+		resp.Error = &ErrorObj{
+			Code:    provResp.Error.Code,
+			Message: provResp.Error.Message,
+		}
+	}
+	return resp
 }
 
 // handleStatus returns bridge status

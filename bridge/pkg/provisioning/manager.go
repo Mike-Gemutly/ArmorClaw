@@ -6,9 +6,12 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -22,6 +25,25 @@ const (
 	StatusExpired  TokenStatus = "expired"
 	StatusCanceled TokenStatus = "canceled"
 )
+
+// AdminRole represents a user's admin level (matches ArmorChat AdminLevel enum)
+type AdminRole string
+
+const (
+	RoleNone      AdminRole = "NONE"
+	RoleModerator AdminRole = "MODERATOR"
+	RoleAdmin     AdminRole = "ADMIN"
+	RoleOwner     AdminRole = "OWNER"
+)
+
+// RoleAssignment tracks a user's role
+type RoleAssignment struct {
+	UserID     string    `json:"user_id"`
+	Role       AdminRole `json:"role"`
+	DeviceID   string    `json:"device_id"`
+	DeviceName string    `json:"device_name"`
+	ClaimedAt  time.Time `json:"claimed_at"`
+}
 
 // Token represents a provisioning token
 type Token struct {
@@ -39,7 +61,8 @@ type Token struct {
 // Config represents the configuration to be provisioned
 type Config struct {
 	Version          int    `json:"version"`
-	TokenID          string `json:"token_id,omitempty"`
+	TokenID          string `json:"-"` // internal only, not serialized to QR
+	SetupToken       string `json:"setup_token,omitempty"`
 	MatrixHomeserver string `json:"matrix_homeserver"`
 	RPCURL           string `json:"rpc_url"`
 	WSURL            string `json:"ws_url"`
@@ -61,8 +84,11 @@ type DeviceInfo struct {
 type Manager struct {
 	mu            sync.RWMutex
 	tokens        map[string]*Token
+	roles         map[string]*RoleAssignment // user_id -> role
+	ownerClaimed  bool                       // true after first OWNER claim
 	signingSecret []byte
 	config        *ManagerConfig
+	rolesPath     string // path to persist roles JSON file
 }
 
 // ManagerConfig contains configuration for the provisioning manager
@@ -79,6 +105,8 @@ type ManagerConfig struct {
 	BridgePublicKey string
 	// ServerConfig provides server URLs for provisioning
 	ServerConfig ServerConfigProvider
+	// DataDir is the directory for persisting roles (optional; empty = in-memory only)
+	DataDir string
 }
 
 // ServerConfigProvider provides server configuration
@@ -104,11 +132,25 @@ func NewManager(config *ManagerConfig) (*Manager, error) {
 		config.MaxExpirySeconds = 300
 	}
 
-	return &Manager{
+	var rolesPath string
+	if config.DataDir != "" {
+		rolesPath = filepath.Join(config.DataDir, "provisioning_roles.json")
+	}
+
+	mgr := &Manager{
 		tokens:        make(map[string]*Token),
+		roles:         make(map[string]*RoleAssignment),
 		signingSecret: []byte(config.SigningSecret),
 		config:        config,
-	}, nil
+		rolesPath:     rolesPath,
+	}
+
+	// Load persisted roles from disk (restores ownerClaimed + role assignments)
+	if rolesPath != "" {
+		mgr.loadRoles()
+	}
+
+	return mgr, nil
 }
 
 // StartToken generates a new provisioning token
@@ -136,9 +178,16 @@ func (m *Manager) StartToken(ctx context.Context, opts *StartTokenOptions) (*Tok
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(expirySeconds) * time.Second)
 
+	// Generate setup_token for ArmorChat first-boot claim
+	setupToken, err := generateSetupToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate setup token: %w", err)
+	}
+
 	config := &Config{
 		Version:          1,
 		TokenID:          tokenID,
+		SetupToken:       setupToken,
 		MatrixHomeserver: m.config.ServerConfig.GetMatrixHomeserver(),
 		RPCURL:           m.config.ServerConfig.GetRPCURL(),
 		WSURL:            m.config.ServerConfig.GetWSURL(),
@@ -183,15 +232,15 @@ type StartTokenOptions struct {
 
 // GetToken retrieves a token by ID
 func (m *Manager) GetToken(tokenID string) (*Token, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	token, ok := m.tokens[tokenID]
 	if !ok {
 		return nil, fmt.Errorf("token not found")
 	}
 
-	// Check if expired
+	// Check if expired (requires write lock since we mutate status)
 	if time.Now().After(token.ExpiresAt) && token.Status == StatusPending {
 		token.Status = StatusExpired
 	}
@@ -315,8 +364,8 @@ func (m *Manager) GetQRData(token *Token) (string, error) {
 		return "", fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	// Base64 encode
-	encoded := hex.EncodeToString(jsonData)
+	// Base64 URL-safe encode (matches ArmorChat's parseConfigDeepLink)
+	encoded := base64.RawURLEncoding.EncodeToString(jsonData)
 
 	return fmt.Sprintf("armorclaw://config?d=%s", encoded), nil
 }
@@ -370,6 +419,111 @@ func (m *Manager) cleanupToken(tokenID string, expiresAt time.Time) {
 	}
 }
 
+// ResolveSetupToken finds the token_id for a given setup_token by scanning active tokens
+func (m *Manager) ResolveSetupToken(setupToken string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, token := range m.tokens {
+		if token.Config != nil && token.Config.SetupToken == setupToken && token.Status == StatusPending {
+			return token.ID
+		}
+	}
+	return ""
+}
+
+// ClaimTokenWithRole claims a token and assigns a role.
+// The first successful claim gets OWNER; subsequent claims get the specified role (default NONE).
+func (m *Manager) ClaimTokenWithRole(ctx context.Context, tokenID string, device *DeviceInfo, requestedRole AdminRole) (*Token, AdminRole, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	token, ok := m.tokens[tokenID]
+	if !ok {
+		return nil, RoleNone, "", fmt.Errorf("token not found")
+	}
+
+	if token.Status != StatusPending {
+		return nil, RoleNone, "", fmt.Errorf("token is %s", token.Status)
+	}
+
+	if time.Now().After(token.ExpiresAt) {
+		token.Status = StatusExpired
+		return nil, RoleNone, "", fmt.Errorf("token has expired")
+	}
+
+	// Determine role: first claimer becomes OWNER
+	assignedRole := requestedRole
+	if !m.ownerClaimed {
+		assignedRole = RoleOwner
+		m.ownerClaimed = true
+	}
+
+	// Generate a per-user admin token for authenticated RPC calls
+	adminToken, err := generateAdminToken()
+	if err != nil {
+		return nil, RoleNone, "", fmt.Errorf("failed to generate admin token: %w", err)
+	}
+
+	// Generate a stable user ID from device info
+	userID := generateUserID(device.DeviceID)
+
+	// Store role assignment (keyed by internal user ID)
+	m.roles[userID] = &RoleAssignment{
+		UserID:     userID,
+		Role:       assignedRole,
+		DeviceID:   device.DeviceID,
+		DeviceName: device.DeviceName,
+		ClaimedAt:  time.Now(),
+	}
+
+	// Persist roles to disk (non-blocking, best-effort)
+	if m.rolesPath != "" {
+		go m.saveRoles()
+	}
+
+	// Mark token as claimed
+	now := time.Now()
+	token.Status = StatusClaimed
+	token.ClaimedAt = &now
+	token.ClaimedBy = device
+
+	// Remove one-time-use tokens after claiming
+	if token.OneTimeUse {
+		go func() {
+			time.Sleep(5 * time.Second)
+			m.mu.Lock()
+			delete(m.tokens, tokenID)
+			m.mu.Unlock()
+		}()
+	}
+
+	return token, assignedRole, adminToken, nil
+}
+
+// GetUserRole returns the role for a given user ID.
+// Accepts both internal user IDs (u_<hex>) and Matrix user IDs (@user:server).
+func (m *Manager) GetUserRole(userID string) AdminRole {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Direct lookup by internal user ID
+	if assignment, ok := m.roles[userID]; ok {
+		return assignment.Role
+	}
+
+	// Fallback: scan all roles to match by Matrix-style user_id or device_id
+	// This handles the case where ArmorChat sends its Matrix user_id but
+	// we index by internal hash.
+	for _, assignment := range m.roles {
+		if assignment.DeviceID == userID {
+			return assignment.Role
+		}
+	}
+
+	return RoleNone
+}
+
 // generateTokenID generates a random token ID
 func generateTokenID() (string, error) {
 	bytes := make([]byte, 16)
@@ -377,4 +531,97 @@ func generateTokenID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(bytes), nil
+}
+
+// generateSetupToken generates a random setup token for first-boot provisioning
+func generateSetupToken() (string, error) {
+	bytes := make([]byte, 24)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return "stp_" + hex.EncodeToString(bytes), nil
+}
+
+// generateAdminToken generates a random admin bearer token
+func generateAdminToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return "aat_" + hex.EncodeToString(bytes), nil
+}
+
+// generateUserID creates a deterministic user ID from a device ID (internal)
+func generateUserID(deviceID string) string {
+	h := sha256.Sum256([]byte("armorclaw:user:" + deviceID))
+	return "u_" + hex.EncodeToString(h[:8])
+}
+
+// generateMatrixUserID creates a Matrix-style user ID: @<hash>:<server_name>
+func generateMatrixUserID(deviceID string, serverName string) string {
+	h := sha256.Sum256([]byte("armorclaw:user:" + deviceID))
+	localpart := hex.EncodeToString(h[:8])
+	if serverName == "" {
+		serverName = "armorclaw.local"
+	}
+	return "@" + localpart + ":" + serverName
+}
+
+// generateDeviceID creates a device ID from device_name and device_type when not provided
+func generateDeviceID(deviceName, deviceType string) string {
+	input := deviceName + ":" + deviceType
+	if input == ":" {
+		// No identifying info, generate random
+		b := make([]byte, 8)
+		rand.Read(b)
+		return "DEV_" + hex.EncodeToString(b)
+	}
+	h := sha256.Sum256([]byte("armorclaw:device:" + input))
+	return hex.EncodeToString(h[:6])
+}
+
+// persistedRoles is the on-disk format for role persistence
+type persistedRoles struct {
+	OwnerClaimed bool                       `json:"owner_claimed"`
+	Roles        map[string]*RoleAssignment `json:"roles"`
+}
+
+// saveRoles persists roles to disk. Called under m.mu write lock (via goroutine).
+func (m *Manager) saveRoles() {
+	m.mu.RLock()
+	data := persistedRoles{
+		OwnerClaimed: m.ownerClaimed,
+		Roles:        m.roles,
+	}
+	m.mu.RUnlock()
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return
+	}
+
+	// Atomic write: write to temp file then rename
+	tmpPath := m.rolesPath + ".tmp"
+	if err := os.WriteFile(tmpPath, jsonData, 0640); err != nil {
+		return
+	}
+	os.Rename(tmpPath, m.rolesPath)
+}
+
+// loadRoles loads persisted roles from disk.
+func (m *Manager) loadRoles() {
+	jsonData, err := os.ReadFile(m.rolesPath)
+	if err != nil {
+		return // File doesn't exist yet — first boot
+	}
+
+	var data persistedRoles
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return
+	}
+
+	m.ownerClaimed = data.OwnerClaimed
+	if data.Roles != nil {
+		m.roles = data.Roles
+	}
 }

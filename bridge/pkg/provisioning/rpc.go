@@ -2,6 +2,8 @@ package provisioning
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 )
@@ -22,7 +24,7 @@ const (
 	MethodStatus         = "provisioning.status"
 	MethodCancel         = "provisioning.cancel"
 	MethodClaim          = "provisioning.claim"
-	MethodRotateSecret   = "provisioning.rotate_secret"
+	MethodRotate         = "provisioning.rotate"
 	MethodList           = "provisioning.list"
 	MethodGetQR          = "provisioning.get_qr"
 )
@@ -55,39 +57,53 @@ type StartRequest struct {
 	DeviceName    string `json:"device_name,omitempty"`
 }
 
-// StartResponse is the response for provisioning.start
-type StartResponse struct {
-	TokenID    string `json:"token_id"`
-	DeepLink   string `json:"deep_link"`
-	QRData     string `json:"qr_data"`
-	ExpiresAt  int64  `json:"expires_at"`
-	ExpiresIn  int    `json:"expires_in"`
-	ServerName string `json:"server_name"`
-}
-
-// StatusResponse is the response for provisioning.status
-type StatusResponse struct {
-	TokenID    string       `json:"token_id"`
-	Status     string       `json:"status"`
-	ExpiresAt  int64        `json:"expires_at"`
-	ClaimedBy  *DeviceInfo  `json:"claimed_by,omitempty"`
-	Config     *Config      `json:"config,omitempty"`
-}
-
-// ClaimRequest is the request for provisioning.claim
-type ClaimRequest struct {
-	TokenID    string `json:"token_id"`
-	DeviceID   string `json:"device_id"`
-	DeviceName string `json:"device_name"`
-	UserAgent  string `json:"user_agent,omitempty"`
-}
-
-// ClaimResponse is the response for provisioning.claim
-type ClaimResponse struct {
-	Claimed          bool   `json:"claimed"`
-	DeviceRegistered bool   `json:"device_registered"`
-	TokenID          string `json:"token_id"`
+// ServerConfigResponse is the nested server config in provisioning responses
+type ServerConfigResponse struct {
 	MatrixHomeserver string `json:"matrix_homeserver"`
+	RPCURL           string `json:"rpc_url"`
+	WSURL            string `json:"ws_url"`
+	PushGateway      string `json:"push_gateway,omitempty"`
+	ServerName       string `json:"server_name"`
+}
+
+// StartResponse is the response for provisioning.start (ArmorChat contract)
+type StartResponse struct {
+	ProvisioningID string                `json:"provisioning_id"`
+	QRData         string                `json:"qr_data"`
+	SetupToken     string                `json:"setup_token"`
+	ExpiresAt      int64                 `json:"expires_at"`
+	ServerConfig   *ServerConfigResponse `json:"server_config"`
+}
+
+// StatusResponse is the response for provisioning.status (ArmorChat contract)
+type StatusResponse struct {
+	ProvisioningID string       `json:"provisioning_id"`
+	Status         string       `json:"status"`
+	ExpiresAt      int64        `json:"expires_at"`
+	ClaimedBy      *DeviceInfo  `json:"claimed_by"`
+	ClaimedAt      *int64       `json:"claimed_at"`
+}
+
+// ClaimRequest is the request for provisioning.claim (ArmorChat contract)
+type ClaimRequest struct {
+	SetupToken    string `json:"setup_token"`
+	DeviceID      string `json:"device_id"`
+	DeviceName    string `json:"device_name"`
+	DeviceType    string `json:"device_type,omitempty"`
+	UserAgent     string `json:"user_agent,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+}
+
+// ClaimResponse is the response for provisioning.claim (ArmorChat contract)
+type ClaimResponse struct {
+	Success          bool   `json:"success"`
+	Role             string `json:"role,omitempty"`
+	AdminToken       string `json:"admin_token,omitempty"`
+	UserID           string `json:"user_id,omitempty"`
+	DeviceID         string `json:"device_id,omitempty"`
+	Message          string `json:"message"`
+	MatrixHomeserver string `json:"matrix_homeserver,omitempty"`
+	CorrelationID    string `json:"correlation_id,omitempty"`
 }
 
 // Handle handles an RPC request
@@ -104,8 +120,8 @@ func (h *RPCHandler) Handle(ctx context.Context, req *RPCRequest) *RPCResponse {
 		result, err = h.handleCancel(ctx, req.Params)
 	case MethodClaim:
 		result, err = h.handleClaim(ctx, req.Params)
-	case MethodRotateSecret:
-		result, err = h.handleRotateSecret(ctx, req.Params)
+	case MethodRotate:
+		result, err = h.handleRotate(ctx, req.Params)
 	case MethodList:
 		result, err = h.handleList(ctx, req.Params)
 	case MethodGetQR:
@@ -156,118 +172,194 @@ func (h *RPCHandler) handleStart(ctx context.Context, params json.RawMessage) (*
 		return nil, err
 	}
 
-	expiresIn := int(token.ExpiresAt.Sub(token.CreatedAt).Seconds())
-
 	return &StartResponse{
-		TokenID:    token.ID,
-		DeepLink:   qrData,
-		QRData:     qrData,
-		ExpiresAt:  token.ExpiresAt.Unix(),
-		ExpiresIn:  expiresIn,
-		ServerName: token.Config.ServerName,
+		ProvisioningID: token.ID,
+		QRData:         qrData,
+		SetupToken:     token.Config.SetupToken,
+		ExpiresAt:      token.ExpiresAt.Unix(),
+		ServerConfig: &ServerConfigResponse{
+			MatrixHomeserver: token.Config.MatrixHomeserver,
+			RPCURL:           token.Config.RPCURL,
+			WSURL:            token.Config.WSURL,
+			PushGateway:      token.Config.PushGateway,
+			ServerName:       token.Config.ServerName,
+		},
 	}, nil
 }
 
 func (h *RPCHandler) handleStatus(ctx context.Context, params json.RawMessage) (*StatusResponse, error) {
 	var req struct {
-		TokenID string `json:"token_id"`
+		ProvisioningID string `json:"provisioning_id"`
 	}
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 
-	token, err := h.manager.GetToken(req.TokenID)
+	token, err := h.manager.GetToken(req.ProvisioningID)
 	if err != nil {
 		return nil, err
 	}
 
+	var claimedAt *int64
+	if token.ClaimedAt != nil {
+		unix := token.ClaimedAt.Unix()
+		claimedAt = &unix
+	}
+
 	return &StatusResponse{
-		TokenID:   token.ID,
-		Status:    string(token.Status),
-		ExpiresAt: token.ExpiresAt.Unix(),
-		ClaimedBy: token.ClaimedBy,
-		Config:    token.Config,
+		ProvisioningID: token.ID,
+		Status:         string(token.Status),
+		ExpiresAt:      token.ExpiresAt.Unix(),
+		ClaimedBy:      token.ClaimedBy,
+		ClaimedAt:      claimedAt,
 	}, nil
 }
 
 func (h *RPCHandler) handleCancel(ctx context.Context, params json.RawMessage) (map[string]interface{}, error) {
 	var req struct {
-		TokenID string `json:"token_id"`
+		ProvisioningID string `json:"provisioning_id"`
 	}
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 
-	if err := h.manager.CancelToken(req.TokenID); err != nil {
+	if err := h.manager.CancelToken(req.ProvisioningID); err != nil {
 		return nil, err
 	}
 
 	return map[string]interface{}{
-		"cancelled": true,
-		"token_id":  req.TokenID,
+		"success": true,
+		"message": "Provisioning session cancelled",
 	}, nil
 }
 
 func (h *RPCHandler) handleClaim(ctx context.Context, params json.RawMessage) (*ClaimResponse, error) {
 	var req ClaimRequest
 	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		// Return success:false instead of RPC error — ArmorChat checks result.success
+		return &ClaimResponse{
+			Success: false,
+			Message: "invalid request params",
+		}, nil
 	}
 
-	if req.TokenID == "" || req.DeviceID == "" {
-		return nil, fmt.Errorf("token_id and device_id are required")
+	if req.SetupToken == "" {
+		return &ClaimResponse{
+			Success: false,
+			Message: "setup_token is required",
+		}, nil
+	}
+
+	// Generate device_id if not provided (ArmorChat sends device_name + device_type only)
+	deviceID := req.DeviceID
+	if deviceID == "" {
+		deviceID = generateDeviceID(req.DeviceName, req.DeviceType)
+	}
+
+	// Resolve setup_token → token_id by scanning active tokens
+	tokenID := h.manager.ResolveSetupToken(req.SetupToken)
+	if tokenID == "" {
+		return &ClaimResponse{
+			Success:       false,
+			Message:       "invalid or expired setup_token",
+			CorrelationID: req.CorrelationID,
+		}, nil
 	}
 
 	device := &DeviceInfo{
-		DeviceID:   req.DeviceID,
+		DeviceID:   deviceID,
 		DeviceName: req.DeviceName,
 		UserAgent:  req.UserAgent,
 	}
 
-	token, err := h.manager.ClaimToken(ctx, req.TokenID, device)
+	token, role, adminToken, err := h.manager.ClaimTokenWithRole(ctx, tokenID, device, RoleNone)
 	if err != nil {
-		return nil, err
+		// Return success:false instead of RPC error — ArmorChat checks result.success
+		return &ClaimResponse{
+			Success:       false,
+			Message:       err.Error(),
+			CorrelationID: req.CorrelationID,
+		}, nil
+	}
+
+	// Build Matrix-style user_id: @<device-hash>:<server_name>
+	serverName := ""
+	if token.Config != nil {
+		serverName = token.Config.ServerName
+	}
+	userID := generateMatrixUserID(deviceID, serverName)
+
+	message := "Admin role claimed successfully"
+	if role != RoleOwner {
+		message = "Device registered successfully"
 	}
 
 	return &ClaimResponse{
-		Claimed:          true,
-		DeviceRegistered: true,
-		TokenID:          token.ID,
+		Success:          true,
+		Role:             string(role),
+		AdminToken:       adminToken,
+		UserID:           userID,
+		DeviceID:         deviceID,
+		Message:          message,
 		MatrixHomeserver: token.Config.MatrixHomeserver,
+		CorrelationID:    req.CorrelationID,
 	}, nil
 }
 
-func (h *RPCHandler) handleRotateSecret(ctx context.Context, params json.RawMessage) (map[string]interface{}, error) {
+func (h *RPCHandler) handleRotate(ctx context.Context, params json.RawMessage) (map[string]interface{}, error) {
 	var req struct {
-		NewSecret string `json:"new_secret"`
+		NewSecret     string `json:"new_secret"`
+		CorrelationID string `json:"correlation_id,omitempty"`
 	}
-	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
 	}
 
+	// If no new secret provided, auto-generate one
 	if req.NewSecret == "" {
-		return nil, fmt.Errorf("new_secret is required")
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return nil, fmt.Errorf("failed to generate new secret: %w", err)
+		}
+		req.NewSecret = hex.EncodeToString(b)
 	}
 
 	if err := h.manager.RotateSecret(req.NewSecret); err != nil {
 		return nil, err
 	}
 
+	// Generate a new provisioning token with the rotated secret
+	token, err := h.manager.StartToken(context.Background(), nil)
+	if err != nil {
+		return map[string]interface{}{
+			"success": true,
+			"message": "Provisioning secret rotated (failed to generate new token)",
+		}, nil
+	}
+
+	qrData, _ := h.manager.GetQRData(token)
+
 	return map[string]interface{}{
-		"rotated": true,
-		"warning": "Existing unclaimed tokens have been invalidated",
+		"success":         true,
+		"new_setup_token": token.Config.SetupToken,
+		"new_qr_data":     qrData,
+		"expires_at":      token.ExpiresAt.Unix(),
+		"message":         "Provisioning secret rotated",
 	}, nil
 }
 
 func (h *RPCHandler) handleList(ctx context.Context, params json.RawMessage) ([]*StatusResponse, error) {
 	tokens := h.manager.ListTokens()
 
-	var result []*StatusResponse
+	// Always return an array, never null
+	result := make([]*StatusResponse, 0, len(tokens))
 	for _, token := range tokens {
 		result = append(result, &StatusResponse{
-			TokenID:   token.ID,
-			Status:    string(token.Status),
-			ExpiresAt: token.ExpiresAt.Unix(),
+			ProvisioningID: token.ID,
+			Status:         string(token.Status),
+			ExpiresAt:      token.ExpiresAt.Unix(),
 		})
 	}
 

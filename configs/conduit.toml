@@ -1,5 +1,8 @@
 # Matrix Conduit Configuration
 # ArmorClaw Communication Stack
+#
+# Conduit uses flat keys under [global]. Do NOT use nested sections
+# like [global.matrix] — Conduit will silently ignore them.
 
 [global]
 # Server identification
@@ -10,9 +13,8 @@ database_path = "/var/lib/matrix-conduit/conduit.db"
 database_backend = "sqlite"
 
 # Performance tuning
-max_request_size = 10_000_000  # 10 MB
+max_request_size = 10000000  # 10 MB
 max_concurrent_requests = 100
-panic_threshold = 50
 
 # Address to listen on
 address = "0.0.0.0"
@@ -21,51 +23,28 @@ port = 6167
 # Logging
 log = "info"
 
-# Matrix-specific settings
-[global.matrix]
 # SECURITY: Keep registration DISABLED. Use deploy/create-matrix-admin.sh to create users.
 # Enabling registration creates a window of vulnerability where anyone can register.
 allow_registration = false
+
+# Shared-secret registration: The setup wizard temporarily adds this line to
+# register bridge + admin users, then removes it. For manual user creation:
+#   1. Uncomment and set: registration_shared_secret = "<openssl rand -hex 32>"
+#   2. Restart Conduit
+#   3. Run: REGISTRATION_SHARED_SECRET="<secret>" ./create-matrix-admin.sh
+#   4. Remove this line and restart Conduit
+# registration_shared_secret = ""
+
 allow_encryption = true
 allow_federation = true
 allow_check_for_updates = true
 
+# TURN server for WebRTC voice/video
+# turn_uris = ["turn:turn.matrix.armorclaw.com:3478?transport=udp"]
+# turn_secret = "set-via-env-var"
+# turn_ttl = 86400
+
 # Trusted servers (for federation)
-[global.matrix.well_known]
-client_url = "https://matrix.armorclaw.com"
-server_url = "https://matrix.armorclaw.com:443"
-
-# Media settings
-[global.media]
-# Media storage (embedded database)
-media_backup_dir = "/var/lib/matrix-conduit/media_backup"
-# Size limits
-max_file_size = 10_000_000  # 10 MB
-# URL preview
-url_preview_enabled = true
-url_preview_domain_contains_allowlist = []
-
-# Presence settings
-[global.presence]
-presence_enabled = true
-presence_timeout_idle_seconds = 300
-presence_timeout_offline_seconds = 600
-
-# Room directory
-[global.room_dir]
-# Search visibility for new rooms
-search_visibility = true
-
-# Conduit-specific settings
-[conduit]
-# Allow port checking by conduit
-allow_check_for_updates = true
-# Disable emergency password if not needed
-# emergency_password = ""
-
-# Database settings (SQLite-specific)
-[sqlite]
-# Connection pool size
-pool_size = 5
-# Busy timeout
-busy_timeout = 30
+[global.well_known]
+client = "https://matrix.armorclaw.com"
+server = "https://matrix.armorclaw.com:443"

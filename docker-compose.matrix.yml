@@ -41,7 +41,7 @@ services:
 
     volumes:
       - conduit_data:/var/lib/matrix-conduit
-      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
+      - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit/conduit.toml:ro
 
     ports:
       - "6167:6167"   # Client API
@@ -51,7 +51,7 @@ services:
       - matrix-net
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6167/_matrix/client/versions"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:6167/_matrix/client/versions || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -74,19 +74,29 @@ services:
 
     network_mode: "host"  # Requires direct network access for TURN
 
+    environment:
+      - MATRIX_SERVER_NAME=${MATRIX_SERVER_NAME:-matrix.armorclaw.com}
+      - TURN_SECRET=${TURN_SECRET:-change-me-in-production}
+      - COTURN_EXTERNAL_IP=${COTURN_EXTERNAL_IP:-}
+
     volumes:
-      - ./configs/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ${ARMORCLAW_CONFIGS:-./configs}/turnserver.conf:/etc/coturn/turnserver.conf:ro
       - coturn_data:/var/lib/coturn
 
-    command: [
-      "--log-file=stdout",
-      "-n",  # Daemon mode
-      "--no-cli",
-      "--realm=${MATRIX_SERVER_NAME:-matrix.armorclaw.com}",
-      "--use-auth-secret",
-      "--static-auth-secret=${TURN_SECRET:-change-me-in-production}",
-      "--external-ip=$(curl -s https://api.ipify.org)",
-    ]
+    # Use shell form so environment variables and commands are expanded
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        EXTERNAL_IP=$${COTURN_EXTERNAL_IP:-$$(curl -s https://api.ipify.org 2>/dev/null || echo '0.0.0.0')}
+        exec turnserver \
+          --log-file=stdout \
+          -n \
+          --no-cli \
+          --realm=$${MATRIX_SERVER_NAME:-matrix.armorclaw.com} \
+          --use-auth-secret \
+          --static-auth-secret=$${TURN_SECRET:-change-me-in-production} \
+          --external-ip=$$EXTERNAL_IP
 
     deploy:
       resources:
@@ -99,6 +109,9 @@ services:
   # Nginx Reverse Proxy (Matrix Frontend)
   # ========================================
   nginx:
+    # Nginx requires a build context and config files on the HOST filesystem.
+    # Use 'docker compose --profile frontend up' to include it.
+    profiles: ["frontend"]
     build:
       context: ./deploy/nginx
       dockerfile: Dockerfile
@@ -111,8 +124,8 @@ services:
       - TURN_SERVER_NAME=${TURN_SERVER_NAME:-turn.matrix.armorclaw.com}
 
     volumes:
-      - ./configs/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
-      - ./configs/nginx/ssl:/etc/nginx/ssl:ro
+      - ${ARMORCLAW_CONFIGS:-./configs}/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ${ARMORCLAW_CONFIGS:-./configs}/nginx/ssl:/etc/nginx/ssl:ro
       - letsencrypt:/etc/letsencrypt:ro
 
     ports:

@@ -40,8 +40,8 @@ services:
     restart: unless-stopped
 
     volumes:
-      - ./configs/sygnal.yaml:/app/sygnal.yaml:ro
-      - sygnal_data:/app/data
+      - ./configs/sygnal.yaml:/etc/sygnal/sygnal.yaml:ro
+      - sygnal_data:/data
 
     # Expose on internal port only, nginx proxies external access
     ports:
@@ -52,13 +52,14 @@ services:
       - matrix-net
 
     environment:
-      - SYGNAL_CONF=/app/sygnal.yaml
+      - SYGNAL_CONFIG=/etc/sygnal/sygnal.yaml
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/_matrix/push/v1/notify"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/_matrix/push/v1/notify')"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
 
     deploy:
       resources:
@@ -269,7 +270,7 @@ services:
           memory: 256M
 
     healthcheck:
-      test: ["CMD", "node", "-e", "console.log('healthy')"]
+      test: ["CMD", "python3", "-c", "from openclaw import agent; print('OK')"]
       interval: 60s
       timeout: 10s
       retries: 3

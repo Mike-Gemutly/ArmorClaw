@@ -331,9 +331,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
 
 ---
 
-## 📌 Current Status (2026-02-19)
+## 📌 Current Status (2026-02-24)
 
-**Phase:** Phase 5 Complete - Hybrid Architecture Stabilization (All Gaps Resolved)
+**Phase:** Phase 5 Complete - Docker Deployment Hardened (v4.1.0)
 
 **Bridge Core (Complete):**
 - ✅ Encrypted Keystore (SQLCipher + XChaCha20-Poly1305)
@@ -359,6 +359,13 @@ echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
 - ✅ Sygnal Push Gateway
 - ✅ FFI Boundary Tests (Kotlin + Go)
 
+**Docker Deployment (Hardened):**
+- ✅ Dockerfile.quickstart — 19 fixes across 5 review passes
+- ✅ container-setup.sh — All prompts retry on invalid input (no stuck users)
+- ✅ Docker Compose — Parameterized paths, env var passthrough, V2 plugin support
+- ✅ Bridge build — CGO_ENABLED=1, libsqlite3-0 in runtime stage
+- ✅ Security hooks — AF_UNIX allowed through LD_PRELOAD
+
 **Next:**
 - ⏳ Production deployment and integration testing
 - ⏳ End-to-end E2EE verification with real devices
@@ -373,5 +380,5 @@ echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
 
 ---
 
-**CLAUDE.md Last Updated:** 2026-02-19
-**Phase:** Phase 5 Complete - Hybrid Architecture Stabilization
+**CLAUDE.md Last Updated:** 2026-02-24
+**Phase:** Phase 5 Complete - Docker Deployment Hardened (v4.1.0)

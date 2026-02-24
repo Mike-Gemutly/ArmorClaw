@@ -1,7 +1,7 @@
 # ArmorClaw + OpenClaw Integration Dockerfile
 #
-# This Dockerfile creates a hardened container that runs OpenClaw
-# inside ArmorClaw's security layer with bridge communication.
+# This Dockerfile creates a hardened container that runs the OpenClaw
+# Python agent inside ArmorClaw's security layer with bridge communication.
 #
 # Build: docker build -f container/Dockerfile.openclaw -t armorclaw/openclaw:latest .
 #
@@ -13,89 +13,110 @@
 # - Seccomp syscall filtering
 
 # ============================================================
-# Stage 1: Build OpenClaw
+# Stage 1: Build dependencies
 # ============================================================
-FROM node:22-bookworm-slim AS openclaw-builder
+FROM debian:bookworm-slim AS builder
 
-WORKDIR /build
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
+    python3 python3-pip python3-venv \
+    ca-certificates \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy OpenClaw source
-COPY --from=openclaw-src /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
-COPY --from=openclaw-src /app/src ./src
-COPY --from=openclaw-src /app/ui ./ui
-COPY --from=openclaw-src /app/patches ./patches
-COPY --from=openclaw-src /app/scripts ./scripts
-COPY --from=openclaw-src /app/tsconfig.json ./
-COPY --from=openclaw-src /app/tsdown.config.ts ./
+# Create Python venv
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Install and build
-RUN corepack enable && pnpm install --frozen-lockfile
-RUN pnpm build
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir aiohttp websockets python-dotenv
 
 # ============================================================
 # Stage 2: Production Runtime
 # ============================================================
 FROM debian:bookworm-slim AS runtime
 
+# Install minimal runtime dependencies (including gcc for security hook)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv \
+    ca-certificates \
+    coreutils \
+    gcc libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user
 RUN groupadd -g 10001 claw && \
     useradd -u 10001 -g claw -m -d /home/claw -s /usr/sbin/nologin claw
 
-# Install minimal runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
 # Create directories
-RUN mkdir -p /opt/openclaw /run/armorclaw /run/secrets \
+RUN mkdir -p /opt/openclaw /opt/openclaw/lib /run/armorclaw /run/secrets \
     && chown -R claw:claw /opt/openclaw /run/armorclaw
 
 WORKDIR /opt/openclaw
 
-# Copy OpenClaw built artifacts
-COPY --from=openclaw-builder --chown=claw:claw /build/dist ./dist
-COPY --from=openclaw-builder --chown=claw:claw /build/node_modules ./node_modules
-COPY --from=openclaw-builder --chown=claw:claw /build/package.json ./
+# Copy Python venv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy ArmorClaw integration files
-COPY --chown=claw:claw container/openclaw/bridge-client.ts ./armorclaw/
-COPY --chown=claw:claw container/openclaw/armorclaw-channel.ts ./armorclaw/
-COPY --chown=claw:claw container/openclaw/entrypoint.ts ./armorclaw/
-COPY --chown=claw:claw container/opt/openclaw/health.sh ./health.sh
+# Copy ArmorClaw agent files
+COPY container/opt/openclaw/entrypoint.py /opt/openclaw/entrypoint.py
+COPY container/opt/openclaw/health.sh /opt/openclaw/health.sh
+COPY container/openclaw/ /opt/openclaw/openclaw/
 
-# Copy security hook library
-COPY --chown=claw:claw container/openclaw/security_hook.c /tmp/
-RUN gcc -shared -fPIC -o /opt/openclaw/lib/libarmorclaw_hook.so /tmp/security_hook.c \
-    && rm /tmp/security_hook.c
+# Compile security hook library
+COPY container/openclaw/security_hook.c /tmp/security_hook.c
+RUN gcc -shared -fPIC -o /opt/openclaw/lib/libarmorclaw_hook.so /tmp/security_hook.c -ldl \
+    && rm -f /tmp/security_hook.c
 
-# Hardening: Remove shell and dangerous tools
-RUN chmod a-x /bin/bash /bin/sh /bin/dash /bin/zsh 2>/dev/null || true \
-    && chmod a-x /usr/bin/* 2>/dev/null || true \
-    && chmod a-x /bin/* 2>/dev/null || true \
-    && chmod +x /usr/bin/node /bin/cat /bin/ls /bin/mkdir /bin/rm
+# Make entrypoint executable
+RUN chmod +x /opt/openclaw/entrypoint.py /opt/openclaw/health.sh
+
+# Ensure all runtime files are owned by claw user
+RUN chown -R claw:claw /opt/openclaw
+
+# ============================================================
+# SECURITY HARDENING
+# ============================================================
+
+# Layer 1: Remove dangerous tools
+RUN rm -f /bin/rm /bin/bash /bin/mv /bin/find \
+    /bin/ps /usr/bin/top /usr/bin/lsof /usr/bin/strace \
+    /usr/bin/curl /usr/bin/wget /usr/bin/nc /usr/bin/telnet /usr/bin/ftp \
+    /usr/bin/sudo /usr/bin/su /usr/bin/passwd \
+    /usr/bin/gdb /usr/bin/ltrace \
+    /usr/bin/rm /usr/bin/shred /usr/bin/unlink \
+    /usr/bin/openssl /usr/bin/dd \
+    && apt-get autoremove -y 2>/dev/null || true
+
+# Layer 2: Remove execute permissions from shells, re-enable only safe tools
+RUN chmod a-x /bin/sh /bin/dash /usr/bin/dash 2>/dev/null || true \
+    && find -L /bin -type f | xargs -r chmod a-x 2>/dev/null || true \
+    && find -L /usr/bin -type f | xargs -r chmod a-x 2>/dev/null || true \
+    && chmod +x /usr/bin/python3* /usr/bin/env 2>/dev/null || true \
+    && chmod +x /usr/bin/id /usr/bin/cp /usr/bin/mkdir /usr/bin/stat /usr/bin/cat /usr/bin/ls /usr/bin/head /usr/bin/tail /usr/bin/wc /usr/bin/sed /usr/bin/grep /usr/bin/basename /usr/bin/dirname /usr/bin/readlink /usr/bin/realpath 2>/dev/null || true
 
 # Set environment
-ENV NODE_ENV=production
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/opt"
 ENV ARMORCLAW_BRIDGE_SOCKET=/run/armorclaw/bridge.sock
+ENV ARMORCLAW_SECRETS_PATH="/run/secrets"
 ENV LD_PRELOAD=/opt/openclaw/lib/libarmorclaw_hook.so
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["/opt/openclaw/health.sh"]
 
 # Switch to non-root user
 USER claw
 
-# Expose no ports (bridge communication only)
-# All communication happens via Unix socket
+# Volumes
+VOLUME ["/tmp"]
+VOLUME ["/run/secrets"]
+
+# Health check (uses Python since shell is disabled)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["python3", "-c", "from openclaw import agent; print('OK')"]
+
+# Expose no ports — all communication via Unix socket
 
 # Entry point
-CMD ["node", "armorclaw/entrypoint.ts"]
+ENTRYPOINT ["/opt/openclaw/entrypoint.py"]
+CMD ["python", "-c", "from openclaw import main; main()"]

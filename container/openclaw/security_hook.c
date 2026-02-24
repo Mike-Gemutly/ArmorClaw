@@ -129,7 +129,13 @@ int socket(int domain, int type, int protocol) {
 
 int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     init_real_functions();
-    // Block all outbound connections
+    // Allow Unix domain socket connections (needed for bridge communication)
+    if (addr && addr->sa_family == AF_UNIX) {
+        if (real_connect)
+            return real_connect(sockfd, addr, addrlen);
+        return -1;
+    }
+    // Block AF_INET and AF_INET6 outbound connections (data exfiltration prevention)
     write(STDERR_FILENO, SECURITY_ERROR, sizeof(SECURITY_ERROR) - 1);
     return -1;
 }

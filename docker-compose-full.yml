@@ -2,8 +2,6 @@
 # All-in-one deployment for ArmorClaw with Matrix
 # Launch container and immediately connect via Element X
 
-version: "3.8"
-
 services:
   # ========================================
   # Matrix Conduit Homeserver
@@ -52,8 +50,9 @@ services:
     volumes:
       - sygnal_data:/data
       - ./configs/sygnal.yaml:/etc/sygnal/sygnal.yaml:ro
-      # FCM credentials (mount as secret in production)
-      - ./secrets/fcm-credentials.json:/etc/sygnal/fcm-credentials.json:ro
+      # FCM credentials: Create secrets/fcm-credentials.json before enabling push notifications.
+      # Without this file, Sygnal starts but FCM push will not work.
+      # - ./secrets/fcm-credentials.json:/etc/sygnal/fcm-credentials.json:ro
 
     ports:
       - "5000:5000"   # Push Gateway API
@@ -93,7 +92,7 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
-      - ./configs/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
 
     ports:
       - "80:80"

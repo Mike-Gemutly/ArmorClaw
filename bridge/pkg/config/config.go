@@ -108,6 +108,9 @@ type Config struct {
 	// Compliance configuration (PII/PHI scrubbing)
 	Compliance ComplianceConfig `toml:"compliance"`
 
+	// Provisioning configuration (ArmorChat first-boot claim)
+	Provisioning ProvisioningConfig `toml:"provisioning"`
+
 	// Logging configuration
 	Logging LoggingConfig `toml:"logging"`
 }
@@ -634,6 +637,24 @@ func ComplianceTierDefaults(tier string) ComplianceConfig {
 	}
 }
 
+// ProvisioningConfig holds provisioning system configuration (ArmorChat first-boot claim)
+type ProvisioningConfig struct {
+	// SigningSecret is the HMAC key for signing provisioning QR data
+	SigningSecret string `toml:"signing_secret" env:"ARMORCLAW_PROVISIONING_SECRET"`
+
+	// DefaultExpirySeconds is the default token lifetime
+	DefaultExpirySeconds int `toml:"default_expiry_seconds" env:"ARMORCLAW_PROVISIONING_DEFAULT_EXPIRY"`
+
+	// MaxExpirySeconds is the maximum allowed token lifetime
+	MaxExpirySeconds int `toml:"max_expiry_seconds" env:"ARMORCLAW_PROVISIONING_MAX_EXPIRY"`
+
+	// OneTimeUse determines if tokens can only be used once
+	OneTimeUse bool `toml:"one_time_use" env:"ARMORCLAW_PROVISIONING_ONE_TIME_USE"`
+
+	// DataDir is the directory for persisting roles (empty = in-memory only)
+	DataDir string `toml:"data_dir" env:"ARMORCLAW_PROVISIONING_DATA_DIR"`
+}
+
 // ErrorSystemConfig holds error handling system configuration
 type ErrorSystemConfig struct {
 	// Enabled controls whether the error system is active
@@ -794,6 +815,13 @@ func DefaultConfig() *Config {
 			AdminMXID:       "",
 			SetupUserMXID:   "",
 			AdminRoomID:     "",
+		},
+		Provisioning: ProvisioningConfig{
+			SigningSecret:        "",    // Generated during container-setup.sh
+			DefaultExpirySeconds: 60,
+			MaxExpirySeconds:     300,
+			OneTimeUse:           true,
+			DataDir:              "",    // Set by container-setup.sh for persistence
 		},
 		Compliance: ComplianceConfig{
 			Enabled:            false, // Disabled by default for performance

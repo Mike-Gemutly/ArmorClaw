@@ -18,6 +18,7 @@ type ConfigLoader struct {
 	PushGateway         string
 	ServerName          string
 	Region              string
+	DataDir             string
 }
 
 // LoadFromEnv loads configuration from environment variables
@@ -63,6 +64,7 @@ func (c *ConfigLoader) ToManagerConfig() *ManagerConfig {
 		OneTimeUse:          c.OneTimeUse,
 		BridgePublicKey:    c.BridgePublicKey,
 		ServerConfig:       c,
+		DataDir:            c.DataDir,
 	}
 }
 
