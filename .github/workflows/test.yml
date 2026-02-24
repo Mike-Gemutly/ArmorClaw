@@ -118,7 +118,22 @@ jobs:
           chmod +x tests/test-e2e.sh
           ./tests/test-e2e.sh
 
-  # Job 5: CIS Docker Benchmark (Security Baseline)
+  # Job 5: Container Setup Script Tests
+  container-setup:
+    name: Container Setup Script Tests
+    runs-on: ubuntu-latest
+    needs: hardening
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run container setup tests
+        run: |
+          chmod +x tests/test-container-setup.sh
+          ./tests/test-container-setup.sh
+
+  # Job 6: CIS Docker Benchmark (Security Baseline)
   cis-benchmark:
     name: CIS Docker Benchmark
     runs-on: ubuntu-latest
@@ -161,11 +176,11 @@ jobs:
             cat benchmark.txt
           fi
 
-  # Job 6: Full Test Suite Summary
+  # Job 7: Full Test Suite Summary
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [hardening, secrets, exploits, e2e, cis-benchmark]
+    needs: [hardening, secrets, exploits, e2e, container-setup, cis-benchmark]
 
     steps:
       - name: All tests passed
@@ -178,11 +193,12 @@ jobs:
           echo "✅ Secrets Injection Validation: PASSED"
           echo "✅ Security Exploit Simulations: PASSED"
           echo "✅ End-to-End Integration: PASSED"
+          echo "✅ Container Setup Script Tests: PASSED"
           echo "✅ CIS Docker Benchmark: PASSED"
           echo ""
           echo "Ready for deployment to main branch"
 
-  # Job 7: Deploy Test (main branch only)
+  # Job 8: Deploy Test (main branch only)
   deploy-test:
     name: Deployment Test (Dry Run)
     runs-on: ubuntu-latest

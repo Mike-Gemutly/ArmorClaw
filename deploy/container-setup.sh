@@ -70,6 +70,9 @@ prompt_input() {
     fi
 
     read -r result
+    # Strip carriage returns and trailing whitespace (handles CRLF from terminals)
+    result="${result%$'\r'}"
+    result="${result%"${result##*[![:space:]]}"}"
     echo "${result:-$default}"
 }
 
@@ -247,25 +250,35 @@ configure_api() {
         case "$choice" in
             1)
                 API_BASE_URL="https://api.openai.com/v1"
+                print_info "Selected: OpenAI"
                 ;;
             2)
                 API_BASE_URL="https://api.anthropic.com/v1"
+                print_info "Selected: Anthropic (Claude)"
                 ;;
             3)
                 API_BASE_URL="https://api.z.ai/api/coding/paas/v4"
+                print_info "Selected: GLM-5 (Zhipu AI)"
                 ;;
             4)
                 API_BASE_URL=$(prompt_input "API base URL" "")
+                print_info "Selected: Custom ($API_BASE_URL)"
                 ;;
             *)
-                print_warning "Invalid choice, using OpenAI"
-                API_BASE_URL="https://api.openai.com/v1"
+                print_error "Invalid choice '$choice'. Please enter 1, 2, 3, or 4."
+                exit 1
                 ;;
         esac
 
         API_KEY=$(prompt_input "API key" "")
         if [ -z "$API_KEY" ]; then
             print_error "API key is required"
+            exit 1
+        fi
+        # Validate API key looks reasonable (at least 20 chars for real keys)
+        if [ ${#API_KEY} -lt 20 ]; then
+            print_error "API key appears too short (minimum 20 characters)"
+            print_info "OpenAI keys start with 'sk-', Anthropic keys start with 'sk-ant-'"
             exit 1
         fi
     fi
@@ -279,8 +292,15 @@ configure_bridge() {
     else
         print_step 3 5 "Bridge Configuration"
 
+        echo "Configure the ArmorClaw bridge settings:"
+        echo ""
+
         LOG_LEVEL=$(prompt_input "Log level (debug/info/warn)" "info")
         SOCKET_PATH=$(prompt_input "Bridge socket path" "/run/armorclaw/bridge.sock")
+
+        echo ""
+        print_info "Log level: $LOG_LEVEL"
+        print_info "Socket path: $SOCKET_PATH"
     fi
 
     print_success "Bridge configuration complete"

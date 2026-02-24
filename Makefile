@@ -1,14 +1,14 @@
 # ArmorClaw v1 Test Suite
 # Tests verify containment guarantees and hardening posture
 
-.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets
+.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets test-container-setup
 
 # Decrypt test files with secrets before running tests
 decrypt-test-secrets:
 	@./decrypt-test-secrets.sh
 
 # Default: run all tests
-test-all: decrypt-test-secrets test-hardening test-secrets test-exploits test-e2e
+test-all: decrypt-test-secrets test-hardening test-secrets test-exploits test-e2e test-container-setup
 	@echo ""
 	@echo "✅ All test suites passed"
 
@@ -90,6 +90,11 @@ test-exploits:
 test-e2e:
 	@echo "🧪 Running End-to-End Integration Tests..."
 	@./tests/test-e2e.sh
+
+# 5. Container Setup Script Tests
+test-container-setup:
+	@echo "🧪 Running Container Setup Script Tests..."
+	@./tests/test-container-setup.sh
 
 # Clean up test artifacts
 clean:
