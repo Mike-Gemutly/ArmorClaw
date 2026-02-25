@@ -400,25 +400,195 @@ func (cal *ComplianceAuditLog) VerifyIntegrity() (bool, []int) {
 	return len(corruptedIndices) == 0, corruptedIndices
 }
 
-// PurgeOldEntries removes entries older than retention period
+// PurgeOldEntries removes entries older than retention period.
+// Inserts a tombstone entry at the purge boundary to preserve hash chain integrity.
+// The tombstone includes a RedactionDigest — a Merkle-style hash of all purged entries —
+// so auditors can verify that entries were legitimately purged (GDPR Article 17 compliance).
 func (cal *ComplianceAuditLog) PurgeOldEntries() (int, error) {
 	cal.mu.Lock()
 	defer cal.mu.Unlock()
 
 	cutoff := time.Now().AddDate(0, 0, -cal.retentionDays)
 	var filtered []ComplianceEntry
-	purged := 0
+	var purgedEntries []ComplianceEntry
+	var lastPurgedHash string
 
 	for _, entry := range cal.entries {
 		if entry.Timestamp.After(cutoff) {
 			filtered = append(filtered, entry)
 		} else {
-			purged++
+			lastPurgedHash = entry.EntryHash
+			purgedEntries = append(purgedEntries, entry)
 		}
 	}
 
+	purged := len(purgedEntries)
+
+	// Insert tombstone entry at the beginning to preserve hash chain continuity
+	if purged > 0 && cal.config.EnableHashChain {
+		// Compute a Merkle-style redaction digest over all purged entries.
+		// This allows auditors to verify the purge was legitimate without
+		// retaining the original data (GDPR Right to Erasure).
+		redactionDigest := cal.computeRedactionDigest(purgedEntries)
+
+		tombstone := ComplianceEntry{
+			ID:        generateEntryID(time.Now()),
+			Timestamp: cutoff,
+			EventType: EventType("retention_purge"),
+			Action:    "purge",
+			Resource:  "audit_log",
+			Status:    "success",
+			Reason:    fmt.Sprintf("Retention purge: %d entries removed (retention=%dd)", purged, cal.retentionDays),
+			PreviousHash: lastPurgedHash,
+			Details: map[string]string{
+				"redaction_digest": redactionDigest,
+				"purged_count":     fmt.Sprintf("%d", purged),
+				"purge_cutoff":     cutoff.Format(time.RFC3339),
+				"retention_days":   fmt.Sprintf("%d", cal.retentionDays),
+			},
+		}
+		tombstone.EntryHash = cal.computeHash(tombstone)
+
+		// Fix chain: update the first remaining entry to point to tombstone
+		if len(filtered) > 0 {
+			filtered[0].PreviousHash = tombstone.EntryHash
+			filtered[0].EntryHash = cal.computeHash(filtered[0])
+		}
+
+		filtered = append([]ComplianceEntry{tombstone}, filtered...)
+	}
+
 	cal.entries = filtered
+
+	// Update last hash for chain continuation
+	if len(cal.entries) > 0 {
+		cal.lastHash = cal.entries[len(cal.entries)-1].EntryHash
+	}
+
 	return purged, cal.saveToFile()
+}
+
+// computeRedactionDigest computes a Merkle-style hash over a set of entries.
+// The digest is stored in the purge tombstone as proof of what was removed.
+// Auditors can independently verify the digest if they have the original entries.
+func (cal *ComplianceAuditLog) computeRedactionDigest(entries []ComplianceEntry) string {
+	h := hmac.New(sha256.New, cal.hashKey)
+
+	for _, entry := range entries {
+		// Include each entry's hash in the digest
+		h.Write([]byte(entry.EntryHash))
+		// Also include the entry ID as an ordering anchor
+		h.Write([]byte(entry.ID))
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// RedactEntry redacts PII from a specific entry while preserving hash chain integrity.
+// The entry stays in the log but personal data fields are replaced with [REDACTED].
+// The entry hash is recomputed over the redacted content.
+// GDPR Article 17: Right to Erasure ("Right to be Forgotten")
+func (cal *ComplianceAuditLog) RedactEntry(entryID, reason string) error {
+	cal.mu.Lock()
+	defer cal.mu.Unlock()
+
+	for i, entry := range cal.entries {
+		if entry.ID == entryID {
+			// Redact personal data fields
+			redactedTag := fmt.Sprintf("[REDACTED: %s]", reason)
+			cal.entries[i].UserID = redactedTag
+			cal.entries[i].IPAddress = redactedTag
+			cal.entries[i].UserAgent = redactedTag
+			cal.entries[i].Details = map[string]string{"redacted": reason}
+			cal.entries[i].Reason = redactedTag
+
+			// Recompute hash chain from this entry forward
+			cal.recomputeHashChain(i)
+
+			return cal.saveToFile()
+		}
+	}
+
+	return fmt.Errorf("entry not found: %s", entryID)
+}
+
+// RedactByUserID redacts all entries for a given user.
+// GDPR Article 17: Right to Erasure — bulk redaction for a single data subject.
+func (cal *ComplianceAuditLog) RedactByUserID(userID, reason string) (int, error) {
+	cal.mu.Lock()
+	defer cal.mu.Unlock()
+
+	redacted := 0
+	firstRedactedIdx := -1
+	redactedTag := fmt.Sprintf("[REDACTED: %s]", reason)
+
+	for i, entry := range cal.entries {
+		if entry.UserID == userID {
+			cal.entries[i].UserID = redactedTag
+			cal.entries[i].IPAddress = redactedTag
+			cal.entries[i].UserAgent = redactedTag
+			cal.entries[i].Details = map[string]string{"redacted": reason, "original_user": "[removed]"}
+			cal.entries[i].Reason = redactedTag
+			redacted++
+
+			if firstRedactedIdx == -1 {
+				firstRedactedIdx = i
+			}
+		}
+	}
+
+	if redacted == 0 {
+		return 0, nil
+	}
+
+	// Recompute hash chain from the first redacted entry
+	cal.recomputeHashChain(firstRedactedIdx)
+
+	if err := cal.saveToFile(); err != nil {
+		return redacted, err
+	}
+
+	return redacted, nil
+}
+
+// ExportUserData exports all audit entries for a specific user.
+// GDPR Article 20: Right to Data Portability.
+func (cal *ComplianceAuditLog) ExportUserData(userID string) ([]ComplianceEntry, error) {
+	cal.mu.RLock()
+	defer cal.mu.RUnlock()
+
+	var entries []ComplianceEntry
+	for _, entry := range cal.entries {
+		if entry.UserID == userID {
+			entries = append(entries, entry)
+		}
+	}
+
+	if len(entries) == 0 {
+		return make([]ComplianceEntry, 0), nil
+	}
+
+	return entries, nil
+}
+
+// recomputeHashChain recomputes the hash chain from a given index forward.
+// This is called after redaction to maintain chain integrity.
+func (cal *ComplianceAuditLog) recomputeHashChain(fromIndex int) {
+	if !cal.config.EnableHashChain {
+		return
+	}
+
+	for i := fromIndex; i < len(cal.entries); i++ {
+		if i > 0 {
+			cal.entries[i].PreviousHash = cal.entries[i-1].EntryHash
+		}
+		cal.entries[i].EntryHash = cal.computeHash(cal.entries[i])
+	}
+
+	// Update last hash
+	if len(cal.entries) > 0 {
+		cal.lastHash = cal.entries[len(cal.entries)-1].EntryHash
+	}
 }
 
 // Count returns total entry count

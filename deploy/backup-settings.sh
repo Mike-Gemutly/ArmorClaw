@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Settings Backup Utility
 # Creates a portable .zip backup of agent settings
-# Version: 1.0.0
+# Version: 0.3.1
 
 set -e
 

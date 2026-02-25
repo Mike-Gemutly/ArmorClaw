@@ -259,6 +259,104 @@ func (c *Client) JoinRoom(ctx context.Context, roomID string) error {
 	return nil
 }
 
+// SyncFilter configures the /sync endpoint to reduce payload size at scale.
+// See: https://spec.matrix.org/v1.9/client-server-api/#filtering
+type SyncFilter struct {
+	Room RoomFilter `json:"room"`
+}
+
+// RoomFilter filters room-level events in sync responses
+type RoomFilter struct {
+	Timeline EventFilter `json:"timeline"`
+	State    StateFilter `json:"state"`
+}
+
+// EventFilter limits timeline events
+type EventFilter struct {
+	Limit int `json:"limit"`
+}
+
+// StateFilter controls state event delivery
+type StateFilter struct {
+	LazyLoadMembers bool `json:"lazy_load_members"`
+}
+
+// SyncResponse represents a /sync response
+type SyncResponse struct {
+	NextBatch string                    `json:"next_batch"`
+	Rooms     map[string]json.RawMessage `json:"rooms,omitempty"`
+}
+
+// DefaultSyncFilter returns a filter suitable for production use
+// - Limits timeline events to 50 per room
+// - Enables lazy loading of member events to reduce payload size
+func DefaultSyncFilter() SyncFilter {
+	return SyncFilter{
+		Room: RoomFilter{
+			Timeline: EventFilter{Limit: 50},
+			State:    StateFilter{LazyLoadMembers: true},
+		},
+	}
+}
+
+// Sync performs an incremental sync with the homeserver.
+// Uses the provided filter to limit response size and latency.
+// Pass an empty sinceToken for the initial sync.
+func (c *Client) Sync(ctx context.Context, sinceToken string, filter SyncFilter, timeout int) (*SyncResponse, error) {
+	if c.accessToken == "" {
+		return nil, ErrNotLoggedIn
+	}
+
+	if timeout <= 0 {
+		timeout = 30000 // 30s long-poll default
+	}
+
+	// Serialize the filter
+	filterJSON, err := json.Marshal(filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal sync filter: %w", err)
+	}
+
+	// Build URL with query params
+	url := fmt.Sprintf("%s/_matrix/client/v3/sync?timeout=%d&filter=%s",
+		c.homeserver, timeout, string(filterJSON))
+
+	if sinceToken != "" {
+		url += "&since=" + sinceToken
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	req.Header.Set("User-Agent", "ArmorClaw-Bridge/1.0")
+
+	// Use a longer HTTP timeout to accommodate the long-poll
+	syncClient := &http.Client{
+		Timeout: time.Duration(timeout+10000) * time.Millisecond,
+	}
+
+	resp, err := syncClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sync request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("sync failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var syncResp SyncResponse
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		return nil, fmt.Errorf("failed to decode sync response: %w", err)
+	}
+
+	return &syncResp, nil
+}
+
 // GetUserID returns the current user ID
 func (c *Client) GetUserID() string {
 	return c.userID

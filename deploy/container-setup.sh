@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 1.0.0
+# Version: 0.3.1
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -22,6 +22,15 @@ RUN_DIR="/run/armorclaw"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 SETUP_FLAG="$CONFIG_DIR/.setup_complete"
 
+# Profile defaults
+DEPLOY_PROFILE="quick"
+HIPAA_ENABLED="false"
+QUARANTINE_ENABLED="false"
+AUDIT_RETENTION_DAYS=90
+COMPLIANCE_PATTERNS_PII="false"
+COMPLIANCE_PATTERNS_PHI="false"
+MATRIX_AVAILABLE=false
+
 #=============================================================================
 # Helper Functions
 #=============================================================================
@@ -30,7 +39,7 @@ print_header() {
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════╗"
     echo "║        ${BOLD}ArmorClaw Container Setup${NC}${CYAN}                     ║"
-    echo "║        ${BOLD}Version 1.0.0${NC}${CYAN}                                  ║"
+    echo "║        ${BOLD}Version 0.3.1${NC}${CYAN}                                  ║"
     echo "╚══════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -100,6 +109,45 @@ prompt_yes_no() {
     done
 }
 
+check_required_tools() {
+    local missing=()
+    for cmd in openssl jq socat curl docker; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing+=("$cmd")
+        fi
+    done
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        print_error "Required tools missing: ${missing[*]}"
+        print_error "Install with: apt-get install -y ${missing[*]}"
+        exit 1
+    fi
+    print_success "Required tools verified (openssl, jq, socat, curl, docker)"
+}
+
+validate_config_vars() {
+    local errors=()
+
+    [ -z "${MATRIX_URL:-}" ] && errors+=("MATRIX_URL is empty")
+    [ -z "${SOCKET_PATH:-}" ] && errors+=("SOCKET_PATH is empty")
+    [ -z "${BRIDGE_PASSWORD:-}" ] && errors+=("BRIDGE_PASSWORD is empty")
+    [ -z "${API_BASE_URL:-}" ] && errors+=("API_BASE_URL is empty")
+
+    if [ ${#errors[@]} -gt 0 ]; then
+        print_error "Configuration validation failed:"
+        for err in "${errors[@]}"; do
+            print_error "  - $err"
+        done
+        print_error "Cannot write configuration. Please re-run setup."
+        exit 1
+    fi
+
+    # Non-critical warnings
+    [ -z "${API_KEY:-}" ] && print_warning "No API key configured — add one later via RPC store_key"
+
+    print_success "Configuration variables validated"
+}
+
 #=============================================================================
 # Environment Variable Support
 #=============================================================================
@@ -112,8 +160,11 @@ check_env_vars() {
         print_info "Environment variables detected - using non-interactive mode"
         NON_INTERACTIVE=true
 
+        # Profile support
+        DEPLOY_PROFILE="${ARMORCLAW_PROFILE:-quick}"
+
         # Server name - auto-detect if not provided
-        SERVER_NAME="${ARMORCLAW_SERVER_NAME:-$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')}"
+        SERVER_NAME="${ARMORCLAW_SERVER_NAME:-$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')}"
 
         # Matrix config - use internal by default
         MATRIX_SERVER="${ARMORCLAW_MATRIX_SERVER:-$SERVER_NAME:6167}"
@@ -129,13 +180,159 @@ check_env_vars() {
         esac
 
         # Bridge config
-        BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || echo 'bridge123')}"
+        BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)}"
         LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
-        SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
         SOCKET_PATH="${ARMORCLAW_SOCKET_PATH:-/run/armorclaw/bridge.sock}"
+
+        # Enterprise profile env vars
+        if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+            SECURITY_TIER="maximum"
+            HIPAA_ENABLED="${ARMORCLAW_HIPAA:-false}"
+            QUARANTINE_ENABLED="${ARMORCLAW_QUARANTINE:-true}"
+            AUDIT_RETENTION_DAYS="${ARMORCLAW_AUDIT_RETENTION:-90}"
+            COMPLIANCE_PATTERNS_PII="true"
+            if [ "$HIPAA_ENABLED" = "true" ]; then
+                COMPLIANCE_PATTERNS_PHI="true"
+            fi
+            LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
+        else
+            SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
+        fi
     else
         NON_INTERACTIVE=false
     fi
+}
+
+#=============================================================================
+# Profile Selection
+#=============================================================================
+
+select_profile() {
+    if [ "$NON_INTERACTIVE" = true ]; then
+        print_info "Deployment profile: $DEPLOY_PROFILE"
+        return
+    fi
+
+    echo -e "${CYAN}Choose your deployment profile:${NC}"
+    echo ""
+    echo "  ${BOLD}1) Quick Start${NC} (default)"
+    echo "     Fewest questions, running in ~2 minutes."
+    echo "     Best for: developers, testing, personal use."
+    echo ""
+    echo "  ${BOLD}2) Enterprise / Compliance${NC}"
+    echo "     Guided setup with PII/PHI scrubbing, audit logging,"
+    echo "     HIPAA support, and production-grade security."
+    echo "     Best for: compliance teams, healthcare, regulated industries."
+    echo ""
+
+    while true; do
+        local choice=$(prompt_input "Profile" "1")
+        case "$choice" in
+            1)
+                DEPLOY_PROFILE="quick"
+                print_info "Selected: Quick Start"
+                break
+                ;;
+            2)
+                DEPLOY_PROFILE="enterprise"
+                print_info "Selected: Enterprise / Compliance"
+                break
+                ;;
+            *)
+                print_warning "Please enter 1 or 2."
+                ;;
+        esac
+    done
+    echo ""
+}
+
+#=============================================================================
+# Quick Start Auto-Defaults
+#=============================================================================
+
+apply_quick_defaults() {
+    # Auto-detect server IP
+    print_info "Detecting server IP..."
+    local detected_ip=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -n "$detected_ip" ]; then
+        print_success "Detected IP: $detected_ip"
+    else
+        detected_ip="127.0.0.1"
+        print_warning "Could not detect IP, using $detected_ip"
+    fi
+
+    SERVER_NAME="$detected_ip"
+    MATRIX_SERVER="${detected_ip}:8448"
+    MATRIX_URL="http://localhost:6167"
+    BRIDGE_USER="bridge"
+    BRIDGE_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
+    LOG_LEVEL="info"
+    SOCKET_PATH="/run/armorclaw/bridge.sock"
+    SECURITY_TIER="enhanced"
+}
+
+#=============================================================================
+# Compliance Configuration (Enterprise Profile)
+#=============================================================================
+
+configure_compliance() {
+    if [ "$NON_INTERACTIVE" = true ]; then
+        print_info "Using environment variables for compliance configuration"
+        return
+    fi
+
+    local total_steps=6
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        total_steps=6
+    fi
+
+    print_step 3 $total_steps "Compliance & Security Configuration"
+
+    echo -e "${BOLD}PII Scrubbing${NC}"
+    echo "  Detects and redacts personally identifiable information"
+    echo "  (SSN, credit cards, emails, phone numbers, IP addresses, API tokens)"
+    echo "  in all messages before they reach the AI agent."
+    echo ""
+    COMPLIANCE_PATTERNS_PII="true"
+    print_success "PII scrubbing: enabled (always on for Enterprise)"
+
+    echo ""
+    echo -e "${BOLD}HIPAA Compliance${NC}"
+    echo "  Enables Protected Health Information (PHI) pattern detection:"
+    echo "  medical record numbers, health plan IDs, lab results,"
+    echo "  diagnoses (ICD codes), prescriptions, biometric data."
+    echo ""
+
+    if prompt_yes_no "Enable HIPAA compliance mode?" "n"; then
+        HIPAA_ENABLED="true"
+        COMPLIANCE_PATTERNS_PHI="true"
+        print_success "HIPAA mode: enabled"
+    else
+        HIPAA_ENABLED="false"
+        print_info "HIPAA mode: disabled (can enable later in config.toml)"
+    fi
+
+    echo ""
+    echo -e "${BOLD}Quarantine Mode${NC}"
+    echo "  Blocks messages containing critical PII/PHI findings"
+    echo "  for admin review instead of silently scrubbing."
+    echo ""
+
+    if prompt_yes_no "Enable quarantine mode?" "y"; then
+        QUARANTINE_ENABLED="true"
+        print_success "Quarantine mode: enabled"
+    else
+        QUARANTINE_ENABLED="false"
+        print_info "Quarantine mode: disabled"
+    fi
+
+    echo ""
+    AUDIT_RETENTION_DAYS=$(prompt_input "Audit log retention (days)" "90")
+    print_info "Audit retention: ${AUDIT_RETENTION_DAYS} days"
+
+    # Enterprise always uses maximum security
+    SECURITY_TIER="maximum"
+    print_success "Security tier: maximum (auto-set for Enterprise)"
 }
 
 #=============================================================================
@@ -158,7 +355,11 @@ generate_self_signed_cert() {
     print_info "Generating self-signed SSL certificate..."
 
     local ssl_dir="$CONFIG_DIR/ssl"
-    local ip_address=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    local ip_address=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -z "$ip_address" ]; then
+        ip_address="127.0.0.1"
+        print_warning "Could not detect IP for certificate, using $ip_address"
+    fi
 
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout "$ssl_dir/key.pem" \
@@ -197,44 +398,53 @@ check_docker_socket() {
 configure_matrix() {
     if [ "$NON_INTERACTIVE" = true ]; then
         print_info "Using environment variables for Matrix configuration"
+        return
+    fi
+
+    # Quick profile: Matrix is auto-configured, skip this step
+    if [ "$DEPLOY_PROFILE" = "quick" ]; then
+        print_info "Matrix server: $MATRIX_SERVER (auto-configured)"
+        print_success "Matrix configuration complete"
+        return
+    fi
+
+    # Enterprise profile: full Matrix configuration
+    print_step 1 6 "Matrix Homeserver Configuration"
+
+    echo "Enter your Matrix server details:"
+    echo "  - For domain: matrix.example.com"
+    echo "  - For IP-only: YOUR_VPS_IP (e.g., 192.168.1.100)"
+    echo ""
+
+    while true; do
+        MATRIX_SERVER=$(prompt_input "Matrix server (domain or IP)" "")
+        if [ -n "$MATRIX_SERVER" ]; then
+            break
+        fi
+        print_warning "Matrix server is required. Please enter a domain or IP address."
+    done
+
+    # Auto-detect if IP address
+    if echo "$MATRIX_SERVER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        print_info "Detected IP address mode - using HTTP"
+        MATRIX_URL="http://localhost:6167"
+        MATRIX_SERVER="$MATRIX_SERVER:8448"
     else
-        print_step 1 5 "Matrix Homeserver Configuration"
+        MATRIX_URL=$(prompt_input "Matrix homeserver URL" "http://localhost:6167")
+    fi
 
-        echo "Enter your Matrix server details:"
-        echo "  - For domain: matrix.example.com"
-        echo "  - For IP-only: YOUR_VPS_IP (e.g., 192.168.1.100)"
-        echo ""
-
-        while true; do
-            MATRIX_SERVER=$(prompt_input "Matrix server (domain or IP)" "")
-            if [ -n "$MATRIX_SERVER" ]; then
-                break
-            fi
-            print_warning "Matrix server is required. Please enter a domain or IP address."
-        done
-
-        # Auto-detect if IP address
-        if echo "$MATRIX_SERVER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-            print_info "Detected IP address mode - using HTTP"
-            MATRIX_URL="http://localhost:6167"
-            MATRIX_SERVER="$MATRIX_SERVER:8448"
-        else
-            MATRIX_URL=$(prompt_input "Matrix homeserver URL" "http://localhost:6167")
+    echo ""
+    if prompt_yes_no "Create bridge user on Matrix?" "y"; then
+        BRIDGE_USER=$(prompt_input "Bridge username" "bridge")
+        BRIDGE_PASSWORD=$(prompt_input "Bridge password" "")
+        if [ -z "$BRIDGE_PASSWORD" ]; then
+            # Generate random password
+            BRIDGE_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
+            print_info "Generated password: $BRIDGE_PASSWORD"
         fi
-
-        echo ""
-        if prompt_yes_no "Create bridge user on Matrix?" "y"; then
-            BRIDGE_USER=$(prompt_input "Bridge username" "bridge")
-            BRIDGE_PASSWORD=$(prompt_input "Bridge password" "")
-            if [ -z "$BRIDGE_PASSWORD" ]; then
-                # Generate random password
-                BRIDGE_PASSWORD=$(openssl rand -base64 16 2>/dev/null || cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-                print_info "Generated password: $BRIDGE_PASSWORD"
-            fi
-        else
-            BRIDGE_USER="bridge"
-            BRIDGE_PASSWORD="bridge123"
-        fi
+    else
+        BRIDGE_USER="bridge"
+        BRIDGE_PASSWORD="bridge123"
     fi
 
     print_success "Matrix configuration complete"
@@ -244,7 +454,13 @@ configure_api() {
     if [ "$NON_INTERACTIVE" = true ]; then
         print_info "Using environment variables for API configuration"
     else
-        print_step 2 5 "AI Provider Configuration"
+        local step_num=1
+        local total_steps=2
+        if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+            step_num=2
+            total_steps=6
+        fi
+        print_step $step_num $total_steps "AI Provider Configuration"
 
         echo "Select your AI provider:"
         echo "  1) OpenAI"
@@ -314,31 +530,64 @@ configure_api() {
 configure_bridge() {
     if [ "$NON_INTERACTIVE" = true ]; then
         print_info "Using environment variables for bridge configuration"
-    else
-        print_step 3 5 "Bridge Configuration"
-
-        echo "Configure the ArmorClaw bridge settings:"
-        echo ""
-
-        LOG_LEVEL=$(prompt_input "Log level (debug/info/warn)" "info")
-        SOCKET_PATH=$(prompt_input "Bridge socket path" "/run/armorclaw/bridge.sock")
-
-        echo ""
-        print_info "Log level: $LOG_LEVEL"
-        print_info "Socket path: $SOCKET_PATH"
+        return
     fi
+
+    # Quick profile: use defaults, skip this step
+    if [ "$DEPLOY_PROFILE" = "quick" ]; then
+        LOG_LEVEL="info"
+        SOCKET_PATH="/run/armorclaw/bridge.sock"
+        return
+    fi
+
+    # Enterprise profile: full bridge configuration
+    print_step 5 6 "Bridge Configuration"
+
+    echo "Configure the ArmorClaw bridge settings:"
+    echo ""
+
+    LOG_LEVEL=$(prompt_input "Log level (debug/info/warn)" "info")
+    SOCKET_PATH=$(prompt_input "Bridge socket path" "/run/armorclaw/bridge.sock")
+
+    echo ""
+    print_info "Log level: $LOG_LEVEL"
+    print_info "Socket path: $SOCKET_PATH"
 
     print_success "Bridge configuration complete"
 }
 
 write_config() {
-    print_step 4 5 "Writing Configuration"
+    print_info "Writing configuration..."
 
     print_info "Creating config.toml..."
+
+    # Budget defaults vary by profile
+    local budget_daily="5.0"
+    local budget_monthly="100.0"
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        budget_daily="2.0"
+        budget_monthly="50.0"
+    fi
+
+    # Compliance settings
+    local compliance_enabled="false"
+    local compliance_streaming="true"
+    local compliance_quarantine="false"
+    local compliance_audit="false"
+    local compliance_tier="${SECURITY_TIER:-essential}"
+    local compliance_retention="${AUDIT_RETENTION_DAYS:-90}"
+
+    if [ "$DEPLOY_PROFILE" = "enterprise" ] || [ "$SECURITY_TIER" = "maximum" ]; then
+        compliance_enabled="true"
+        compliance_streaming="false"
+        compliance_quarantine="${QUARANTINE_ENABLED:-true}"
+        compliance_audit="true"
+    fi
 
     cat > "$CONFIG_FILE" << EOF
 # ArmorClaw Bridge Configuration
 # Generated by container-setup.sh on $(date -Iseconds)
+# Profile: ${DEPLOY_PROFILE}
 
 [server]
 socket_path = "${SOCKET_PATH:-/run/armorclaw/bridge.sock}"
@@ -370,8 +619,8 @@ trusted_rooms = []
 reject_untrusted = false
 
 [budget]
-daily_limit_usd = 5.0
-monthly_limit_usd = 100.0
+daily_limit_usd = ${budget_daily}
+monthly_limit_usd = ${budget_monthly}
 alert_threshold = 80.0
 hard_stop = true
 
@@ -408,14 +657,42 @@ rate_limit_window = "5m"
 retention_period = "24h"
 
 [compliance]
-enabled = $([ "$SECURITY_TIER" = "maximum" ] && echo "true" || echo "false")
-streaming_mode = $([ "$SECURITY_TIER" = "maximum" ] && echo "false" || echo "true")
-quarantine_enabled = $([ "$SECURITY_TIER" = "maximum" ] && echo "true" || echo "false")
+enabled = ${compliance_enabled}
+streaming_mode = ${compliance_streaming}
+quarantine_enabled = ${compliance_quarantine}
 notify_on_quarantine = true
-audit_enabled = $([ "$SECURITY_TIER" = "maximum" ] && echo "true" || echo "false")
-audit_retention_days = 90
-tier = "${SECURITY_TIER:-essential}"
+audit_enabled = ${compliance_audit}
+audit_retention_days = ${compliance_retention}
+tier = "${compliance_tier}"
 
+EOF
+
+    # Add compliance patterns section for enterprise profile
+    if [ "$COMPLIANCE_PATTERNS_PII" = "true" ] || [ "$COMPLIANCE_PATTERNS_PHI" = "true" ]; then
+        cat >> "$CONFIG_FILE" << EOF
+[compliance.patterns]
+# Standard PII patterns
+ssn = true
+credit_card = true
+email = true
+phone = true
+ip_address = true
+api_token = true
+
+# HIPAA / PHI patterns
+medical_record = ${COMPLIANCE_PATTERNS_PHI}
+health_plan = ${COMPLIANCE_PATTERNS_PHI}
+device_id = ${COMPLIANCE_PATTERNS_PHI}
+biometric = ${COMPLIANCE_PATTERNS_PHI}
+lab_result = ${COMPLIANCE_PATTERNS_PHI}
+diagnosis = ${COMPLIANCE_PATTERNS_PHI}
+prescription = ${COMPLIANCE_PATTERNS_PHI}
+
+EOF
+    fi
+
+    # Add provisioning section
+    cat >> "$CONFIG_FILE" << EOF
 [provisioning]
 signing_secret = "$(openssl rand -hex 32)"
 default_expiry_seconds = 60
@@ -429,7 +706,7 @@ EOF
 }
 
 initialize_keystore() {
-    print_step 5 5 "Initializing Keystore"
+    print_info "Initializing keystore..."
 
     print_info "Keystore will be initialized by bridge on first run..."
 
@@ -554,7 +831,9 @@ start_matrix_stack() {
     print_success "Docker Compose started"
 
     # --- Wait for Conduit to be healthy ---
-    wait_for_conduit
+    if wait_for_conduit; then
+        MATRIX_AVAILABLE=true
+    fi
 }
 
 wait_for_conduit() {
@@ -667,24 +946,39 @@ configure_admin_user() {
         ADMIN_USER="${ARMORCLAW_ADMIN_USER:-admin}"
         ADMIN_PASSWORD="${ARMORCLAW_ADMIN_PASSWORD:-}"
         if [ -z "$ADMIN_PASSWORD" ]; then
-            ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+            ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
             print_info "Generated admin password: $ADMIN_PASSWORD"
         fi
         return
     fi
 
-    echo ""
-    echo -e "${CYAN}Admin User for Element X / ArmorChat${NC}"
+    local step_num=2
+    local total_steps=2
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        step_num=4
+        total_steps=6
+    fi
+
+    print_step $step_num $total_steps "Admin User for Element X / ArmorChat"
     echo "This account is how YOU log in to chat with the bridge."
     echo ""
 
-    ADMIN_USER=$(prompt_input "Admin username" "admin")
+    if [ "$DEPLOY_PROFILE" = "quick" ]; then
+        ADMIN_USER="admin"
+        print_info "Username: admin (default)"
+    else
+        ADMIN_USER=$(prompt_input "Admin username" "admin")
+    fi
 
     while true; do
-        ADMIN_PASSWORD=$(prompt_input "Admin password (min 8 chars)" "")
+        ADMIN_PASSWORD=$(prompt_input "Admin password (min 8 chars, press Enter to auto-generate)" "")
         if [ -z "$ADMIN_PASSWORD" ]; then
             # Generate a random password
-            ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=')
+            ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
+            if [ -z "$ADMIN_PASSWORD" ]; then
+                print_warning "Auto-generation failed. Please enter a password manually."
+                continue
+            fi
             print_info "Generated admin password: $ADMIN_PASSWORD"
             break
         fi
@@ -830,12 +1124,35 @@ final_summary() {
     echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo "Configuration:"
+    echo "  - Profile: ${DEPLOY_PROFILE}"
     echo "  - Matrix server: $MATRIX_SERVER"
-    echo "  - Matrix URL: $MATRIX_URL"
     echo "  - API provider: $API_BASE_URL"
-    echo "  - Log level: ${LOG_LEVEL:-info}"
     echo "  - Security tier: ${SECURITY_TIER:-essential}"
+    echo "  - Log level: ${LOG_LEVEL:-info}"
     echo ""
+
+    # Enterprise compliance summary
+    if [ "$DEPLOY_PROFILE" = "enterprise" ] || [ "$SECURITY_TIER" = "maximum" ]; then
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}Compliance Status:${NC}"
+        echo -e "  PII scrubbing:     ${GREEN}enabled${NC} (SSN, credit card, email, phone, IP, API token)"
+        if [ "$HIPAA_ENABLED" = "true" ]; then
+            echo -e "  HIPAA mode:        ${GREEN}enabled${NC} (medical records, health plans, lab results, diagnoses, prescriptions)"
+        else
+            echo -e "  HIPAA mode:        ${YELLOW}disabled${NC}"
+        fi
+        if [ "$QUARANTINE_ENABLED" = "true" ]; then
+            echo -e "  Quarantine:        ${GREEN}enabled${NC} (critical findings blocked for review)"
+        else
+            echo -e "  Quarantine:        ${YELLOW}disabled${NC} (findings scrubbed, not blocked)"
+        fi
+        echo -e "  Audit logging:     ${GREEN}enabled${NC} (${AUDIT_RETENTION_DAYS} day retention)"
+        echo -e "  Response mode:     ${GREEN}buffered${NC} (full-text scrubbing)"
+        echo -e "  Logging format:    ${GREEN}JSON${NC} (SIEM-ready)"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+    fi
+
     echo "Files:"
     echo "  - Config: $CONFIG_FILE"
     echo "  - Keystore: $DATA_DIR/keystore.db"
@@ -903,8 +1220,19 @@ final_summary() {
 #=============================================================================
 
 configure_security_tier() {
+    # Enterprise profile: already set to maximum by configure_compliance()
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        return
+    fi
+
+    # Quick profile: use enhanced default
+    if [ "$DEPLOY_PROFILE" = "quick" ]; then
+        SECURITY_TIER="enhanced"
+        return
+    fi
+
     if [ "$NON_INTERACTIVE" = true ]; then
-        SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-essential}"
+        SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
         print_info "Security tier: $SECURITY_TIER"
         return
     fi
@@ -957,8 +1285,19 @@ offer_post_setup_options() {
 main() {
     print_header
 
+    # Verify required tools are available
+    check_required_tools
+
     # Check for environment variables
     check_env_vars
+
+    # Select deployment profile (Step 0)
+    select_profile
+
+    # Apply auto-defaults for quick profile
+    if [ "$DEPLOY_PROFILE" = "quick" ] && [ "$NON_INTERACTIVE" != true ]; then
+        apply_quick_defaults
+    fi
 
     # Create directories
     create_directories
@@ -969,20 +1308,30 @@ main() {
     # Check Docker socket
     check_docker_socket
 
-    # Run configuration steps
-    configure_matrix
-    configure_api
-    configure_bridge
-    configure_security_tier
+    # Run configuration steps (profile-aware)
+    configure_matrix      # Quick: auto-configured | Enterprise: Step 1/6
+    configure_api          # Quick: Step 1/2       | Enterprise: Step 2/6
 
-    # Collect admin credentials (for Element X / ArmorChat login)
-    configure_admin_user
+    # Enterprise-only: compliance configuration (Step 3/6)
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        configure_compliance
+    fi
+
+    # Collect admin credentials
+    configure_admin_user   # Quick: Step 2/2       | Enterprise: Step 4/6
+
+    # Enterprise-only: bridge config (Step 5/6)
+    configure_bridge
+
+    # Set security tier (auto for both profiles)
+    configure_security_tier
 
     # Persist admin user info for quickstart.sh to auto-claim OWNER role
     echo "${ADMIN_USER}" > "$DATA_DIR/.admin_user"
     echo "${MATRIX_SERVER_NAME:-${MATRIX_SERVER%%:*}}" >> "$DATA_DIR/.admin_user"
     chmod 600 "$DATA_DIR/.admin_user"
 
+    validate_config_vars
     write_config
     initialize_keystore
 
@@ -990,14 +1339,20 @@ main() {
     start_matrix_stack
 
     # Register bridge + admin users on Conduit (requires Matrix stack running)
-    register_users
+    if [ "$MATRIX_AVAILABLE" = true ]; then
+        register_users
 
-    # Create bridge management room with admin at power level 100
-    # This ensures Element X / ArmorChat users see the room on first login
-    setup_bridge_room
+        # Create bridge management room with admin at power level 100
+        setup_bridge_room
+    else
+        print_warning "Matrix homeserver not available — skipping user registration and room setup"
+        print_warning "Run 'create-matrix-admin.sh' manually after Matrix is running"
+    fi
 
-    # Offer post-setup options
-    offer_post_setup_options
+    # Offer post-setup options (enterprise only)
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        offer_post_setup_options
+    fi
 
     # Show summary
     final_summary

@@ -3,7 +3,7 @@
 # ArmorClaw Production Installer v4.0
 # Purpose: Self-aware, deterministic, hardened deployment with blue/green support
 # Supported: Ubuntu 22.04/24.04, Debian 12
-# Version: 4.0.0
+# Version: 0.3.1
 # =============================================================================
 
 set -euo pipefail
@@ -12,7 +12,7 @@ set -euo pipefail
 # Section 1: Constants and Configuration
 # =============================================================================
 
-readonly SCRIPT_VERSION="4.0.0"
+readonly SCRIPT_VERSION="0.3.1"
 readonly SCRIPT_NAME="installer-v4.sh"
 readonly MIN_RAM_MB=4096
 readonly MIN_CPU_CORES=2

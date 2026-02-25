@@ -49,7 +49,7 @@ ARG VCS_REF
 # Labels for image metadata
 LABEL org.opencontainers.image.title="ArmorClaw Agent" \
       org.opencontainers.image.description="Hardened container runtime for AI agents" \
-      org.opencontainers.image.version="v1.0.0" \
+      org.opencontainers.image.version="0.3.1" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
 

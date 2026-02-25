@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Final Hardening Script
 # Called after security configuration is complete
-# Version: 1.0.0
+# Version: 0.3.1
 
 set -e
 

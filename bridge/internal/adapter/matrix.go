@@ -51,6 +51,52 @@ type MatrixAdapter struct {
 	trustVerifier    *TrustVerifier     // Zero-trust verification
 	auditLog         *audit.TamperEvidentLog // Audit logging
 	minTrustLevel    trust.TrustScore   // Minimum trust level required
+	syncFilterID     string              // Server-side sync filter ID for performance
+	syncMetrics      SyncMetrics         // Sync performance metrics
+}
+
+// SyncMetrics tracks sync performance for monitoring
+type SyncMetrics struct {
+	mu                  sync.Mutex
+	LastSyncDurationMs  int64 `json:"last_sync_duration_ms"`
+	EventsProcessed     int64 `json:"events_processed"`
+	RoomsActive         int   `json:"rooms_active"`
+	TotalSyncs          int64 `json:"total_syncs"`
+}
+
+// bridgeSyncFilter is the default sync filter for the bridge.
+// Limits timeline to 10 events per room, enables lazy-load members,
+// and only subscribes to event types the bridge processes.
+var bridgeSyncFilter = map[string]interface{}{
+	"room": map[string]interface{}{
+		"timeline": map[string]interface{}{
+			"limit": 10,
+			"types": []string{
+				"m.room.message",
+				"m.room.member",
+				"m.room.bridge",
+				"app.armorclaw.alert",
+			},
+		},
+		"state": map[string]interface{}{
+			"lazy_load_members": true,
+			"types": []string{
+				"m.room.member",
+				"m.room.bridge",
+				"m.room.name",
+				"m.room.power_levels",
+			},
+		},
+		"ephemeral": map[string]interface{}{
+			"types": []string{
+				"m.typing",
+				"m.receipt",
+			},
+		},
+	},
+	"presence": map[string]interface{}{
+		"types": []string{}, // Ignore presence updates to reduce payload
+	},
 }
 
 // MatrixEvent represents a Matrix event
@@ -396,11 +442,25 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 		return err
 	}
 
+	syncStart := time.Now()
+
 	u.Path = "/_matrix/client/v3/sync"
 	query := url.Values{}
 	query.Set("timeout", fmt.Sprintf("%d", timeout*1000))
 	if syncToken != "" {
 		query.Set("since", syncToken)
+	}
+
+	// Apply sync filter for performance: limits timeline, enables lazy-load,
+	// filters to only event types the bridge processes
+	if m.syncFilterID != "" {
+		query.Set("filter", m.syncFilterID)
+	} else {
+		// Inline filter as JSON (fallback if server-side filter not registered)
+		filterJSON, err := json.Marshal(bridgeSyncFilter)
+		if err == nil {
+			query.Set("filter", string(filterJSON))
+		}
 	}
 	u.RawQuery = query.Encode()
 
@@ -457,7 +517,7 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 	}
 
 	// Process events and queue them
-	m.processEvents(&syncResp)
+	eventsProcessed := m.processEvents(&syncResp)
 
 	// Update sync token
 	m.mu.Lock()
@@ -465,14 +525,30 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 	m.lastExpiryCheck = time.Now() // Update expiry check on successful sync
 	m.mu.Unlock()
 
-	matrixTracker.Success("sync", map[string]any{"next_batch": syncResp.NextBatch})
+	// Track sync performance metrics
+	syncDuration := time.Since(syncStart)
+	m.syncMetrics.mu.Lock()
+	m.syncMetrics.LastSyncDurationMs = syncDuration.Milliseconds()
+	m.syncMetrics.EventsProcessed += int64(eventsProcessed)
+	m.syncMetrics.RoomsActive = len(syncResp.Rooms.Join)
+	m.syncMetrics.TotalSyncs++
+	m.syncMetrics.mu.Unlock()
+
+	matrixTracker.Success("sync", map[string]any{
+		"next_batch":       syncResp.NextBatch,
+		"duration_ms":      syncDuration.Milliseconds(),
+		"events_processed": eventsProcessed,
+		"rooms_active":     len(syncResp.Rooms.Join),
+	})
 	return nil
 }
 
-// processEvents processes events from sync response
-func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) {
+// processEvents processes events from sync response and returns the count of events processed
+func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
+	processed := 0
 	for roomID, room := range syncResp.Rooms.Join {
 		for _, rawEvent := range room.Timeline.Events {
+			processed++
 			var event MatrixEvent
 			if err := json.Unmarshal(rawEvent, &event); err != nil {
 				continue
@@ -620,6 +696,19 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) {
 				}
 			}
 		}
+	}
+	return processed
+}
+
+// GetSyncMetrics returns current sync performance metrics
+func (m *MatrixAdapter) GetSyncMetrics() SyncMetrics {
+	m.syncMetrics.mu.Lock()
+	defer m.syncMetrics.mu.Unlock()
+	return SyncMetrics{
+		LastSyncDurationMs: m.syncMetrics.LastSyncDurationMs,
+		EventsProcessed:    m.syncMetrics.EventsProcessed,
+		RoomsActive:        m.syncMetrics.RoomsActive,
+		TotalSyncs:         m.syncMetrics.TotalSyncs,
 	}
 }
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Matrix Setup
 # Post-setup Matrix configuration script
-# Version: 1.0.0
+# Version: 0.3.1
 #
 # Usage: sudo ./deploy/setup-matrix.sh [--enable] [--domain example.com]
 

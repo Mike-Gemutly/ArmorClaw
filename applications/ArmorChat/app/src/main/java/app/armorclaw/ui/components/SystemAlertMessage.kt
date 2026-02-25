@@ -29,14 +29,28 @@ import app.armorclaw.data.model.*
  * System Alert Card Component
  *
  * Renders a system alert with severity-based styling.
+ * PII_ACCESS_REQUEST alerts delegate to PiiApprovalCard for interactive review.
  */
 @Composable
 fun SystemAlertCard(
     alert: SystemAlertContent,
     onActionClick: ((String) -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
+    onPiiApprove: ((String, List<String>) -> Unit)? = null,
+    onPiiDeny: ((String, String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    // Route PII_ACCESS_REQUEST to dedicated PiiApprovalCard
+    if (alert.alertType == AlertType.PII_ACCESS_REQUEST && onPiiApprove != null && onPiiDeny != null) {
+        PiiApprovalCard(
+            alert = alert,
+            onApprove = onPiiApprove,
+            onDeny = onPiiDeny,
+            modifier = modifier
+        )
+        return
+    }
+
     val colors = alert.severity.getColors()
 
     Card(
@@ -299,6 +313,8 @@ fun AlertType.getIcon(): ImageVector {
         AlertType.BRIDGE_RESTARTING -> Icons.Default.Refresh
 
         AlertType.MAINTENANCE -> Icons.Default.Build
+
+        AlertType.PII_ACCESS_REQUEST -> Icons.Default.PrivacyTip
 
         AlertType.COMPLIANCE_VIOLATION -> Icons.Default.Gavel
 

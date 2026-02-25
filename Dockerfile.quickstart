@@ -60,7 +60,7 @@ ARG VCS_REF
 
 LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
       org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
-      org.opencontainers.image.version="v1.0.0" \
+      org.opencontainers.image.version="0.3.1" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -143,7 +143,7 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 CONFIG_FILE="/etc/armorclaw/config.toml"
 SETUP_FLAG="/etc/armorclaw/.setup_complete"
 API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
-VERSION="1.0.0"
+VERSION="0.3.1"
 
 # Colors
 RED='\033[0;31m'
@@ -152,6 +152,15 @@ CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+# Cleanup on interruption — prevent partial state from blocking future runs
+cleanup() {
+    echo ""
+    echo -e "${YELLOW}Interrupted. Cleaning up partial state...${NC}"
+    rm -f "$SETUP_FLAG"
+    exit 130
+}
+trap cleanup INT TERM
 
 # Handle --help and --version flags before any setup
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -164,16 +173,41 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  --version, -v  Show version information"
     echo "  (no args)      Start ArmorClaw bridge (requires Docker socket)"
     echo ""
+    echo "Deployment Profiles:"
+    echo "  Quick Start (default)  - 2 prompts, running in ~2 minutes"
+    echo "  Enterprise/Compliance  - PII/PHI scrubbing, HIPAA, audit logging"
+    echo ""
+    echo "  Set profile via: -e ARMORCLAW_PROFILE=enterprise"
+    echo ""
     echo "Required volumes:"
     echo "  -v /var/run/docker.sock:/var/run/docker.sock"
     echo "  -v armorclaw-data:/etc/armorclaw (optional, persists config)"
     echo ""
-    echo "Example:"
+    echo "Environment variables (non-interactive mode):"
+    echo "  ARMORCLAW_SERVER_NAME  Server domain or IP"
+    echo "  ARMORCLAW_API_KEY      AI provider API key"
+    echo "  ARMORCLAW_PROFILE      Deployment profile (quick|enterprise)"
+    echo "  ARMORCLAW_HIPAA        Enable HIPAA mode (true|false)"
+    echo "  ARMORCLAW_QUARANTINE   Enable quarantine mode (true|false)"
+    echo ""
+    echo "Examples:"
+    echo "  # Quick start (interactive):"
+    echo "  docker run -it --name armorclaw \\"
+    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
+    echo "    -v armorclaw-data:/etc/armorclaw \\"
+    echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
+    echo "    mikegemut/armorclaw:latest"
+    echo ""
+    echo "  # Enterprise (non-interactive):"
     echo "  docker run -d --name armorclaw \\"
     echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
     echo "    -v armorclaw-data:/etc/armorclaw \\"
-    echo "    -p 8443:8443 \\"
-    echo "    armorclaw/quickstart"
+    echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
+    echo "    -e ARMORCLAW_PROFILE=enterprise \\"
+    echo "    -e ARMORCLAW_SERVER_NAME=your-domain.com \\"
+    echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
+    echo "    -e ARMORCLAW_HIPAA=true \\"
+    echo "    mikegemut/armorclaw:latest"
     exit 0
 fi
 
@@ -207,18 +241,30 @@ if [ ! -f "$SETUP_FLAG" ]; then
 
     # Run container setup (container-aware, no Go/systemctl required)
     cd /opt/armorclaw
-    ./container-setup.sh
+    if ! ./container-setup.sh; then
+        echo -e "${RED}ERROR: Container setup failed.${NC}"
+        echo -e "${RED}Re-run the container to try again.${NC}"
+        exit 1
+    fi
 
     # Mark setup complete
     touch "$SETUP_FLAG"
 fi
 
-# Check configuration exists
+# Check configuration exists and has required fields
 if [ ! -f "$CONFIG_FILE" ]; then
     echo -e "${RED}ERROR: Configuration not found at $CONFIG_FILE${NC}"
     echo -e "${RED}Run setup first: /opt/armorclaw/container-setup.sh${NC}"
     exit 1
 fi
+
+for field in socket_path homeserver_url db_path; do
+    if ! grep -q "${field}" "$CONFIG_FILE" 2>/dev/null; then
+        echo -e "${RED}ERROR: Config missing required field: $field${NC}"
+        echo -e "${RED}Remove $SETUP_FLAG and re-run to repeat setup.${NC}"
+        exit 1
+    fi
+done
 
 echo -e "${GREEN}Starting ArmorClaw Bridge...${NC}"
 echo ""
@@ -241,7 +287,10 @@ echo ""
 if [ -S /run/armorclaw/bridge.sock ]; then
     echo -e "${GREEN}Bridge socket ready${NC}"
 
-    # Inject API key if temp file exists
+    # Brief wait for RPC server to finish initialization
+    sleep 2
+
+    # Inject API key if temp file exists (with retry)
     if [ -f "$API_KEY_TEMP" ]; then
         echo -e "${CYAN}Injecting API key into keystore...${NC}"
         source "$API_KEY_TEMP" 2>/dev/null || true
@@ -249,15 +298,23 @@ if [ -S /run/armorclaw/bridge.sock ]; then
         if [ -n "$api_key" ]; then
             # Use provider from temp file, default to openai
             key_provider="${provider:-openai}"
-            # Add API key via RPC (method: store_key, requires id + provider + token)
-            RESPONSE=$(echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"store_key\",\"params\":{\"id\":\"${key_provider}-default\",\"provider\":\"${key_provider}\",\"token\":\"$api_key\",\"display_name\":\"Default API\"}}" | \
-                socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{"error":"failed"}')
+            # Add API key via RPC with retry (bridge RPC may need a moment)
+            inject_ok=false
+            for inject_attempt in 1 2 3; do
+                RESPONSE=$(echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"store_key\",\"params\":{\"id\":\"${key_provider}-default\",\"provider\":\"${key_provider}\",\"token\":\"$api_key\",\"display_name\":\"Default API\"}}" | \
+                    socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{"error":"failed"}')
+                if echo "$RESPONSE" | grep -q '"result"'; then
+                    inject_ok=true
+                    break
+                fi
+                [ $inject_attempt -lt 3 ] && sleep 2
+            done
 
-            if echo "$RESPONSE" | grep -q '"result"'; then
+            if [ "$inject_ok" = true ]; then
                 echo -e "${GREEN}API key injected successfully${NC}"
                 rm -f "$API_KEY_TEMP"
             else
-                echo -e "${YELLOW}Warning: Could not inject API key automatically${NC}"
+                echo -e "${YELLOW}Warning: Could not inject API key after 3 attempts${NC}"
                 echo -e "${YELLOW}Add manually via RPC: store_key${NC}"
             fi
         fi
@@ -273,11 +330,15 @@ if [ -S /run/armorclaw/bridge.sock ]; then
 
         echo -e "${CYAN}Assigning OWNER role to admin user...${NC}"
 
-        # Step 1: Create provisioning token
-        TOKEN_RESP=$(echo '{"jsonrpc":"2.0","id":10,"method":"provisioning.start","params":{}}' | \
-            socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
-
-        SETUP_TOKEN=$(echo "$TOKEN_RESP" | jq -r '.result.setup_token // empty' 2>/dev/null)
+        # Step 1: Create provisioning token (with retry)
+        SETUP_TOKEN=""
+        for prov_attempt in 1 2 3; do
+            TOKEN_RESP=$(echo '{"jsonrpc":"2.0","id":10,"method":"provisioning.start","params":{}}' | \
+                socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
+            SETUP_TOKEN=$(echo "$TOKEN_RESP" | jq -r '.result.setup_token // empty' 2>/dev/null)
+            [ -n "$SETUP_TOKEN" ] && break
+            [ $prov_attempt -lt 3 ] && sleep 2
+        done
 
         if [ -n "$SETUP_TOKEN" ]; then
             # Step 2: Claim with admin's Matrix ID as device_id → first claim = OWNER
@@ -338,7 +399,17 @@ if [ -S /run/armorclaw/bridge.sock ]; then
     echo ""
 
     # Wait for bridge process
-    wait $BRIDGE_PID
+    if kill -0 $BRIDGE_PID 2>/dev/null; then
+        wait $BRIDGE_PID
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}Bridge exited with code $EXIT_CODE${NC}"
+        fi
+        exit $EXIT_CODE
+    else
+        echo -e "${RED}Bridge process is no longer running${NC}"
+        exit 1
+    fi
 else
     echo -e "${RED}ERROR: Bridge failed to create socket${NC}"
     kill $BRIDGE_PID 2>/dev/null || true

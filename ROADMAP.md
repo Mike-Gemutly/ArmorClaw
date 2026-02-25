@@ -1,7 +1,7 @@
 # ArmorClaw Platform Adapter Roadmap
 
 > **Last Updated:** 2026-02-19
-> **Version:** 4.4.0
+> **Version:** 0.3.1
 > **Status:** Slack Edition - Production Ready
 
 ---
@@ -183,10 +183,10 @@ type PlatformAdapter interface {
 
 | Version | Platform | Target Date |
 |---------|----------|-------------|
-| v4.4.0 | Slack (Live) | Current |
-| v4.5.0 | Discord | TBD |
-| v5.0.0 | Teams | TBD |
-| v5.1.0 | WhatsApp | TBD |
+| 0.3.0 | Slack (Live) | Current |
+| 0.4.0 | Discord | TBD |
+| 0.5.0 | Teams | TBD |
+| 0.5.1 | WhatsApp | TBD |
 
 ---
 

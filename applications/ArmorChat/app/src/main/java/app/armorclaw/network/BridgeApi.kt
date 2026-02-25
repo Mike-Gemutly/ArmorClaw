@@ -306,6 +306,148 @@ class BridgeApi(private val baseUrl: String = "http://localhost:8080/api") {
         return rpc("qr.generate_setup")
     }
 
+    //region Verification Methods
+
+    @Serializable
+    data class VerificationStartResponse(
+        val transaction_id: String,
+        val emojis: List<EmojiData>,
+        val status: String
+    )
+
+    @Serializable
+    data class EmojiData(
+        val emoji: String,
+        val description: String
+    )
+
+    @Serializable
+    data class VerificationConfirmResponse(
+        val verified: Boolean,
+        val device_id: String,
+        val trust_state: String
+    )
+
+    /**
+     * Start emoji verification with a bridge device
+     */
+    fun startVerification(userId: String, deviceId: String, roomId: String): Result<VerificationStartResponse> {
+        return rpc("device.start_verification", mapOf(
+            "user_id" to userId,
+            "device_id" to deviceId,
+            "room_id" to roomId
+        ))
+    }
+
+    /**
+     * Confirm emoji verification match
+     */
+    fun confirmVerification(transactionId: String): Result<VerificationConfirmResponse> {
+        return rpc("device.confirm_verification", mapOf(
+            "transaction_id" to transactionId
+        ))
+    }
+
+    /**
+     * Cancel verification
+     */
+    fun cancelVerification(transactionId: String, reason: String = "user_cancelled"): Result<Map<String, Boolean>> {
+        return rpc("device.cancel_verification", mapOf(
+            "transaction_id" to transactionId,
+            "reason" to reason
+        ))
+    }
+
+    //endregion
+
+    //region PII Access Methods
+
+    @Serializable
+    data class PiiApproveResponse(
+        val success: Boolean,
+        val request_id: String,
+        val approved_fields: List<String>,
+        val ttl_seconds: Int
+    )
+
+    @Serializable
+    data class PiiRejectResponse(
+        val success: Boolean,
+        val request_id: String
+    )
+
+    /**
+     * Approve PII access for selected fields
+     */
+    fun approvePiiAccess(requestId: String, approvedFields: List<String>): Result<PiiApproveResponse> {
+        val params = mutableMapOf(
+            "request_id" to requestId
+        )
+        approvedFields.forEachIndexed { index, field ->
+            params["field_$index"] = field
+        }
+        params["field_count"] = approvedFields.size.toString()
+        return rpc("pii.approve_access", params)
+    }
+
+    /**
+     * Reject PII access request
+     */
+    fun rejectPiiAccess(requestId: String, reason: String): Result<PiiRejectResponse> {
+        return rpc("pii.reject_access", mapOf(
+            "request_id" to requestId,
+            "reason" to reason
+        ))
+    }
+
+    //endregion
+
+    //region Key Backup Methods
+
+    @Serializable
+    data class BackupCreateResponse(
+        val backup_version: String,
+        val algorithm: String,
+        val key_count: Int,
+        val status: String
+    )
+
+    /**
+     * Create encrypted key backup on homeserver (SSSS)
+     */
+    fun createKeyBackup(passphraseHash: String, algorithm: String = "m.megolm_backup.v1.curve25519-aes-sha2"): Result<BackupCreateResponse> {
+        return rpc("recovery.create_backup", mapOf(
+            "passphrase_hash" to passphraseHash,
+            "algorithm" to algorithm
+        ))
+    }
+
+    //endregion
+
+    //region Provisioning Methods
+
+    @Serializable
+    data class ProvisioningClaimResponse(
+        val status: String,
+        val device_id: String,
+        val session_token: String,
+        val migrated_from: String?
+    )
+
+    /**
+     * Claim device provisioning after migration
+     */
+    fun provisioningClaim(deviceName: String, deviceFingerprint: String, migratedFrom: String? = null): Result<ProvisioningClaimResponse> {
+        val params = mutableMapOf(
+            "device_name" to deviceName,
+            "device_fingerprint" to deviceFingerprint
+        )
+        migratedFrom?.let { params["migrated_from"] = it }
+        return rpc("provisioning.claim", params)
+    }
+
+    //endregion
+
     //region Push Notification Methods
 
     @Serializable

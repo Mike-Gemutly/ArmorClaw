@@ -19,9 +19,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import app.armorclaw.network.BridgeApi
 
 /**
  * Migration Screen - Handles upgrade from legacy v2.5 to secure architecture
@@ -253,6 +257,7 @@ class MigrationViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(MigrationUiState())
     val uiState: StateFlow<MigrationUiState> = _uiState.asStateFlow()
+    private val bridgeApi = BridgeApi()
 
     private val LEGACY_PREFS_NAME = "armorclaw_prefs"
     private val LEGACY_KEY_USER_ID = "user_id"
@@ -278,17 +283,26 @@ class MigrationViewModel : ViewModel() {
             error = null
         )
 
-        // TODO: Implement actual export logic
-        // For now, simulate export
         viewModelScope.launch {
             try {
-                // Simulate export delay
-                kotlinx.coroutines.delay(2000)
+                withContext(Dispatchers.IO) {
+                    // Query legacy SharedPreferences for cached data
+                    val prefs = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+                    val userId = prefs.getString(LEGACY_KEY_USER_ID, null)
 
-                // In production, this would:
-                // 1. Query local database for messages
-                // 2. Export to JSON file
-                // 3. Save to Downloads or shared storage
+                    // Export to JSON in app-specific Downloads directory
+                    val exportDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    val exportFile = java.io.File(exportDir, "armorclaw_export_${System.currentTimeMillis()}.json")
+
+                    val exportData = org.json.JSONObject().apply {
+                        put("exported_at", System.currentTimeMillis())
+                        put("user_id", userId ?: "unknown")
+                        put("legacy_version", prefs.getString(LEGACY_KEY_VERSION, "unknown"))
+                        put("note", "Legacy data export before v3.0 migration")
+                    }
+
+                    exportFile.writeText(exportData.toString(2))
+                }
 
                 _uiState.value = _uiState.value.copy(
                     exporting = false,
@@ -313,20 +327,50 @@ class MigrationViewModel : ViewModel() {
             try {
                 // 1. Clear legacy credentials
                 val prefs = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+                val legacyVersion = prefs.getString(LEGACY_KEY_VERSION, null)
                 prefs.edit().clear().apply()
 
-                // 2. Clear push token state
+                // 2. Clear push token state and mark for migration
                 val pushPrefs = context.getSharedPreferences("push_tokens", Context.MODE_PRIVATE)
                 pushPrefs.edit()
-                    .putBoolean("legacy_push_mode", true) // Mark for migration
+                    .putBoolean("legacy_push_mode", true)
                     .apply()
 
-                // 3. Clear any cached data
-                // In production, clear room database, etc.
+                // 3. Claim device provisioning with the bridge
+                val deviceFingerprint = android.provider.Settings.Secure.getString(
+                    context.contentResolver,
+                    android.provider.Settings.Secure.ANDROID_ID
+                ) ?: "unknown"
 
-                _uiState.value = _uiState.value.copy(
-                    migrating = false,
-                    migrationComplete = true
+                val claimResult = withContext(Dispatchers.IO) {
+                    bridgeApi.provisioningClaim(
+                        deviceName = android.os.Build.MODEL,
+                        deviceFingerprint = deviceFingerprint,
+                        migratedFrom = legacyVersion
+                    )
+                }
+
+                claimResult.fold(
+                    onSuccess = { response ->
+                        // Store new session token
+                        val newPrefs = context.getSharedPreferences("armorclaw_session", Context.MODE_PRIVATE)
+                        newPrefs.edit()
+                            .putString("device_id", response.device_id)
+                            .putString("session_token", response.session_token)
+                            .putBoolean("migrated", true)
+                            .apply()
+
+                        _uiState.value = _uiState.value.copy(
+                            migrating = false,
+                            migrationComplete = true
+                        )
+                    },
+                    onFailure = { e ->
+                        _uiState.value = _uiState.value.copy(
+                            migrating = false,
+                            error = "Provisioning failed: ${e.message}"
+                        )
+                    }
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(

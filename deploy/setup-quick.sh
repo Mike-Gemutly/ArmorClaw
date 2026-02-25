@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Quick Setup - Express Installation
 # Streamlined 3-minute setup with secure defaults
-# Version: 1.0.0
+# Version: 0.3.1
 #
 # Usage: sudo ./deploy/setup-quick.sh [--non-interactive]
 

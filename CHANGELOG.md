@@ -1,13 +1,13 @@
 # ArmorClaw Changelog
 
-> **Last Updated:** 2026-02-24
-> **Current Version:** 4.2.0
+> **Last Updated:** 2026-02-25
+> **Current Version:** 0.3.1
 
 All notable changes to ArmorClaw are documented here with commit references.
 
 ---
 
-## [4.2.0] - 2026-02-24 - Docker Quickstart Admin & Hangup Fixes (Pass 6)
+## [0.3.1] - 2026-02-24 - Docker Quickstart Admin & Hangup Fixes (Pass 6)
 
 ### Fixed
 - **Bridge user never created on Conduit** — Setup wizard collected bridge credentials but never registered the user; bridge `matrix.Login()` fatally crashed the container on every first run
@@ -33,7 +33,7 @@ All notable changes to ArmorClaw are documented here with commit references.
 
 ---
 
-## [4.1.0] - 2026-02-24 - Docker Deployment Hardening (5-Pass Review)
+## [0.3.0] - 2026-02-24 - Docker Deployment Hardening (5-Pass Review)
 
 ### Fixed
 - **LD_PRELOAD security hook** — `security_hook.c` now checks `addr->sa_family` and allows `AF_UNIX` through, preventing bridge socket communication from being silently blocked
@@ -65,7 +65,7 @@ All notable changes to ArmorClaw are documented here with commit references.
 
 ---
 
-## [4.0.0] - 2026-02-19 - Phase 5: Zero-Trust Hardening
+## [0.2.0] - 2026-02-19 - Phase 5: Zero-Trust Hardening
 
 ### Added
 - **Zero-Trust System** (`bridge/pkg/trust/`)
@@ -94,14 +94,14 @@ All notable changes to ArmorClaw are documented here with commit references.
 
 ### Commits
 ```
-da6b415 docs: Update review.md to v4.0.0 with Phase 5 completion
+da6b415 docs: Update review.md to 0.2.0 with Phase 5 completion
 41a0479 feat(security): Add core trust and audit packages
 2b81bad feat(security): Complete Phase 5 audit and zero-trust integration
 ```
 
 ---
 
-## [3.5.0] - 2026-02-18 - Step 4: Push Notification Gateway
+## [0.1.5] - 2026-02-18 - Step 4: Push Notification Gateway
 
 ### Added
 - **Push Gateway** (`bridge/pkg/push/`)
@@ -123,7 +123,7 @@ da6b415 docs: Update review.md to v4.0.0 with Phase 5 completion
 
 ---
 
-## [3.4.0] - 2026-02-18 - Step 3: Enterprise Enforcement Layer
+## [0.1.4] - 2026-02-18 - Step 3: Enterprise Enforcement Layer
 
 ### Added
 - **Enforcement System** (`bridge/pkg/enforcement/`)
@@ -140,7 +140,7 @@ ca6699c feat: Add adapters, configs, tests, and deployment scripts
 
 ---
 
-## [3.3.0] - 2026-02-18 - Step 2: Bridge AppService Implementation
+## [0.1.3] - 2026-02-18 - Step 2: Bridge AppService Implementation
 
 ### Added
 - **AppService** (`bridge/pkg/appservice/`)
@@ -157,7 +157,7 @@ ca6699c feat: Add adapters, configs, tests, and deployment scripts
 
 ---
 
-## [3.2.0] - 2026-02-18 - Step 1: Matrix Infrastructure
+## [0.1.2] - 2026-02-18 - Step 1: Matrix Infrastructure
 
 ### Added
 - **Deployment Configs** (`configs/`)
@@ -178,7 +178,7 @@ ca6699c feat: Add adapters, configs, tests, and deployment scripts
 
 ---
 
-## [3.1.0] - 2026-02-18 - Critical Bug Fixes
+## [0.1.1] - 2026-02-18 - Critical Bug Fixes
 
 ### Fixed
 - **LLM Response PHI Scrubbing** - Tier-dependent compliance for outbound responses

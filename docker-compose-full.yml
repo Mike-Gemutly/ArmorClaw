@@ -121,7 +121,7 @@ services:
   # ArmorClaw Bridge (Containerized)
   # ========================================
   bridge:
-    image: armorclaw/bridge:v1.0.0
+    image: armorclaw/bridge:0.3.1
     container_name: armorclaw-bridge
     restart: unless-stopped
 

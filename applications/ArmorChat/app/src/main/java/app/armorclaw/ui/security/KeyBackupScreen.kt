@@ -19,9 +19,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.ui.graphics.Color
+import app.armorclaw.network.BridgeApi
+import java.security.MessageDigest
 
 /**
  * Key Backup Setup Screen - SSSS Recovery Passphrase
@@ -478,6 +484,8 @@ class KeyBackupViewModel : ViewModel() {
         )
     }
 
+    private val bridgeApi = BridgeApi()
+
     fun setupBackup() {
         val state = _uiState.value
 
@@ -490,15 +498,24 @@ class KeyBackupViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
-                // Simulate backup creation
-                // In production, this would:
-                // 1. Derive key from passphrase using PBKDF2
-                // 2. Encrypt private keys
-                // 3. Upload to homeserver as SSSS backup
+                // Derive passphrase hash for server-side key derivation
+                val passphraseHash = hashPassphrase(originalPassphrase)
 
-                kotlinx.coroutines.delay(2000)
+                val result = withContext(Dispatchers.IO) {
+                    bridgeApi.createKeyBackup(passphraseHash)
+                }
 
-                _uiState.value = _uiState.value.copy(step = SetupStep.COMPLETE)
+                result.fold(
+                    onSuccess = { response ->
+                        _uiState.value = _uiState.value.copy(step = SetupStep.COMPLETE)
+                    },
+                    onFailure = { e ->
+                        _uiState.value = state.copy(
+                            step = SetupStep.CONFIRM_PASSPHRASE,
+                            error = "Backup failed: ${e.message}"
+                        )
+                    }
+                )
             } catch (e: Exception) {
                 _uiState.value = state.copy(
                     step = SetupStep.CONFIRM_PASSPHRASE,
@@ -506,6 +523,16 @@ class KeyBackupViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    /**
+     * Hash passphrase for transport to bridge.
+     * The bridge performs PBKDF2 key derivation server-side.
+     */
+    private fun hashPassphrase(passphrase: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(passphrase.toByteArray(Charsets.UTF_8))
+        return hash.joinToString("") { "%02x".format(it) }
     }
 
     private fun calculateStrength(passphrase: String): PassphraseStrength {

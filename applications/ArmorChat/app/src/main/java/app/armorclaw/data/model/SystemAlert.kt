@@ -71,6 +71,9 @@ enum class AlertType(val displayName: String, val defaultSeverity: AlertSeverity
     BRIDGE_RESTARTING("Bridge Restarting", AlertSeverity.WARNING),
     MAINTENANCE("Maintenance Scheduled", AlertSeverity.INFO),
 
+    // PII / Blind Fill alerts
+    PII_ACCESS_REQUEST("PII Access Request", AlertSeverity.WARNING),
+
     // Compliance alerts
     COMPLIANCE_VIOLATION("Compliance Violation", AlertSeverity.ERROR),
     AUDIT_EXPORT("Audit Export Ready", AlertSeverity.INFO);
@@ -235,6 +238,41 @@ object AlertFactory {
             metadata = mapOf(
                 "room_name" to roomName,
                 "platforms" to platforms
+            )
+        )
+    }
+
+    /**
+     * PII Access Request - Batched approval for BlindFill fields
+     *
+     * @param requestId The HITL consent request ID
+     * @param skillName Human-readable skill name requesting PII
+     * @param fields List of maps with keys: "key", "description", "required" (Boolean), "sensitivity" (low/medium/high/critical)
+     */
+    fun piiAccessRequest(
+        requestId: String,
+        skillName: String,
+        fields: List<Map<String, Any>>
+    ): SystemAlertContent {
+        val requiredCount = fields.count { it["required"] == true }
+        val criticalFields = fields.filter { (it["sensitivity"] as? String) == "critical" }
+        val severity = if (criticalFields.isNotEmpty()) AlertSeverity.WARNING else AlertSeverity.INFO
+
+        val fieldSummary = fields.joinToString(", ") { it["key"] as? String ?: "unknown" }
+
+        return SystemAlertContent(
+            alertType = AlertType.PII_ACCESS_REQUEST,
+            severity = severity,
+            title = "PII Access Request",
+            message = "Skill '$skillName' requests access to $requiredCount required field(s): $fieldSummary",
+            action = "Review & Approve",
+            actionUrl = "armorclaw://pii/approve/$requestId",
+            metadata = mapOf(
+                "request_id" to requestId,
+                "skill_name" to skillName,
+                "fields" to fields,
+                "required_count" to requiredCount,
+                "has_critical" to criticalFields.isNotEmpty()
             )
         )
     }

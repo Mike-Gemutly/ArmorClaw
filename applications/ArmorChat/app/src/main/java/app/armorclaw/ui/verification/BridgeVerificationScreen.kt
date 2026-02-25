@@ -14,9 +14,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import app.armorclaw.network.BridgeApi
 
 /**
  * Bridge Verification Screen - SDTW E2EE Verification
@@ -241,6 +245,7 @@ class BridgeVerificationViewModel : ViewModel() {
     private var roomId: String? = null
     private var bridgeUserId: String? = null
     private var verificationTransactionId: String? = null
+    private val bridgeApi = BridgeApi()
 
     fun initialize(roomId: String, bridgeUserId: String) {
         this.roomId = roomId
@@ -264,18 +269,30 @@ class BridgeVerificationViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
-                // Simulate verification request
-                // In production, this would call Matrix SDK:
-                // matrixClient.verification().requestVerification(bridgeUserId, roomId)
+                val result = withContext(Dispatchers.IO) {
+                    bridgeApi.startVerification(
+                        userId = currentBridgeUserId,
+                        deviceId = "armorclaw-bridge",
+                        roomId = currentRoomId
+                    )
+                }
 
-                kotlinx.coroutines.delay(1000)
+                result.fold(
+                    onSuccess = { response ->
+                        verificationTransactionId = response.transaction_id
+                        val emojis = response.emojis.map { EmojiInfo(it.emoji, it.description) }
 
-                // Generate emoji verification (simulated)
-                val emojis = generateVerificationEmojis()
-
-                _uiState.value = _uiState.value.copy(
-                    statusMessage = "Compare the emojis below",
-                    emojis = emojis
+                        _uiState.value = _uiState.value.copy(
+                            statusMessage = "Compare the emojis below",
+                            emojis = emojis
+                        )
+                    },
+                    onFailure = { e ->
+                        _uiState.value = _uiState.value.copy(
+                            verificationInProgress = false,
+                            error = "Failed to start verification: ${e.message}"
+                        )
+                    }
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -287,21 +304,32 @@ class BridgeVerificationViewModel : ViewModel() {
     }
 
     fun confirmVerification() {
+        val txnId = verificationTransactionId ?: return
+
         _uiState.value = _uiState.value.copy(
             statusMessage = "Confirming verification..."
         )
 
         viewModelScope.launch {
             try {
-                // In production, call Matrix SDK to confirm:
-                // matrixClient.verification().confirmVerification(transactionId)
+                val result = withContext(Dispatchers.IO) {
+                    bridgeApi.confirmVerification(txnId)
+                }
 
-                kotlinx.coroutines.delay(500)
-
-                _uiState.value = _uiState.value.copy(
-                    verificationInProgress = false,
-                    verificationComplete = true,
-                    statusMessage = "Verification complete"
+                result.fold(
+                    onSuccess = { response ->
+                        _uiState.value = _uiState.value.copy(
+                            verificationInProgress = false,
+                            verificationComplete = response.verified,
+                            statusMessage = if (response.verified) "Verification complete" else "Verification failed",
+                            error = if (!response.verified) "Bridge did not confirm the match" else null
+                        )
+                    },
+                    onFailure = { e ->
+                        _uiState.value = _uiState.value.copy(
+                            error = "Confirmation failed: ${e.message}"
+                        )
+                    }
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -312,27 +340,21 @@ class BridgeVerificationViewModel : ViewModel() {
     }
 
     fun cancelVerification() {
+        val txnId = verificationTransactionId
+        if (txnId != null) {
+            viewModelScope.launch {
+                withContext(Dispatchers.IO) {
+                    bridgeApi.cancelVerification(txnId)
+                }
+            }
+        }
+
+        verificationTransactionId = null
         _uiState.value = _uiState.value.copy(
             verificationInProgress = false,
             emojis = emptyList(),
             statusMessage = null
         )
-    }
-
-    private fun generateVerificationEmojis(): List<EmojiInfo> {
-        // In production, these would come from the Matrix SDK verification
-        val emojiList = listOf(
-            EmojiInfo("🐕", "Dog"),
-            EmojiInfo("🐱", "Cat"),
-            EmojiInfo("🐘", "Elephant"),
-            EmojiInfo("🦊", "Fox"),
-            EmojiInfo("🐼", "Panda"),
-            EmojiInfo("🦁", "Lion"),
-            EmojiInfo("🐯", "Tiger"),
-            EmojiInfo("🐻", "Bear")
-        )
-
-        return emojiList.shuffled().take(7)
     }
 
     private val viewModelScope = androidx.lifecycle.viewModelScope

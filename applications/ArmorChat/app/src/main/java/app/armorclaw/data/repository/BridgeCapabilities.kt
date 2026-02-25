@@ -159,11 +159,21 @@ data class ChannelInfo(
 
 /**
  * Repository for bridge capabilities
+ *
+ * Uses StateFlow for reactive UI updates when capabilities change.
  */
 class BridgeCapabilitiesRepository {
 
     private val _capabilities = mutableMapOf<String, BridgeCapabilities>()
     val capabilities: Map<String, BridgeCapabilities> get() = _capabilities.toMap()
+
+    // Reactive version number — incremented on every mutation so Compose can recompose
+    private val _version = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    val version: kotlinx.coroutines.flow.StateFlow<Long> get() = _version
+
+    private fun notifyChange() {
+        _version.value++
+    }
 
     /**
      * Get capabilities for a room
@@ -191,6 +201,7 @@ class BridgeCapabilitiesRepository {
         )
 
         _capabilities[roomId] = capabilities
+        notifyChange()
         return capabilities
     }
 
@@ -398,6 +409,7 @@ class BridgeCapabilitiesRepository {
      */
     fun clearCapabilities(roomId: String) {
         _capabilities.remove(roomId)
+        notifyChange()
     }
 
     /**
@@ -405,5 +417,6 @@ class BridgeCapabilitiesRepository {
      */
     fun clearAll() {
         _capabilities.clear()
+        notifyChange()
     }
 }

@@ -5,7 +5,7 @@
 > **Deploy AI agents in production — without exposing your infrastructure.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-[![Status](https://img.shields.io/badge/status-v4.1.0--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
+[![Status](https://img.shields.io/badge/status-0.3.1--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
 [![Security](https://img.shields.io/badge/security-hardened-green.svg)](docs/guides/security-verification-guide.md)
 [![Docker](https://img.shields.io/badge/docker-24%2B-blue.svg)](https://docs.docker.com/)
 [![Matrix](https://img.shields.io/badge/protocol-Matrix%20E2EE-purple.svg)](https://matrix.org/)
@@ -125,7 +125,7 @@ ArmorClaw is built for teams running AI agents in production workflows:
 
 ## 🧪 Current Status
 
-**v4.1.0-beta — Docker Deployment Hardening Release**
+**0.3.1-beta — Docker Deployment Hardening Release**
 
 This release implements multi-layer defense against:
 
@@ -145,7 +145,7 @@ This release implements multi-layer defense against:
 | Direct shell execution        | ✅ Blocked |
 | Privilege escalation attempts | ✅ Blocked |
 
-Community validation in progress before v1.0 production release.
+Community validation in progress before 1.0 production release.
 
 ---
 
@@ -158,55 +158,15 @@ Community validation in progress before v1.0 production release.
 | **OS** | Ubuntu 22.04, Debian 12 | Ubuntu 24.04 |
 | **RAM** | 1 GB | 2 GB |
 | **Docker** | 24.0+ | Latest |
-| **Go** | 1.21+ | 1.24+ |
 
-### Install (2-3 minutes)
+> **Need a server?** We recommend [DigitalOcean](https://www.digitalocean.com/) — create a $6/mo Droplet (1 GB RAM, Ubuntu 24.04) and you're ready to go. See the [DigitalOcean Deployment Guide](docs/guides/digitalocean-deployment.md) for details.
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/armorclaw/armorclaw.git
-cd armorclaw
-
-# 2. Run quick setup
-sudo ./deploy/setup-quick.sh
-
-# 3. Add your API key
-sudo armorclaw-bridge add-key --provider openai --token sk-...
-
-# 4. Start an agent
-sudo armorclaw-bridge start --key openai-main
-```
-
-### Verify Installation
+### Deploy (2-3 minutes)
 
 ```bash
-# Check bridge status
-sudo systemctl status armorclaw-bridge
+# SSH into your VPS, then:
+curl -fsSL https://get.docker.com | sh   # skip if Docker is already installed
 
-# Test health via RPC
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | \
-  sudo socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
-```
-
-**Time to production:** ~3 minutes.
-
----
-
-## 🌐 Deployment Options
-
-| Method       | Domain Required | SSL      | Use Case           |
-|--------------|-----------------|----------|---------------------|
-| **Docker One-Command** | No | Self-signed | Simplest setup |
-| Quick Setup  | No              | Self-signed | Development, testing |
-| Standard     | Yes             | Let's Encrypt | Production        |
-| Docker Stack | Optional        | Built-in | Full infrastructure |
-| VPS Deploy   | Optional        | Configurable | Remote hosting    |
-
-### Docker One-Command (Simplest)
-
-**No YAML files. No manual config. Just run and answer questions.**
-
-```bash
 docker run -it --name armorclaw \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-data:/etc/armorclaw \
@@ -217,16 +177,31 @@ docker run -it --name armorclaw \
 **The setup wizard asks:**
 1. Server name (domain or IP)
 2. API provider and key (OpenAI, Anthropic, GLM-5, or custom)
-3. Matrix enabled? (optional for remote access)
+3. Admin credentials for Element X / ArmorChat
 
 All prompts have retry-on-error — a typo re-prompts instead of killing the container.
 
 **After setup completes:**
 - ✅ Bridge running
+- ✅ Matrix homeserver running
 - ✅ QR code displayed for ArmorChat
+- ✅ Admin user created, bridge room ready
 - ✅ All configs auto-generated
 
-**Non-interactive (CI/CD):**
+### Verify Installation
+
+```bash
+# Check container is healthy
+docker ps --filter name=armorclaw
+
+# View logs
+docker logs armorclaw
+```
+
+**Time to production:** ~3 minutes on a fresh VPS.
+
+### Non-Interactive (CI/CD)
+
 ```bash
 docker run -d --name armorclaw \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -236,6 +211,54 @@ docker run -d --name armorclaw \
   -e ARMORCLAW_API_KEY=sk-your-key \
   mikegemut/armorclaw:latest
 ```
+
+### Enterprise / Compliance Deployment
+
+For regulated industries (HIPAA, SOC2), use the enterprise profile:
+
+```bash
+# Interactive — guided compliance setup:
+docker run -it --name armorclaw \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-data:/etc/armorclaw \
+  -p 8443:8443 -p 6167:6167 -p 5000:5000 \
+  -e ARMORCLAW_PROFILE=enterprise \
+  mikegemut/armorclaw:latest
+
+# Non-interactive with HIPAA:
+docker run -d --name armorclaw \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-data:/etc/armorclaw \
+  -p 8443:8443 -p 6167:6167 -p 5000:5000 \
+  -e ARMORCLAW_PROFILE=enterprise \
+  -e ARMORCLAW_SERVER_NAME=your-domain.com \
+  -e ARMORCLAW_API_KEY=sk-your-key \
+  -e ARMORCLAW_HIPAA=true \
+  mikegemut/armorclaw:latest
+```
+
+Enterprise profile enables: PII/PHI scrubbing, audit logging, quarantine mode, buffered response processing, and maximum security tier.
+
+---
+
+## 🌐 Deployment Options
+
+| Method       | Domain Required | SSL      | Use Case           |
+|--------------|-----------------|----------|---------------------|
+| **Docker One-Command** | No | Self-signed | **Recommended — VPS, local, or CI/CD** |
+| Build from Source | No | Self-signed | Development, contributing |
+| Standard     | Yes             | Let's Encrypt | Production with custom domain |
+| Docker Stack | Optional        | Built-in | Full infrastructure |
+
+### Recommended VPS Providers
+
+| Provider | Plan | RAM | Price | Notes |
+|----------|------|-----|-------|-------|
+| **[DigitalOcean](https://www.digitalocean.com/)** ⭐ | Droplet | 1–2 GB | $6–12/mo | Best overall — simple UI, predictable pricing, great docs |
+| Hetzner | CX22 | 2 GB | €4/mo | Budget option, EU data centers |
+| Hostinger | KVM2 | 4 GB | $6/mo | Good value for larger setups |
+
+ArmorClaw runs on any Linux VPS with Docker — pick any provider you prefer.
 
 ### IP-Only Deployment (No Domain Required)
 
@@ -247,6 +270,18 @@ ArmorClaw supports deployment without a domain:
 ```bash
 # During setup, enter IP instead of domain
 # Example: 123.45.67.89 instead of matrix.example.com
+```
+
+### Build from Source
+
+For development or contributing (requires Go 1.24+):
+
+```bash
+git clone https://github.com/armorclaw/armorclaw.git
+cd armorclaw
+sudo ./deploy/setup-quick.sh
+sudo armorclaw-bridge add-key --provider openai --token sk-...
+sudo armorclaw-bridge start --key openai-main
 ```
 
 ---
@@ -313,6 +348,7 @@ ArmorClaw separates responsibilities across secure layers:
 - **[Error Catalog](docs/guides/error-catalog.md)** — Search errors by text (LLM-friendly)
 
 ### Deployment
+- **[DigitalOcean Deployment](docs/guides/digitalocean-deployment.md)** — Recommended VPS provider
 - **[VPS Deployment Guide](docs/guides/2026-02-05-infrastructure-deployment-guide.md)** — Deploy to any VPS
 - **[Hostinger Deployment](docs/guides/hostinger-deployment.md)** — Step-by-step for Hostinger
 
@@ -326,11 +362,12 @@ ArmorClaw separates responsibilities across secure layers:
 
 | Version | Feature                    | Target    | Status |
 |---------|---------------------------|-----------|--------|
-| v0.1.0  | Multi-layer security hardening | 2026-02-09 | ✅ Complete |
-| v4.0.0  | Zero-trust & audit system | 2026-02-19 | ✅ Complete |
-| v4.1.0  | Docker deployment hardening | 2026-02-24 | ✅ Complete |
-| v0.5.0  | Policy engine             | Q1 2026   | 🚧 In Progress |
-| v1.0.0  | Enterprise ready          | Q3 2026   | 📋 Planned |
+| 0.1.0   | Multi-layer security hardening | 2026-02-09 | ✅ Complete |
+| 0.2.0   | Zero-trust & audit system | 2026-02-19 | ✅ Complete |
+| 0.3.0   | Docker deployment hardening | 2026-02-24 | ✅ Complete |
+| 0.3.1   | Deployment profiles & error handling | 2026-02-25 | ✅ Complete |
+| 0.4.0   | Policy engine             | Q1 2026   | 🚧 In Progress |
+| 1.0.0   | Enterprise ready          | Q3 2026   | 📋 Planned |
 
 ArmorClaw is evolving from **secure runtime** → **enterprise AI containment platform**.
 

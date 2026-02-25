@@ -29,9 +29,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Python dependencies
+# Install Python dependencies with integrity checks
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir aiohttp websockets python-dotenv
+
+# Supply chain security: audit Python dependencies for known CVEs
+# pip-audit checks the installed packages against the PyPI advisory database.
+# Override with --build-arg SKIP_AUDIT=1 for local development only.
+ARG SKIP_AUDIT=0
+RUN pip install --no-cache-dir pip-audit && \
+    if [ "$SKIP_AUDIT" = "0" ]; then \
+      echo "=== Python Supply Chain Audit ===" && \
+      pip-audit --strict --desc || \
+      (echo "FATAL: pip-audit found vulnerabilities. Fix or set SKIP_AUDIT=1" && exit 1); \
+    else \
+      echo "WARNING: Python audit skipped (SKIP_AUDIT=1)"; \
+    fi && \
+    pip uninstall -y pip-audit  # Remove audit tool from production image
 
 # ============================================================
 # Stage 2: Production Runtime

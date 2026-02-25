@@ -814,6 +814,8 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleAgentList(req)
 	case "agent.send_command":
 		return s.handleAgentSendCommand(req)
+	case "agent.report_usage":
+		return s.handleAgentReportUsage(req)
 
 	// Workflow control methods (ArmorTerminal compatibility)
 	case "workflow.start":
@@ -6919,6 +6921,111 @@ func (s *Server) handleAgentSendCommand(req *Request) *Response {
 			"agent_id":    params.AgentID,
 			"status":      "dispatched",
 			"dispatched_at": time.Now().Unix(),
+		},
+	}
+}
+
+// handleAgentReportUsage handles agent.report_usage RPC method
+// Allows agents/wrappers to report token consumption back to the bridge.
+// This closes the budget tracking loop: agent executes LLM calls internally,
+// then reports total usage so Bridge can update AgentInfo and global budget state.
+func (s *Server) handleAgentReportUsage(req *Request) *Response {
+	var params struct {
+		AgentID      string `json:"agent_id"`
+		WorkflowID   string `json:"workflow_id,omitempty"`
+		InputTokens  int64  `json:"input_tokens"`
+		OutputTokens int64  `json:"output_tokens"`
+		Model        string `json:"model"`
+		CommandID    string `json:"command_id,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	totalTokens := params.InputTokens + params.OutputTokens
+	if totalTokens <= 0 {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "input_tokens + output_tokens must be > 0",
+			},
+		}
+	}
+
+	// Update agent token usage
+	agentsMu.Lock()
+	agent, exists := agents[params.AgentID]
+	if exists {
+		agent.TokensUsed += totalTokens
+		agent.LastActive = time.Now().Unix()
+	}
+	agentsMu.Unlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    KeyNotFound,
+				Message: "agent not found: " + params.AgentID,
+			},
+		}
+	}
+
+	// Update workflow token usage if workflow is specified
+	if params.WorkflowID != "" {
+		workflowsMu.Lock()
+		if wf, ok := workflows[params.WorkflowID]; ok {
+			wf.TokensUsed += totalTokens
+		}
+		workflowsMu.Unlock()
+	}
+
+	// Update global budget state
+	budgetStateMu.Lock()
+	budgetState.TokensUsed += totalTokens
+	budgetStateMu.Unlock()
+
+	agentLogger.Info("agent usage reported",
+		"agent_id", params.AgentID,
+		"input_tokens", params.InputTokens,
+		"output_tokens", params.OutputTokens,
+		"total_tokens", totalTokens,
+		"model", params.Model,
+		"command_id", params.CommandID,
+	)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":           true,
+			"agent_id":          params.AgentID,
+			"tokens_recorded":   totalTokens,
+			"agent_total":       agent.TokensUsed,
+			"budget_total":      budgetState.TokensUsed,
+			"budget_limit":      budgetState.TokensLimit,
 		},
 	}
 }

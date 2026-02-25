@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Security Verification Script
 # Verifies all security measures are in place
-# Version: 1.0.0
+# Version: 0.3.1
 
 set -e
 

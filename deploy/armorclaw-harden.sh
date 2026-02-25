@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Production Hardening
 # Post-setup security hardening for production deployments
-# Version: 1.0.0
+# Version: 0.3.1
 #
 # Usage: sudo ./deploy/armorclaw-harden.sh [--non-interactive]
 
