@@ -264,19 +264,58 @@ if [ ! -f "$SETUP_FLAG" ]; then
     # container-setup.sh via --from-wizard. Secrets are passed
     # through environment variables, never written to disk.
     #
-    # Fallback: If the Go binary is unavailable (e.g., stripped image),
-    # fall back to the bash-only interactive wizard.
+    # Fallback chain:
+    #   1. Huh? TUI wizard (Go binary)
+    #   2. Bash wizard (container-setup.sh)
+    #   3. Environment variables (non-interactive)
     setup_failed=false
+
     if [ -x /opt/armorclaw/armorclaw-bridge ]; then
-        if ! /opt/armorclaw/armorclaw-bridge container-setup; then
-            setup_failed=true
-        fi
+        echo -e "${CYAN}Launching Huh? TUI wizard...${NC}"
+
+        # Run wizard and capture exit code
+        set +e
+        /opt/armorclaw/armorclaw-bridge container-setup
+        WIZARD_EXIT=$?
+        set -e
+
         # Reset terminal state after Huh? TUI (may leave terminal in raw mode)
         stty sane 2>/dev/null || true
         tput reset 2>/dev/null || true
+
+        if [ $WIZARD_EXIT -ne 0 ]; then
+            echo ""
+            echo -e "${YELLOW}Huh? wizard exited with code $WIZARD_EXIT${NC}"
+
+            # Check if it's a user abort vs a crash
+            if [ $WIZARD_EXIT -eq 130 ]; then
+                echo -e "${YELLOW}Setup cancelled by user.${NC}"
+                exit 130
+            fi
+
+            echo -e "${YELLOW}Attempting fallback to bash wizard...${NC}"
+            cd /opt/armorclaw
+
+            if [ -x ./container-setup.sh ]; then
+                if ! ./container-setup.sh; then
+                    echo -e "${YELLOW}Bash wizard also failed.${NC}"
+                    setup_failed=true
+                fi
+            else
+                echo -e "${RED}Bash wizard not found.${NC}"
+                setup_failed=true
+            fi
+        fi
     else
+        echo -e "${YELLOW}Huh? wizard not available, using bash wizard...${NC}"
         cd /opt/armorclaw
-        if ! ./container-setup.sh; then
+
+        if [ -x ./container-setup.sh ]; then
+            if ! ./container-setup.sh; then
+                setup_failed=true
+            fi
+        else
+            echo -e "${RED}No setup wizard available.${NC}"
             setup_failed=true
         fi
     fi
@@ -287,16 +326,46 @@ if [ ! -f "$SETUP_FLAG" ]; then
         echo -e "${RED}ERROR: Container setup failed.${NC}"
         echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
-        echo "Common issues:"
-        echo "  • Docker socket not accessible - ensure your user is in the 'docker' group"
-        echo "  • Permission denied - try running with --user root or fix volume permissions"
-        echo ""
-        echo "To retry:"
-        echo "  1. Fix the issue above"
-        echo "  2. Remove the container: docker rm -f armorclaw"
-        echo "  3. Re-run the docker command"
-        echo ""
-        exit 1
+
+        # Check if we can fall back to environment variable mode
+        if [ -n "${ARMORCLAW_SERVER_NAME:-}" ] && [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+            echo -e "${YELLOW}Attempting non-interactive setup with environment variables...${NC}"
+            export NON_INTERACTIVE=true
+            cd /opt/armorclaw
+
+            if ./container-setup.sh; then
+                echo -e "${GREEN}Non-interactive setup succeeded!${NC}"
+                setup_failed=false
+            else
+                echo -e "${RED}Non-interactive setup also failed.${NC}"
+            fi
+        fi
+
+        # If still failed, show help
+        if [ "$setup_failed" = true ]; then
+            echo "Common issues:"
+            echo "  • Docker socket not accessible - run with --user root"
+            echo "  • Terminal incompatibility - try a different terminal or SSH client"
+            echo "  • Permission denied - fix volume permissions"
+            echo ""
+            echo "To retry with environment variables (non-interactive):"
+            echo "  docker run -it --user root \\"
+            echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
+            echo "    -v armorclaw-config:/etc/armorclaw \\"
+            echo "    -v armorclaw-data:/var/lib/armorclaw \\"
+            echo "    -e ARMORCLAW_SERVER_NAME=your-ip \\"
+            echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
+            echo "    -e ARMORCLAW_PROFILE=quick \\"
+            echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
+            echo "    mikegemut/armorclaw:latest"
+            echo ""
+            echo "To retry:"
+            echo "  1. Fix the issue above"
+            echo "  2. Remove the container: docker rm -f armorclaw"
+            echo "  3. Re-run the docker command"
+            echo ""
+            exit 1
+        fi
     fi
 
     # Mark setup complete
