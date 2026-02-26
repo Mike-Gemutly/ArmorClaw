@@ -117,7 +117,9 @@ COPY container/openclaw/ /opt/armorclaw/agent/openclaw/
 COPY deploy/container-setup.sh /opt/armorclaw/
 COPY deploy/health-check.sh /opt/armorclaw/
 COPY deploy/create-matrix-admin.sh /opt/armorclaw/
-RUN chmod +x /opt/armorclaw/*.sh
+COPY deploy/view-setup-log.sh /opt/armorclaw/
+RUN chmod +x /opt/armorclaw/*.sh && \
+    ln -sf /opt/armorclaw/view-setup-log.sh /usr/local/bin/view-setup-log
 
 # Copy configuration templates
 COPY configs/ /opt/armorclaw/configs/
@@ -136,6 +138,7 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 #!/bin/bash
 # ArmorClaw Quick Start Entrypoint
 # Launches container setup on first run, then starts bridge
+# Version: 0.3.2
 
 # NOTE: Do NOT use set -e. Transient failures must not kill the container.
 # Critical commands check errors explicitly.
@@ -143,7 +146,12 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 CONFIG_FILE="/etc/armorclaw/config.toml"
 SETUP_FLAG="/etc/armorclaw/.setup_complete"
 API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
-VERSION="0.3.1"
+LOG_DIR="/var/log/armorclaw"
+LOG_FILE="$LOG_DIR/setup.log"
+VERSION="0.3.2"
+
+# Debug mode (set ARMORCLAW_DEBUG=true to enable)
+DEBUG="${ARMORCLAW_DEBUG:-false}"
 
 # Colors
 RED='\033[0;31m'
@@ -153,28 +161,108 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Cleanup on failure only — prevent partial state from blocking future runs
-# Note: We trap EXIT but only clean up when exit_code != 0
-# Success path disables the trap before exiting
-cleanup_on_failure() {
+#=============================================================================
+# Logging Functions
+#=============================================================================
+
+init_logging() {
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    touch "$LOG_FILE" 2>/dev/null || true
+    chmod 644 "$LOG_FILE" 2>/dev/null || true
+}
+
+log_to_file() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp
+    timestamp=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_info()  { log_to_file "INFO" "$@"; }
+log_error() { log_to_file "ERROR" "$@"; }
+log_debug() { [ "$DEBUG" = true ] && log_to_file "DEBUG" "$@"; }
+
+# Initialize logging first
+init_logging
+
+# Redirect all output to log file AND stdout (Phase 1: Persistent Log File System)
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+log_info "ArmorClaw Quick Start v${VERSION} starting"
+log_info "Debug mode: $DEBUG"
+
+# Enable debug tracing if requested (Phase 3: Debug Mode)
+if [ "$DEBUG" = true ]; then
+    set -x
+    log_debug "Debug tracing enabled"
+fi
+
+#=============================================================================
+# Crash Handler (Phase 2: Crash Handler & Error Capture)
+#=============================================================================
+
+# Track if setup succeeded (for crash handler)
+SETUP_SUCCEEDED=false
+
+# Crash handler - shows error summary and log location on failure
+crash_handler() {
     local exit_code=$?
-    # Only clean up on failure (non-zero exit)
-    if [ $exit_code -ne 0 ]; then
+
+    # Only run on failure (non-zero exit)
+    if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
+        log_error "Setup failed with exit code: $exit_code"
+
         echo ""
-        echo -e "${YELLOW}Setup failed (exit $exit_code). Cleaning up partial state...${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}SETUP FAILED (exit code: $exit_code)${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        # Clean up partial state
+        echo -e "${YELLOW}Cleaning up partial state...${NC}"
         rm -f "$SETUP_FLAG" 2>/dev/null || true
         rm -f "$API_KEY_TEMP" 2>/dev/null || true
         rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
+
         # Reset terminal state in case Huh? left it in raw mode
         stty sane 2>/dev/null || true
         tput reset 2>/dev/null || true
+
+        # Show log file location
+        if [ -f "$LOG_FILE" ]; then
+            echo ""
+            echo -e "${CYAN}Log file saved to: $LOG_FILE${NC}"
+            echo ""
+            echo "To view the log:"
+            echo "  docker cp armorclaw:$LOG_FILE ./setup.log"
+            echo ""
+            echo "To view inside container:"
+            echo "  docker exec armorclaw cat $LOG_FILE"
+            echo ""
+            echo -e "${YELLOW}Last 20 lines of log:${NC}"
+            echo ""
+            tail -20 "$LOG_FILE" 2>/dev/null || echo "(no log available)"
+            echo ""
+        fi
+
+        echo -e "${CYAN}Common issues and fixes:${NC}"
+        echo "  • Docker socket not accessible - run with --user root"
+        echo "  • Terminal incompatibility - try environment variable mode:"
+        echo "      -e ARMORCLAW_SERVER_NAME=your-ip"
+        echo "      -e ARMORCLAW_API_KEY=sk-your-key"
+        echo "  • Permission denied - check volume permissions"
+        echo ""
     fi
+
     exit $exit_code
 }
-trap cleanup_on_failure INT TERM EXIT
+trap crash_handler INT TERM EXIT
 
 # Disable cleanup trap on success (call this before normal exit)
-disable_cleanup_trap() {
+disable_crash_handler() {
+    SETUP_SUCCEEDED=true
     trap - INT TERM EXIT
 }
 
@@ -208,6 +296,7 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  ARMORCLAW_PROFILE      Deployment profile (quick|enterprise)"
     echo "  ARMORCLAW_HIPAA        Enable HIPAA mode (true|false)"
     echo "  ARMORCLAW_QUARANTINE   Enable quarantine mode (true|false)"
+    echo "  ARMORCLAW_DEBUG        Enable debug mode (true|false)"
     echo ""
     echo "Examples:"
     echo "  # Quick start (interactive):"
@@ -227,6 +316,12 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
     echo "    -e ARMORCLAW_HIPAA=true \\"
     echo "    mikegemut/armorclaw:latest"
+    echo ""
+    echo "  # Debug mode (verbose logging):"
+    echo "  docker run -it --name armorclaw \\"
+    echo "    -e ARMORCLAW_DEBUG=true \\"
+    echo "    ..."
+    SETUP_SUCCEEDED=true
     exit 0
 fi
 
@@ -234,6 +329,7 @@ if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
     echo "ArmorClaw Quick Start v${VERSION}"
     echo "Bridge: $(/opt/armorclaw/armorclaw-bridge --version 2>/dev/null || echo 'installed')"
     echo "Node.js: $(node --version 2>/dev/null || echo 'installed')"
+    SETUP_SUCCEEDED=true
     exit 0
 fi
 
@@ -272,6 +368,7 @@ if [ ! -f "$SETUP_FLAG" ]; then
 
     if [ -x /opt/armorclaw/armorclaw-bridge ]; then
         echo -e "${CYAN}Launching Huh? TUI wizard...${NC}"
+        log_info "Launching Huh? TUI wizard"
 
         # Run wizard and capture exit code
         set +e
@@ -286,12 +383,17 @@ if [ ! -f "$SETUP_FLAG" ]; then
         if [ $WIZARD_EXIT -ne 0 ]; then
             echo ""
             echo -e "${YELLOW}Huh? wizard exited with code $WIZARD_EXIT${NC}"
+            log_error "Huh? wizard exited with code $WIZARD_EXIT"
 
             # Check if it's a user abort vs a crash
             if [ $WIZARD_EXIT -eq 130 ]; then
                 echo -e "${YELLOW}Setup cancelled by user.${NC}"
+                log_info "Setup cancelled by user"
                 exit 130
             fi
+
+            # Log error code INS-002 for wizard crash
+            log_error "[INS-002] Huh? wizard crashed - attempting fallback"
 
             echo -e "${YELLOW}Attempting fallback to bash wizard...${NC}"
             cd /opt/armorclaw
@@ -299,23 +401,30 @@ if [ ! -f "$SETUP_FLAG" ]; then
             if [ -x ./container-setup.sh ]; then
                 if ! ./container-setup.sh; then
                     echo -e "${YELLOW}Bash wizard also failed.${NC}"
+                    log_error "Bash wizard also failed"
                     setup_failed=true
                 fi
             else
                 echo -e "${RED}Bash wizard not found.${NC}"
+                log_error "Bash wizard not found"
                 setup_failed=true
             fi
+        else
+            log_info "Huh? wizard completed successfully"
         fi
     else
         echo -e "${YELLOW}Huh? wizard not available, using bash wizard...${NC}"
+        log_info "Huh? wizard not available, using bash wizard"
         cd /opt/armorclaw
 
         if [ -x ./container-setup.sh ]; then
             if ! ./container-setup.sh; then
+                log_error "Bash wizard failed"
                 setup_failed=true
             fi
         else
             echo -e "${RED}No setup wizard available.${NC}"
+            log_error "No setup wizard available"
             setup_failed=true
         fi
     fi
@@ -521,20 +630,24 @@ if [ -S /run/armorclaw/bridge.sock ]; then
 
     # Wait for bridge process
     if kill -0 $BRIDGE_PID 2>/dev/null; then
-        # Disable cleanup trap - setup succeeded, bridge is running
-        disable_cleanup_trap
+        # Disable crash handler - setup succeeded, bridge is running
+        log_info "Setup completed successfully - bridge running"
+        disable_crash_handler
         wait $BRIDGE_PID
         EXIT_CODE=$?
         if [ $EXIT_CODE -ne 0 ]; then
             echo -e "${RED}Bridge exited with code $EXIT_CODE${NC}"
+            log_error "Bridge exited with code $EXIT_CODE"
         fi
         exit $EXIT_CODE
     else
         echo -e "${RED}Bridge process is no longer running${NC}"
+        log_error "Bridge process is no longer running"
         exit 1
     fi
 else
     echo -e "${RED}ERROR: Bridge failed to create socket${NC}"
+    log_error "Bridge failed to create socket"
     kill $BRIDGE_PID 2>/dev/null || true
     exit 1
 fi

@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -285,6 +286,26 @@ func runSetupCommand(cliCfg cliConfig) {
 // setup (Docker Compose, Matrix, certs) to container-setup.sh.
 // Secrets are passed via environment variables and never written to the JSON file.
 func runContainerSetupCommand(cliCfg cliConfig) {
+	// Panic recovery for crash handler (Phase 2: Crash Handler & Error Capture)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in container setup: %v", r)
+			// Print stack trace for debugging
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			log.Printf("Stack trace:\n%s", string(buf[:n]))
+			fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			fmt.Println("SETUP CRASHED (unexpected error)")
+			fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			fmt.Println()
+			fmt.Println("This is an internal error. Please report this issue:")
+			fmt.Println("  https://github.com/armorclaw/armorclaw/issues")
+			fmt.Println()
+			fmt.Println("Include the stack trace above in your report.")
+			os.Exit(1)
+		}
+	}()
+
 	accessible := os.Getenv("ACCESSIBLE") != ""
 
 	result, err := wizard.Run(accessible)

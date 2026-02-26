@@ -41,6 +41,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"resolve_error","params":{"trace_id":"tr_
 | BGT-XXX | Budget | BGT-001 (warning), BGT-002 (exceeded) |
 | VOX-XXX | Voice | VOX-001 (WebRTC), VOX-002 (audio capture) |
 | E-XXX | EventBus | E001 (nil event), E101 (subscriber), E201 (websocket) |
+| INS-XXX | Installation | INS-001 (docker socket), INS-002 (wizard crash), INS-003 (config write) |
 
 ### LLM-Friendly Error Trace Format
 
@@ -79,6 +80,7 @@ Component Events:
 
 | Error Category | Quick Link |
 |---------------|------------|
+| **Installation Errors** | [Jump to Installation](#installation-errors) |
 | **Configuration Errors** | [Jump to Config](#configuration-errors) |
 | **Docker Errors** | [Jump to Docker](#docker-errors) |
 | **Keystore Errors** | [Jump to Keystore](#keystore-errors) |
@@ -86,6 +88,250 @@ Component Events:
 | **RPC/Bridge Errors** | [Jump to RPC](#rpcbridge-errors) |
 | **Matrix Errors** | [Jump to Matrix](#matrix-errors) |
 | **CLI Errors** | [Jump to CLI](#cli-errors) |
+
+---
+
+## Installation Errors
+
+These errors occur during the ArmorClaw quickstart container setup process.
+
+### `INS-001: Docker socket not accessible`
+
+**When:** The Docker socket is not found or not accessible during setup
+
+**Message:**
+```
+Docker socket not found at /var/run/docker.sock
+Cannot connect to Docker daemon
+```
+
+**Solution:**
+```bash
+# Option 1: Run with --user root
+docker run --user root -v /var/run/docker.sock:/var/run/docker.sock ...
+
+# Option 2: Add user to docker group on host
+sudo usermod -aG docker $USER
+# Log out and back in for changes to take effect
+
+# Option 3: Fix socket permissions
+sudo chmod 666 /var/run/docker.sock
+```
+
+---
+
+### `INS-002: Huh? wizard crashed (terminal incompatibility)`
+
+**When:** The Huh? TUI wizard crashes due to terminal incompatibility
+
+**Message:**
+```
+Huh? wizard exited with code X
+[INS-002] Huh? wizard crashed - attempting fallback
+```
+
+**Solution:**
+```bash
+# Option 1: Try a different terminal or SSH client
+# Some terminals don't fully support the TUI framework
+
+# Option 2: Use environment variables instead (non-interactive)
+docker run -e ARMORCLAW_SERVER_NAME=your-ip \
+           -e ARMORCLAW_API_KEY=sk-your-key \
+           -e ARMORCLAW_PROFILE=quick \
+           -e ARMORCLAW_DEBUG=true \
+           ...
+
+# Option 3: Enable debug mode for more details
+docker run -e ARMORCLAW_DEBUG=true ...
+```
+
+---
+
+### `INS-003: Configuration write failed (permission denied)`
+
+**When:** Cannot write configuration files to /etc/armorclaw
+
+**Message:**
+```
+Configuration write failed
+Permission denied
+```
+
+**Solution:**
+```bash
+# Check volume permissions
+docker volume inspect armorclaw-data
+
+# Check disk space
+df -h
+
+# Run with --user root if needed
+docker run --user root ...
+
+# Fix volume permissions manually
+sudo chown -R 10001:10001 /var/lib/docker/volumes/armorclaw-data/_data
+```
+
+---
+
+### `INS-004: Matrix connection failed`
+
+**When:** Cannot connect to the Matrix Conduit homeserver
+
+**Message:**
+```
+Matrix connection failed
+Conduit did not become ready within 120 seconds
+```
+
+**Solution:**
+```bash
+# Check if Conduit is running
+docker ps | grep conduit
+
+# Check Conduit logs
+docker logs armorclaw-conduit
+
+# Verify network connectivity
+curl http://localhost:6167/_matrix/client/versions
+
+# Restart Conduit
+docker restart armorclaw-conduit
+
+# Check if port is in use
+netstat -tlnp | grep 6167
+```
+
+---
+
+### `INS-005: API key validation failed`
+
+**When:** The provided API key is invalid or malformed
+
+**Message:**
+```
+API key validation failed
+API key appears too short
+```
+
+**Solution:**
+```bash
+# Verify API key format
+# OpenAI: sk-... (starts with sk-)
+# Anthropic: sk-ant-... (starts with sk-ant-)
+
+# Check key length (minimum 20 characters)
+echo -n "your-api-key" | wc -c
+
+# Test key manually
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer sk-your-key"
+
+# Re-run with correct key
+docker run -e ARMORCLAW_API_KEY=sk-correct-key ...
+```
+
+---
+
+### `INS-006: Required tool missing`
+
+**When:** A required tool is not available in the container
+
+**Message:**
+```
+Required tools missing: openssl jq socat curl docker
+```
+
+**Solution:**
+```bash
+# This usually indicates a corrupted container image
+# Pull the latest image
+docker pull mikegemut/armorclaw:latest
+
+# Or rebuild from source
+git clone https://github.com/armorclaw/armorclaw
+cd armorclaw
+docker build -f Dockerfile.quickstart -t armorclaw/quickstart .
+```
+
+---
+
+### `INS-007: Conduit homeserver not ready`
+
+**When:** The Conduit homeserver did not become ready in time
+
+**Message:**
+```
+Conduit did not become ready within 120 seconds
+```
+
+**Solution:**
+```bash
+# Check Conduit logs
+docker logs armorclaw-conduit
+
+# Check resource usage
+docker stats armorclaw-conduit
+
+# Increase wait time (wait and retry)
+# Setup will continue and you can run create-matrix-admin.sh manually
+
+# Run admin creation manually after Conduit is ready
+/opt/armorclaw/create-matrix-admin.sh admin
+```
+
+---
+
+### `INS-008: Matrix user registration failed`
+
+**When:** Unable to register users on the Matrix homeserver
+
+**Message:**
+```
+Matrix user registration failed
+Bridge user registration failed
+```
+
+**Solution:**
+```bash
+# Check Conduit status
+docker logs armorclaw-conduit
+
+# Verify registration_shared_secret in conduit.toml
+cat /tmp/armorclaw-configs/conduit.toml | grep registration_shared_secret
+
+# Run create-matrix-admin.sh manually
+/opt/armorclaw/create-matrix-admin.sh bridge
+/opt/armorclaw/create-matrix-admin.sh admin
+```
+
+---
+
+### `INS-009: Bridge room creation failed`
+
+**When:** Unable to create the bridge management room
+
+**Message:**
+```
+Bridge room creation failed
+Room creation failed
+```
+
+**Solution:**
+```bash
+# Create the room manually in Element X:
+# 1. Open Element X
+# 2. Create a new room named "ArmorClaw Bridge"
+# 3. Invite the bridge bot: @bridge:<server_name>
+# 4. Send !status to verify connection
+
+# Or create via API with admin token
+curl -X POST "http://localhost:6167/_matrix/client/v3/createRoom" \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ArmorClaw Bridge","preset":"trusted_private_chat"}'
+```
 
 ---
 

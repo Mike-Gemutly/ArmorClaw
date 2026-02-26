@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.1
+# Version: 0.3.2
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -19,8 +19,13 @@ NC='\033[0m'
 CONFIG_DIR="/etc/armorclaw"
 DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"
+LOG_DIR="/var/log/armorclaw"
+LOG_FILE="$LOG_DIR/setup.log"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 SETUP_FLAG="$CONFIG_DIR/.setup_complete"
+
+# Debug mode (set ARMORCLAW_DEBUG=true to enable)
+DEBUG="${ARMORCLAW_DEBUG:-false}"
 
 # Profile defaults
 DEPLOY_PROFILE="quick"
@@ -34,16 +39,226 @@ MATRIX_AVAILABLE=false
 # Track if setup succeeded (for cleanup trap)
 SETUP_SUCCEEDED=false
 
+#=============================================================================
+# Logging Functions (Phase 1: Persistent Log File System)
+#=============================================================================
+
+# Initialize log file - ensures directory exists and file is writable
+init_logging() {
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    touch "$LOG_FILE" 2>/dev/null || true
+    chmod 644 "$LOG_FILE" 2>/dev/null || true
+}
+
+# Core logging function - writes to log file with timestamp and level
+log_setup() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp
+    timestamp=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
+
+    # Write to log file (always, if possible)
+    if [ -w "$LOG_FILE" ] || [ -w "$LOG_DIR" ]; then
+        echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+}
+
+# Log levels - write to both log file and stdout/stderr
+log_info() {
+    log_setup "INFO" "$@"
+    print_info "$@"
+}
+
+log_success() {
+    log_setup "INFO" "SUCCESS: $*"
+    print_success "$@"
+}
+
+log_error() {
+    log_setup "ERROR" "$@"
+    print_error "$@"
+}
+
+log_warning() {
+    log_setup "WARN" "$@"
+    print_warning "$@"
+}
+
+log_debug() {
+    if [ "$DEBUG" = true ]; then
+        log_setup "DEBUG" "$@"
+        echo -e "${BLUE}[DEBUG] $*${NC}" >&2
+    fi
+}
+
+log_critical() {
+    log_setup "CRITICAL" "$@"
+    echo -e "${RED}[CRITICAL] $*${NC}" >&2
+}
+
+# Log command execution (for debug mode)
+log_command() {
+    log_debug "Executing: $*"
+}
+
+# Log section marker
+log_section() {
+    local section="$1"
+    log_setup "INFO" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_setup "INFO" "SECTION: $section"
+    log_setup "INFO" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+#=============================================================================
+# Error Codes and Summary (Phase 4: Error Summary & Recovery Suggestions)
+#=============================================================================
+
+# Installation error codes (INS-XXX)
+# INS-001: Docker socket not accessible
+# INS-002: Huh? wizard crashed (terminal incompatibility)
+# INS-003: Configuration write failed (permission denied)
+# INS-004: Matrix connection failed
+# INS-005: API key validation failed
+# INS-006: Required tool missing
+# INS-007: Conduit homeserver not ready
+# INS-008: User registration failed
+# INS-009: Bridge room creation failed
+
+# Set error code and message for crash handler
+set_error() {
+    ERROR_CODE="$1"
+    ERROR_MESSAGE="$2"
+    log_error "[$ERROR_CODE] $ERROR_MESSAGE"
+}
+
+# Show error summary with recovery suggestions
+show_error_summary() {
+    local error_code="$1"
+    local error_message="$2"
+
+    echo ""
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}Error Code: $error_code${NC}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}$error_message${NC}"
+    echo ""
+    echo -e "${CYAN}Suggested Fix:${NC}"
+
+    case "$error_code" in
+        INS-001)
+            echo "  The Docker socket is not accessible."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Run with --user root: docker run --user root ..."
+            echo "    2. Add user to docker group: sudo usermod -aG docker \$USER"
+            echo "    3. Fix socket permissions: sudo chmod 666 /var/run/docker.sock"
+            ;;
+        INS-002)
+            echo "  The Huh? TUI wizard crashed (terminal incompatibility)."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Try a different terminal or SSH client"
+            echo "    2. Use environment variables instead:"
+            echo "       -e ARMORCLAW_SERVER_NAME=your-ip"
+            echo "       -e ARMORCLAW_API_KEY=sk-your-key"
+            echo "       -e ARMORCLAW_PROFILE=quick"
+            ;;
+        INS-003)
+            echo "  Configuration write failed (permission denied)."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Check volume permissions: docker volume inspect armorclaw-data"
+            echo "    2. Ensure sufficient disk space: df -h"
+            echo "    3. Run with --user root if needed"
+            ;;
+        INS-004)
+            echo "  Matrix connection failed."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Check if Conduit is running: docker ps | grep conduit"
+            echo "    2. Check Conduit logs: docker logs armorclaw-conduit"
+            echo "    3. Verify network connectivity: curl http://localhost:6167/_matrix/client/versions"
+            ;;
+        INS-005)
+            echo "  API key validation failed."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Verify API key format (OpenAI: sk-*, Anthropic: sk-ant-*)"
+            echo "    2. Check API key is at least 20 characters"
+            echo "    3. Test key manually: curl https://api.openai.com/v1/models -H 'Authorization: Bearer sk-...'"
+            ;;
+        INS-006)
+            echo "  Required tool missing."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Install missing tools: apt-get install -y openssl jq socat curl docker.io"
+            echo "    2. Ensure the container image is complete"
+            ;;
+        INS-007)
+            echo "  Conduit homeserver did not become ready in time."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Check Conduit logs: docker logs armorclaw-conduit"
+            echo "    2. Increase wait time and retry"
+            echo "    3. Run create-matrix-admin.sh manually after Conduit is ready"
+            ;;
+        INS-008)
+            echo "  Matrix user registration failed."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Check if Conduit is healthy"
+            echo "    2. Verify registration_shared_secret in conduit.toml"
+            echo "    3. Run create-matrix-admin.sh manually: /opt/armorclaw/create-matrix-admin.sh <username>"
+            ;;
+        INS-009)
+            echo "  Bridge room creation failed."
+            echo ""
+            echo "  Solutions:"
+            echo "    1. Create the room manually in Element X"
+            echo "    2. Invite the bridge bot: @bridge:<server_name>"
+            echo "    3. Send !status to verify connection"
+            ;;
+        *)
+            echo "  Check $LOG_FILE for detailed error information"
+            ;;
+    esac
+    echo ""
+}
+
 # Cleanup trap - only runs on failure
 cleanup_on_failure() {
     local exit_code=$?
     if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
+        log_critical "Setup failed with exit code: $exit_code"
+
         echo ""
         echo -e "${YELLOW}Setup failed. Cleaning up partial state...${NC}"
+
         # Clean up wizard JSON if it exists
         rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
+
         # Reset terminal state
         stty sane 2>/dev/null || true
+
+        # Show error summary if we have an error code
+        if [ -n "${ERROR_CODE:-}" ]; then
+            show_error_summary "$ERROR_CODE" "${ERROR_MESSAGE:-Unknown error}"
+        fi
+
+        # Show log location
+        if [ -f "$LOG_FILE" ]; then
+            echo ""
+            echo -e "${CYAN}Log file saved to: $LOG_FILE${NC}"
+            echo ""
+            echo "To view the log:"
+            echo "  docker cp armorclaw:$LOG_FILE ./setup.log"
+            echo ""
+            echo "Last 20 lines:"
+            tail -20 "$LOG_FILE" 2>/dev/null || echo "(no log available)"
+            echo ""
+        fi
     fi
     exit $exit_code
 }
@@ -141,11 +356,12 @@ check_required_tools() {
     done
 
     if [ ${#missing[@]} -gt 0 ]; then
+        set_error "INS-006" "Required tools missing: ${missing[*]}"
         print_error "Required tools missing: ${missing[*]}"
         print_error "Install with: apt-get install -y ${missing[*]}"
         exit 1
     fi
-    print_success "Required tools verified (openssl, jq, socat, curl, docker)"
+    log_success "Required tools verified (openssl, jq, socat, curl, docker)"
 }
 
 validate_config_vars() {
@@ -458,9 +674,10 @@ generate_self_signed_cert() {
 }
 
 check_docker_socket() {
-    print_info "Checking Docker socket..."
+    log_info "Checking Docker socket..."
 
     if [ ! -S /var/run/docker.sock ]; then
+        set_error "INS-001" "Docker socket not found at /var/run/docker.sock"
         print_error "Docker socket not found at /var/run/docker.sock"
         print_error "This container requires Docker socket access."
         echo ""
@@ -472,6 +689,7 @@ check_docker_socket() {
     local docker_error
     docker_error=$(docker info 2>&1)
     if [ $? -ne 0 ]; then
+        set_error "INS-001" "Cannot connect to Docker daemon: $docker_error"
         print_error "Cannot connect to Docker daemon"
         print_error "Ensure your user has Docker permissions"
         echo ""
@@ -487,7 +705,7 @@ check_docker_socket() {
         exit 1
     fi
 
-    print_success "Docker socket accessible"
+    log_success "Docker socket accessible"
 }
 
 configure_matrix() {
@@ -932,20 +1150,20 @@ start_matrix_stack() {
 }
 
 wait_for_conduit() {
-    print_info "Waiting for Conduit homeserver to be ready..."
+    log_info "Waiting for Conduit homeserver to be ready..."
     local max_attempts=24  # 24 * 5s = 120s
     local attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
         # Check if Conduit responds to the versions endpoint
         if curl -sf --connect-timeout 3 "http://localhost:6167/_matrix/client/versions" >/dev/null 2>&1; then
-            print_success "Conduit homeserver is ready"
+            log_success "Conduit homeserver is ready"
             return 0
         fi
 
         attempt=$((attempt + 1))
         if [ $((attempt % 4)) -eq 0 ]; then
-            print_info "Still waiting for Conduit... (${attempt}/${max_attempts})"
+            log_info "Still waiting for Conduit... (${attempt}/${max_attempts})"
         else
             echo -n "."
         fi
@@ -953,6 +1171,7 @@ wait_for_conduit() {
     done
 
     echo ""
+    set_error "INS-007" "Conduit did not become ready within 120 seconds"
     print_error "Conduit did not become ready within 120 seconds"
     print_warning "Check Conduit logs: docker logs armorclaw-conduit"
     print_warning "Bridge user registration will be skipped - you may need to run create-matrix-admin.sh manually"
@@ -1157,6 +1376,7 @@ setup_bridge_room() {
     local ADMIN_TOKEN
     ADMIN_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
     if [ -z "$ADMIN_TOKEN" ]; then
+        set_error "INS-009" "Admin login failed for bridge room setup"
         print_warning "Admin login failed — skipping room setup"
         return 1
     fi
@@ -1215,6 +1435,8 @@ setup_bridge_room() {
 final_summary() {
     local server_name="${MATRIX_SERVER_NAME:-${MATRIX_SERVER%%:*}}"
 
+    log_section "Setup Complete"
+
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║${NC}        ${BOLD}Setup Complete!${NC}                                  ${GREEN}║${NC}"
@@ -1226,6 +1448,12 @@ final_summary() {
     echo "  - API provider: $API_BASE_URL"
     echo "  - Security tier: ${SECURITY_TIER:-essential}"
     echo "  - Log level: ${LOG_LEVEL:-info}"
+    echo ""
+    echo "Files:"
+    echo "  - Config: $CONFIG_FILE"
+    echo "  - Keystore: $DATA_DIR/keystore.db"
+    echo "  - SSL cert: $CONFIG_DIR/ssl/cert.pem"
+    echo "  - Setup log: $LOG_FILE"
     echo ""
 
     # Enterprise compliance summary
@@ -1249,12 +1477,6 @@ final_summary() {
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
     fi
-
-    echo "Files:"
-    echo "  - Config: $CONFIG_FILE"
-    echo "  - Keystore: $DATA_DIR/keystore.db"
-    echo "  - SSL cert: $CONFIG_DIR/ssl/cert.pem"
-    echo ""
 
     # Admin credentials (critical for Element X / ArmorChat login)
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -1380,6 +1602,18 @@ offer_post_setup_options() {
 #=============================================================================
 
 main() {
+    # Initialize logging first
+    init_logging
+    log_section "ArmorClaw Container Setup Starting"
+    log_info "Setup version: 0.3.2"
+    log_info "Debug mode: $DEBUG"
+
+    # Enable debug tracing if requested
+    if [ "$DEBUG" = true ]; then
+        set -x
+        log_debug "Debug tracing enabled"
+    fi
+
     # Check for --from-wizard flag (Huh? TUI wizard output)
     FROM_WIZARD=false
     if [ "$1" = "--from-wizard" ] && [ -n "$2" ]; then
