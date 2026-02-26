@@ -159,36 +159,71 @@ Community validation in progress before 1.0 production release.
 | **RAM** | 1 GB | 2 GB |
 | **Docker** | 24.0+ | Latest |
 
-> **Need a server?** We recommend [DigitalOcean](https://www.digitalocean.com/) — create a $6/mo Droplet (1 GB RAM, Ubuntu 24.04) and you're ready to go. See the [DigitalOcean Deployment Guide](docs/guides/digitalocean-deployment.md) for details.
+> **Need a server?** Any Linux VPS with Docker works. See [Recommended VPS Providers](#recommended-vps-providers) below.
 
-### Deploy (2-3 minutes)
+### Step 1: Install Docker (skip if already installed)
+
+SSH into your VPS, then:
 
 ```bash
-# SSH into your VPS, then:
-curl -fsSL https://get.docker.com | sh   # skip if Docker is already installed
+curl -fsSL https://get.docker.com | sh
+```
 
+Verify:
+
+```bash
+docker --version
+```
+
+### Step 2: Pull and Run
+
+One command — no git clone, no config files, no manual setup:
+
+```bash
 docker run -it --name armorclaw \
+  --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-data:/etc/armorclaw \
+  -v armorclaw-keystore:/var/lib/armorclaw \
   -p 8443:8443 -p 6167:6167 -p 5000:5000 \
   mikegemut/armorclaw:latest
 ```
 
-**The setup wizard asks:**
-1. Server name (domain or IP)
-2. API provider and key (OpenAI, Anthropic, GLM-5, or custom)
-3. Admin credentials for Element X / ArmorChat
+What each flag does:
+
+| Flag | Purpose |
+|------|---------|
+| `-it` | Interactive mode — required for setup wizard on first run |
+| `--restart unless-stopped` | Auto-restart on reboot or crash |
+| `-v .../docker.sock` | Bridge needs Docker access to manage agent containers |
+| `-v armorclaw-data` | Persists config across container restarts |
+| `-v armorclaw-keystore` | Persists encrypted API keys |
+| `-p 8443` | Bridge HTTPS API (ArmorChat connects here) |
+| `-p 6167` | Matrix homeserver (Element X connects here) |
+| `-p 5000` | Push gateway (mobile notifications) |
+
+**No domain required.** Use your VPS IP address when the wizard asks for server name.
+
+### Step 3: Setup Wizard
+
+On first run, the setup wizard starts automatically and asks:
+
+1. **Server name** — enter your VPS IP (e.g. `123.45.67.89`) or domain
+2. **API provider and key** — OpenAI, Anthropic, Google, xAI, or custom
+3. **Admin credentials** — username and password for Element X / ArmorChat
 
 All prompts have retry-on-error — a typo re-prompts instead of killing the container.
 
-**After setup completes:**
+When setup completes, you'll see:
 - ✅ Bridge running
 - ✅ Matrix homeserver running
-- ✅ QR code displayed for ArmorChat
+- ✅ QR code displayed for ArmorChat provisioning
 - ✅ Admin user created, bridge room ready
 - ✅ All configs auto-generated
 
-### Verify Installation
+**Time to running:** ~2-3 minutes on a fresh VPS.
+
+### Step 4: Verify
 
 ```bash
 # Check container is healthy
@@ -198,16 +233,47 @@ docker ps --filter name=armorclaw
 docker logs armorclaw
 ```
 
-**Time to production:** ~3 minutes on a fresh VPS.
+### Step 5: Connect
 
-### Non-Interactive (CI/CD)
+**ArmorChat (recommended):** Scan the QR code displayed after setup.
+
+**Element X:** Open the app → set homeserver to `http://YOUR_VPS_IP:6167` → log in with admin credentials.
+
+**Generate a new QR code anytime:**
+
+```bash
+docker exec armorclaw armorclaw-bridge generate-qr
+```
+
+### Managing the Bridge
+
+```bash
+# View live logs
+docker logs -f armorclaw
+
+# Restart
+docker restart armorclaw
+
+# Stop
+docker stop armorclaw
+
+# Re-run setup wizard (resets config)
+docker exec armorclaw rm /etc/armorclaw/.setup_complete
+docker restart armorclaw
+```
+
+### Non-Interactive Deployment (CI/CD)
+
+Pass environment variables to skip the wizard entirely:
 
 ```bash
 docker run -d --name armorclaw \
+  --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-data:/etc/armorclaw \
+  -v armorclaw-keystore:/var/lib/armorclaw \
   -p 8443:8443 -p 6167:6167 -p 5000:5000 \
-  -e ARMORCLAW_SERVER_NAME=your-domain.com \
+  -e ARMORCLAW_SERVER_NAME=your-domain-or-ip \
   -e ARMORCLAW_API_KEY=sk-your-key \
   mikegemut/armorclaw:latest
 ```
@@ -219,16 +285,20 @@ For regulated industries (HIPAA, SOC2), use the enterprise profile:
 ```bash
 # Interactive — guided compliance setup:
 docker run -it --name armorclaw \
+  --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-data:/etc/armorclaw \
+  -v armorclaw-keystore:/var/lib/armorclaw \
   -p 8443:8443 -p 6167:6167 -p 5000:5000 \
   -e ARMORCLAW_PROFILE=enterprise \
   mikegemut/armorclaw:latest
 
 # Non-interactive with HIPAA:
 docker run -d --name armorclaw \
+  --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-data:/etc/armorclaw \
+  -v armorclaw-keystore:/var/lib/armorclaw \
   -p 8443:8443 -p 6167:6167 -p 5000:5000 \
   -e ARMORCLAW_PROFILE=enterprise \
   -e ARMORCLAW_SERVER_NAME=your-domain.com \

@@ -31,17 +31,40 @@ COMPLIANCE_PATTERNS_PII="false"
 COMPLIANCE_PATTERNS_PHI="false"
 MATRIX_AVAILABLE=false
 
+# Track if setup succeeded (for cleanup trap)
+SETUP_SUCCEEDED=false
+
+# Cleanup trap - only runs on failure
+cleanup_on_failure() {
+    local exit_code=$?
+    if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
+        echo ""
+        echo -e "${YELLOW}Setup failed. Cleaning up partial state...${NC}"
+        # Clean up wizard JSON if it exists
+        rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
+        # Reset terminal state
+        stty sane 2>/dev/null || true
+    fi
+    exit $exit_code
+}
+trap cleanup_on_failure INT TERM EXIT
+
 #=============================================================================
 # Helper Functions
 #=============================================================================
 
 print_header() {
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════╗"
-    echo "║        ${BOLD}ArmorClaw Container Setup${NC}${CYAN}                     ║"
-    echo "║        ${BOLD}Version 0.3.1${NC}${CYAN}                                  ║"
-    echo "╚══════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+    # Reset terminal state in case Huh? TUI left it in raw mode
+    stty sane 2>/dev/null || true
+    tput reset 2>/dev/null || true
+
+    # Use printf for reliable ANSI handling
+    printf '%b' "${CYAN}"
+    printf '╔══════════════════════════════════════════════════════╗\n'
+    printf '║        %bArmorClaw Container Setup%b%b                     ║\n' "${BOLD}" "${NC}" "${CYAN}"
+    printf '║        %bVersion 0.3.1%b%b                                  ║\n' "${BOLD}" "${NC}" "${CYAN}"
+    printf '╚══════════════════════════════════════════════════════╝\n'
+    printf '%b' "${NC}"
 }
 
 print_step() {
@@ -445,10 +468,22 @@ check_docker_socket() {
         exit 1
     fi
 
-    # Test Docker access
-    if ! docker info >/dev/null 2>&1; then
+    # Test Docker access - check if we can talk to the daemon
+    local docker_error
+    docker_error=$(docker info 2>&1)
+    if [ $? -ne 0 ]; then
         print_error "Cannot connect to Docker daemon"
         print_error "Ensure your user has Docker permissions"
+        echo ""
+        echo "Error details: $docker_error"
+        echo ""
+        echo "Solutions:"
+        echo "  1. Run container as root: --user root"
+        echo "  2. Add user to docker group on host: sudo usermod -aG docker \$USER"
+        echo "  3. Fix socket permissions: sudo chmod 666 /var/run/docker.sock"
+        echo ""
+        echo "For quickstart container, add to your docker run command:"
+        echo "  --user root"
         exit 1
     fi
 
@@ -1428,6 +1463,9 @@ main() {
 
     # Show summary
     final_summary
+
+    # Mark setup as succeeded (disables cleanup trap)
+    SETUP_SUCCEEDED=true
 }
 
 # Run main

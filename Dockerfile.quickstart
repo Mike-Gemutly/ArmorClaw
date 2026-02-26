@@ -153,15 +153,30 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Cleanup on interruption — prevent partial state from blocking future runs
-cleanup() {
-    echo ""
-    echo -e "${YELLOW}Interrupted. Cleaning up partial state...${NC}"
-    rm -f "$SETUP_FLAG"
-    rm -f "$API_KEY_TEMP"
-    exit 130
+# Cleanup on failure only — prevent partial state from blocking future runs
+# Note: We trap EXIT but only clean up when exit_code != 0
+# Success path disables the trap before exiting
+cleanup_on_failure() {
+    local exit_code=$?
+    # Only clean up on failure (non-zero exit)
+    if [ $exit_code -ne 0 ]; then
+        echo ""
+        echo -e "${YELLOW}Setup failed (exit $exit_code). Cleaning up partial state...${NC}"
+        rm -f "$SETUP_FLAG" 2>/dev/null || true
+        rm -f "$API_KEY_TEMP" 2>/dev/null || true
+        rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
+        # Reset terminal state in case Huh? left it in raw mode
+        stty sane 2>/dev/null || true
+        tput reset 2>/dev/null || true
+    fi
+    exit $exit_code
 }
-trap cleanup INT TERM
+trap cleanup_on_failure INT TERM EXIT
+
+# Disable cleanup trap on success (call this before normal exit)
+disable_cleanup_trap() {
+    trap - INT TERM EXIT
+}
 
 # Handle --help and --version flags before any setup
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -183,6 +198,9 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Required volumes:"
     echo "  -v /var/run/docker.sock:/var/run/docker.sock"
     echo "  -v armorclaw-data:/etc/armorclaw (optional, persists config)"
+    echo ""
+    echo "Important: Run with --user root to access Docker socket:"
+    echo "  docker run --user root -v /var/run/docker.sock:/var/run/docker.sock ..."
     echo ""
     echo "Environment variables (non-interactive mode):"
     echo "  ARMORCLAW_SERVER_NAME  Server domain or IP"
@@ -248,19 +266,37 @@ if [ ! -f "$SETUP_FLAG" ]; then
     #
     # Fallback: If the Go binary is unavailable (e.g., stripped image),
     # fall back to the bash-only interactive wizard.
+    setup_failed=false
     if [ -x /opt/armorclaw/armorclaw-bridge ]; then
         if ! /opt/armorclaw/armorclaw-bridge container-setup; then
-            echo -e "${RED}ERROR: Container setup failed.${NC}"
-            echo -e "${RED}Re-run the container to try again.${NC}"
-            exit 1
+            setup_failed=true
         fi
+        # Reset terminal state after Huh? TUI (may leave terminal in raw mode)
+        stty sane 2>/dev/null || true
+        tput reset 2>/dev/null || true
     else
         cd /opt/armorclaw
         if ! ./container-setup.sh; then
-            echo -e "${RED}ERROR: Container setup failed.${NC}"
-            echo -e "${RED}Re-run the container to try again.${NC}"
-            exit 1
+            setup_failed=true
         fi
+    fi
+
+    if [ "$setup_failed" = true ]; then
+        echo ""
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}ERROR: Container setup failed.${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo "Common issues:"
+        echo "  • Docker socket not accessible - ensure your user is in the 'docker' group"
+        echo "  • Permission denied - try running with --user root or fix volume permissions"
+        echo ""
+        echo "To retry:"
+        echo "  1. Fix the issue above"
+        echo "  2. Remove the container: docker rm -f armorclaw"
+        echo "  3. Re-run the docker command"
+        echo ""
+        exit 1
     fi
 
     # Mark setup complete
@@ -416,6 +452,8 @@ if [ -S /run/armorclaw/bridge.sock ]; then
 
     # Wait for bridge process
     if kill -0 $BRIDGE_PID 2>/dev/null; then
+        # Disable cleanup trap - setup succeeded, bridge is running
+        disable_cleanup_trap
         wait $BRIDGE_PID
         EXIT_CODE=$?
         if [ $EXIT_CODE -ne 0 ]; then
