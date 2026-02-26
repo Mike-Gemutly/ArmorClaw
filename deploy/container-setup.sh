@@ -149,6 +149,66 @@ validate_config_vars() {
 }
 
 #=============================================================================
+# Wizard JSON Input Support
+#=============================================================================
+
+# Load configuration from wizard JSON output file.
+# Non-secret values come from the JSON file; secrets come from env vars
+# (ARMORCLAW_WIZARD_API_KEY, ARMORCLAW_WIZARD_ADMIN_PASSWORD,
+# ARMORCLAW_WIZARD_BRIDGE_PASSWORD) to avoid leaving them on disk.
+load_wizard_json() {
+    local json_file="$1"
+
+    if [ ! -f "$json_file" ]; then
+        print_error "Wizard output file not found: $json_file"
+        exit 1
+    fi
+
+    print_info "Loading configuration from wizard output..."
+
+    # Parse non-secret config from JSON
+    DEPLOY_PROFILE=$(jq -r '.profile // "quick"' "$json_file")
+    API_PROVIDER=$(jq -r '.api_provider // "openai"' "$json_file")
+    API_BASE_URL=$(jq -r '.api_base_url // "https://api.openai.com/v1"' "$json_file")
+    ADMIN_USER=$(jq -r '.admin_user // "admin"' "$json_file")
+    LOG_LEVEL=$(jq -r '.log_level // "info"' "$json_file")
+    SOCKET_PATH=$(jq -r '.socket_path // "/run/armorclaw/bridge.sock"' "$json_file")
+    SECURITY_TIER=$(jq -r '.security_tier // "enhanced"' "$json_file")
+    HIPAA_ENABLED=$(jq -r '.hipaa_enabled // false' "$json_file")
+    QUARANTINE_ENABLED=$(jq -r '.quarantine_enabled // false' "$json_file")
+    AUDIT_RETENTION_DAYS=$(jq -r '.audit_retention_days // 90' "$json_file")
+
+    # Secrets come from environment variables (set by the Go wizard process)
+    API_KEY="${ARMORCLAW_WIZARD_API_KEY:-}"
+    ADMIN_PASSWORD="${ARMORCLAW_WIZARD_ADMIN_PASSWORD:-}"
+    BRIDGE_PASSWORD="${ARMORCLAW_WIZARD_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)}"
+
+    # Auto-detect server IP
+    local detected_ip=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+    SERVER_NAME="${detected_ip:-127.0.0.1}"
+    MATRIX_SERVER="${SERVER_NAME}:8448"
+    MATRIX_URL="http://localhost:6167"
+    BRIDGE_USER="bridge"
+
+    # Enterprise compliance patterns
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        COMPLIANCE_PATTERNS_PII="true"
+        if [ "$HIPAA_ENABLED" = "true" ]; then
+            COMPLIANCE_PATTERNS_PHI="true"
+        fi
+    fi
+
+    NON_INTERACTIVE=true
+    FROM_WIZARD=true
+
+    print_success "Wizard configuration loaded (profile: $DEPLOY_PROFILE)"
+
+    # Delete the JSON file immediately after reading — secrets are in env vars
+    rm -f "$json_file"
+    print_info "Wizard JSON file removed (secrets in memory only)"
+}
+
+#=============================================================================
 # Environment Variable Support
 #=============================================================================
 
@@ -1018,12 +1078,14 @@ register_users() {
     # This prevents anyone from registering users after setup
     print_info "Removing registration shared secret..."
     local HOST_CONFIGS="/tmp/armorclaw-configs"
-    echo "$(cat /dev/null)" | docker run --rm -i -v /tmp:/tmp alpine sh -c "
+    if ! echo "$(cat /dev/null)" | docker run --rm -i -v /tmp:/tmp alpine sh -c "
         if [ -f '$HOST_CONFIGS/conduit.toml' ]; then
             sed -i '/registration_shared_secret/d' '$HOST_CONFIGS/conduit.toml'
             sed -i '/Temporary.*shared secret/d' '$HOST_CONFIGS/conduit.toml'
         fi
-    " 2>/dev/null || true
+    " 2>/dev/null; then
+        print_warning "Failed to remove registration shared secret — remove manually from $HOST_CONFIGS/conduit.toml"
+    fi
 
     # Restart Conduit to pick up the config without shared secret
     docker restart armorclaw-conduit >/dev/null 2>&1 || true
@@ -1283,20 +1345,30 @@ offer_post_setup_options() {
 #=============================================================================
 
 main() {
+    # Check for --from-wizard flag (Huh? TUI wizard output)
+    FROM_WIZARD=false
+    if [ "$1" = "--from-wizard" ] && [ -n "$2" ]; then
+        load_wizard_json "$2"
+        shift 2
+    fi
+
     print_header
 
     # Verify required tools are available
     check_required_tools
 
-    # Check for environment variables
-    check_env_vars
+    # If not from wizard, check env vars and run interactive prompts
+    if [ "$FROM_WIZARD" != true ]; then
+        # Check for environment variables
+        check_env_vars
 
-    # Select deployment profile (Step 0)
-    select_profile
+        # Select deployment profile (Step 0)
+        select_profile
 
-    # Apply auto-defaults for quick profile
-    if [ "$DEPLOY_PROFILE" = "quick" ] && [ "$NON_INTERACTIVE" != true ]; then
-        apply_quick_defaults
+        # Apply auto-defaults for quick profile
+        if [ "$DEPLOY_PROFILE" = "quick" ] && [ "$NON_INTERACTIVE" != true ]; then
+            apply_quick_defaults
+        fi
     fi
 
     # Create directories

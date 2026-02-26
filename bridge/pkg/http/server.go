@@ -47,14 +47,33 @@ type ServerConfig struct {
 
 // Server is the HTTPS server for the bridge
 type Server struct {
-	config     ServerConfig
-	rpcServer  *rpc.Server
-	httpServer *http.Server
-	certPEM    []byte
-	keyPEM     []byte
-	mu         sync.RWMutex
-	clients    map[string]*WebSocketClient
-	qrManager  *qr.QRManager
+	config       ServerConfig
+	rpcServer    *rpc.Server
+	httpServer   *http.Server
+	certPEM      []byte
+	keyPEM       []byte
+	mu           sync.RWMutex
+	clients      map[string]*WebSocketClient
+	qrManager    *qr.QRManager
+	ownerClaimed bool // tracks whether an OWNER has been claimed (for is_new_server)
+}
+
+// SetOwnerClaimed allows the provisioning manager to update owner status
+func (s *Server) SetOwnerClaimed(claimed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ownerClaimed = claimed
+}
+
+// toWSS converts an https:// URL to wss:// (or http:// to ws://)
+func toWSS(u string) string {
+	if len(u) >= 8 && u[:8] == "https://" {
+		return "wss://" + u[8:]
+	}
+	if len(u) >= 7 && u[:7] == "http://" {
+		return "ws://" + u[7:]
+	}
+	return u
 }
 
 // WebSocketClient represents a connected WebSocket client
@@ -322,11 +341,21 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	serverName := s.config.ServerName
+	if serverName == "" {
+		serverName = s.config.Hostname
+	}
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "ok",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"version":   "1.0.0",
+		"status":                  "ok",
+		"bridge_ready":            true,
+		"provisioning_available":  true,
+		"is_new_server":           !s.ownerClaimed,
+		"server_name":             serverName,
+		"timestamp":               time.Now().UTC().Format(time.RFC3339),
+		"version":                 "1.0.0",
 	})
 }
 
@@ -335,14 +364,29 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	ips, _ := getLocalIPs()
 	fingerprint, _ := s.GetCertificateFingerprint()
 
+	bridgeURL := fmt.Sprintf("https://%s", s.config.Hostname)
+	if s.config.Port != 443 && s.config.Port != 0 {
+		bridgeURL = fmt.Sprintf("https://%s:%d", s.config.Hostname, s.config.Port)
+	}
+
+	matrixURL := s.config.MatrixHomeserver
+	if matrixURL == "" {
+		matrixURL = "https://matrix.armorclaw.app"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"name":        hostname,
-		"hostname":    s.config.Hostname,
-		"port":        s.config.Port,
-		"ips":         ips,
-		"version":     "1.0.0",
-		"fingerprint": fingerprint,
+		"name":              hostname,
+		"hostname":          s.config.Hostname,
+		"port":              s.config.Port,
+		"ips":               ips,
+		"version":           "1.0.0",
+		"fingerprint":       fingerprint,
+		"matrix_homeserver": matrixURL,
+		"rpc_url":           bridgeURL + "/api",
+		"ws_url":            toWSS(bridgeURL) + "/ws",
+		"push_gateway":      bridgeURL + "/_matrix/push/v1/notify",
 		"endpoints": map[string]string{
 			"rpc":    "/api",
 			"ws":     "/ws",
@@ -398,10 +442,10 @@ func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 		"m.homeserver": map[string]string{
 			"base_url": matrixURL,
 		},
-		"com.armorclaw.bridge": map[string]string{
+	"com.armorclaw": map[string]string{
 			"base_url":      bridgeURL,
 			"api_endpoint":  bridgeURL + "/api",
-			"ws_endpoint":   bridgeURL + "/ws",
+			"ws_endpoint":   toWSS(bridgeURL) + "/ws",
 			"push_gateway":  bridgeURL + "/_matrix/push/v1/notify",
 		},
 	}

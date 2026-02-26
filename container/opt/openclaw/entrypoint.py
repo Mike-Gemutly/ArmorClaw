@@ -82,65 +82,92 @@ def load_secrets_from_socket() -> dict:
         dict: Loaded secrets with keys: provider, token, display_name
     """
     secret_socket_path = os.getenv('ARMORCLAW_SECRET_SOCKET', '/run/secrets/socket')
+    socket_timeout = int(os.getenv('ARMORCLAW_SOCKET_TIMEOUT', '10'))
+    max_retries = int(os.getenv('ARMORCLAW_SOCKET_RETRIES', '3'))
+    retry_delay = 2  # seconds between retries
 
     if not os.path.exists(secret_socket_path):
         # Socket doesn't exist, skip to file-based fallback
         return None
 
-    try:
-        print(f"[ArmorClaw] Connecting to secret socket: {secret_socket_path}")
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(5)  # 5 second timeout
-        sock.connect(secret_socket_path)
+    # Retry logic for socket connection (bridge may not be ready yet)
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        sock = None
+        try:
+            print(f"[ArmorClaw] Connecting to secret socket: {secret_socket_path} (attempt {attempt}/{max_retries})")
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(socket_timeout)
+            sock.connect(secret_socket_path)
 
-        # Read message length prefix (4 bytes, big-endian)
-        length_data = b''
-        while len(length_data) < 4:
-            chunk = sock.recv(4 - len(length_data))
-            if not chunk:
-                print(f"[ArmorClaw] ✗ ERROR: Failed to read length prefix from socket", file=sys.stderr)
-                sock.close()
+            # Read message length prefix (4 bytes, big-endian)
+            length_data = b''
+            while len(length_data) < 4:
+                chunk = sock.recv(4 - len(length_data))
+                if not chunk:
+                    print(f"[ArmorClaw] ✗ ERROR: Failed to read length prefix from socket", file=sys.stderr)
+                    sock.close()
+                    return None
+                length_data += chunk
+
+            # Parse length
+            msg_length = (length_data[0] << 24) | (length_data[1] << 16) | (length_data[2] << 8) | length_data[3]
+
+            # Read secrets data
+            secrets_data = b''
+            while len(secrets_data) < msg_length:
+                chunk = sock.recv(min(4096, msg_length - len(secrets_data)))
+                if not chunk:
+                    print(f"[ArmorClaw] ✗ ERROR: Failed to read secrets data from socket", file=sys.stderr)
+                    sock.close()
+                    return None
+                secrets_data += chunk
+
+            sock.close()
+
+            # Parse JSON
+            secrets = json.loads(secrets_data.decode('utf-8'))
+
+            # Validate structure
+            if not secrets.get('provider') or not secrets.get('token'):
+                print(f"[ArmorClaw] ✗ ERROR: Invalid secrets structure from socket", file=sys.stderr)
                 return None
-            length_data += chunk
 
-        # Parse length
-        msg_length = (length_data[0] << 24) | (length_data[1] << 16) | (length_data[2] << 8) | length_data[3]
+            print(f"[ArmorClaw] ✓ Secrets loaded from socket (P0-CRIT-3: memory-only)")
+            return secrets
 
-        # Read secrets data
-        secrets_data = b''
-        while len(secrets_data) < msg_length:
-            chunk = sock.recv(min(4096, msg_length - len(secrets_data)))
-            if not chunk:
-                print(f"[ArmorClaw] ✗ ERROR: Failed to read secrets data from socket", file=sys.stderr)
+        except FileNotFoundError as e:
+            last_error = e
+            print(f"[ArmorClaw] ⚠️ Socket not found (attempt {attempt}/{max_retries}): {e}", file=sys.stderr)
+        except socket.timeout as e:
+            last_error = e
+            print(f"[ArmorClaw] ⚠️ Timeout (attempt {attempt}/{max_retries}), retrying...", file=sys.stderr)
+        except ConnectionRefusedError as e:
+            last_error = e
+            print(f"[ArmorClaw] ⚠️ Connection refused (attempt {attempt}/{max_retries}), bridge may not be ready...", file=sys.stderr)
+        except json.JSONDecodeError as e:
+            # JSON errors are not recoverable - data is corrupted
+            print(f"[ArmorClaw] ✗ ERROR: Invalid JSON in socket data: {e}", file=sys.stderr)
+            if sock:
                 sock.close()
-                return None
-            secrets_data += chunk
-
-        sock.close()
-
-        # Parse JSON
-        secrets = json.loads(secrets_data.decode('utf-8'))
-
-        # Validate structure
-        if not secrets.get('provider') or not secrets.get('token'):
-            print(f"[ArmorClaw] ✗ ERROR: Invalid secrets structure from socket", file=sys.stderr)
             return None
+        except Exception as e:
+            last_error = e
+            print(f"[ArmorClaw] ⚠️ Socket error (attempt {attempt}/{max_retries}): {e}", file=sys.stderr)
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except:
+                    pass
 
-        print(f"[ArmorClaw] ✓ Secrets loaded from socket (P0-CRIT-3: memory-only)")
-        return secrets
+        # Wait before retry (except on last attempt)
+        if attempt < max_retries:
+            import time
+            time.sleep(retry_delay)
 
-    except FileNotFoundError:
-        print(f"[ArmorClaw] ✗ ERROR: Secret socket not found: {secret_socket_path}", file=sys.stderr)
-        return None
-    except socket.timeout:
-        print(f"[ArmorClaw] ✗ ERROR: Timeout connecting to secret socket", file=sys.stderr)
-        return None
-    except json.JSONDecodeError as e:
-        print(f"[ArmorClaw] ✗ ERROR: Invalid JSON in socket data: {e}", file=sys.stderr)
-        return None
-    except Exception as e:
-        print(f"[ArmorClaw] ⚠️ Failed to load secrets from socket: {e}", file=sys.stderr)
-        return None
+    print(f"[ArmorClaw] ✗ ERROR: Failed to connect to secret socket after {max_retries} attempts: {last_error}", file=sys.stderr)
+    return None
 
 def validate_secrets(secrets: dict) -> bool:
     """

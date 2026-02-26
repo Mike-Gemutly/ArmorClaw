@@ -25,10 +25,11 @@ import (
 	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/discovery"
 	"github.com/armorclaw/bridge/pkg/docker"
+	"github.com/armorclaw/bridge/internal/adapter"
+	"github.com/armorclaw/bridge/internal/wizard"
 	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/health"
-	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/notification"
@@ -37,6 +38,8 @@ import (
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/webrtc"
+
+	"github.com/charmbracelet/huh"
 )
 
 var (
@@ -101,6 +104,11 @@ func main() {
 
 	if cliCfg.command == "setup" {
 		runSetupCommand(cliCfg)
+		return
+	}
+
+	if cliCfg.command == "container-setup" {
+		runContainerSetupCommand(cliCfg)
 		return
 	}
 
@@ -195,8 +203,124 @@ func runValidateCommand(cliCfg cliConfig) {
 	log.Printf("  Matrix: %v", cfg.Matrix.Enabled)
 }
 
-// runSetupCommand runs the interactive setup wizard
+// runSetupCommand runs the interactive setup wizard using Huh? TUI forms.
+// This is the standalone (non-container) setup that creates a local config.
 func runSetupCommand(cliCfg cliConfig) {
+	// Detect accessible mode from environment
+	accessible := os.Getenv("ACCESSIBLE") != ""
+
+	result, err := wizard.Run(accessible)
+	if err != nil {
+		if err == huh.ErrUserAborted {
+			fmt.Println("\nSetup cancelled.")
+			return
+		}
+		log.Fatalf("Setup wizard failed: %v", err)
+	}
+
+	// Determine config path
+	configPath := cliCfg.configPath
+	if configPath == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("Failed to determine home directory: %v", err)
+		}
+		configPath = filepath.Join(homeDir, ".armorclaw", "config.toml")
+	}
+
+	// Create config directory
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0750); err != nil {
+		log.Fatalf("Failed to create config directory: %v", err)
+	}
+
+	// Generate and save configuration
+	cfg := config.DefaultConfig()
+	cfg.Keystore.DBPath = filepath.Join(configDir, "keystore.db")
+
+	if err := config.Save(cfg, configPath); err != nil {
+		log.Fatalf("Failed to save configuration: %v", err)
+	}
+
+	// Store API key directly in the encrypted keystore (never written to disk as plaintext)
+	if result.Secrets.APIKey != "" {
+		ks, err := keystore.New(cfg.ToKeystoreConfig())
+		if err != nil {
+			log.Fatalf("Failed to initialize keystore: %v", err)
+		}
+		if err := ks.Open(); err != nil {
+			log.Fatalf("Failed to open keystore: %v", err)
+		}
+		defer ks.Close()
+
+		keyID := result.Config.APIProvider + "-default"
+		cred := keystore.Credential{
+			ID:          keyID,
+			Provider:    keystore.Provider(result.Config.APIProvider),
+			Token:       result.Secrets.APIKey,
+			DisplayName: result.Config.APIProvider + " API Key (setup wizard)",
+			Tags:        []string{"setup-wizard", "production"},
+		}
+
+		if err := ks.Store(cred); err != nil {
+			log.Fatalf("Failed to store API key: %v", err)
+		}
+		fmt.Printf("  API key stored securely as '%s'\n", keyID)
+	}
+
+	fmt.Printf("  Configuration saved to: %s\n", configPath)
+	fmt.Println()
+	fmt.Println("  Next steps:")
+	fmt.Println("    1. Start the bridge:  armorclaw-bridge")
+	if result.Secrets.APIKey != "" {
+		fmt.Printf("    2. Start an agent:    armorclaw-bridge start --key %s-default\n", result.Config.APIProvider)
+	} else {
+		fmt.Println("    2. Add an API key:    armorclaw-bridge add-key --provider openai --token sk-...")
+	}
+	fmt.Println()
+	return
+}
+
+// runContainerSetupCommand runs the Huh? wizard then delegates infrastructure
+// setup (Docker Compose, Matrix, certs) to container-setup.sh.
+// Secrets are passed via environment variables and never written to the JSON file.
+func runContainerSetupCommand(cliCfg cliConfig) {
+	accessible := os.Getenv("ACCESSIBLE") != ""
+
+	result, err := wizard.Run(accessible)
+	if err != nil {
+		if err == huh.ErrUserAborted {
+			fmt.Println("\nSetup cancelled.")
+			os.Exit(130)
+		}
+		log.Fatalf("Setup wizard failed: %v", err)
+	}
+
+	// Write non-secret config to temporary JSON file
+	wizardJSON := "/tmp/armorclaw-wizard.json"
+	if err := wizard.WriteConfigJSON(wizardJSON, &result.Config); err != nil {
+		log.Fatalf("Failed to write wizard config: %v", err)
+	}
+	defer os.Remove(wizardJSON) // Clean up immediately after container-setup.sh reads it
+
+	// Build environment with secrets (passed via env vars, not written to disk)
+	setupScript := "/opt/armorclaw/container-setup.sh"
+	cmd := exec.Command(setupScript, "--from-wizard", wizardJSON)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	// Inherit current env and add secret env vars
+	cmd.Env = append(os.Environ(), wizard.SecretEnvVars(&result.Secrets)...)
+
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("Container setup failed: %v", err)
+	}
+}
+
+// runSetupCommandLegacy is the original bufio-based setup wizard (kept for
+// environments where Huh? TUI is not available, e.g., dumb terminals).
+func runSetupCommandLegacy(cliCfg cliConfig) {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("\n╔════════════════════════════════════════════════════════════╗")
@@ -208,12 +332,12 @@ func runSetupCommand(cliCfg cliConfig) {
 	fmt.Println("")
 
 	// Step 1: Check Docker availability
-	fmt.Print("🔍 Checking Docker availability... ")
+	fmt.Print("Checking Docker availability... ")
 	if !docker.IsAvailable() {
-		fmt.Println("❌")
+		fmt.Println("not found")
 		log.Fatal("Docker is not available or not running. Please install and start Docker first.")
 	}
-	fmt.Println("✓")
+	fmt.Println("ok")
 
 	// Step 2: Configuration location
 	fmt.Println("\n📁 Configuration Setup")
@@ -2186,10 +2310,11 @@ func printHelp() {
     armorclaw-bridge [command] [flags]
 
 COMMANDS:
-    init        Initialize configuration file
-    validate    Validate configuration
-    setup       Run interactive setup wizard
-    add-key     Add an API key to the keystore
+    init              Initialize configuration file
+    validate          Validate configuration
+    setup             Run interactive setup wizard (Huh? TUI)
+    container-setup   Run container setup wizard (Huh? TUI + infrastructure)
+    add-key           Add an API key to the keystore
     list-keys   List all stored API keys
     start       Start an agent container (legacy, use start-agent)
     start-agent Start an AI agent (OpenClaw, assistant, etc.)

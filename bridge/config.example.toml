@@ -106,6 +106,35 @@ output = "/var/log/armorclaw/bridge.log"
 # - version (bridge version)
 # - context-specific fields (session_id, container_id, key_id, etc.)
 
+[http]
+# HTTPS server for remote bridge access (ArmorChat / ArmorTerminal)
+# This enables mobile and web clients to communicate with the bridge.
+
+# Port for the HTTPS server (default: 8443)
+port = 8443
+
+# Hostname used in self-signed certs and discovery responses
+hostname = "armorclaw.local"
+
+# Matrix homeserver URL included in well-known and QR config responses
+matrix_homeserver = "https://matrix.armorclaw.app"
+
+# Human-readable server name (shown in ArmorChat during setup)
+server_name = "ArmorClaw"
+
+# Enable CORS for browser clients
+enable_cors = true
+
+# Health endpoint response contract:
+#   GET /health returns JSON with:
+#     status               - "ok" when bridge is running
+#     bridge_ready         - true when bridge is fully initialized
+#     provisioning_available - true when new devices can provision
+#     is_new_server        - true if no OWNER has claimed yet
+#     server_name          - human-readable name
+#     timestamp            - UTC RFC3339 timestamp
+#     version              - bridge version
+
 [webrtc]
 # Enable WebRTC voice call support
 enabled = false

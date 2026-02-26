@@ -284,7 +284,7 @@ func (m *QRManager) GenerateConfigQR(expiration time.Duration) (*ConfigQRResult,
 		Version:          1,
 		MatrixHomeserver: m.serverURL,
 		RpcURL:           m.bridgeURL + "/api",
-		WsURL:            m.bridgeURL + "/ws",
+		WsURL:            toWSS(m.bridgeURL) + "/ws",
 		PushGateway:      m.bridgeURL + "/_matrix/push/v1/notify",
 		ServerName:       m.serverName,
 		ExpiresAt:        time.Now().Add(expiration).Unix(),
@@ -340,7 +340,7 @@ func (m *QRManager) GenerateConfigURL(expiration time.Duration) (string, *Config
 		Version:          1,
 		MatrixHomeserver: m.serverURL,
 		RpcURL:           m.bridgeURL + "/api",
-		WsURL:            m.bridgeURL + "/ws",
+		WsURL:            toWSS(m.bridgeURL) + "/ws",
 		PushGateway:      m.bridgeURL + "/_matrix/push/v1/notify",
 		ServerName:       m.serverName,
 		ExpiresAt:        time.Now().Add(expiration).Unix(),
@@ -653,6 +653,17 @@ func (t *OneTimeToken) Summary() map[string]interface{} {
 		"expires_at": t.ExpiresAt,
 		"use_count":  t.UseCount,
 	}
+}
+
+// toWSS converts an https:// URL to wss:// (or http:// to ws://)
+func toWSS(u string) string {
+	if len(u) >= 8 && u[:8] == "https://" {
+		return "wss://" + u[8:]
+	}
+	if len(u) >= 7 && u[:7] == "http://" {
+		return "ws://" + u[7:]
+	}
+	return u
 }
 
 // QRToImage converts QR bytes to an image.Image

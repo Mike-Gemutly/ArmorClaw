@@ -158,6 +158,7 @@ cleanup() {
     echo ""
     echo -e "${YELLOW}Interrupted. Cleaning up partial state...${NC}"
     rm -f "$SETUP_FLAG"
+    rm -f "$API_KEY_TEMP"
     exit 130
 }
 trap cleanup INT TERM
@@ -239,12 +240,27 @@ if [ ! -f "$SETUP_FLAG" ]; then
         exit 1
     fi
 
-    # Run container setup (container-aware, no Go/systemctl required)
-    cd /opt/armorclaw
-    if ! ./container-setup.sh; then
-        echo -e "${RED}ERROR: Container setup failed.${NC}"
-        echo -e "${RED}Re-run the container to try again.${NC}"
-        exit 1
+    # Run container setup via the Huh? TUI wizard.
+    # The Go binary collects config interactively, then delegates
+    # infrastructure setup (Docker Compose, Matrix, certs) to
+    # container-setup.sh via --from-wizard. Secrets are passed
+    # through environment variables, never written to disk.
+    #
+    # Fallback: If the Go binary is unavailable (e.g., stripped image),
+    # fall back to the bash-only interactive wizard.
+    if [ -x /opt/armorclaw/armorclaw-bridge ]; then
+        if ! /opt/armorclaw/armorclaw-bridge container-setup; then
+            echo -e "${RED}ERROR: Container setup failed.${NC}"
+            echo -e "${RED}Re-run the container to try again.${NC}"
+            exit 1
+        fi
+    else
+        cd /opt/armorclaw
+        if ! ./container-setup.sh; then
+            echo -e "${RED}ERROR: Container setup failed.${NC}"
+            echo -e "${RED}Re-run the container to try again.${NC}"
+            exit 1
+        fi
     fi
 
     # Mark setup complete
@@ -430,9 +446,9 @@ EXPOSE 8443 5000 6167
 # Volumes
 VOLUME ["/etc/armorclaw", "/var/lib/armorclaw", "/run/armorclaw", "/var/log/armorclaw"]
 
-# Health check
+# Health check - verifies RPC server is responding, not just socket exists
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD test -S /run/armorclaw/bridge.sock || exit 1
+    CMD echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null | grep -q '"result"' || exit 1
 
 # Entrypoint - launches setup wizard on first run
 ENTRYPOINT ["/opt/armorclaw/quickstart.sh"]
