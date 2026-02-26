@@ -1,0 +1,1 @@
+Before incrementing the major version category (x.0.0), always ask the user for explicit confirmation. Do not assume a major version bump is appropriate — this project uses 0.x.y patch versioning until proven production-ready.
