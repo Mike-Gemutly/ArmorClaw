@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/huh"
+	"golang.org/x/term"
 )
 
 // Version is the wizard version, matching the container setup version.
-const Version = "0.3.1"
+const Version = "0.3.2"
 
 // Profile represents a deployment profile.
 const (
@@ -47,8 +49,8 @@ type WizardConfig struct {
 // These are passed to the container setup script via environment variables
 // and then injected directly into the SQLCipher-encrypted keystore.
 type WizardSecrets struct {
-	APIKey        string
-	AdminPassword string
+	APIKey         string
+	AdminPassword  string
 	BridgePassword string
 }
 
@@ -58,9 +60,105 @@ type WizardResult struct {
 	Secrets WizardSecrets
 }
 
+// TerminalCheckResult contains information about terminal capabilities.
+type TerminalCheckResult struct {
+	IsTTY        bool
+	Width        int
+	Height       int
+	StdinOpen    bool
+	SupportsColor bool
+}
+
+// checkTerminal verifies terminal capabilities for TUI operation.
+func checkTerminal() TerminalCheckResult {
+	result := TerminalCheckResult{
+		IsTTY:        term.IsTerminal(int(os.Stdout.Fd())),
+		StdinOpen:    true,
+		SupportsColor: true,
+	}
+
+	// Check if stdin is open
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		result.StdinOpen = false
+	} else {
+		// Check if stdin is a pipe or redirect (not interactive)
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			result.StdinOpen = false
+		}
+	}
+
+	// Get terminal size if available
+	if result.IsTTY {
+		result.Width, result.Height, _ = term.GetSize(int(os.Stdout.Fd()))
+	}
+
+	// Check for color support via TERM env
+	termEnv := os.Getenv("TERM")
+	if termEnv == "dumb" || termEnv == "" {
+		result.SupportsColor = false
+	}
+
+	return result
+}
+
+// printTerminalError shows a helpful message when terminal is not suitable for TUI.
+func printTerminalError(check TerminalCheckResult) {
+	fmt.Println()
+	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("  Interactive Terminal Required")
+	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+
+	if !check.IsTTY {
+		fmt.Println("  The TUI wizard requires an interactive terminal.")
+		fmt.Println()
+		fmt.Println("  Solutions:")
+		fmt.Println("    1. Run with -it flags: docker run -it ...")
+		fmt.Println("    2. Use environment variables (non-interactive):")
+		fmt.Println("       -e ARMORCLAW_API_KEY=sk-your-key")
+		fmt.Println("       -e ARMORCLAW_PROFILE=quick")
+	}
+
+	if !check.StdinOpen && check.IsTTY {
+		fmt.Println("  Stdin is not connected (piped input detected).")
+		fmt.Println()
+		fmt.Println("  Solutions:")
+		fmt.Println("    1. Run without piping input")
+		fmt.Println("    2. Use environment variables for non-interactive setup")
+	}
+
+	if check.Width > 0 && check.Width < 60 {
+		fmt.Printf("  Terminal is too narrow (%d columns, need 60+).\n", check.Width)
+		fmt.Println("  Please resize your terminal window.")
+	}
+
+	fmt.Println()
+	fmt.Println("  For non-interactive setup, set these environment variables:")
+	fmt.Println("    ARMORCLAW_PROFILE=quick|enterprise")
+	fmt.Println("    ARMORCLAW_API_KEY=your-api-key")
+	fmt.Println("    ARMORCLAW_SERVER_NAME=your-server (optional, auto-detected)")
+	fmt.Println()
+}
+
 // Run executes the interactive setup wizard and returns the collected
 // configuration and secrets. Returns huh.ErrUserAborted if the user cancels.
 func Run(accessible bool) (*WizardResult, error) {
+	// Check terminal capabilities before launching TUI
+	termCheck := checkTerminal()
+
+	// If not a proper TTY, check for env vars (non-interactive mode)
+	if !termCheck.IsTTY || !termCheck.StdinOpen {
+		// Check if we have enough env vars to proceed non-interactively
+		if result := tryNonInteractive(); result != nil {
+			return result, nil
+		}
+
+		// No env vars, show error
+		printTerminalError(termCheck)
+		return nil, fmt.Errorf("interactive terminal required (run with -it or provide ARMORCLAW_API_KEY)")
+	}
+
 	printBanner()
 
 	result := &WizardResult{
@@ -99,6 +197,63 @@ func Run(accessible bool) (*WizardResult, error) {
 	}
 
 	return result, nil
+}
+
+// tryNonInteractive attempts to build a WizardResult from environment variables.
+// Returns nil if required env vars are missing.
+func tryNonInteractive() *WizardResult {
+	apiKey := strings.TrimSpace(os.Getenv("ARMORCLAW_API_KEY"))
+	if apiKey == "" {
+		return nil
+	}
+
+	profile := os.Getenv("ARMORCLAW_PROFILE")
+	if profile == "" {
+		profile = ProfileQuick
+	}
+
+	// Determine provider from API base URL
+	baseURL := os.Getenv("ARMORCLAW_API_BASE_URL")
+	provider := "openai"
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	if strings.Contains(baseURL, "anthropic") {
+		provider = "anthropic"
+	}
+
+	adminPassword := os.Getenv("ARMORCLAW_ADMIN_PASSWORD")
+	if adminPassword == "" {
+		// Auto-generate using the same function as the wizard
+		generated, _ := generatePassword(16)
+		adminPassword = generated
+	}
+
+	bridgePassword, _ := generatePassword(16)
+
+	fmt.Println()
+	fmt.Println("  Running in non-interactive mode (environment variables)")
+	fmt.Printf("  Profile: %s\n", profile)
+	fmt.Printf("  Provider: %s\n", provider)
+	fmt.Println()
+
+	return &WizardResult{
+		Config: WizardConfig{
+			WizardVersion: Version,
+			Profile:       profile,
+			APIProvider:   provider,
+			APIBaseURL:    baseURL,
+			LogLevel:      "info",
+			SocketPath:    "/run/armorclaw/bridge.sock",
+			SecurityTier:  "enhanced",
+			AdminUser:     "admin",
+		},
+		Secrets: WizardSecrets{
+			APIKey:         apiKey,
+			AdminPassword:  adminPassword,
+			BridgePassword: bridgePassword,
+		},
+	}
 }
 
 // WriteConfigJSON writes the non-secret configuration to a JSON file.
