@@ -267,6 +267,9 @@ type Config struct {
 	Region string
 }
 
+// BridgeVersion is the canonical bridge version string used across all health endpoints.
+const BridgeVersion = "1.6.2"
+
 // New creates a new JSON-RPC server
 func New(cfg Config) (*Server, error) {
 	if cfg.SocketPath == "" {
@@ -652,7 +655,7 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleWebRTCGetAuditLog(req)
 
 	// Recovery methods - GAP #6
-	case "recovery.generate_phrase":
+	case "recovery.generate_phrase", "recovery.generate":
 		return s.handleRecoveryGeneratePhrase(req)
 	case "recovery.store_phrase":
 		return s.handleRecoveryStorePhrase(req)
@@ -1030,7 +1033,7 @@ func (s *Server) handleHealth(req *Request) *Response {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
-			"status": "healthy",
+			"status": "ok",
 		},
 	}
 }
@@ -8279,24 +8282,43 @@ func countUnacknowledgedAlerts(alerts []BudgetAlert) int {
 // ============================================================================
 
 // handleBridgeHealth handles bridge.health RPC method
-// Returns bridge health status and capabilities
+// Returns bridge health status, capabilities, and 0.3.4 fields for ArmorChat health-gate
 func (s *Server) handleBridgeHealth(req *Request) *Response {
+	// Determine server name
+	serverName := "ArmorClaw"
+	if s.config != nil && s.config.Region != "" {
+		serverName = "ArmorClaw (" + s.config.Region + ")"
+	}
+
+	// Determine if owner has been claimed (for is_new_server)
+	isNewServer := true
+	if s.provisioningMgr != nil {
+		isNewServer = !s.provisioningMgr.IsOwnerClaimed()
+	}
+
 	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
-			"version":            "1.6.2",
-			"supports_e2ee":      true,
-			"supports_recovery":  true,
-			"supports_agents":    true,
-			"supports_workflows": true,
-			"supports_hitl":      true,
-			"supports_budget":    true,
-			"supports_containers": s.docker != nil,
-			"supports_matrix":    s.matrix != nil,
-			"region":             s.getRegion(),
-			"uptime_seconds":     time.Since(s.startTime).Seconds(),
-			"status":             "healthy",
+			// 0.3.4 fields (ArmorChat health-gate + setup flow)
+			"status":                 "ok",
+			"bridge_ready":           true,
+			"provisioning_available": s.provisioningMgr != nil,
+			"is_new_server":          isNewServer,
+			"server_name":            serverName,
+			"timestamp":              time.Now().UTC().Format(time.RFC3339),
+			"version":                BridgeVersion,
+			// Capability flags
+			"supports_e2ee":          true,
+			"supports_recovery":      true,
+			"supports_agents":        true,
+			"supports_workflows":     true,
+			"supports_hitl":          true,
+			"supports_budget":        true,
+			"supports_containers":    s.docker != nil,
+			"supports_matrix":        s.matrix != nil,
+			"region":                 s.getRegion(),
+			"uptime_seconds":         time.Since(s.startTime).Seconds(),
 		},
 	}
 }
@@ -8305,7 +8327,7 @@ func (s *Server) handleBridgeHealth(req *Request) *Response {
 // This is used by ArmorChat and ArmorTerminal to adapt their UI based on available features
 func (s *Server) handleBridgeCapabilities(req *Request) *Response {
 	capabilities := map[string]interface{}{
-		"version": "1.6.2",
+		"version": BridgeVersion,
 		"features": map[string]bool{
 			"e2ee":           true,
 			"key_backup":     true,

@@ -55,7 +55,8 @@ type Server struct {
 	mu           sync.RWMutex
 	clients      map[string]*WebSocketClient
 	qrManager    *qr.QRManager
-	ownerClaimed bool // tracks whether an OWNER has been claimed (for is_new_server)
+	ownerClaimed        bool // tracks whether an OWNER has been claimed (for is_new_server)
+	provisioningAvailable bool // tracks whether provisioning is configured on the bridge
 }
 
 // SetOwnerClaimed allows the provisioning manager to update owner status
@@ -63,6 +64,13 @@ func (s *Server) SetOwnerClaimed(claimed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ownerClaimed = claimed
+}
+
+// SetProvisioningAvailable sets whether provisioning is configured on the bridge
+func (s *Server) SetProvisioningAvailable(available bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.provisioningAvailable = available
 }
 
 // toWSS converts an https:// URL to wss:// (or http:// to ws://)
@@ -351,11 +359,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":                  "ok",
 		"bridge_ready":            true,
-		"provisioning_available":  true,
+		"provisioning_available":  s.provisioningAvailable,
 		"is_new_server":           !s.ownerClaimed,
 		"server_name":             serverName,
 		"timestamp":               time.Now().UTC().Format(time.RFC3339),
-		"version":                 "1.0.0",
+		"version":                 rpc.BridgeVersion,
 	})
 }
 

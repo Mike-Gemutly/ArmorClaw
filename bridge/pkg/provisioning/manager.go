@@ -501,6 +501,14 @@ func (m *Manager) ClaimTokenWithRole(ctx context.Context, tokenID string, device
 	return token, assignedRole, adminToken, nil
 }
 
+// IsOwnerClaimed returns whether an OWNER has been claimed on this bridge.
+// Used by the HTTP server and RPC server to determine is_new_server for ArmorChat.
+func (m *Manager) IsOwnerClaimed() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.ownerClaimed
+}
+
 // GetUserRole returns the role for a given user ID.
 // Accepts both internal user IDs (u_<hex>) and Matrix user IDs (@user:server).
 func (m *Manager) GetUserRole(userID string) AdminRole {
