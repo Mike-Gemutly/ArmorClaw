@@ -354,6 +354,16 @@ if [ ! -f "$SETUP_FLAG" ]; then
         exit 1
     fi
 
+    # Check if non-interactive mode is requested via environment variables
+    # If ARMORCLAW_API_KEY is provided, skip the TUI wizard entirely
+    NON_INTERACTIVE_MODE=false
+    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+        NON_INTERACTIVE_MODE=true
+        log_info "API key detected - using non-interactive mode"
+        echo -e "${GREEN}Environment variables detected - skipping TUI wizard${NC}"
+        echo ""
+    fi
+
     # Run container setup via the Huh? TUI wizard.
     # The Go binary collects config interactively, then delegates
     # infrastructure setup (Docker Compose, Matrix, certs) to
@@ -361,12 +371,27 @@ if [ ! -f "$SETUP_FLAG" ]; then
     # through environment variables, never written to disk.
     #
     # Fallback chain:
-    #   1. Huh? TUI wizard (Go binary)
-    #   2. Bash wizard (container-setup.sh)
-    #   3. Environment variables (non-interactive)
+    #   1. Environment variables (non-interactive) - if API_KEY provided
+    #   2. Huh? TUI wizard (Go binary)
+    #   3. Bash wizard (container-setup.sh)
     setup_failed=false
 
-    if [ -x /opt/armorclaw/armorclaw-bridge ]; then
+    if [ "$NON_INTERACTIVE_MODE" = true ]; then
+        # Skip TUI wizard, go directly to container-setup.sh with env vars
+        log_info "Running non-interactive setup with environment variables"
+        cd /opt/armorclaw
+
+        if [ -x ./container-setup.sh ]; then
+            if ! ./container-setup.sh; then
+                log_error "Non-interactive setup failed"
+                setup_failed=true
+            fi
+        else
+            echo -e "${RED}container-setup.sh not found.${NC}"
+            log_error "container-setup.sh not found"
+            setup_failed=true
+        fi
+    elif [ -x /opt/armorclaw/armorclaw-bridge ]; then
         echo -e "${CYAN}Launching Huh? TUI wizard...${NC}"
         log_info "Launching Huh? TUI wizard"
 
