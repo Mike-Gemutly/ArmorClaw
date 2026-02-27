@@ -35,6 +35,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/notification"
 	"github.com/armorclaw/bridge/pkg/rpc"
+	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/armorclaw/bridge/pkg/turn"
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
@@ -305,6 +306,49 @@ func runContainerSetupCommand(cliCfg cliConfig) {
 			os.Exit(1)
 		}
 	}()
+
+	// Preflight check: Verify Docker daemon is accessible before running wizard
+	fmt.Println("Checking Docker connectivity...")
+	dockerResult := setup.FullDockerCheck()
+	if dockerResult.Error != nil {
+		fmt.Println()
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println("ERROR: Docker not accessible")
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println()
+
+		// Show detailed diagnostics
+		fmt.Printf("Diagnostics:\n")
+		fmt.Printf("  Socket exists:   %v\n", dockerResult.SocketExists)
+		fmt.Printf("  Socket readable: %v\n", dockerResult.SocketReadable)
+		fmt.Printf("  Socket writable: %v\n", dockerResult.SocketWritable)
+		fmt.Printf("  Daemon running:  %v\n", dockerResult.DaemonRunning)
+		fmt.Println()
+
+		// Show specific error
+		if setupErr, ok := dockerResult.Error.(*setup.SetupError); ok {
+			fmt.Printf("Error code: %s\n", setupErr.Code)
+			fmt.Printf("Message:    %s\n", setupErr.Title)
+			fmt.Printf("Cause:      %s\n", setupErr.Cause)
+			fmt.Println()
+			fmt.Println("Suggested fixes:")
+			for i, fix := range setupErr.Fix {
+				fmt.Printf("  %d. %s\n", i+1, fix)
+			}
+		} else {
+			fmt.Printf("Error: %v\n", dockerResult.Error)
+		}
+
+		fmt.Println()
+		fmt.Println("Common solutions:")
+		fmt.Println("  1. Run container with --user root")
+		fmt.Println("  2. Ensure Docker is running on host: systemctl status docker")
+		fmt.Println("  3. Fix socket permissions: sudo chmod 666 /var/run/docker.sock")
+		fmt.Println()
+		os.Exit(1)
+	}
+	fmt.Println("Docker connectivity OK")
+	fmt.Println()
 
 	accessible := os.Getenv("ACCESSIBLE") != ""
 

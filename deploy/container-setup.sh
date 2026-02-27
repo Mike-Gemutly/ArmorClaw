@@ -280,16 +280,61 @@ preflight_checks() {
     local checks_passed=0
     local checks_failed=0
 
-    # Check 1: Docker daemon is responsive
+    # Check 1: Docker daemon is responsive (with detailed diagnostics)
     printf "  [1/4] Docker daemon... "
-    if docker info >/dev/null 2>&1; then
-        printf "${GREEN}OK${NC}\n"
-        ((checks_passed++)) || true
-    else
+
+    # First check socket file exists
+    if [ ! -S /var/run/docker.sock ]; then
         printf "${RED}FAILED${NC}\n"
-        printf "        Docker daemon is not responding\n"
-        set_error "INS-001" "Docker daemon not responsive"
+        printf "        Docker socket not found at /var/run/docker.sock\n"
+        printf "        Mount with: -v /var/run/docker.sock:/var/run/docker.sock\n"
+        set_error "INS-001" "Docker socket not mounted"
         ((checks_failed++)) || true
+    # Check socket is readable
+    elif [ ! -r /var/run/docker.sock ]; then
+        printf "${RED}FAILED${NC}\n"
+        printf "        Docker socket not readable (permission denied)\n"
+        printf "        Current user: $(id 2>/dev/null || echo 'unknown')\n"
+        printf "        Socket perms: $(ls -la /var/run/docker.sock 2>/dev/null || echo 'unknown')\n"
+        printf "        Run with --user root or fix socket permissions\n"
+        set_error "INS-001" "Docker socket permission denied"
+        ((checks_failed++)) || true
+    # Check socket is writable
+    elif [ ! -w /var/run/docker.sock ]; then
+        printf "${RED}FAILED${NC}\n"
+        printf "        Docker socket not writable (permission denied)\n"
+        printf "        Current user: $(id 2>/dev/null || echo 'unknown')\n"
+        printf "        Socket perms: $(ls -la /var/run/docker.sock 2>/dev/null || echo 'unknown')\n"
+        printf "        Run with --user root or fix socket permissions\n"
+        set_error "INS-001" "Docker socket not writable"
+        ((checks_failed++)) || true
+    # Try to communicate with Docker daemon
+    else
+        local docker_error
+        docker_error=$(docker info 2>&1)
+        if [ $? -eq 0 ]; then
+            printf "${GREEN}OK${NC}\n"
+            ((checks_passed++)) || true
+        else
+            printf "${RED}FAILED${NC}\n"
+            printf "        Docker daemon not responding\n"
+            printf "        Socket exists but daemon communication failed:\n"
+            # Show first 3 lines of error for diagnosis
+            echo "$docker_error" | head -3 | while read -r line; do
+                printf "        ${YELLOW}%s${NC}\n" "$line"
+            done
+            printf "\n"
+            printf "        Possible causes:\n"
+            printf "          1. Docker daemon not running on host\n"
+            printf "          2. Docker version mismatch (client vs daemon)\n"
+            printf "          3. SELinux/AppArmor blocking access\n"
+            printf "\n"
+            printf "        Debug commands:\n"
+            printf "          # On host: systemctl status docker\n"
+            printf "          # On host: docker info\n"
+            set_error "INS-001" "Docker daemon not responsive"
+            ((checks_failed++)) || true
+        fi
     fi
 
     # Check 2: Network connectivity (can reach Docker Hub)

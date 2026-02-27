@@ -425,6 +425,37 @@ if [ ! -f "$SETUP_FLAG" ]; then
         exit 1
     fi
 
+    # Quick Docker daemon connectivity test (with diagnostics)
+    echo -e "${CYAN}Testing Docker connectivity...${NC}"
+    if ! docker info >/dev/null 2>&1; then
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}ERROR: Docker daemon not accessible${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo "Docker socket exists but daemon is not responding."
+        echo ""
+        echo "Diagnostics:"
+        echo "  User:          $(id 2>/dev/null || echo 'unknown')"
+        echo "  Socket perms:  $(ls -la /var/run/docker.sock 2>/dev/null || echo 'unknown')"
+        echo "  Docker error:"
+        docker info 2>&1 | head -3 | while read -r line; do
+            echo "    $line"
+        done
+        echo ""
+        echo "Common fixes:"
+        echo "  1. Ensure Docker is running on the host: systemctl status docker"
+        echo "  2. Run container with --user root"
+        echo "  3. Fix socket permissions: sudo chmod 666 /var/run/docker.sock"
+        echo "  4. Add user to docker group: sudo usermod -aG docker \$USER"
+        echo ""
+        echo "Debug mode (for more info):"
+        echo "  docker run -e ARMORCLAW_DEBUG=true ..."
+        echo ""
+        exit 1
+    fi
+    echo -e "${GREEN}Docker connectivity OK${NC}"
+    echo ""
+
     # Run container setup via the Huh? TUI wizard.
     # The Go binary handles BOTH interactive and non-interactive modes:
     #   - If ARMORCLAW_API_KEY env var is set, it runs non-interactive
