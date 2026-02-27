@@ -10,6 +10,7 @@ package wizard
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -18,7 +19,8 @@ import (
 )
 
 // Version is the wizard version, matching the container setup version.
-const Version = "0.3.2"
+// Update this when releasing new versions - should match VERSION file in repo root.
+const Version = "0.3.3"
 
 // Profile represents a deployment profile.
 const (
@@ -230,6 +232,12 @@ func tryNonInteractive() *WizardResult {
 		provider = "openai" // Z.ai uses OpenAI-compatible API
 	}
 
+	// Get server name from env or auto-detect
+	serverName := os.Getenv("ARMORCLAW_SERVER_NAME")
+	if serverName == "" {
+		serverName = detectServerName()
+	}
+
 	// Get or generate admin password
 	adminPassword := os.Getenv("ARMORCLAW_ADMIN_PASSWORD")
 	if adminPassword == "" {
@@ -253,9 +261,10 @@ func tryNonInteractive() *WizardResult {
 	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("  Non-Interactive Mode (Environment Variables)")
 	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("  Profile:  %s\n", profile)
-	fmt.Printf("  Provider: %s\n", provider)
-	fmt.Printf("  Base URL: %s\n", baseURL)
+	fmt.Printf("  Profile:     %s\n", profile)
+	fmt.Printf("  Server Name: %s\n", serverName)
+	fmt.Printf("  Provider:    %s\n", provider)
+	fmt.Printf("  Base URL:    %s\n", baseURL)
 	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 
@@ -265,6 +274,7 @@ func tryNonInteractive() *WizardResult {
 			Profile:       profile,
 			APIProvider:   provider,
 			APIBaseURL:    baseURL,
+			ServerName:    serverName,
 			LogLevel:      "info",
 			SocketPath:    "/run/armorclaw/bridge.sock",
 			SecurityTier:  "enhanced",
@@ -276,6 +286,26 @@ func tryNonInteractive() *WizardResult {
 			BridgePassword: bridgePassword,
 		},
 	}
+}
+
+// detectServerName attempts to auto-detect the server's public hostname or IP.
+// Falls back to localhost if detection fails.
+func detectServerName() string {
+	// Try to get public IP (most reliable for VPS deployments)
+	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+		defer conn.Close()
+		if localAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			return localAddr.IP.String()
+		}
+	}
+
+	// Try hostname
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+
+	// Fallback to localhost
+	return "localhost"
 }
 
 // WriteConfigJSON writes the non-secret configuration to a JSON file.

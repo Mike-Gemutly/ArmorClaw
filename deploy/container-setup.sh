@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.2
+# Version: 0.3.3
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -265,6 +265,118 @@ cleanup_on_failure() {
 trap cleanup_on_failure INT TERM EXIT
 
 #=============================================================================
+# Preflight Checks (Verify system readiness before setup)
+#=============================================================================
+
+# Progress tracking
+TOTAL_STEPS=0
+CURRENT_STEP=0
+
+preflight_checks() {
+    log_section "Preflight Checks"
+    print_info "Running preflight checks..."
+    echo ""
+
+    local checks_passed=0
+    local checks_failed=0
+
+    # Check 1: Docker daemon is responsive
+    printf "  [1/4] Docker daemon... "
+    if docker info >/dev/null 2>&1; then
+        printf "${GREEN}OK${NC}\n"
+        ((checks_passed++)) || true
+    else
+        printf "${RED}FAILED${NC}\n"
+        printf "        Docker daemon is not responding\n"
+        set_error "INS-001" "Docker daemon not responsive"
+        ((checks_failed++)) || true
+    fi
+
+    # Check 2: Network connectivity (can reach Docker Hub)
+    printf "  [2/4] Network connectivity... "
+    if curl -s --max-time 5 https://registry-1.docker.io/v2/ >/dev/null 2>&1; then
+        printf "${GREEN}OK${NC}\n"
+        ((checks_passed++)) || true
+    else
+        printf "${YELLOW}WARNING${NC}\n"
+        printf "        Cannot reach Docker registry (may affect image pulls)\n"
+        # Don't fail - network might work for other registries
+        ((checks_passed++)) || true
+    fi
+
+    # Check 3: DNS resolution
+    printf "  [3/4] DNS resolution... "
+    if host google.com >/dev/null 2>&1 || nslookup google.com >/dev/null 2>&1; then
+        printf "${GREEN}OK${NC}\n"
+        ((checks_passed++)) || true
+    else
+        printf "${YELLOW}WARNING${NC}\n"
+        printf "        DNS resolution may be slow (SSL cert generation might fail)\n"
+        ((checks_passed++)) || true
+    fi
+
+    # Check 4: Disk space (need at least 2GB free)
+    printf "  [4/4] Disk space... "
+    local free_space
+    free_space=$(df -BG /var 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4}')
+    if [ -n "$free_space" ] && [ "$free_space" -ge 2 ]; then
+        printf "${GREEN}OK${NC} (${free_space}GB available)\n"
+        ((checks_passed++)) || true
+    else
+        printf "${YELLOW}WARNING${NC}\n"
+        printf "        Low disk space (need at least 2GB)\n"
+        ((checks_passed++)) || true
+    fi
+
+    echo ""
+
+    if [ $checks_failed -gt 0 ]; then
+        print_error "Preflight checks failed ($checks_failed of 4)"
+        return 1
+    fi
+
+    print_success "Preflight checks passed ($checks_passed/4)"
+    echo ""
+    return 0
+}
+
+#=============================================================================
+# Progress Indication Functions
+#=============================================================================
+
+# Initialize progress tracking
+init_progress() {
+    TOTAL_STEPS="$1"
+    CURRENT_STEP=0
+}
+
+# Advance to next step with progress display
+next_step() {
+    local description="$1"
+    ((CURRENT_STEP++)) || true
+
+    if [ "$TOTAL_STEPS" -gt 0 ]; then
+        local pct=$((CURRENT_STEP * 100 / TOTAL_STEPS))
+        local bar_width=30
+        local filled=$((pct * bar_width / 100))
+        local empty=$((bar_width - filled))
+
+        printf "\r${CYAN}[%-${bar_width}s] %3d%%${NC} %s" \
+            "$(printf '#%.0s' $(seq 1 $filled 2>/dev/null))$(printf ' %.0s' $(seq 1 $empty 2>/dev/null))" \
+            "$pct" "$description"
+        echo ""
+    else
+        print_info "[$CURRENT_STEP] $description"
+    fi
+}
+
+# Show completion message
+complete_progress() {
+    echo ""
+    print_success "All steps completed successfully!"
+}
+
+#=============================================================================
 # Helper Functions
 #=============================================================================
 
@@ -277,7 +389,7 @@ print_header() {
     printf '%b' "${CYAN}"
     printf '╔══════════════════════════════════════════════════════╗\n'
     printf '║        %bArmorClaw Container Setup%b%b                     ║\n' "${BOLD}" "${NC}" "${CYAN}"
-    printf '║        %bVersion 0.3.1%b%b                                  ║\n' "${BOLD}" "${NC}" "${CYAN}"
+    printf '║        %bVersion 0.3.3%b%b                                  ║\n' "${BOLD}" "${NC}" "${CYAN}"
     printf '╚══════════════════════════════════════════════════════╝\n'
     printf '%b' "${NC}"
 }
@@ -1485,7 +1597,12 @@ final_summary() {
     echo -e "  Password:   ${GREEN}${ADMIN_PASSWORD}${NC}"
     echo -e "  Homeserver: ${GREEN}http://${server_name}:6167${NC}"
     echo ""
-    echo -e "  ${YELLOW}⚠ Save these credentials now — the password is not stored.${NC}"
+    if [ -f "$DATA_DIR/.admin_password" ]; then
+        echo -e "  ${CYAN}Password saved to: $DATA_DIR/.admin_password${NC}"
+        echo -e "  ${YELLOW}⚠ Delete this file after first login for security.${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ Save these credentials now — the password is not stored.${NC}"
+    fi
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
@@ -1605,7 +1722,7 @@ main() {
     # Initialize logging first
     init_logging
     log_section "ArmorClaw Container Setup Starting"
-    log_info "Setup version: 0.3.2"
+    log_info "Setup version: 0.3.3"
     log_info "Debug mode: $DEBUG"
 
     # Enable debug tracing if requested
@@ -1623,8 +1740,17 @@ main() {
 
     print_header
 
+    # Run preflight checks before starting setup
+    if ! preflight_checks; then
+        print_error "Preflight checks failed. Fix issues above and retry."
+        exit 1
+    fi
+
     # Verify required tools are available
     check_required_tools
+
+    # Initialize progress tracking (10 steps for full setup)
+    init_progress 10
 
     # If not from wizard, check env vars and run interactive prompts
     if [ "$FROM_WIZARD" != true ]; then
@@ -1641,30 +1767,39 @@ main() {
     fi
 
     # Create directories
+    next_step "Creating directories"
     create_directories
 
     # Generate self-signed SSL certificate (default)
+    next_step "Generating SSL certificate"
     generate_self_signed_cert
 
     # Check Docker socket
     check_docker_socket
 
     # Run configuration steps (profile-aware)
+    next_step "Configuring Matrix"
     configure_matrix      # Quick: auto-configured | Enterprise: Step 1/6
+
+    next_step "Configuring API provider"
     configure_api          # Quick: Step 1/2       | Enterprise: Step 2/6
 
     # Enterprise-only: compliance configuration (Step 3/6)
     if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        next_step "Configuring compliance settings"
         configure_compliance
     fi
 
     # Collect admin credentials
+    next_step "Setting up admin user"
     configure_admin_user   # Quick: Step 2/2       | Enterprise: Step 4/6
 
     # Enterprise-only: bridge config (Step 5/6)
+    next_step "Configuring bridge"
     configure_bridge
 
     # Set security tier (auto for both profiles)
+    next_step "Configuring security tier"
     configure_security_tier
 
     # Persist admin user info for quickstart.sh to auto-claim OWNER role
@@ -1672,15 +1807,25 @@ main() {
     echo "${MATRIX_SERVER_NAME:-${MATRIX_SERVER%%:*}}" >> "$DATA_DIR/.admin_user"
     chmod 600 "$DATA_DIR/.admin_user"
 
+    # Save admin password to temp file for recovery (P2 improvement)
+    if [ -n "${ADMIN_PASSWORD:-}" ]; then
+        echo "${ADMIN_PASSWORD}" > "$DATA_DIR/.admin_password"
+        chmod 600 "$DATA_DIR/.admin_password"
+        log_debug "Admin password saved to $DATA_DIR/.admin_password"
+    fi
+
+    next_step "Validating and writing configuration"
     validate_config_vars
     write_config
     initialize_keystore
 
     # Start Matrix if available
+    next_step "Starting Matrix stack"
     start_matrix_stack
 
     # Register bridge + admin users on Conduit (requires Matrix stack running)
     if [ "$MATRIX_AVAILABLE" = true ]; then
+        next_step "Registering users and creating rooms"
         register_users
 
         # Create bridge management room with admin at power level 100
@@ -1694,6 +1839,9 @@ main() {
     if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
         offer_post_setup_options
     fi
+
+    # Show progress completion
+    complete_progress
 
     # Show summary
     final_summary

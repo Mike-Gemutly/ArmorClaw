@@ -60,7 +60,7 @@ ARG VCS_REF
 
 LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
       org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
-      org.opencontainers.image.version="0.3.1" \
+      org.opencontainers.image.version="0.3.3" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -138,7 +138,7 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 #!/bin/bash
 # ArmorClaw Quick Start Entrypoint
 # Launches container setup on first run, then starts bridge
-# Version: 0.3.2
+# Version: 0.3.3
 
 # NOTE: Do NOT use set -e. Transient failures must not kill the container.
 # Critical commands check errors explicitly.
@@ -146,9 +146,10 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 CONFIG_FILE="/etc/armorclaw/config.toml"
 SETUP_FLAG="/etc/armorclaw/.setup_complete"
 API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
+PASSWORD_FILE="/var/lib/armorclaw/.admin_password"
 LOG_DIR="/var/log/armorclaw"
 LOG_FILE="$LOG_DIR/setup.log"
-VERSION="0.3.2"
+VERSION="0.3.3"
 
 # Debug mode (set ARMORCLAW_DEBUG=true to enable)
 DEBUG="${ARMORCLAW_DEBUG:-false}"
@@ -251,6 +252,29 @@ fi
 # Track if setup succeeded (for crash handler)
 SETUP_SUCCEEDED=false
 
+# Rollback function - cleans up partial state on failure
+rollback_setup() {
+    log_info "Rolling back partial setup..."
+    echo -e "${YELLOW}Rolling back partial setup...${NC}"
+
+    # Stop any containers we may have started
+    if command -v docker >/dev/null 2>&1; then
+        cd /opt/armorclaw 2>/dev/null || true
+        docker compose down --volumes 2>/dev/null || true
+        docker-compose down --volumes 2>/dev/null || true
+    fi
+
+    # Clean up partial config files
+    rm -f "$SETUP_FLAG" 2>/dev/null || true
+    rm -f "$API_KEY_TEMP" 2>/dev/null || true
+    rm -f "$PASSWORD_FILE" 2>/dev/null || true
+    rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
+    rm -f /etc/armorclaw/config.toml 2>/dev/null || true
+
+    # Don't remove data volumes - user may want to inspect them
+    log_info "Rollback complete"
+}
+
 # Crash handler - shows error summary and log location on failure
 crash_handler() {
     local exit_code=$?
@@ -268,15 +292,8 @@ crash_handler() {
         echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
 
-        # Clean up partial state
-        echo -e "${YELLOW}Cleaning up partial state...${NC}"
-        rm -f "$SETUP_FLAG" 2>/dev/null || true
-        rm -f "$API_KEY_TEMP" 2>/dev/null || true
-        rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
-
-        # Reset terminal state in case Huh? left it in raw mode
-        stty sane 2>/dev/null || true
-        tput reset 2>/dev/null || true
+        # Perform rollback
+        rollback_setup
 
         # Show log file location
         if [ -f "$LOG_FILE" ]; then
@@ -408,46 +425,29 @@ if [ ! -f "$SETUP_FLAG" ]; then
         exit 1
     fi
 
-    # Check if non-interactive mode is requested via environment variables
-    # If ARMORCLAW_API_KEY is provided, skip the TUI wizard entirely
-    NON_INTERACTIVE_MODE=false
-    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
-        NON_INTERACTIVE_MODE=true
-        log_info "API key detected - using non-interactive mode"
-        echo -e "${GREEN}Environment variables detected - skipping TUI wizard${NC}"
-        echo ""
-    fi
-
     # Run container setup via the Huh? TUI wizard.
-    # The Go binary collects config interactively, then delegates
-    # infrastructure setup (Docker Compose, Matrix, certs) to
-    # container-setup.sh via --from-wizard. Secrets are passed
-    # through environment variables, never written to disk.
+    # The Go binary handles BOTH interactive and non-interactive modes:
+    #   - If ARMORCLAW_API_KEY env var is set, it runs non-interactive
+    #   - Otherwise, it launches the TUI wizard
+    # After collecting config, it delegates infrastructure setup
+    # (Docker Compose, Matrix, certs) to container-setup.sh.
+    # Secrets are passed through environment variables, never written to disk.
     #
     # Fallback chain:
-    #   1. Environment variables (non-interactive) - if API_KEY provided
-    #   2. Huh? TUI wizard (Go binary)
-    #   3. Bash wizard (container-setup.sh)
+    #   1. Go wizard (handles env vars OR TUI based on context)
+    #   2. Bash wizard (container-setup.sh) - fallback only
     setup_failed=false
+    WIZARD_CRASHED=false
 
-    if [ "$NON_INTERACTIVE_MODE" = true ]; then
-        # Skip TUI wizard, go directly to container-setup.sh with env vars
-        log_info "Running non-interactive setup with environment variables"
-        cd /opt/armorclaw
-
-        if [ -x ./container-setup.sh ]; then
-            if ! ./container-setup.sh; then
-                log_error "Non-interactive setup failed"
-                setup_failed=true
-            fi
+    if [ -x /opt/armorclaw/armorclaw-bridge ]; then
+        # Check if we're in non-interactive mode (for logging)
+        if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+            echo -e "${CYAN}Environment variables detected - using non-interactive mode${NC}"
+            log_info "Running wizard in non-interactive mode (env vars)"
         else
-            echo -e "${RED}container-setup.sh not found.${NC}"
-            log_error "container-setup.sh not found"
-            setup_failed=true
+            echo -e "${CYAN}Launching setup wizard...${NC}"
+            log_info "Launching Huh? TUI wizard"
         fi
-    elif [ -x /opt/armorclaw/armorclaw-bridge ]; then
-        echo -e "${CYAN}Launching Huh? TUI wizard...${NC}"
-        log_info "Launching Huh? TUI wizard"
 
         # Run wizard and capture exit code
         set +e
@@ -455,14 +455,10 @@ if [ ! -f "$SETUP_FLAG" ]; then
         WIZARD_EXIT=$?
         set -e
 
-        # Reset terminal state after Huh? TUI (may leave terminal in raw mode)
-        stty sane 2>/dev/null || true
-        tput reset 2>/dev/null || true
-
         if [ $WIZARD_EXIT -ne 0 ]; then
             echo ""
-            echo -e "${YELLOW}Huh? wizard exited with code $WIZARD_EXIT${NC}"
-            log_error "Huh? wizard exited with code $WIZARD_EXIT"
+            echo -e "${YELLOW}Wizard exited with code $WIZARD_EXIT${NC}"
+            log_error "Wizard exited with code $WIZARD_EXIT"
 
             # Check if it's a user abort vs a crash
             if [ $WIZARD_EXIT -eq 130 ]; then
@@ -471,8 +467,15 @@ if [ ! -f "$SETUP_FLAG" ]; then
                 exit 130
             fi
 
+            # Mark as crashed for terminal reset decision
+            WIZARD_CRASHED=true
+
             # Log error code INS-002 for wizard crash
-            log_error "[INS-002] Huh? wizard crashed - attempting fallback"
+            log_error "[INS-002] Wizard crashed - attempting fallback"
+
+            # Reset terminal state ONLY on crash (not on normal exit)
+            stty sane 2>/dev/null || true
+            tput reset 2>/dev/null || true
 
             echo -e "${YELLOW}Attempting fallback to bash wizard...${NC}"
             cd /opt/armorclaw
@@ -489,11 +492,11 @@ if [ ! -f "$SETUP_FLAG" ]; then
                 setup_failed=true
             fi
         else
-            log_info "Huh? wizard completed successfully"
+            log_info "Wizard completed successfully"
         fi
     else
-        echo -e "${YELLOW}Huh? wizard not available, using bash wizard...${NC}"
-        log_info "Huh? wizard not available, using bash wizard"
+        echo -e "${YELLOW}Go wizard not available, using bash wizard...${NC}"
+        log_info "Go wizard not available, using bash wizard"
         cd /opt/armorclaw
 
         if [ -x ./container-setup.sh ]; then
@@ -515,45 +518,29 @@ if [ ! -f "$SETUP_FLAG" ]; then
         echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
 
-        # Check if we can fall back to environment variable mode
-        if [ -n "${ARMORCLAW_SERVER_NAME:-}" ] && [ -n "${ARMORCLAW_API_KEY:-}" ]; then
-            echo -e "${YELLOW}Attempting non-interactive setup with environment variables...${NC}"
-            export NON_INTERACTIVE=true
-            cd /opt/armorclaw
-
-            if ./container-setup.sh; then
-                echo -e "${GREEN}Non-interactive setup succeeded!${NC}"
-                setup_failed=false
-            else
-                echo -e "${RED}Non-interactive setup also failed.${NC}"
-            fi
-        fi
-
-        # If still failed, show help
-        if [ "$setup_failed" = true ]; then
-            echo "Common issues:"
-            echo "  • Docker socket not accessible - run with --user root"
-            echo "  • Terminal incompatibility - try a different terminal or SSH client"
-            echo "  • Permission denied - fix volume permissions"
-            echo ""
-            echo "To retry with environment variables (non-interactive):"
-            echo "  docker run -it --user root \\"
-            echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-            echo "    -v armorclaw-config:/etc/armorclaw \\"
-            echo "    -v armorclaw-data:/var/lib/armorclaw \\"
-            echo "    -e ARMORCLAW_SERVER_NAME=your-ip \\"
-            echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
-            echo "    -e ARMORCLAW_PROFILE=quick \\"
-            echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
-            echo "    mikegemut/armorclaw:latest"
-            echo ""
-            echo "To retry:"
-            echo "  1. Fix the issue above"
-            echo "  2. Remove the container: docker rm -f armorclaw"
-            echo "  3. Re-run the docker command"
-            echo ""
-            exit 1
-        fi
+        # Show help
+        echo "Common issues:"
+        echo "  • Docker socket not accessible - run with --user root"
+        echo "  • Terminal incompatibility - try environment variable mode"
+        echo "  • Permission denied - fix volume permissions"
+        echo ""
+        echo "To retry with environment variables (non-interactive):"
+        echo "  docker run -it --user root \\"
+        echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
+        echo "    -v armorclaw-config:/etc/armorclaw \\"
+        echo "    -v armorclaw-data:/var/lib/armorclaw \\"
+        echo "    -e ARMORCLAW_SERVER_NAME=your-ip \\"
+        echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
+        echo "    -e ARMORCLAW_PROFILE=quick \\"
+        echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
+        echo "    mikegemut/armorclaw:latest"
+        echo ""
+        echo "To retry:"
+        echo "  1. Fix the issue above"
+        echo "  2. Remove the container: docker rm -f armorclaw"
+        echo "  3. Re-run the docker command"
+        echo ""
+        exit 1
     fi
 
     # Mark setup complete
