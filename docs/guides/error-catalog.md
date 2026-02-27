@@ -105,6 +105,17 @@ Docker socket not found at /var/run/docker.sock
 Cannot connect to Docker daemon
 ```
 
+**Enhanced Diagnostics (v0.3.6+):**
+```
+Diagnostics:
+  Socket exists:   true/false
+  Socket readable: true/false
+  Socket writable: true/false
+  Daemon running:  true/false
+  User:            uid=0(root) gid=0(root)
+  Socket perms:    srw-rw---- 1 root docker 0 Feb 27 10:00 /var/run/docker.sock
+```
+
 **Solution:**
 ```bash
 # Option 1: Run with --user root
@@ -116,6 +127,10 @@ sudo usermod -aG docker $USER
 
 # Option 3: Fix socket permissions
 sudo chmod 666 /var/run/docker.sock
+
+# Option 4: Ensure Docker daemon is running on host
+systemctl status docker
+sudo systemctl start docker
 ```
 
 ---
