@@ -144,17 +144,21 @@ func printTerminalError(check TerminalCheckResult) {
 // Run executes the interactive setup wizard and returns the collected
 // configuration and secrets. Returns huh.ErrUserAborted if the user cancels.
 func Run(accessible bool) (*WizardResult, error) {
-	// Check terminal capabilities before launching TUI
+	// Check for ACCESSIBLE env var
+	if os.Getenv("ARMORCLAW_ACCESSIBLE") == "true" {
+		accessible = true
+	}
+
+	// ALWAYS check env vars first - prefer non-interactive if configured
+	// This allows users to provide env vars even with proper terminal
+	if result := tryNonInteractive(); result != nil {
+		return result, nil
+	}
+
+	// No env vars - check terminal capabilities before launching TUI
 	termCheck := checkTerminal()
-
-	// If not a proper TTY, check for env vars (non-interactive mode)
-	if !termCheck.IsTTY || !termCheck.StdinOpen {
-		// Check if we have enough env vars to proceed non-interactively
-		if result := tryNonInteractive(); result != nil {
-			return result, nil
-		}
-
-		// No env vars, show error
+	if !termCheck.IsTTY {
+		// No env vars AND no TTY - show error
 		printTerminalError(termCheck)
 		return nil, fmt.Errorf("interactive terminal required (run with -it or provide ARMORCLAW_API_KEY)")
 	}
@@ -218,23 +222,41 @@ func tryNonInteractive() *WizardResult {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
-	if strings.Contains(baseURL, "anthropic") {
+	// Detect provider from URL patterns
+	switch {
+	case strings.Contains(baseURL, "anthropic"):
 		provider = "anthropic"
+	case strings.Contains(baseURL, "z.ai"):
+		provider = "openai" // Z.ai uses OpenAI-compatible API
 	}
 
+	// Get or generate admin password
 	adminPassword := os.Getenv("ARMORCLAW_ADMIN_PASSWORD")
 	if adminPassword == "" {
-		// Auto-generate using the same function as the wizard
-		generated, _ := generatePassword(16)
+		generated, err := generatePassword(16)
+		if err != nil {
+			// Log error but don't fail - use a fallback
+			fmt.Fprintf(os.Stderr, "Warning: password generation failed: %v\n", err)
+			generated = "ChangeMe123!" // Fallback password
+		}
 		adminPassword = generated
 	}
 
-	bridgePassword, _ := generatePassword(16)
+	// Generate bridge password
+	bridgePassword, err := generatePassword(16)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: bridge password generation failed: %v\n", err)
+		bridgePassword = "BridgePass123!"
+	}
 
 	fmt.Println()
-	fmt.Println("  Running in non-interactive mode (environment variables)")
-	fmt.Printf("  Profile: %s\n", profile)
+	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("  Non-Interactive Mode (Environment Variables)")
+	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Printf("  Profile:  %s\n", profile)
 	fmt.Printf("  Provider: %s\n", provider)
+	fmt.Printf("  Base URL: %s\n", baseURL)
+	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 
 	return &WizardResult{
