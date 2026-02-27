@@ -5,7 +5,7 @@
 > **Deploy AI agents in production — without exposing your infrastructure.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-[![Status](https://img.shields.io/badge/status-0.3.1--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
+[![Status](https://img.shields.io/badge/status-0.3.6--beta-orange.svg)](https://github.com/armorclaw/armorclaw/releases)
 [![Security](https://img.shields.io/badge/security-hardened-green.svg)](docs/guides/security-verification-guide.md)
 [![Docker](https://img.shields.io/badge/docker-24%2B-blue.svg)](https://docs.docker.com/)
 [![Matrix](https://img.shields.io/badge/protocol-Matrix%20E2EE-purple.svg)](https://matrix.org/)
@@ -125,15 +125,14 @@ ArmorClaw is built for teams running AI agents in production workflows:
 
 ## 🧪 Current Status
 
-**0.3.1-beta — Docker Deployment Hardening Release**
+**0.3.6-beta — Browser Automation & PII Access Control**
 
-This release implements multi-layer defense against:
+This release adds:
 
-* Shell escape attempts
-* Process spawning
-* Outbound network exfiltration
-* Filesystem abuse
-* Raw syscall bypass attempts
+* **Browser Automation RPC** - 11 JSON-RPC methods for browser control
+* **PII Access Control** - Secretary flow with approval/denial lifecycle
+* **Matrix Event Integration** - PII requests emit `app.armorclaw.pii_request` events
+* **33 new tests** for browser and PII functionality
 
 ### Test Results
 
@@ -144,6 +143,8 @@ This release implements multi-layer defense against:
 | urllib/fetch exfiltration     | ✅ Blocked |
 | Direct shell execution        | ✅ Blocked |
 | Privilege escalation attempts | ✅ Blocked |
+| Browser RPC methods           | ✅ 14/14 Pass |
+| PII Request lifecycle         | ✅ 19/19 Pass |
 
 Community validation in progress before 1.0 production release.
 
@@ -436,6 +437,8 @@ ArmorClaw separates responsibilities across secure layers:
 | 0.2.0   | Zero-trust & audit system | 2026-02-19 | ✅ Complete |
 | 0.3.0   | Docker deployment hardening | 2026-02-24 | ✅ Complete |
 | 0.3.1   | Deployment profiles & error handling | 2026-02-25 | ✅ Complete |
+| 0.3.5   | Mobile Secretary (zero-trust keystore) | 2026-02-26 | ✅ Complete |
+| 0.3.6   | Browser Automation & PII Access Control | 2026-02-27 | ✅ Complete |
 | 0.4.0   | Policy engine             | Q1 2026   | 🚧 In Progress |
 | 1.0.0   | Enterprise ready          | Q3 2026   | 📋 Planned |
 

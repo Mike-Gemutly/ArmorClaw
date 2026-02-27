@@ -1,11 +1,11 @@
 # ArmorClaw Architecture Review - Complete
 
-> **Date:** 2026-02-24
-> **Version:** 4.1.0
-> **Milestone:** Docker Deployment Hardening (5-Pass Review)
+> **Date:** 2026-02-26
+> **Version:** 4.2.0
+> **Milestone:** Mobile Secretary Zero-Trust Keystore + Setup Utilities
 > **Edition:** **Zero-Trust AI Agent Containment Platform** (Slack ready; Discord/Telegram/WhatsApp available via mautrix profiles; Teams planned - see [ROADMAP.md](../../ROADMAP.md))
 > **Status:** BETA - Enterprise Security with Zero-Trust Enforcement
-> **Security Hardening:** v4.1.0 includes Docker quickstart hardening, retry-friendly setup wizard, and 19 deployment fixes
+> **Security Hardening:** v4.2.0 adds Mobile Secretary (zero-trust keystore, agent status, browser skill), Go-native setup utilities (SSL, config generation), and 160+ new tests
 
 ---
 
@@ -7937,3 +7937,188 @@ Investigation of 6 critique claims against actual source code:
 
 **Verdict:** All 6 claims were false alarms based on an outdated snapshot. ArmorChat is feature-complete from a UX/logic perspective.
 
+
+---
+
+## Mobile Secretary Implementation (2026-02-26)
+
+### Overview
+
+The Mobile Secretary implementation adds zero-trust keystore capabilities and comprehensive status tracking for mobile visibility. This enables secure credential access from mobile devices with cryptographic challenge-response verification.
+
+### Components Implemented
+
+#### 1. Zero-Trust Keystore
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| Sealed Keystore | `bridge/pkg/keystore/sealed_keystore.go` | Encrypted credential storage with unseal policies |
+| Challenge Protocol | `bridge/pkg/keystore/challenge.go` | Ed25519 challenge-response authentication |
+| Key Derivation | `bridge/pkg/keystore/key_derivation.go` | Argon2id + XChaCha20-Poly1305 key wrapping |
+| Unseal Policies | `bridge/pkg/keystore/sealed_keystore.go` | MobileApproval, Challenge, TimeLimited, Auto |
+
+**Security Properties:**
+- **Memory-Only DEK:** Data Encryption Key never written to disk
+- **Hardware-Bound:** Encryption tied to machine via Argon2id
+- **Time-Bounded Sessions:** Auto-seal after configurable TTL (default: 5 minutes)
+- **Cryptographic Verification:** Ed25519 signatures for device authentication
+
+#### 2. Agent Status System
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| State Machine | `bridge/pkg/agent/state_machine.go` | Validated state transitions with event emission |
+| Status Types | `bridge/pkg/agent/state.go` | 11 status states with transition rules |
+| Integration Layer | `bridge/pkg/agent/integration.go` | HITL consent + keystore coordination |
+| Status Emitters | `bridge/pkg/agent/status_integration.go` | Browser + BlindFill status utilities |
+
+**Status States:**
+```
+IDLE → INITIALIZING → BROWSING → FORM_FILLING → COMPLETE
+                     ↘ AWAITING_CAPTCHA ↗
+                     ↘ AWAITING_2FA ↗
+                     ↘ AWAITING_APPROVAL → PROCESSING_PAYMENT ↗
+                     ↘ ERROR → IDLE
+```
+
+#### 3. Browser Skill Module
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| BrowserSkill | `bridge/pkg/browser/browser.go` | Browser operations with status tracking |
+| Session Tracking | `browser.go` | URL, title, status tracking |
+| Status Emission | `browser.go` | Automatic status events on all operations |
+
+**Operations:**
+- `Navigate(url)` → StatusBrowsing
+- `FillForm(selector, value)` → StatusFormFilling
+- `WaitForCaptcha()` → StatusAwaitingCaptcha
+- `WaitFor2FA()` → StatusAwaiting2FA
+- `Complete()` → StatusComplete
+- `Fail(err)` → StatusError
+
+#### 4. Setup Utilities (Go Native)
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| Error Types | `bridge/pkg/setup/errors.go` | Typed errors with actionable guidance (INS-XXX) |
+| Docker Validation | `bridge/pkg/setup/docker.go` | Socket + daemon health checks |
+| SSL Generation | `bridge/pkg/setup/ssl.go` | ECDSA P-256 self-signed certificates |
+| Config Generation | `bridge/pkg/setup/config.go` | TOML + env file generation |
+
+### RPC Methods Added
+
+| Method | Description |
+|--------|-------------|
+| `challenge.generate` | Create new challenge for device |
+| `challenge.verify` | Verify challenge signature |
+| `challenge.get` | Get challenge by ID |
+| `challenge.list_pending` | List pending challenges |
+| `challenge.register_device` | Register device public key |
+| `challenge.unregister_device` | Remove device registration |
+| `challenge.server_public_key` | Get server's Ed25519 public key |
+| `challenge.stats` | Challenge statistics |
+| `keystore.unseal_challenge` | Initiate challenge-based unseal |
+| `keystore.unseal_respond` | Complete unseal with signature |
+| `agent.set_status` | Set agent status |
+| `agent.get_status` | Get current status |
+| `agent.status_history` | Get status history |
+| `agent.subscribe_status` | Subscribe to status events |
+
+### Test Coverage
+
+| Package | Tests | Description |
+|---------|-------|-------------|
+| `pkg/keystore` | 74+ | Challenge, key derivation, integration |
+| `pkg/agent` | 58+ | State machine, integration, E2E |
+| `pkg/browser` | 12 | Browser skill operations |
+| `pkg/setup` | 15 | SSL, config generation |
+| **Total** | **~160** | All CGO-free tests passing |
+
+### Zero-Trust Unseal Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    ZERO-TRUST UNSEAL FLOW                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   1. Mobile calls keystore.unseal_challenge(agentID, reason)        │
+│      └─ Bridge generates Ed25519 challenge with nonce               │
+│                                                                      │
+│   2. Mobile derives KEK from password using Argon2id                │
+│      └─ KEK = Argon2id(password, salt, memory=64MB, iterations=3)   │
+│                                                                      │
+│   3. Mobile signs challenge: sign(SHA256(nonce||timestamp||deviceID))│
+│      └─ Ed25519 signature with device private key                   │
+│                                                                      │
+│   4. Mobile calls keystore.unseal_respond(challengeID, signature)   │
+│      └─ Bridge verifies signature with registered device pubkey     │
+│                                                                      │
+│   5. Bridge stores DEK in RAM-only, session begins                  │
+│      └─ Session auto-expires after TTL (default: 5 minutes)        │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Derivation Parameters
+
+```go
+DefaultKeyDerivationParams = KeyDerivationParams{
+    Memory:      64 * 1024,  // 64 MB
+    Iterations:  3,
+    Parallelism: 4,
+    KeyLength:   32,         // 256-bit for XChaCha20-Poly1305
+    SaltLength:  16,
+}
+```
+
+---
+
+## v4.2.0 Documentation Update (2026-02-26)
+
+### Summary of Changes
+
+This version completes the Mobile Secretary implementation with zero-trust keystore, agent status system, browser skill integration, and Go-native setup utilities.
+
+#### New Packages
+
+| Package | Files | Purpose |
+|---------|-------|---------|
+| `pkg/browser` | `browser.go`, `browser_test.go` | Browser skill with status emission |
+| `pkg/setup` | `ssl.go`, `config.go`, `docker.go`, `errors.go` | Go-native setup utilities |
+
+#### Files Created
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `bridge/pkg/keystore/challenge.go` | ~450 | Ed25519 challenge-response protocol |
+| `bridge/pkg/keystore/key_derivation.go` | ~400 | Argon2id key derivation |
+| `bridge/pkg/agent/status_integration.go` | ~310 | Status emission utilities |
+| `bridge/pkg/browser/browser.go` | ~270 | Browser skill module |
+| `bridge/pkg/setup/ssl.go` | ~260 | SSL certificate generation |
+| `bridge/pkg/setup/config.go` | ~320 | Config file generation |
+| (test files) | ~1500+ | Comprehensive test coverage |
+
+#### RPC Methods Added: 14
+
+- Challenge protocol: 8 methods
+- Challenge-based unseal: 2 methods
+- Agent status: 4 methods
+
+### Verification Checklist
+
+After deployment, verify Mobile Secretary features:
+
+- [ ] Challenge generation: `challenge.generate` returns nonce
+- [ ] Key derivation: Argon2id produces consistent KEK
+- [ ] Signature verification: Ed25519 signatures validate
+- [ ] Agent status: `agent.get_status` returns current state
+- [ ] Status transitions: Valid transitions succeed
+- [ ] Browser skill: Navigate emits status events
+- [ ] SSL generation: Self-signed certs work with Matrix
+- [ ] Config generation: TOML files parse correctly
+
+---
+
+**Document Version:** 4.2.0
+**Last Updated:** 2026-02-26

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/internal/adapter"
+	"github.com/armorclaw/bridge/pkg/agent"
 	"github.com/armorclaw/bridge/pkg/appservice"
 	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/docker"
@@ -146,6 +147,8 @@ type Server struct {
 	socketPath   string
 	listener     net.Listener
 	keystore     *keystore.Keystore
+	sealedKS     *keystore.SealedKeystore // Mobile Secretary sealed keystore
+	challengeMgr *keystore.ChallengeManager // Challenge-response protocol manager
 	matrix       *adapter.MatrixAdapter
 	docker       *docker.Client
 	containers   map[string]*ContainerInfo
@@ -205,6 +208,9 @@ type Server struct {
 	// Provisioning manager for ArmorChat first-boot claim
 	provisioningHandler *provisioning.RPCHandler
 	provisioningMgr     *provisioning.Manager
+
+	// Browser automation job manager
+	browserJobs *BrowserJobManager
 }
 
 // ContainerInfo holds information about a running container
@@ -337,6 +343,8 @@ func New(cfg Config) (*Server, error) {
 		startTime: time.Now(),
 		// Store config for later access
 		config: &cfg,
+		// Browser automation job manager
+		browserJobs: NewBrowserJobManager(),
 	}
 
 	// Initialize license client
@@ -429,6 +437,27 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	return server, nil
+}
+
+// SetSealedKeystore sets the sealed keystore for Mobile Secretary
+func (s *Server) SetSealedKeystore(sealedKS *keystore.SealedKeystore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sealedKS = sealedKS
+}
+
+// SetChallengeManager sets the challenge manager for zero-trust unsealing
+func (s *Server) SetChallengeManager(cm *keystore.ChallengeManager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.challengeMgr = cm
+}
+
+// GetChallengeManager returns the challenge manager
+func (s *Server) GetChallengeManager() *keystore.ChallengeManager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.challengeMgr
 }
 
 // Start starts the JSON-RPC server
@@ -780,6 +809,26 @@ func (s *Server) handleRequest(req *Request) *Response {
 	case "pii.list_requests":
 		return s.handlePIIListRequests(req)
 
+	// PII request lifecycle methods (Secretary flow)
+	case "pii.request":
+		return s.handlePIIRequest(req)
+	case "pii.approve":
+		return s.handlePIIApprove(req)
+	case "pii.deny":
+		return s.handlePIIDeny(req)
+	case "pii.status":
+		return s.handlePIIStatus(req)
+	case "pii.list_pending":
+		return s.handlePIIListPending(req)
+	case "pii.stats":
+		return s.handlePIIStats(req)
+	case "pii.cancel":
+		return s.handlePIICancel(req)
+	case "pii.fulfill":
+		return s.handlePIIFulfill(req)
+	case "pii.wait_for_approval":
+		return s.handlePIIWaitForApproval(req)
+
 	// Matrix room and sync methods (ArmorChat compatibility)
 	case "matrix.sync":
 		return s.handleMatrixSync(req)
@@ -897,6 +946,78 @@ func (s *Server) handleRequest(req *Request) *Response {
 		"provisioning.claim", "provisioning.rotate", "provisioning.list",
 		"provisioning.get_qr":
 		return s.handleProvisioning(req)
+
+	// Agent status methods (Mobile Secretary)
+	case "agent.set_status":
+		return s.handleAgentSetStatus(req)
+	case "agent.get_status":
+		return s.handleAgentGetStatus(req)
+	case "agent.status_history":
+		return s.handleAgentStatusHistory(req)
+	case "agent.subscribe_status":
+		return s.handleAgentSubscribeStatus(req)
+
+	// Sealed keystore methods (Mobile Secretary)
+	case "keystore.unseal_request":
+		return s.handleKeystoreUnsealRequest(req)
+	case "keystore.unseal_approve":
+		return s.handleKeystoreUnsealApprove(req)
+	case "keystore.unseal_reject":
+		return s.handleKeystoreUnsealReject(req)
+	case "keystore.unseal_status":
+		return s.handleKeystoreUnsealStatus(req)
+	case "keystore.unseal_pending":
+		return s.handleKeystoreUnsealPending(req)
+	case "keystore.seal":
+		return s.handleKeystoreSeal(req)
+
+	// Challenge-response protocol methods (Zero-Trust Keystore)
+	case "challenge.generate":
+		return s.handleChallengeGenerate(req)
+	case "challenge.verify":
+		return s.handleChallengeVerify(req)
+	case "challenge.get":
+		return s.handleChallengeGet(req)
+	case "challenge.list_pending":
+		return s.handleChallengeListPending(req)
+	case "challenge.register_device":
+		return s.handleChallengeRegisterDevice(req)
+	case "challenge.unregister_device":
+		return s.handleChallengeUnregisterDevice(req)
+	case "challenge.server_public_key":
+		return s.handleChallengeServerPublicKey(req)
+	case "challenge.stats":
+		return s.handleChallengeStats(req)
+
+	// Challenge-based unseal methods (Zero-Trust Keystore)
+	case "keystore.unseal_challenge":
+		return s.handleKeystoreUnsealChallenge(req)
+	case "keystore.unseal_respond":
+		return s.handleKeystoreUnsealRespond(req)
+
+	// Browser automation methods
+	case "browser.navigate":
+		return s.handleBrowserNavigate(req)
+	case "browser.fill":
+		return s.handleBrowserFill(req)
+	case "browser.click":
+		return s.handleBrowserClick(req)
+	case "browser.status":
+		return s.handleBrowserStatus(req)
+	case "browser.wait_for_element":
+		return s.handleBrowserWaitForElement(req)
+	case "browser.wait_for_captcha":
+		return s.handleBrowserWaitForCaptcha(req)
+	case "browser.wait_for_2fa":
+		return s.handleBrowserWaitFor2FA(req)
+	case "browser.complete":
+		return s.handleBrowserComplete(req)
+	case "browser.fail":
+		return s.handleBrowserFail(req)
+	case "browser.list":
+		return s.handleBrowserList(req)
+	case "browser.cancel":
+		return s.handleBrowserCancel(req)
 
 	default:
 		return &Response{
@@ -6512,6 +6633,10 @@ var (
 	agentsMu    sync.RWMutex
 	agents      = make(map[string]*AgentInfo)
 	agentLogger = slog.Default().With("component", "agent_manager")
+
+	// State machine registry for Mobile Secretary
+	stateMachines   = make(map[string]*agent.StateMachine)
+	stateMachinesMu sync.RWMutex
 )
 
 // AgentInfo holds information about a running agent
@@ -7029,6 +7154,789 @@ func (s *Server) handleAgentReportUsage(req *Request) *Response {
 			"agent_total":       agent.TokensUsed,
 			"budget_total":      budgetState.TokensUsed,
 			"budget_limit":      budgetState.TokensLimit,
+		},
+	}
+}
+
+// ============================================================================
+// Agent Status Methods (Mobile Secretary)
+// ============================================================================
+
+// getOrCreateStateMachine returns the state machine for an agent, creating if needed
+func getOrCreateStateMachine(agentID string) *agent.StateMachine {
+	stateMachinesMu.Lock()
+	defer stateMachinesMu.Unlock()
+
+	if sm, exists := stateMachines[agentID]; exists {
+		return sm
+	}
+
+	sm := agent.NewStateMachine(agent.StateMachineConfig{
+		AgentID:     agentID,
+		HistorySize: 100,
+	})
+	stateMachines[agentID] = sm
+	return sm
+}
+
+// handleAgentSetStatus handles agent.set_status RPC method
+// Updates the agent status with state machine validation
+func (s *Server) handleAgentSetStatus(req *Request) *Response {
+	var params struct {
+		AgentID   string                 `json:"agent_id"`
+		Status    string                 `json:"status"`
+		Metadata  map[string]interface{} `json:"metadata,omitempty"`
+		Force     bool                   `json:"force,omitempty"` // Skip validation (for recovery)
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	if params.Status == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "status is required",
+			},
+		}
+	}
+
+	// Get or create state machine
+	sm := getOrCreateStateMachine(params.AgentID)
+	newStatus := agent.AgentStatus(params.Status)
+
+	// Convert metadata
+	metadata := agent.StatusMetadata{}
+	if params.Metadata != nil {
+		if url, ok := params.Metadata["url"].(string); ok {
+			metadata.URL = url
+		}
+		if step, ok := params.Metadata["step"].(string); ok {
+			metadata.Step = step
+		}
+		if progress, ok := params.Metadata["progress"].(float64); ok {
+			metadata.Progress = int(progress)
+		}
+		if errMsg, ok := params.Metadata["error"].(string); ok {
+			metadata.Error = errMsg
+		}
+		if taskID, ok := params.Metadata["task_id"].(string); ok {
+			metadata.TaskID = taskID
+		}
+		if taskType, ok := params.Metadata["task_type"].(string); ok {
+			metadata.TaskType = taskType
+		}
+		if fields, ok := params.Metadata["fields_requested"].([]interface{}); ok {
+			for _, f := range fields {
+				if s, ok := f.(string); ok {
+					metadata.FieldsRequested = append(metadata.FieldsRequested, s)
+				}
+			}
+		}
+	}
+
+	var transitionErr error
+	if params.Force {
+		sm.ForceTransition(newStatus, metadata)
+	} else {
+		transitionErr = sm.Transition(newStatus, metadata)
+	}
+
+	if transitionErr != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid state transition: " + transitionErr.Error(),
+			},
+		}
+	}
+
+	// Update legacy agent status for backward compatibility
+	agentsMu.Lock()
+	if agentInfo, exists := agents[params.AgentID]; exists {
+		agentInfo.Status = params.Status
+		agentInfo.LastActive = time.Now().Unix()
+	}
+	agentsMu.Unlock()
+
+	// Broadcast status event via Matrix if adapter is available
+	if s.matrix != nil {
+		event := sm.LastEvent()
+		if event != nil {
+			// Send status event to agent's Matrix room
+			agentLogger.Info("broadcasting agent status",
+				"agent_id", params.AgentID,
+				"status", params.Status,
+				"previous", event.Previous,
+			)
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"agent_id":     params.AgentID,
+			"status":       sm.Current(),
+			"previous":     sm.LastEvent().Previous,
+			"timestamp":    sm.LastEvent().Timestamp,
+			"is_terminal":  sm.Current().IsTerminal(),
+			"needs_action": sm.Current().NeedsUserAction(),
+		},
+	}
+}
+
+// handleAgentGetStatus handles agent.get_status RPC method
+// Returns the current agent status with metadata
+func (s *Server) handleAgentGetStatus(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	stateMachinesMu.RLock()
+	sm, exists := stateMachines[params.AgentID]
+	stateMachinesMu.RUnlock()
+
+	if !exists {
+		// Return default OFFLINE status for unknown agents
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"agent_id":     params.AgentID,
+				"status":       string(agent.StatusOffline),
+				"metadata":     agent.StatusMetadata{},
+				"is_terminal":  true,
+				"is_active":    false,
+				"needs_action": false,
+			},
+		}
+	}
+
+	metadata := sm.Metadata()
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"agent_id":     params.AgentID,
+			"status":       string(sm.Current()),
+			"metadata":     metadata,
+			"is_terminal":  sm.Current().IsTerminal(),
+			"is_active":    sm.Current().IsActive(),
+			"needs_action": sm.Current().NeedsUserAction(),
+			"string":       sm.String(),
+		},
+	}
+}
+
+// handleAgentStatusHistory handles agent.status_history RPC method
+// Returns the status change history for an agent
+func (s *Server) handleAgentStatusHistory(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id"`
+		Limit   int    `json:"limit,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+
+	stateMachinesMu.RLock()
+	sm, exists := stateMachines[params.AgentID]
+	stateMachinesMu.RUnlock()
+
+	if !exists {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"agent_id": params.AgentID,
+				"history":  []agent.StatusEvent{},
+			},
+		}
+	}
+
+	history := sm.History(params.Limit)
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"agent_id": params.AgentID,
+			"history":  history,
+			"count":    len(history),
+		},
+	}
+}
+
+// handleAgentSubscribeStatus handles agent.subscribe_status RPC method
+// Long-polling subscription for status changes (returns when status changes or timeout)
+func (s *Server) handleAgentSubscribeStatus(req *Request) *Response {
+	var params struct {
+		AgentID       string `json:"agent_id"`
+		TimeoutMs     int    `json:"timeout_ms,omitempty"`
+		CurrentStatus string `json:"current_status,omitempty"` // Only return if different
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	// Default timeout: 30 seconds
+	if params.TimeoutMs <= 0 {
+		params.TimeoutMs = 30000
+	}
+	// Max timeout: 60 seconds
+	if params.TimeoutMs > 60000 {
+		params.TimeoutMs = 60000
+	}
+
+	sm := getOrCreateStateMachine(params.AgentID)
+
+	// If current_status specified and matches, subscribe for changes
+	if params.CurrentStatus != "" && string(sm.Current()) == params.CurrentStatus {
+		// Subscribe to status events
+		sub := sm.Subscribe()
+		defer sm.Unsubscribe(sub)
+
+		timeout := time.Duration(params.TimeoutMs) * time.Millisecond
+		select {
+		case event := <-sub:
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]interface{}{
+					"agent_id":     params.AgentID,
+					"status":       string(event.Status),
+					"previous":     string(event.Previous),
+					"metadata":     event.Metadata,
+					"timestamp":    event.Timestamp,
+					"is_terminal":  event.Status.IsTerminal(),
+					"needs_action": event.Status.NeedsUserAction(),
+				},
+			}
+		case <-time.After(timeout):
+			// Timeout - return current status unchanged
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]interface{}{
+					"agent_id":   params.AgentID,
+					"status":     string(sm.Current()),
+					"timeout":    true,
+					"changed":    false,
+					"timestamp":  time.Now().UnixMilli(),
+				},
+			}
+		case <-s.ctx.Done():
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InternalError,
+					Message: "server shutting down",
+				},
+			}
+		}
+	}
+
+	// Return current status immediately
+	lastEvent := sm.LastEvent()
+	result := map[string]interface{}{
+		"agent_id":     params.AgentID,
+		"status":       string(sm.Current()),
+		"changed":      true,
+		"is_terminal":  sm.Current().IsTerminal(),
+		"is_active":    sm.Current().IsActive(),
+		"needs_action": sm.Current().NeedsUserAction(),
+		"timestamp":    time.Now().UnixMilli(),
+	}
+
+	if lastEvent != nil {
+		result["previous"] = string(lastEvent.Previous)
+		result["metadata"] = lastEvent.Metadata
+		result["timestamp"] = lastEvent.Timestamp
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  result,
+	}
+}
+
+// ============================================================================
+// Sealed Keystore Methods (Mobile Secretary)
+// ============================================================================
+
+// handleKeystoreUnsealRequest handles keystore.unseal_request RPC method
+// Creates a pending unseal request that must be approved (for mobile_approval policy)
+func (s *Server) handleKeystoreUnsealRequest(req *Request) *Response {
+	var params struct {
+		AgentID string   `json:"agent_id"`
+		Reason  string   `json:"reason"`
+		Fields  []string `json:"fields,omitempty"`
+		TaskID  string   `json:"task_id,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	// Check if sealed keystore is initialized
+	if s.sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "sealed keystore not initialized",
+			},
+		}
+	}
+
+	// Request unseal
+	pending, err := s.sealedKS.RequestUnseal(s.ctx, params.AgentID, params.Reason, params.Fields, params.TaskID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "unseal request failed: " + err.Error(),
+			},
+		}
+	}
+
+	// If nil, already unsealed
+	if pending == nil {
+		status := s.sealedKS.GetStatus(params.AgentID)
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"already_unsealed": true,
+				"session_id":       status.SessionID,
+				"expires_at":       status.ExpiresAt,
+			},
+		}
+	}
+
+	// Return pending request info
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"request_id":   pending.ID,
+			"agent_id":     pending.AgentID,
+			"reason":       pending.Reason,
+			"fields":       pending.Fields,
+			"requested_at": pending.RequestedAt.UnixMilli(),
+			"expires_at":   pending.ExpiresAt.UnixMilli(),
+			"policy":       string(pending.Policy),
+		},
+	}
+}
+
+// handleKeystoreUnsealApprove handles keystore.unseal_approve RPC method
+// Approves a pending unseal request (called from mobile device)
+func (s *Server) handleKeystoreUnsealApprove(req *Request) *Response {
+	var params struct {
+		RequestID  string `json:"request_id"`
+		ApprovedBy string `json:"approved_by"` // Matrix user ID
+		DeviceID   string `json:"device_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RequestID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "request_id is required",
+			},
+		}
+	}
+
+	if s.sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "sealed keystore not initialized",
+			},
+		}
+	}
+
+	session, err := s.sealedKS.ApproveUnseal(s.ctx, params.RequestID, params.ApprovedBy, params.DeviceID)
+	if err != nil {
+		code := InternalError
+		if errors.Is(err, keystore.ErrSessionNotFound) || errors.Is(err, keystore.ErrUnsealExpired) {
+			code = InvalidParams
+		}
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    code,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"session_id":  session.ID,
+			"agent_id":    session.AgentID,
+			"unsealed_at": session.UnsealedAt.Unix(),
+			"expires_at":  session.ExpiresAt.Unix(),
+			"policy":      string(session.UnsealPolicy),
+		},
+	}
+}
+
+// handleKeystoreUnsealReject handles keystore.unseal_reject RPC method
+// Rejects a pending unseal request
+func (s *Server) handleKeystoreUnsealReject(req *Request) *Response {
+	var params struct {
+		RequestID   string `json:"request_id"`
+		RejectedBy  string `json:"rejected_by"`
+		Reason      string `json:"reason,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RequestID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "request_id is required",
+			},
+		}
+	}
+
+	if s.sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "sealed keystore not initialized",
+			},
+		}
+	}
+
+	err := s.sealedKS.RejectUnseal(s.ctx, params.RequestID, params.RejectedBy)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":    true,
+			"request_id": params.RequestID,
+			"rejected":   true,
+		},
+	}
+}
+
+// handleKeystoreUnsealStatus handles keystore.unseal_status RPC method
+// Returns the current sealed/unsealed status for an agent
+func (s *Server) handleKeystoreUnsealStatus(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	if s.sealedKS == nil {
+		// If no sealed keystore, consider it always unsealed (backward compatible)
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"agent_id":   params.AgentID,
+				"is_sealed":  false,
+				"available":  true,
+				"policy":     "none",
+			},
+		}
+	}
+
+	status := s.sealedKS.GetStatus(params.AgentID)
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  status,
+	}
+}
+
+// handleKeystoreUnsealPending handles keystore.unseal_pending RPC method
+// Returns all pending unseal requests (for mobile app to display)
+func (s *Server) handleKeystoreUnsealPending(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id,omitempty"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	if s.sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"requests": []interface{}{},
+				"count":    0,
+			},
+		}
+	}
+
+	pending := s.sealedKS.GetPendingRequests(params.AgentID)
+
+	// Convert to response format
+	requests := make([]map[string]interface{}, len(pending))
+	for i, p := range pending {
+		requests[i] = map[string]interface{}{
+			"request_id":   p.ID,
+			"agent_id":     p.AgentID,
+			"reason":       p.Reason,
+			"fields":       p.Fields,
+			"task_id":      p.TaskID,
+			"requested_at": p.RequestedAt.UnixMilli(),
+			"expires_at":   p.ExpiresAt.UnixMilli(),
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"requests": requests,
+			"count":    len(requests),
+		},
+	}
+}
+
+// handleKeystoreSeal handles keystore.seal RPC method
+// Explicitly seals the keystore for an agent
+func (s *Server) handleKeystoreSeal(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	if s.sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"success":  true,
+				"agent_id": params.AgentID,
+				"sealed":   true,
+			},
+		}
+	}
+
+	err := s.sealedKS.Seal(s.ctx, params.AgentID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":  true,
+			"agent_id": params.AgentID,
+			"sealed":   true,
 		},
 	}
 }
@@ -9142,6 +10050,776 @@ func (s *Server) handleQRConfig(req *Request) *Response {
 			},
 			"expires_at": result.ExpiresAt.Unix(),
 			"has_qr":     len(result.QRImage) > 0,
+		},
+	}
+}
+
+// =============================================================================
+// Challenge-Response Protocol RPC Methods
+// =============================================================================
+
+// handleChallengeGenerate handles challenge.generate RPC method
+// Creates a new challenge for unseal request
+func (s *Server) handleChallengeGenerate(req *Request) *Response {
+	var params struct {
+		AgentID string   `json:"agent_id"`
+		Reason  string   `json:"reason"`
+		Fields  []string `json:"fields,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	challenge, err := cm.GenerateChallenge(params.AgentID, params.Reason, params.Fields)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to generate challenge: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  challenge.ToMatrixEvent(),
+	}
+}
+
+// handleChallengeVerify handles challenge.verify RPC method
+// Verifies a challenge response and returns the verified challenge
+func (s *Server) handleChallengeVerify(req *Request) *Response {
+	var params struct {
+		ChallengeID string `json:"challenge_id"`
+		Signature   string `json:"signature"`   // Base64-encoded Ed25519 signature
+		PublicKey   string `json:"public_key"`  // Base64-encoded Ed25519 public key
+		Timestamp   int64  `json:"timestamp"`
+		DeviceID    string `json:"device_id"`
+		WrappedKEK  string `json:"wrapped_kek,omitempty"` // Optional key exchange
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ChallengeID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "challenge_id is required",
+			},
+		}
+	}
+
+	if params.Signature == "" || params.PublicKey == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "signature and public_key are required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	// Build the response object
+	response := &keystore.ChallengeResponse{
+		ChallengeID: params.ChallengeID,
+		Timestamp:   params.Timestamp,
+		DeviceID:    params.DeviceID,
+	}
+
+	// Decode signature
+	sig, err := base64.RawURLEncoding.DecodeString(params.Signature)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid signature encoding: " + err.Error(),
+			},
+		}
+	}
+	response.Signature = sig
+
+	// Decode public key
+	pubKey, err := base64.RawURLEncoding.DecodeString(params.PublicKey)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid public_key encoding: " + err.Error(),
+			},
+		}
+	}
+	response.PublicKey = pubKey
+
+	// Decode wrapped KEK if present
+	if params.WrappedKEK != "" {
+		wrappedKEK, err := base64.RawURLEncoding.DecodeString(params.WrappedKEK)
+		if err != nil {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "invalid wrapped_kek encoding: " + err.Error(),
+				},
+			}
+		}
+		response.WrappedKEK = wrappedKEK
+	}
+
+	// Verify the challenge
+	verified, err := cm.VerifyChallenge(response)
+	if err != nil {
+		code := InternalError
+		if errors.Is(err, keystore.ErrChallengeNotFound) ||
+			errors.Is(err, keystore.ErrChallengeExpired) ||
+			errors.Is(err, keystore.ErrChallengeAlreadyUsed) {
+			code = InvalidParams
+		} else if errors.Is(err, keystore.ErrInvalidSignature) ||
+			errors.Is(err, keystore.ErrInvalidPublicKey) {
+			code = InvalidParams
+		}
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    code,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":      true,
+			"challenge_id": verified.ID,
+			"agent_id":     verified.AgentID,
+			"reason":       verified.Reason,
+			"fields":       verified.Fields,
+			"device_id":    params.DeviceID,
+		},
+	}
+}
+
+// handleChallengeGet handles challenge.get RPC method
+// Gets a specific challenge by ID
+func (s *Server) handleChallengeGet(req *Request) *Response {
+	var params struct {
+		ChallengeID string `json:"challenge_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.ChallengeID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "challenge_id is required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	challenge, err := cm.GetChallenge(params.ChallengeID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  challenge.ToMatrixEvent(),
+	}
+}
+
+// handleChallengeListPending handles challenge.list_pending RPC method
+// Lists all pending challenges, optionally filtered by agent_id
+func (s *Server) handleChallengeListPending(req *Request) *Response {
+	var params struct {
+		AgentID string `json:"agent_id,omitempty"`
+	}
+
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	challenges := cm.ListPendingChallenges(params.AgentID)
+
+	// Convert to matrix events
+	events := make([]map[string]interface{}, len(challenges))
+	for i, c := range challenges {
+		events[i] = c.ToMatrixEvent()
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"challenges": events,
+			"count":      len(events),
+		},
+	}
+}
+
+// handleChallengeRegisterDevice handles challenge.register_device RPC method
+// Registers a device's public key for challenge verification
+func (s *Server) handleChallengeRegisterDevice(req *Request) *Response {
+	var params struct {
+		DeviceID  string `json:"device_id"`
+		PublicKey string `json:"public_key"` // Base64-encoded Ed25519 public key
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.DeviceID == "" || params.PublicKey == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device_id and public_key are required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	pubKey, err := base64.RawURLEncoding.DecodeString(params.PublicKey)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid public_key encoding: " + err.Error(),
+			},
+		}
+	}
+
+	err = cm.RegisterDevice(params.DeviceID, pubKey)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":   true,
+			"device_id": params.DeviceID,
+		},
+	}
+}
+
+// handleChallengeUnregisterDevice handles challenge.unregister_device RPC method
+// Unregisters a device's public key
+func (s *Server) handleChallengeUnregisterDevice(req *Request) *Response {
+	var params struct {
+		DeviceID string `json:"device_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.DeviceID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "device_id is required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	cm.UnregisterDevice(params.DeviceID)
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":   true,
+			"device_id": params.DeviceID,
+		},
+	}
+}
+
+// handleChallengeServerPublicKey handles challenge.server_public_key RPC method
+// Returns the server's Ed25519 public key for client verification
+func (s *Server) handleChallengeServerPublicKey(req *Request) *Response {
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	pubKey := cm.GetServerPublicKey()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"public_key": base64.RawURLEncoding.EncodeToString(pubKey),
+		},
+	}
+}
+
+// handleChallengeStats handles challenge.stats RPC method
+// Returns challenge manager statistics
+func (s *Server) handleChallengeStats(req *Request) *Response {
+	s.mu.RLock()
+	cm := s.challengeMgr
+	s.mu.RUnlock()
+
+	if cm == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "challenge manager not initialized",
+			},
+		}
+	}
+
+	stats := cm.GetStats()
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result:  stats,
+	}
+}
+
+// =============================================================================
+// Challenge-Based Unseal RPC Methods
+// =============================================================================
+
+// handleKeystoreUnsealChallenge handles keystore.unseal_challenge RPC method
+// Generates a challenge for unseal and returns it to the caller
+func (s *Server) handleKeystoreUnsealChallenge(req *Request) *Response {
+	var params struct {
+		AgentID string   `json:"agent_id"`
+		Reason  string   `json:"reason"`
+		Fields  []string `json:"fields,omitempty"`
+		TaskID  string   `json:"task_id,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.AgentID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "agent_id is required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	sealedKS := s.sealedKS
+	s.mu.RUnlock()
+
+	if sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "sealed keystore not initialized",
+			},
+		}
+	}
+
+	// Request unseal (this will generate a challenge if PolicyChallenge is set)
+	pending, err := sealedKS.RequestUnseal(s.ctx, params.AgentID, params.Reason, params.Fields, params.TaskID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "unseal request failed: " + err.Error(),
+			},
+		}
+	}
+
+	// If nil, already unsealed
+	if pending == nil {
+		status := sealedKS.GetStatus(params.AgentID)
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"already_unsealed": true,
+				"session_id":       status.SessionID,
+				"expires_at":       status.ExpiresAt,
+			},
+		}
+	}
+
+	// Get the challenge
+	challenge, err := sealedKS.GetChallengeForRequest(pending.ID)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "failed to get challenge: " + err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"request_id":        pending.ID,
+			"challenge_id":      challenge.ID,
+			"nonce":             base64.RawURLEncoding.EncodeToString(challenge.Nonce),
+			"server_public_key": base64.RawURLEncoding.EncodeToString(challenge.ServerPublicKey),
+			"agent_id":          challenge.AgentID,
+			"reason":            challenge.Reason,
+			"fields":            challenge.Fields,
+			"expires_at":        challenge.ExpiresAt.UnixMilli(),
+		},
+	}
+}
+
+// handleKeystoreUnsealRespond handles keystore.unseal_respond RPC method
+// Verifies challenge response and completes unseal
+func (s *Server) handleKeystoreUnsealRespond(req *Request) *Response {
+	var params struct {
+		RequestID  string `json:"request_id"`
+		Signature  string `json:"signature"`   // Base64-encoded Ed25519 signature
+		PublicKey  string `json:"public_key"`  // Base64-encoded Ed25519 public key
+		Timestamp  int64  `json:"timestamp"`
+		DeviceID   string `json:"device_id"`
+		WrappedKEK string `json:"wrapped_kek,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid parameters: " + err.Error(),
+			},
+		}
+	}
+
+	if params.RequestID == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "request_id is required",
+			},
+		}
+	}
+
+	if params.Signature == "" || params.PublicKey == "" {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "signature and public_key are required",
+			},
+		}
+	}
+
+	s.mu.RLock()
+	sealedKS := s.sealedKS
+	s.mu.RUnlock()
+
+	if sealedKS == nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InternalError,
+				Message: "sealed keystore not initialized",
+			},
+		}
+	}
+
+	// Build challenge response
+	response := &keystore.ChallengeResponse{
+		ChallengeID: params.RequestID, // For unseal, request_id is the challenge context
+		Timestamp:   params.Timestamp,
+		DeviceID:    params.DeviceID,
+	}
+
+	// Decode signature
+	sig, err := base64.RawURLEncoding.DecodeString(params.Signature)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid signature encoding: " + err.Error(),
+			},
+		}
+	}
+	response.Signature = sig
+
+	// Decode public key
+	pubKey, err := base64.RawURLEncoding.DecodeString(params.PublicKey)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    InvalidParams,
+				Message: "invalid public_key encoding: " + err.Error(),
+			},
+		}
+	}
+	response.PublicKey = pubKey
+
+	// Decode wrapped KEK if present
+	if params.WrappedKEK != "" {
+		wrappedKEK, err := base64.RawURLEncoding.DecodeString(params.WrappedKEK)
+		if err != nil {
+			return &Response{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &ErrorObj{
+					Code:    InvalidParams,
+					Message: "invalid wrapped_kek encoding: " + err.Error(),
+				},
+			}
+		}
+		response.WrappedKEK = wrappedKEK
+	}
+
+	// Verify challenge and complete unseal
+	session, err := sealedKS.VerifyChallengeAndUnseal(s.ctx, response)
+	if err != nil {
+		code := InternalError
+		if errors.Is(err, keystore.ErrSessionNotFound) ||
+			errors.Is(err, keystore.ErrUnsealExpired) ||
+			errors.Is(err, keystore.ErrChallengeNotFound) ||
+			errors.Is(err, keystore.ErrChallengeExpired) {
+			code = InvalidParams
+		} else if errors.Is(err, keystore.ErrInvalidSignature) ||
+			errors.Is(err, keystore.ErrInvalidPublicKey) {
+			code = InvalidParams
+		}
+		return &Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &ErrorObj{
+				Code:    code,
+				Message: err.Error(),
+			},
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"success":     true,
+			"session_id":  session.ID,
+			"agent_id":    session.AgentID,
+			"unsealed_at": session.UnsealedAt.Unix(),
+			"expires_at":  session.ExpiresAt.Unix(),
+			"policy":      string(session.UnsealPolicy),
+			"device_id":   session.DeviceID,
 		},
 	}
 }

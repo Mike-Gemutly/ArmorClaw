@@ -3,8 +3,8 @@
 > **Protocol:** JSON-RPC 2.0
 > **Transport:** Unix Domain Socket
 > **Socket:** `/run/armorclaw/bridge.sock`
-> **Version:** 1.11.0
-> **Last Updated:** 2026-02-21
+> **Version:** 1.12.0
+> **Last Updated:** 2026-02-26
 
 ---
 
@@ -2910,6 +2910,877 @@ echo '{"jsonrpc":"2.0","id":2,"method":"resolve_error","params":{"trace_id":"tr_
 
 ---
 
+## Agent Status Methods (Mobile Secretary)
+
+These methods manage agent state machines for Mobile Secretary workflows.
+
+### Agent Status Values
+
+The agent status follows a state machine with validated transitions:
+
+| Status | Description | Terminal | Needs Action |
+|--------|-------------|----------|--------------|
+| `OFFLINE` | Agent not reachable | ✅ Yes | ❌ No |
+| `INITIALIZING` | Agent starting up | ❌ No | ❌ No |
+| `IDLE` | Agent ready, no task | ❌ No | ❌ No |
+| `BROWSING` | Navigating to URL | ❌ No | ❌ No |
+| `FORM_FILLING` | Filling form fields | ❌ No | ❌ No |
+| `AWAITING_CAPTCHA` | Needs human CAPTCHA solving | ✅ Yes | ✅ Yes |
+| `AWAITING_2FA` | Needs 2FA code | ✅ Yes | ✅ Yes |
+| `AWAITING_APPROVAL` | Waiting for BlindFill approval | ✅ Yes | ✅ Yes |
+| `PROCESSING_PAYMENT` | Submitting payment | ❌ No | ❌ No |
+| `ERROR` | Recoverable error | ❌ No | ❌ No |
+| `COMPLETE` | Task finished | ❌ No | ❌ No |
+
+### agent.set_status
+
+Update agent status with state machine validation.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "agent.set_status",
+  "params": {
+    "agent_id": "secretary-001",
+    "status": "BROWSING",
+    "metadata": {
+      "url": "https://example.com/checkout",
+      "step": "1/5",
+      "progress": 20,
+      "task_id": "task-abc123",
+      "task_type": "flight_booking"
+    }
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+| status | string | ✅ Yes | New status (must be valid transition from current) |
+| metadata | object | ❌ No | Additional context (url, step, progress, etc.) |
+| force | boolean | ❌ No | Skip transition validation (for recovery) |
+
+**Metadata Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| url | string | Current page URL (for BROWSING) |
+| step | string | Current step description (e.g., "2/5") |
+| progress | number | Progress percentage (0-100) |
+| error | string | Error message (for ERROR status) |
+| task_id | string | Current task identifier |
+| task_type | string | Task type (e.g., "flight_booking") |
+| fields_requested | array | PII fields being requested (for AWAITING_APPROVAL) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "agent_id": "secretary-001",
+    "status": "BROWSING",
+    "previous": "INITIALIZING",
+    "timestamp": 1739491200000,
+    "is_terminal": false,
+    "needs_action": false
+  }
+}
+```
+
+**Error Codes:**
+- `-32602` (InvalidParams) - agent_id or status is required
+- `-32602` (InvalidParams) - invalid state transition
+
+### agent.get_status
+
+Get current agent status and metadata.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "agent.get_status",
+  "params": {
+    "agent_id": "secretary-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "agent_id": "secretary-001",
+    "status": "BROWSING",
+    "metadata": {
+      "url": "https://example.com/checkout",
+      "step": "1/5",
+      "progress": 20
+    },
+    "is_terminal": false,
+    "is_active": true,
+    "needs_action": false,
+    "string": "BROWSING (https://example.com/checkout)"
+  }
+}
+```
+
+### agent.status_history
+
+Get status change history for an agent.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "agent.status_history",
+  "params": {
+    "agent_id": "secretary-001",
+    "limit": 10
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+| limit | number | ❌ No | Max history entries (default: 50) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "agent_id": "secretary-001",
+    "history": [
+      {
+        "agent_id": "secretary-001",
+        "status": "BROWSING",
+        "previous": "INITIALIZING",
+        "metadata": {"url": "https://example.com"},
+        "timestamp": 1739491200000
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+### agent.subscribe_status
+
+Long-polling subscription for status changes. Returns immediately if status differs from `current_status`, or waits up to `timeout_ms` for a change.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "agent.subscribe_status",
+  "params": {
+    "agent_id": "secretary-001",
+    "current_status": "BROWSING",
+    "timeout_ms": 30000
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+| current_status | string | ❌ No | Only return if status differs |
+| timeout_ms | number | ❌ No | Max wait time (default: 30000, max: 60000) |
+
+**Response (Status Changed):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "agent_id": "secretary-001",
+    "status": "FORM_FILLING",
+    "previous": "BROWSING",
+    "metadata": {"step": "1/5"},
+    "timestamp": 1739491210000,
+    "is_terminal": false,
+    "needs_action": false
+  }
+}
+```
+
+**Response (Timeout):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "agent_id": "secretary-001",
+    "status": "BROWSING",
+    "timeout": true,
+    "changed": false,
+    "timestamp": 1739491240000
+  }
+}
+```
+
+---
+
+## Sealed Keystore Methods (Mobile Secretary)
+
+These methods manage the sealed keystore for Mobile Secretary workflows. The sealed keystore provides an additional security layer requiring explicit unsealing before sensitive PII operations.
+
+### keystore.unseal_request
+
+Request unsealing of the keystore for an agent. Creates a pending request that must be approved for `mobile_approval` policy.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_request",
+  "params": {
+    "agent_id": "secretary-001",
+    "reason": "Flight booking for John Doe",
+    "fields": ["name", "email", "phone", "credit_card"],
+    "task_id": "task-abc123"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+| reason | string | ✅ Yes | Human-readable reason for unseal request |
+| fields | array | ❌ No | PII fields being requested |
+| task_id | string | ❌ No | Associated task ID |
+
+**Response (Pending Approval):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "request_id": "req_abc123",
+    "agent_id": "secretary-001",
+    "reason": "Flight booking for John Doe",
+    "fields": ["name", "email", "phone", "credit_card"],
+    "requested_at": 1739491200000,
+    "expires_at": 1739491260000,
+    "policy": "mobile_approval"
+  }
+}
+```
+
+**Response (Already Unsealed):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "already_unsealed": true,
+    "session_id": "sess_xyz789",
+    "expires_at": 1739491500000
+  }
+}
+```
+
+### keystore.unseal_approve
+
+Approve a pending unseal request (called from mobile device).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_approve",
+  "params": {
+    "request_id": "req_abc123",
+    "approved_by": "@user:matrix.example.com",
+    "device_id": "DEVICEABC123"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| request_id | string | ✅ Yes | Pending request ID to approve |
+| approved_by | string | ✅ Yes | Matrix user ID of approver |
+| device_id | string | ❌ No | Mobile device ID that approved |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "session_id": "sess_xyz789",
+    "agent_id": "secretary-001",
+    "unsealed_at": 1739491200,
+    "expires_at": 1739491500,
+    "policy": "mobile_approval"
+  }
+}
+```
+
+### keystore.unseal_reject
+
+Reject a pending unseal request.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_reject",
+  "params": {
+    "request_id": "req_abc123",
+    "rejected_by": "@user:matrix.example.com",
+    "reason": "Unknown request"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| request_id | string | ✅ Yes | Pending request ID to reject |
+| rejected_by | string | ❌ No | Matrix user ID of rejecter |
+| reason | string | ❌ No | Reason for rejection |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "request_id": "req_abc123",
+    "rejected": true
+  }
+}
+```
+
+### keystore.unseal_status
+
+Get the current sealed/unsealed status for an agent.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_status",
+  "params": {
+    "agent_id": "secretary-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+
+**Response (Sealed):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "is_sealed": true
+  }
+}
+```
+
+**Response (Unsealed):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "is_sealed": false,
+    "session_id": "sess_xyz789",
+    "agent_id": "secretary-001",
+    "expires_at": 1739491500,
+    "unseal_policy": "mobile_approval"
+  }
+}
+```
+
+### keystore.unseal_pending
+
+Get all pending unseal requests (for mobile app notification list).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_pending",
+  "params": {
+    "agent_id": "secretary-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ❌ No | Filter by agent (omit for all) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "requests": [
+      {
+        "request_id": "req_abc123",
+        "agent_id": "secretary-001",
+        "reason": "Flight booking",
+        "fields": ["name", "email"],
+        "task_id": "task-abc123",
+        "requested_at": 1739491200000,
+        "expires_at": 1739491260000
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+### keystore.seal
+
+Explicitly seal the keystore for an agent (revoke access).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.seal",
+  "params": {
+    "agent_id": "secretary-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "agent_id": "secretary-001",
+    "sealed": true
+  }
+}
+```
+
+---
+
+## Challenge-Response Protocol Methods (Zero-Trust Keystore)
+
+These methods implement the challenge-response protocol for zero-trust keystore unsealing. The mobile device must prove possession of the private key before the keystore can be unsealed.
+
+### challenge.generate
+
+Generate a new challenge for an unseal request. The challenge contains a nonce that must be signed by the mobile device's Ed25519 private key.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.generate",
+  "params": {
+    "agent_id": "secretary-001",
+    "reason": "Flight booking requires PII access",
+    "fields": ["name", "email", "phone"]
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier requesting unseal |
+| reason | string | ✅ Yes | Human-readable reason for the unseal request |
+| fields | array | ❌ No | List of PII fields being requested (for user display) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "type": "com.armorclaw.keystore.unseal_challenge",
+    "challenge_id": "chal_abc123def456",
+    "nonce": "base64-encoded-32-byte-nonce",
+    "server_public_key": "base64-encoded-ed25519-public-key",
+    "agent_id": "secretary-001",
+    "reason": "Flight booking requires PII access",
+    "fields": ["name", "email", "phone"],
+    "expires_at": 1739491260000
+  }
+}
+```
+
+### challenge.verify
+
+Verify a challenge response with Ed25519 signature. The mobile device signs the SHA-256 hash of (nonce || timestamp || device_id).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.verify",
+  "params": {
+    "challenge_id": "chal_abc123def456",
+    "signature": "base64-encoded-ed25519-signature",
+    "public_key": "base64-encoded-ed25519-public-key",
+    "timestamp": 1739491200,
+    "device_id": "device-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| challenge_id | string | ✅ Yes | ID of the challenge to verify |
+| signature | string | ✅ Yes | Base64-encoded Ed25519 signature |
+| public_key | string | ✅ Yes | Base64-encoded Ed25519 public key |
+| timestamp | integer | ✅ Yes | Unix timestamp when response was created |
+| device_id | string | ❌ No | Device identifier for audit logging |
+| wrapped_kek | string | ❌ No | Optional wrapped key encryption key |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "challenge_id": "chal_abc123def456",
+    "agent_id": "secretary-001",
+    "reason": "Flight booking requires PII access",
+    "fields": ["name", "email", "phone"],
+    "device_id": "device-001"
+  }
+}
+```
+
+### challenge.get
+
+Get a specific challenge by ID.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.get",
+  "params": {
+    "challenge_id": "chal_abc123def456"
+  }
+}
+```
+
+**Response:** Same format as `challenge.generate` result.
+
+### challenge.list_pending
+
+List all pending challenges, optionally filtered by agent.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.list_pending",
+  "params": {
+    "agent_id": "secretary-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ❌ No | Filter by agent ID (omit for all agents) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "challenges": [
+      {
+        "type": "com.armorclaw.keystore.unseal_challenge",
+        "challenge_id": "chal_abc123",
+        "nonce": "...",
+        "server_public_key": "...",
+        "agent_id": "secretary-001",
+        "reason": "...",
+        "fields": ["name", "email"],
+        "expires_at": 1739491260000
+      }
+    ],
+    "count": 1
+  }
+}
+```
+
+### challenge.register_device
+
+Register a device's Ed25519 public key for pre-verification.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.register_device",
+  "params": {
+    "device_id": "device-001",
+    "public_key": "base64-encoded-ed25519-public-key"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| device_id | string | ✅ Yes | Unique device identifier |
+| public_key | string | ✅ Yes | Base64-encoded Ed25519 public key (32 bytes) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "device_id": "device-001"
+  }
+}
+```
+
+### challenge.unregister_device
+
+Unregister a device's public key.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.unregister_device",
+  "params": {
+    "device_id": "device-001"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "device_id": "device-001"
+  }
+}
+```
+
+### challenge.server_public_key
+
+Get the server's Ed25519 public key for signature verification on the client side.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.server_public_key"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "public_key": "base64-encoded-ed25519-public-key"
+  }
+}
+```
+
+### challenge.stats
+
+Get challenge manager statistics.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "challenge.stats"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pending_challenges": 5,
+    "registered_devices": 3,
+    "ttl_seconds": 60
+  }
+}
+```
+
+---
+
+## Challenge-Based Unseal Methods (Zero-Trust)
+
+These methods combine the challenge-response protocol with sealed keystore unsealing. They are used when the unseal policy is set to `challenge`, requiring Ed25519 signature verification instead of simple approval.
+
+### keystore.unseal_challenge
+
+Request an unseal with a cryptographic challenge. Returns a challenge that must be signed by the mobile device's Ed25519 private key.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_challenge",
+  "params": {
+    "agent_id": "secretary-001",
+    "reason": "Flight booking requires PII access",
+    "fields": ["name", "email", "phone"],
+    "task_id": "task-abc123"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| agent_id | string | ✅ Yes | Unique agent identifier |
+| reason | string | ✅ Yes | Human-readable reason for unseal |
+| fields | array | ❌ No | PII fields being requested |
+| task_id | string | ❌ No | Associated task ID |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "request_id": "req_xyz789",
+    "challenge_id": "chal_abc123",
+    "nonce": "base64-encoded-32-byte-nonce",
+    "server_public_key": "base64-encoded-ed25519-public-key",
+    "agent_id": "secretary-001",
+    "reason": "Flight booking requires PII access",
+    "fields": ["name", "email", "phone"],
+    "expires_at": 1739491260000
+  }
+}
+```
+
+### keystore.unseal_respond
+
+Verify a challenge response and complete the unseal operation.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "keystore.unseal_respond",
+  "params": {
+    "request_id": "req_xyz789",
+    "signature": "base64-encoded-ed25519-signature",
+    "public_key": "base64-encoded-ed25519-public-key",
+    "timestamp": 1739491200,
+    "device_id": "device-001"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| request_id | string | ✅ Yes | ID from unseal_challenge response |
+| signature | string | ✅ Yes | Base64-encoded Ed25519 signature of SHA256(nonce \|\| timestamp \|\| device_id) |
+| public_key | string | ✅ Yes | Base64-encoded Ed25519 public key (32 bytes) |
+| timestamp | integer | ✅ Yes | Unix timestamp when signature was created |
+| device_id | string | ❌ No | Device identifier for audit logging |
+| wrapped_kek | string | ❌ No | Optional wrapped key encryption key |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "session_id": "sess_def456",
+    "agent_id": "secretary-001",
+    "unsealed_at": 1739491200,
+    "expires_at": 1739491500,
+    "policy": "challenge",
+    "device_id": "device-001"
+  }
+}
+```
+
+**Signature Generation:**
+The mobile device must sign `SHA256(nonce || timestamp || device_id)` where:
+- `nonce` is the raw 32-byte nonce from the challenge
+- `timestamp` is the Unix timestamp as a string
+- `device_id` is the device identifier string
+
+---
+
 ## Appendix A: Provider Values
 
 Valid providers for `list_keys` and credential storage:
@@ -3014,5 +3885,5 @@ Structured error codes for programmatic error handling. Each code follows the fo
 
 ---
 
-**API Reference Last Updated:** 2026-02-21
+**API Reference Last Updated:** 2026-02-26
 **Compatible with Bridge Version:** 1.11.0
