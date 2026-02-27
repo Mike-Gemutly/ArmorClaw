@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/armorclaw/bridge/pkg/setup"
+
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
 )
@@ -162,7 +164,13 @@ func Run(accessible bool) (*WizardResult, error) {
 	if !termCheck.IsTTY {
 		// No env vars AND no TTY - show error
 		printTerminalError(termCheck)
-		return nil, fmt.Errorf("interactive terminal required (run with -it or provide ARMORCLAW_API_KEY)")
+		return nil, setup.ErrTerminalNotTTY
+	}
+
+	// Check terminal width
+	if termCheck.Width > 0 && termCheck.Width < 60 {
+		printTerminalError(termCheck)
+		return nil, setup.ErrTerminalTooNarrow
 	}
 
 	printBanner()
@@ -318,7 +326,7 @@ func WriteConfigJSON(path string, cfg *WizardConfig) error {
 	}
 
 	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write wizard config to %s: %w", path, err)
+		return setup.WrapError(err, setup.ErrConfigWriteFailed)
 	}
 
 	return nil
