@@ -200,6 +200,51 @@ if [ "$DEBUG" = true ]; then
 fi
 
 #=============================================================================
+# Development Mode: Auto-backup logs to catch before crash
+#=============================================================================
+# Set ARMORCLAW_DEV_MODE=true to enable automatic log backup to /tmp
+# This helps catch logs even if container crashes and is removed
+LOG_BACKUP_PID=""
+
+start_log_backup() {
+    # Backup location - use /tmp on host if accessible, otherwise container /tmp
+    BACKUP_DIR="${ARMORCLAW_LOG_BACKUP_DIR:-/tmp/armorclaw-logs}"
+    mkdir -p "$BACKUP_DIR" 2>/dev/null || BACKUP_DIR="/tmp"
+
+    # Start background process to copy logs every 2 seconds
+    (
+        while true; do
+            if [ -f "$LOG_FILE" ]; then
+                cp "$LOG_FILE" "$BACKUP_DIR/setup.log.backup" 2>/dev/null || true
+                # Also create timestamped backup every 30 seconds
+                if [ $(($(date +%s) % 30)) -eq 0 ]; then
+                    cp "$LOG_FILE" "$BACKUP_DIR/setup.log.$(date +%s)" 2>/dev/null || true
+                    # Keep only last 5 timestamped backups
+                    ls -t "$BACKUP_DIR"/setup.log.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+                fi
+            fi
+            sleep 2
+        done
+    ) &
+    LOG_BACKUP_PID=$!
+    log_info "Log backup started (backup dir: $BACKUP_DIR)"
+}
+
+stop_log_backup() {
+    if [ -n "$LOG_BACKUP_PID" ]; then
+        kill $LOG_BACKUP_PID 2>/dev/null || true
+        LOG_BACKUP_PID=""
+    fi
+}
+
+# Start log backup in dev mode or if explicitly requested
+if [ "${ARMORCLAW_DEV_MODE:-false}" = true ] || [ "${ARMORCLAW_LOG_BACKUP:-false}" = true ]; then
+    start_log_backup
+    # Ensure backup stops on exit
+    trap stop_log_backup EXIT
+fi
+
+#=============================================================================
 # Crash Handler (Phase 2: Crash Handler & Error Capture)
 #=============================================================================
 
@@ -209,6 +254,9 @@ SETUP_SUCCEEDED=false
 # Crash handler - shows error summary and log location on failure
 crash_handler() {
     local exit_code=$?
+
+    # Stop log backup if running
+    stop_log_backup
 
     # Only run on failure (non-zero exit)
     if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
@@ -233,26 +281,32 @@ crash_handler() {
         # Show log file location
         if [ -f "$LOG_FILE" ]; then
             echo ""
-            echo -e "${CYAN}Log file saved to: $LOG_FILE${NC}"
+            echo -e "${CYAN}Log file locations:${NC}"
+            echo "  Primary:   $LOG_FILE"
+            if [ -f "/tmp/armorclaw-logs/setup.log.backup" ]; then
+                echo "  Backup:    /tmp/armorclaw-logs/setup.log.backup"
+            fi
             echo ""
-            echo "To view the log:"
+            echo -e "${CYAN}To retrieve logs:${NC}"
             echo "  docker cp armorclaw:$LOG_FILE ./setup.log"
+            if [ -f "/tmp/armorclaw-logs/setup.log.backup" ]; then
+                echo "  docker cp armorclaw:/tmp/armorclaw-logs/setup.log.backup ./setup.log.backup"
+            fi
             echo ""
-            echo "To view inside container:"
-            echo "  docker exec armorclaw cat $LOG_FILE"
+            echo -e "${YELLOW}Last 30 lines of log:${NC}"
             echo ""
-            echo -e "${YELLOW}Last 20 lines of log:${NC}"
-            echo ""
-            tail -20 "$LOG_FILE" 2>/dev/null || echo "(no log available)"
+            tail -30 "$LOG_FILE" 2>/dev/null || echo "(no log available)"
             echo ""
         fi
 
         echo -e "${CYAN}Common issues and fixes:${NC}"
         echo "  • Docker socket not accessible - run with --user root"
         echo "  • Terminal incompatibility - try environment variable mode:"
-        echo "      -e ARMORCLAW_SERVER_NAME=your-ip"
         echo "      -e ARMORCLAW_API_KEY=sk-your-key"
         echo "  • Permission denied - check volume permissions"
+        echo ""
+        echo -e "${CYAN}For development debugging:${NC}"
+        echo "  docker run -e ARMORCLAW_DEV_MODE=true ..."
         echo ""
     fi
 
