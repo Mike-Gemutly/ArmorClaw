@@ -3,7 +3,7 @@
 > **Description:** Pull, run, and configure ArmorClaw with one Docker command
 > **Time to Complete:** ~2 minutes (Quick Start) · ~10 minutes (Enterprise)
 > **Last Updated:** 2026-02-26
-> **Version:** 0.3.1
+> **Version:** 0.3.3
 > **Image:** `mikegemut/armorclaw:latest`
 
 ---
@@ -58,9 +58,10 @@ You'll see the ArmorClaw banner, then the interactive **Huh? TUI wizard** launch
 ```
 ╔══════════════════════════════════════════════════════╗
 ║        ArmorClaw Container Setup                     ║
-║        Version 0.3.1                                 ║
+║        Version 0.3.3                                 ║
 ╚══════════════════════════════════════════════════════╝
 
+✓ Preflight checks passed (Docker, network, DNS, disk)
 ✓ Required tools verified (openssl, jq, socat, curl, docker)
 
   Choose your deployment profile
