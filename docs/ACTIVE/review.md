@@ -836,10 +836,114 @@ fun startCheckout(url: String, agent: AgentDefinition) = scope.launch {
 
 ---
 
+## Browser Service Architecture (v0.4.1)
+
+### Components
+
+The browser automation system consists of three main components:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     BROWSER AUTOMATION ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
+│  │ ArmorChat       │     │ Bridge          │     │ Browser Service │       │
+│  │ (Android)       │     │ (Go)            │     │ (TypeScript)    │       │
+│  │                 │     │                 │     │                 │       │
+│  │ JSON-RPC        │────►│ Browser Client  │────►│ Playwright      │       │
+│  │ Matrix Events   │     │ Queue Processor │     │ Stealth Mode    │       │
+│  │                 │     │                 │     │                 │       │
+│  └─────────────────┘     └─────────────────┘     └─────────────────┘       │
+│         │                       │                       │                   │
+│         │                       ▼                       │                   │
+│         │              ┌─────────────────┐              │                   │
+│         │              │ Job Queue       │              │                   │
+│         │              │ (SQLite)        │              │                   │
+│         │              └─────────────────┘              │                   │
+│         │                       │                       │                   │
+│         └───────────────────────┴───────────────────────┘                   │
+│                     Matrix Events (status, response)                         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Browser Service (TypeScript/Playwright)
+
+**Location:** `browser-service/`
+
+**Features:**
+- Playwright-based headless browser automation
+- Anti-detection / stealth mode
+- Screenshot capture with element cropping
+- Form filling with PII injection
+- Cookie and session management
+- Proxy rotation support
+
+**API Endpoints:**
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Service health check |
+| `/navigate` | POST | Navigate to URL |
+| `/fill` | POST | Fill form fields |
+| `/click` | POST | Click element |
+| `/extract` | POST | Extract page data |
+| `/screenshot` | POST | Capture screenshot |
+| `/status` | GET | Current browser state |
+
+### Browser Client (Go)
+
+**Location:** `bridge/pkg/browser/`
+
+**Components:**
+- `client.go` - HTTP client for browser-service API
+- `processor.go` - Job queue processor with retry logic
+- `browser.go` - Core browser types and interfaces
+
+**Configuration:**
+```toml
+[browser]
+enabled = true
+service_url = "http://localhost:3001"
+timeout = 30
+max_retries = 3
+retry_delay = 2
+
+[browser.stealth]
+enabled = true
+fingerprint_seed = ""
+
+[browser.queue]
+max_workers = 3
+max_depth = 100
+```
+
+### Deployment
+
+**Docker Compose:** `deploy/browser/docker-compose.browser.yml`
+
+```yaml
+services:
+  browser-service:
+    build: ../../browser-service
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - STEALTH_MODE=true
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+```
+
+---
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 0.4.1 | 2026-02-28 | Browser Service (TypeScript/Playwright), Browser Client, Queue Processor |
 | 0.4.0 | 2026-02-28 | Agent Studio, Browser Skill API, MCP Approval Workflow |
 | 0.3.3 | 2026-02-26 | Preflight checks, progress indication, rollback, password file |
 | 0.3.2 | 2026-02-25 | Crash handler, logging, dev mode log backup |

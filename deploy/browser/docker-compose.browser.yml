@@ -1,0 +1,147 @@
+# Docker Compose: ArmorClaw Browser Service
+# Headless browser automation with Playwright + Stealth
+
+version: "3.8"
+
+# ========================================
+# COMMON CONFIGURATION
+# ========================================
+x-common-env: &common-env
+  TZ: UTC
+  NODE_ENV: production
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+x-security-defaults: &security-defaults
+  no_new_privileges: true
+
+services:
+  # ========================================
+  # Browser Service (Playwright + Stealth)
+  # ========================================
+  browser-service:
+    build:
+      context: ../../browser-service
+      dockerfile: Dockerfile
+      args:
+        - PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION:-1.42.0}
+
+    image: armorclaw/browser-service:${BROWSER_SERVICE_VERSION:-latest}
+    container_name: armorclaw-browser
+    restart: unless-stopped
+
+    environment:
+      <<: *common-env
+      PORT: ${BROWSER_SERVICE_PORT:-3000}
+      LOG_LEVEL: ${BROWSER_LOG_LEVEL:-info}
+      INIT_ON_START: ${INIT_ON_START:-false}
+      # Stealth configuration
+      FINGERPRINT_SEED: ${FINGERPRINT_SEED:-armorclaw-default}
+      # Anti-detection settings
+      DISABLE_WEBGL: ${DISABLE_WEBGL:-false}
+      DISABLE_AUDIO: ${DISABLE_AUDIO:-false}
+
+    # No ports exposed externally - only accessible via internal network
+    expose:
+      - "${BROWSER_SERVICE_PORT:-3000}"
+
+    networks:
+      - browser-internal
+
+    # Resource limits - browser can be memory intensive
+    deploy:
+      resources:
+        limits:
+          memory: ${BROWSER_MEMORY_LIMIT:-1G}
+        reservations:
+          memory: ${BROWSER_MEMORY_RESERVATION:-256M}
+
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:${BROWSER_SERVICE_PORT:-3000}/health"]
+
+    security_opt:
+      <<: *security-defaults
+
+    # Read-only root filesystem with writable tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+
+    # Drop all capabilities, add only what's needed
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+
+    # Security hardening
+    security_opt:
+      - no_new_privileges:true
+      - seccomp:unconfined  # Required for Chromium sandbox
+
+  # ========================================
+  # Browser Service (Development Mode)
+  # ========================================
+  browser-service-dev:
+    build:
+      context: ../../browser-service
+      dockerfile: Dockerfile
+      target: builder
+
+    image: armorclaw/browser-service:dev
+    container_name: armorclaw-browser-dev
+    restart: unless-stopped
+    profiles:
+      - dev
+
+    environment:
+      <<: *common-env
+      PORT: ${BROWSER_SERVICE_PORT:-3000}
+      LOG_LEVEL: debug
+      NODE_ENV: development
+      INIT_ON_START: "true"
+
+    ports:
+      - "${BROWSER_SERVICE_PORT:-3000}:${BROWSER_SERVICE_PORT:-3000}"
+
+    volumes:
+      - ../../browser-service/src:/app/src:ro
+      - ../../browser-service/package.json:/app/package.json:ro
+      - ../../browser-service/tsconfig.json:/app/tsconfig.json:ro
+
+    networks:
+      - browser-internal
+
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:${BROWSER_SERVICE_PORT:-3000}/health"]
+
+    security_opt:
+      <<: *security-defaults
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  browser-internal:
+    driver: bridge
+    internal: false  # Needs to access external sites
+    ipam:
+      config:
+        - subnet: 172.23.0.0/16
+
+# ========================================
+# Volumes (none needed - stateless service)
+# ========================================

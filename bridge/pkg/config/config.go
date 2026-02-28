@@ -96,6 +96,9 @@ type Config struct {
 	// Notifications configuration
 	Notifications NotificationsConfig `toml:"notifications"`
 
+	// Browser service configuration
+	Browser BrowserConfig `toml:"browser"`
+
 	// Event bus configuration
 	EventBus EventBusConfig `toml:"eventbus"`
 
@@ -369,6 +372,66 @@ type NotificationsConfig struct {
 
 	// AlertThreshold is the percentage at which to send alerts (0.0-1.0)
 	AlertThreshold float64 `toml:"alert_threshold" env:"ARMORCLAW_ALERT_THRESHOLD"`
+}
+
+// BrowserConfig holds browser service configuration
+type BrowserConfig struct {
+	// Enabled controls whether browser automation is available
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_BROWSER_ENABLED"`
+
+	// ServiceURL is the URL of the browser-service HTTP API
+	ServiceURL string `toml:"service_url" env:"ARMORCLAW_BROWSER_SERVICE_URL"`
+
+	// Timeout is the default timeout for browser operations in seconds
+	Timeout int `toml:"timeout" env:"ARMORCLAW_BROWSER_TIMEOUT"`
+
+	// MaxRetries is the maximum number of retries for failed operations
+	MaxRetries int `toml:"max_retries" env:"ARMORCLAW_BROWSER_MAX_RETRIES"`
+
+	// RetryDelay is the delay between retries in seconds
+	RetryDelay int `toml:"retry_delay" env:"ARMORCLAW_BROWSER_RETRY_DELAY"`
+
+	// Stealth holds anti-detection configuration
+	Stealth BrowserStealthConfig `toml:"stealth"`
+
+	// Queue holds browser job queue configuration
+	Queue BrowserQueueConfig `toml:"queue"`
+}
+
+// BrowserStealthConfig holds anti-detection settings
+type BrowserStealthConfig struct {
+	// Enabled controls whether stealth mode is active
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_BROWSER_STEALTH_ENABLED"`
+
+	// FingerprintSeed is the seed for deterministic fingerprint generation
+	FingerprintSeed string `toml:"fingerprint_seed" env:"ARMORCLAW_BROWSER_FINGERPRINT_SEED"`
+
+	// HumanLikeTyping enables human-like typing delays
+	HumanLikeTyping bool `toml:"human_like_typing" env:"ARMORCLAW_BROWSER_HUMAN_TYPING"`
+
+	// HumanLikeMouse enables human-like mouse movements
+	HumanLikeMouse bool `toml:"human_like_mouse" env:"ARMORCLAW_BROWSER_HUMAN_MOUSE"`
+
+	// WebGLNoise enables WebGL fingerprint noise
+	WebGLNoise bool `toml:"webgl_noise" env:"ARMORCLAW_BROWSER_WEBGL_NOISE"`
+
+	// CanvasNoise enables canvas fingerprint noise
+	CanvasNoise bool `toml:"canvas_noise" env:"ARMORCLAW_BROWSER_CANVAS_NOISE"`
+}
+
+// BrowserQueueConfig holds browser job queue settings
+type BrowserQueueConfig struct {
+	// MaxWorkers is the maximum number of concurrent browser workers
+	MaxWorkers int `toml:"max_workers" env:"ARMORCLAW_BROWSER_MAX_WORKERS"`
+
+	// MaxQueueSize is the maximum number of pending jobs
+	MaxQueueSize int `toml:"max_queue_size" env:"ARMORCLAW_BROWSER_MAX_QUEUE_SIZE"`
+
+	// JobTimeout is the maximum time a job can run in seconds
+	JobTimeout int `toml:"job_timeout" env:"ARMORCLAW_BROWSER_JOB_TIMEOUT"`
+
+	// PriorityLevels is the number of priority levels (1-10)
+	PriorityLevels int `toml:"priority_levels" env:"ARMORCLAW_BROWSER_PRIORITY_LEVELS"`
 }
 
 // EventBusConfig holds event bus configuration for real-time event push
@@ -785,6 +848,27 @@ func DefaultConfig() *Config {
 			AdminRoomID:    "",
 			Enabled:        false,
 			AlertThreshold: 0.8,
+		},
+		Browser: BrowserConfig{
+			Enabled:     false,
+			ServiceURL:  "http://localhost:3000",
+			Timeout:     120, // 2 minutes
+			MaxRetries:  3,
+			RetryDelay:  5,
+			Stealth: BrowserStealthConfig{
+				Enabled:         true,
+				FingerprintSeed: "armorclaw-default",
+				HumanLikeTyping: true,
+				HumanLikeMouse:  true,
+				WebGLNoise:      true,
+				CanvasNoise:     true,
+			},
+			Queue: BrowserQueueConfig{
+				MaxWorkers:      3,
+				MaxQueueSize:    100,
+				JobTimeout:      300, // 5 minutes
+				PriorityLevels:  3,
+			},
 		},
 		EventBus: EventBusConfig{
 			WebSocketEnabled:  false,
