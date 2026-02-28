@@ -42,6 +42,7 @@ type Store interface {
 	GetInstance(id string) (*AgentInstance, error)
 	ListInstances(definitionID string, status InstanceStatus) ([]*AgentInstance, error)
 	UpdateInstance(instance *AgentInstance) error
+	DeleteInstance(id string) error
 
 	// Statistics
 	GetStats() (*StudioStats, error)
@@ -862,6 +863,24 @@ func (s *SQLiteStore) UpdateInstance(instance *AgentInstance) error {
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
 		return fmt.Errorf("instance not found: %s", instance.ID)
+	}
+
+	return nil
+}
+
+// DeleteInstance removes an agent instance from the database
+func (s *SQLiteStore) DeleteInstance(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`DELETE FROM agent_instances WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete instance: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("instance not found: %s", id)
 	}
 
 	return nil
