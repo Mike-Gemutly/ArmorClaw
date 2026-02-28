@@ -2062,6 +2062,8 @@ func runBridgeServer(cliCfg cliConfig) {
 		// Provisioning (ArmorChat first-boot claim)
 		ProvisioningSecret: cfg.Provisioning.SigningSecret,
 		DataDir:            provisioningDataDir,
+		// Agent Studio (No-Code Agent Factory)
+		StudioDataPath: filepath.Join(provisioningDataDir, "studio.db"),
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -2111,6 +2113,18 @@ func runBridgeServer(cliCfg cliConfig) {
 			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
 				errorSystem.SetMatrixAdapter(ma)
 				log.Println("Error system connected to Matrix adapter")
+			}
+		}
+	}
+
+	// Wire Agent Studio to Matrix adapter for command handling
+	if cfg.Matrix.Enabled {
+		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
+			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
+				if studio := server.GetStudio(); studio != nil {
+					ma.SetStudioCommandHandler(studio)
+					log.Println("Agent Studio connected to Matrix adapter for command handling")
+				}
 			}
 		}
 	}

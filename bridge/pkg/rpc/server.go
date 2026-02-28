@@ -31,6 +31,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/plugin"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/qr"
+	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
 	"github.com/armorclaw/bridge/pkg/webrtc"
@@ -211,6 +212,9 @@ type Server struct {
 
 	// Browser automation job manager
 	browserJobs *BrowserJobManager
+
+	// Agent Studio for no-code agent creation
+	studio *studio.StudioIntegration
 }
 
 // ContainerInfo holds information about a running container
@@ -271,6 +275,9 @@ type Config struct {
 
 	// Server region for health reporting
 	Region string
+
+	// Studio configuration (Agent Factory)
+	StudioDataPath string // Path to studio database (empty for in-memory)
 }
 
 // BridgeVersion is the canonical bridge version string used across all health endpoints.
@@ -360,6 +367,22 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create license client: %w", err)
 	}
 	server.licenseClient = licenseClient
+
+	// Initialize Agent Studio
+	studioDataPath := cfg.StudioDataPath
+	if studioDataPath == "" && cfg.DataDir != "" {
+		studioDataPath = filepath.Join(cfg.DataDir, "studio.db")
+	}
+	studioIntegration, err := studio.NewIntegration(studio.IntegrationConfig{
+		DataPath: studioDataPath,
+	})
+	if err != nil {
+		slog.Warn("Failed to initialize Agent Studio", "error", err)
+		// Continue without studio - it's not critical
+	} else {
+		server.studio = studioIntegration
+		slog.Info("Agent Studio initialized", "path", studioDataPath)
+	}
 
 	// Compute server name (used by both provisioning and QR manager)
 	serverName := "ArmorClaw"
@@ -1018,6 +1041,15 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return s.handleBrowserList(req)
 	case "browser.cancel":
 		return s.handleBrowserCancel(req)
+
+	// Agent Studio methods (No-Code Agent Factory)
+	case "studio.list_skills", "studio.get_skill", "studio.register_skill",
+		"studio.list_pii", "studio.get_pii", "studio.register_pii",
+		"studio.list_profiles", "studio.create_agent", "studio.update_agent",
+		"studio.delete_agent", "studio.list_agents", "studio.get_agent",
+		"studio.spawn_agent", "studio.list_instances", "studio.stop_instance",
+		"studio.get_stats":
+		return s.handleStudio(req)
 
 	default:
 		return &Response{

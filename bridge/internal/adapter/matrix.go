@@ -48,11 +48,17 @@ type MatrixAdapter struct {
 	eventPublisher   EventPublisher // Event bus for real-time event publishing
 	lastExpiryCheck  time.Time          // P1-HIGH-1: Track last token expiry check
 	commandHandler   *CommandHandler    // Command handler for admin operations
+	studioCmdHandler StudioCommandHandler // Studio command handler for Agent Factory
 	trustVerifier    *TrustVerifier     // Zero-trust verification
 	auditLog         *audit.TamperEvidentLog // Audit logging
 	minTrustLevel    trust.TrustScore   // Minimum trust level required
 	syncFilterID     string              // Server-side sync filter ID for performance
 	syncMetrics      SyncMetrics         // Sync performance metrics
+}
+
+// StudioCommandHandler handles Agent Studio commands via Matrix
+type StudioCommandHandler interface {
+	HandleMatrixMessage(ctx context.Context, roomID, userID, eventID, text string) bool
 }
 
 // SyncMetrics tracks sync performance for monitoring
@@ -668,6 +674,20 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 				}
 
 				event.RoomID = roomID
+
+				// Check for studio commands before queuing
+				m.mu.RLock()
+				studioHandler := m.studioCmdHandler
+				m.mu.RUnlock()
+
+				if studioHandler != nil {
+					if body, ok := event.Content["body"].(string); ok {
+						if studioHandler.HandleMatrixMessage(context.Background(), roomID, event.Sender, event.EventID, body) {
+							// Studio handled the command, skip queuing
+							continue
+						}
+					}
+				}
 
 				select {
 				case m.eventQueue <- &event:
@@ -1423,6 +1443,13 @@ func (m *MatrixAdapter) SetCommandHandler(h *CommandHandler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.commandHandler = h
+}
+
+// SetStudioCommandHandler sets the studio command handler for Agent Factory commands
+func (m *MatrixAdapter) SetStudioCommandHandler(h StudioCommandHandler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.studioCmdHandler = h
 }
 
 // ============================================================================
