@@ -77,11 +77,13 @@ func ErrorResponse(code int, message string, data ...interface{}) *RPCResponse {
 
 // RPCHandler provides JSON-RPC handlers for the Agent Studio
 type RPCHandler struct {
-	store          Store
-	skillRegistry  *SkillRegistry
-	piiRegistry    *PIIRegistry
-	profileManager *ProfileManager
-	log            *logger.Logger
+	store           Store
+	skillRegistry   *SkillRegistry
+	piiRegistry     *PIIRegistry
+	profileManager  *ProfileManager
+	approvalManager *ApprovalManager
+	mcpRegistry     McpRegistry
+	log             *logger.Logger
 }
 
 // RPCHandlerConfig holds configuration for the RPC handler
@@ -97,12 +99,20 @@ func NewRPCHandler(cfg RPCHandlerConfig) *RPCHandler {
 		log = logger.Global().WithComponent("studio_rpc")
 	}
 
+	mcpRegistry := NewMcpRegistry()
+	approvalManager := NewApprovalManager(ApprovalManagerConfig{
+		Store:    cfg.Store,
+		Registry: mcpRegistry,
+	})
+
 	return &RPCHandler{
-		store:          cfg.Store,
-		skillRegistry:  NewSkillRegistry(cfg.Store),
-		piiRegistry:    NewPIIRegistry(cfg.Store),
-		profileManager: NewProfileManager(cfg.Store),
-		log:            log,
+		store:           cfg.Store,
+		skillRegistry:   NewSkillRegistry(cfg.Store),
+		piiRegistry:     NewPIIRegistry(cfg.Store),
+		profileManager:  NewProfileManager(cfg.Store),
+		approvalManager: approvalManager,
+		mcpRegistry:     mcpRegistry,
+		log:             log,
 	}
 }
 
@@ -154,6 +164,26 @@ func (h *RPCHandler) Handle(req *RPCRequest) *RPCResponse {
 	// Resource Profiles
 	case "studio.list_profiles":
 		return h.handleListProfiles(req)
+
+	// MCP Registry
+	case "studio.list_mcps":
+		return h.handleListMcps(req)
+	case "studio.get_mcp":
+		return h.handleGetMcp(req)
+	case "studio.get_mcp_warning":
+		return h.handleGetMcpWarning(req)
+
+	// MCP Approval Workflow
+	case "studio.request_mcp_approval":
+		return h.handleRequestMcpApproval(req)
+	case "studio.list_pending_approvals":
+		return h.handleListPendingApprovals(req)
+	case "studio.list_my_approvals":
+		return h.handleListMyApprovals(req)
+	case "studio.approve_mcp_request":
+		return h.handleApproveMcpRequest(req)
+	case "studio.reject_mcp_request":
+		return h.handleRejectMcpRequest(req)
 
 	default:
 		return ErrorResponse(ErrNotFound, fmt.Sprintf("Unknown method: %s", req.Method))
@@ -768,6 +798,257 @@ func (h *RPCHandler) handleListProfiles(req *RPCRequest) *RPCResponse {
 	profiles := h.profileManager.List()
 	return SuccessResponse(map[string]interface{}{
 		"profiles": profiles,
+	})
+}
+
+//=============================================================================
+// MCP Registry Handlers
+//=============================================================================
+
+// ListMcpsParams is the params for studio.list_mcps
+type ListMcpsParams struct {
+	Category   string       `json:"category,omitempty"`
+	RiskLevel  McpRiskLevel `json:"risk_level,omitempty"`
+	ActiveOnly bool         `json:"active_only,omitempty"`
+}
+
+func (h *RPCHandler) handleListMcps(req *RPCRequest) *RPCResponse {
+	var params ListMcpsParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+		}
+	}
+
+	filter := &McpFilter{
+		Category:   params.Category,
+		RiskLevel:  params.RiskLevel,
+		ActiveOnly: params.ActiveOnly,
+	}
+
+	mcps, err := h.mcpRegistry.ListMcps(filter)
+	if err != nil {
+		return ErrorResponse(ErrInternal, "Failed to list MCPs: "+err.Error())
+	}
+
+	return SuccessResponse(map[string]interface{}{
+		"mcps":  mcps,
+		"count": len(mcps),
+	})
+}
+
+// GetMcpParams is the params for studio.get_mcp
+type GetMcpParams struct {
+	ID string `json:"id"`
+}
+
+func (h *RPCHandler) handleGetMcp(req *RPCRequest) *RPCResponse {
+	var params GetMcpParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+	}
+
+	if params.ID == "" {
+		return ErrorResponse(ErrInvalidParams, "MCP ID is required")
+	}
+
+	mcp, err := h.mcpRegistry.GetMcp(params.ID)
+	if err != nil {
+		return ErrorResponse(ErrNotFound, "MCP not found: "+params.ID)
+	}
+
+	return SuccessResponse(mcp)
+}
+
+// GetMcpWarningParams is the params for studio.get_mcp_warning
+type GetMcpWarningParams struct {
+	MCPId string `json:"mcp_id"`
+}
+
+func (h *RPCHandler) handleGetMcpWarning(req *RPCRequest) *RPCResponse {
+	var params GetMcpWarningParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+	}
+
+	if params.MCPId == "" {
+		return ErrorResponse(ErrInvalidParams, "MCP ID is required")
+	}
+
+	// Get risk assessment
+	assessment, err := h.approvalManager.GetMcpRiskAssessment(params.MCPId)
+	if err != nil {
+		return ErrorResponse(ErrNotFound, "MCP not found: "+params.MCPId)
+	}
+
+	// Log the warning view for audit purposes
+	_ = LogMcpAction("VIEW_WARNING", params.MCPId, req.UserID, RoleAdmin)
+	h.log.Info("mcp_warning_viewed",
+		"mcp_id", params.MCPId,
+		"user_id", req.UserID,
+		"risk_level", assessment.MCP.RiskLevel)
+
+	return SuccessResponse(&McpWarningResponse{
+		MCP:            assessment.MCP,
+		RiskAssessment: assessment,
+		AuditLogged:    true,
+	})
+}
+
+//=============================================================================
+// MCP Approval Workflow Handlers
+//=============================================================================
+
+// RequestMcpApprovalParams is the params for studio.request_mcp_approval
+type RequestMcpApprovalParams struct {
+	MCPId     string `json:"mcp_id"`
+	AgentName string `json:"agent_name"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func (h *RPCHandler) handleRequestMcpApproval(req *RPCRequest) *RPCResponse {
+	var params RequestMcpApprovalParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+	}
+
+	if params.MCPId == "" {
+		return ErrorResponse(ErrInvalidParams, "MCP ID is required")
+	}
+	if params.AgentName == "" {
+		return ErrorResponse(ErrInvalidParams, "Agent name is required")
+	}
+	if req.UserID == "" {
+		return ErrorResponse(ErrInvalidParams, "User ID is required")
+	}
+
+	approvalReq := &McpApprovalRequest{
+		MCPId:       params.MCPId,
+		AgentName:   params.AgentName,
+		Reason:      params.Reason,
+		RequestedBy: req.UserID,
+	}
+
+	result, err := h.approvalManager.CreateApprovalRequest(nil, approvalReq)
+	if err != nil {
+		return ErrorResponse(ErrInternal, "Failed to create approval request: "+err.Error())
+	}
+
+	h.log.Info("mcp_approval_requested",
+		"approval_id", result.ID,
+		"mcp_id", params.MCPId,
+		"agent_name", params.AgentName,
+		"user_id", req.UserID)
+
+	return SuccessResponse(&McpApprovalResponse{
+		ApprovalID: result.ID,
+		Status:     result.Status,
+		MCPId:      result.MCPId,
+		MCPName:    result.MCPName,
+		CreatedAt:  result.CreatedAt,
+		ExpiresAt:  result.ExpiresAt,
+	})
+}
+
+// ListPendingApprovalsParams is the params for studio.list_pending_approvals
+type ListPendingApprovalsParams struct{}
+
+func (h *RPCHandler) handleListPendingApprovals(req *RPCRequest) *RPCResponse {
+	approvals, err := h.approvalManager.ListPendingApprovals(nil)
+	if err != nil {
+		return ErrorResponse(ErrInternal, "Failed to list pending approvals: "+err.Error())
+	}
+
+	return SuccessResponse(map[string]interface{}{
+		"approvals": approvals,
+		"count":     len(approvals),
+	})
+}
+
+// ListMyApprovalsParams is the params for studio.list_my_approvals
+type ListMyApprovalsParams struct{}
+
+func (h *RPCHandler) handleListMyApprovals(req *RPCRequest) *RPCResponse {
+	if req.UserID == "" {
+		return ErrorResponse(ErrInvalidParams, "User ID is required")
+	}
+
+	approvals, err := h.approvalManager.ListUserApprovals(nil, req.UserID)
+	if err != nil {
+		return ErrorResponse(ErrInternal, "Failed to list user approvals: "+err.Error())
+	}
+
+	return SuccessResponse(map[string]interface{}{
+		"approvals": approvals,
+		"count":     len(approvals),
+	})
+}
+
+// ApproveMcpRequestParams is the params for studio.approve_mcp_request
+type ApproveMcpRequestParams struct {
+	ApprovalID string `json:"approval_id"`
+	Notes      string `json:"notes,omitempty"`
+}
+
+func (h *RPCHandler) handleApproveMcpRequest(req *RPCRequest) *RPCResponse {
+	var params ApproveMcpRequestParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+	}
+
+	if params.ApprovalID == "" {
+		return ErrorResponse(ErrInvalidParams, "Approval ID is required")
+	}
+	if req.UserID == "" {
+		return ErrorResponse(ErrInvalidParams, "User ID is required")
+	}
+
+	if err := h.approvalManager.ApproveRequest(nil, params.ApprovalID, req.UserID, params.Notes); err != nil {
+		return ErrorResponse(ErrInternal, "Failed to approve request: "+err.Error())
+	}
+
+	h.log.Info("mcp_approval_approved",
+		"approval_id", params.ApprovalID,
+		"reviewed_by", req.UserID)
+
+	return SuccessResponse(map[string]interface{}{
+		"approval_id": params.ApprovalID,
+		"status":      "APPROVED",
+		"message":     "MCP access request approved",
+	})
+}
+
+// RejectMcpRequestParams is the params for studio.reject_mcp_request
+type RejectMcpRequestParams struct {
+	ApprovalID string `json:"approval_id"`
+	Notes      string `json:"notes,omitempty"`
+}
+
+func (h *RPCHandler) handleRejectMcpRequest(req *RPCRequest) *RPCResponse {
+	var params RejectMcpRequestParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+	}
+
+	if params.ApprovalID == "" {
+		return ErrorResponse(ErrInvalidParams, "Approval ID is required")
+	}
+	if req.UserID == "" {
+		return ErrorResponse(ErrInvalidParams, "User ID is required")
+	}
+
+	if err := h.approvalManager.RejectRequest(nil, params.ApprovalID, req.UserID, params.Notes); err != nil {
+		return ErrorResponse(ErrInternal, "Failed to reject request: "+err.Error())
+	}
+
+	h.log.Info("mcp_approval_rejected",
+		"approval_id", params.ApprovalID,
+		"reviewed_by", req.UserID)
+
+	return SuccessResponse(map[string]interface{}{
+		"approval_id": params.ApprovalID,
+		"status":      "REJECTED",
+		"message":     "MCP access request rejected",
 	})
 }
 

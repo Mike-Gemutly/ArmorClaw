@@ -44,6 +44,13 @@ type Store interface {
 	UpdateInstance(instance *AgentInstance) error
 	DeleteInstance(id string) error
 
+	// MCP Approval Requests
+	SaveApprovalRequest(req *McpApprovalRequest) error
+	GetApprovalRequest(id string) (*McpApprovalRequest, error)
+	ListApprovalRequests(status ApprovalStatus) ([]*McpApprovalRequest, error)
+	ListUserApprovalRequests(userID string) ([]*McpApprovalRequest, error)
+	DeleteApprovalRequest(id string) error
+
 	// Statistics
 	GetStats() (*StudioStats, error)
 
@@ -179,6 +186,27 @@ func (s *SQLiteStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_agent_instances_definition_id ON agent_instances(definition_id);
 	CREATE INDEX IF NOT EXISTS idx_agent_instances_status ON agent_instances(status);
+
+	-- MCP Approval Requests
+	CREATE TABLE IF NOT EXISTS approval_requests (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		mcp_id TEXT NOT NULL,
+		mcp_name TEXT NOT NULL,
+		agent_name TEXT NOT NULL,
+		reason TEXT,
+		requested_by TEXT NOT NULL,
+		status TEXT DEFAULT 'PENDING',
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		reviewed_by TEXT,
+		reviewed_at INTEGER,
+		review_notes TEXT
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+	CREATE INDEX IF NOT EXISTS idx_approval_requests_requested_by ON approval_requests(requested_by);
+	CREATE INDEX IF NOT EXISTS idx_approval_requests_mcp_id ON approval_requests(mcp_id);
 	`
 
 	if _, err := s.db.Exec(schema); err != nil {
@@ -883,6 +911,187 @@ func (s *SQLiteStore) DeleteInstance(id string) error {
 		return fmt.Errorf("instance not found: %s", id)
 	}
 
+	return nil
+}
+
+//=============================================================================
+// MCP Approval Requests
+//=============================================================================
+
+// SaveApprovalRequest saves or updates an approval request
+func (s *SQLiteStore) SaveApprovalRequest(req *McpApprovalRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var reviewedBy sql.NullString
+	var reviewedAt sql.NullInt64
+
+	if req.ReviewedBy != nil {
+		reviewedBy.String = *req.ReviewedBy
+		reviewedBy.Valid = true
+	}
+	if req.ReviewedAt != nil {
+		reviewedAt.Int64 = req.ReviewedAt.UnixMilli()
+		reviewedAt.Valid = true
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO approval_requests
+			(id, type, mcp_id, mcp_name, agent_name, reason, requested_by, status, created_at, expires_at, reviewed_by, reviewed_at, review_notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.ID, req.Type, req.MCPId, req.MCPName, req.AgentName, req.Reason, req.RequestedBy, req.Status, req.CreatedAt.UnixMilli(), req.ExpiresAt.UnixMilli(), reviewedBy, reviewedAt, req.ReviewNotes)
+
+	if err != nil {
+		return fmt.Errorf("failed to save approval request: %w", err)
+	}
+
+	s.log.Info("approval_request_saved", "id", req.ID, "mcp_id", req.MCPId, "status", req.Status)
+	return nil
+}
+
+// GetApprovalRequest retrieves an approval request by ID
+func (s *SQLiteStore) GetApprovalRequest(id string) (*McpApprovalRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	req := &McpApprovalRequest{}
+	var reviewedBy sql.NullString
+	var reviewedAt sql.NullInt64
+
+	err := s.db.QueryRow(`
+		SELECT id, type, mcp_id, mcp_name, agent_name, reason, requested_by, status, created_at, expires_at, reviewed_by, reviewed_at, review_notes
+		FROM approval_requests WHERE id = ?
+	`, id).Scan(&req.ID, &req.Type, &req.MCPId, &req.MCPName, &req.AgentName, &req.Reason, &req.RequestedBy, &req.Status, &req.CreatedAt, &req.ExpiresAt, &reviewedBy, &reviewedAt, &req.ReviewNotes)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("approval request not found: %s", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get approval request: %w", err)
+	}
+
+	// Convert timestamps
+	req.CreatedAt = time.UnixMilli(req.CreatedAt.UnixMilli())
+	req.ExpiresAt = time.UnixMilli(req.ExpiresAt.UnixMilli())
+
+	if reviewedBy.Valid {
+		req.ReviewedBy = &reviewedBy.String
+	}
+	if reviewedAt.Valid {
+		t := time.UnixMilli(reviewedAt.Int64)
+		req.ReviewedAt = &t
+	}
+
+	return req, nil
+}
+
+// ListApprovalRequests returns approval requests filtered by status
+func (s *SQLiteStore) ListApprovalRequests(status ApprovalStatus) ([]*McpApprovalRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, type, mcp_id, mcp_name, agent_name, reason, requested_by, status, created_at, expires_at, reviewed_by, reviewed_at, review_notes FROM approval_requests`
+	args := []interface{}{}
+
+	if status != "" {
+		query += " WHERE status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list approval requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []*McpApprovalRequest
+	for rows.Next() {
+		req := &McpApprovalRequest{}
+		var reviewedBy sql.NullString
+		var reviewedAt sql.NullInt64
+
+		if err := rows.Scan(&req.ID, &req.Type, &req.MCPId, &req.MCPName, &req.AgentName, &req.Reason, &req.RequestedBy, &req.Status, &req.CreatedAt, &req.ExpiresAt, &reviewedBy, &reviewedAt, &req.ReviewNotes); err != nil {
+			return nil, fmt.Errorf("failed to scan approval request: %w", err)
+		}
+
+		// Convert timestamps
+		req.CreatedAt = time.UnixMilli(req.CreatedAt.UnixMilli())
+		req.ExpiresAt = time.UnixMilli(req.ExpiresAt.UnixMilli())
+
+		if reviewedBy.Valid {
+			req.ReviewedBy = &reviewedBy.String
+		}
+		if reviewedAt.Valid {
+			t := time.UnixMilli(reviewedAt.Int64)
+			req.ReviewedAt = &t
+		}
+
+		requests = append(requests, req)
+	}
+
+	return requests, nil
+}
+
+// ListUserApprovalRequests returns approval requests for a specific user
+func (s *SQLiteStore) ListUserApprovalRequests(userID string) ([]*McpApprovalRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, type, mcp_id, mcp_name, agent_name, reason, requested_by, status, created_at, expires_at, reviewed_by, reviewed_at, review_notes
+		FROM approval_requests WHERE requested_by = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user approval requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []*McpApprovalRequest
+	for rows.Next() {
+		req := &McpApprovalRequest{}
+		var reviewedBy sql.NullString
+		var reviewedAt sql.NullInt64
+
+		if err := rows.Scan(&req.ID, &req.Type, &req.MCPId, &req.MCPName, &req.AgentName, &req.Reason, &req.RequestedBy, &req.Status, &req.CreatedAt, &req.ExpiresAt, &reviewedBy, &reviewedAt, &req.ReviewNotes); err != nil {
+			return nil, fmt.Errorf("failed to scan approval request: %w", err)
+		}
+
+		// Convert timestamps
+		req.CreatedAt = time.UnixMilli(req.CreatedAt.UnixMilli())
+		req.ExpiresAt = time.UnixMilli(req.ExpiresAt.UnixMilli())
+
+		if reviewedBy.Valid {
+			req.ReviewedBy = &reviewedBy.String
+		}
+		if reviewedAt.Valid {
+			t := time.UnixMilli(reviewedAt.Int64)
+			req.ReviewedAt = &t
+		}
+
+		requests = append(requests, req)
+	}
+
+	return requests, nil
+}
+
+// DeleteApprovalRequest removes an approval request
+func (s *SQLiteStore) DeleteApprovalRequest(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`DELETE FROM approval_requests WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete approval request: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("approval request not found: %s", id)
+	}
+
+	s.log.Info("approval_request_deleted", "id", id)
 	return nil
 }
 

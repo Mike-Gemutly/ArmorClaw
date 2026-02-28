@@ -258,6 +258,16 @@ var StudioMethods = []string{
 	"studio.list_instances",
 	"studio.stop_instance",
 	"studio.get_stats",
+	// MCP Registry
+	"studio.list_mcps",
+	"studio.get_mcp",
+	"studio.get_mcp_warning",
+	// MCP Approval Workflow
+	"studio.request_mcp_approval",
+	"studio.list_pending_approvals",
+	"studio.list_my_approvals",
+	"studio.approve_mcp_request",
+	"studio.reject_mcp_request",
 }
 
 // IsStudioMethod checks if a method name is a studio method
