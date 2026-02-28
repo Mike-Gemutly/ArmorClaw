@@ -556,6 +556,286 @@ armorclaw container
 
 ---
 
+## ArmorChat Android Integration
+
+### Event Types Reference
+
+| Event Type | Direction | Purpose |
+|------------|-----------|---------|
+| `com.armorclaw.browser.response` | Bridge → Client | Command results |
+| `com.armorclaw.browser.status` | Bridge → Client | Browser state changes |
+| `com.armorclaw.agent.status` | Bridge → Client | Agent state machine transitions |
+| `com.armorclaw.pii.response` | Client → Bridge | User's PII approval/denial |
+
+> **Important:** Agent state events use `com.armorclaw.agent.status` (not `.state`)
+
+### Matrix Event Listeners
+
+```kotlin
+class BrowserCommandHandler(
+    private val matrixClient: MatrixClient,
+    private val controlPlaneStore: ControlPlaneStore
+) {
+    fun subscribe() {
+        // Listen for browser responses (command results)
+        matrixClient.onEvent("com.armorclaw.browser.response") { event ->
+            handleBrowserResponse(event)
+        }
+
+        // Listen for browser status updates (navigation, form detection, etc.)
+        matrixClient.onEvent("com.armorclaw.browser.status") { event ->
+            handleBrowserStatus(event)
+        }
+
+        // Listen for agent status changes (state machine transitions)
+        matrixClient.onEvent("com.armorclaw.agent.status") { event ->
+            handleAgentStatus(event)
+        }
+    }
+
+    private fun handleAgentStatus(event: MatrixEvent) {
+        val status = AgentStatusEvent.fromJson(event.content)
+
+        when (status.status) {
+            "idle" -> showIdleState()
+            "browsing" -> showBrowsingState(status.metadata.url)
+            "form_filling" -> showFormFillingState(status.metadata.progress)
+            "awaiting_approval" -> showApprovalNeeded(status.metadata.fieldsRequested)
+            "awaiting_captcha" -> showCaptchaUI()
+            "awaiting_2fa" -> show2FAUI()
+            "processing_payment" -> showProcessingPayment()
+            "complete" -> showComplete(status.metadata)
+            "error" -> showError(status.metadata.error)
+        }
+    }
+}
+```
+
+### Agent Status Event Structure
+
+```kotlin
+data class AgentStatusEvent(
+    val agent_id: String,
+    val status: String,          // "idle" | "browsing" | "form_filling" | etc.
+    val previous: String?,       // Previous status
+    val timestamp: Long,         // Unix milliseconds
+    val metadata: StatusMetadata?
+)
+
+data class StatusMetadata(
+    val url: String?,            // Current browser URL
+    val step: String?,           // Current step description
+    val progress: Int?,          // 0-100 progress
+    val error: String?,          // Error message if status == "error"
+    val task_id: String?,        // Current task identifier
+    val task_type: String?,      // e.g., "flight_booking"
+    val fields_requested: List<String>? // PII fields needed (when awaiting_approval)
+)
+```
+
+### PII Field Reference Mapping
+
+```kotlin
+fun mapPIIFieldRef(ref: String): PiiField {
+    return when (ref) {
+        "payment.card_number" -> PiiField(
+            name = "Card Number",
+            sensitivity = SensitivityLevel.HIGH,
+            description = "Credit or debit card number",
+            currentValue = maskCardNumber(storedCard?.last4)
+        )
+        "payment.cvv" -> PiiField(
+            name = "CVV",
+            sensitivity = SensitivityLevel.CRITICAL,
+            description = "Card verification code",
+            currentValue = null // Never display
+        )
+        "payment.card_expiry" -> PiiField(
+            name = "Expiry Date",
+            sensitivity = SensitivityLevel.MEDIUM,
+            description = "MM/YY format",
+            currentValue = storedCard?.expiry
+        )
+        "payment.card_name" -> PiiField(
+            name = "Cardholder Name",
+            sensitivity = SensitivityLevel.LOW,
+            description = "Name on card"
+        )
+        "personal.name" -> PiiField(
+            name = "Full Name",
+            sensitivity = SensitivityLevel.LOW,
+            description = "Your full name"
+        )
+        "personal.address" -> PiiField(
+            name = "Address",
+            sensitivity = SensitivityLevel.MEDIUM,
+            description = "Street address"
+        )
+        "personal.email" -> PiiField(
+            name = "Email",
+            sensitivity = SensitivityLevel.LOW,
+            description = "Contact email"
+        )
+        "personal.phone" -> PiiField(
+            name = "Phone",
+            sensitivity = SensitivityLevel.LOW,
+            description = "Phone number"
+        )
+        else -> PiiField(
+            name = ref.substringAfterLast("."),
+            sensitivity = SensitivityLevel.HIGH,
+            description = "Requested: $ref"
+        )
+    }
+}
+```
+
+### JSON-RPC Browser Queue Client
+
+```kotlin
+class BrowserQueueClient(
+    private val bridgeUrl: String,
+    private val authToken: String
+) {
+    suspend fun enqueueJob(request: EnqueueJobRequest): Result<BrowserJob>
+    suspend fun getJob(jobId: String): Result<BrowserJob>
+    suspend fun cancelJob(jobId: String): Result<Unit>
+    suspend fun retryJob(jobId: String): Result<Unit>
+    suspend fun getQueueStats(): Result<QueueStats>
+    suspend fun listJobs(agentId: String? = null, status: List<String>? = null): Result<List<BrowserJob>>
+}
+
+data class EnqueueJobRequest(
+    val id: String? = null,           // Optional, auto-generated if omitted
+    val agent_id: String,
+    val room_id: String,
+    val definition_id: String? = null,
+    val commands: List<BrowserCommandJson>,
+    val priority: Int = 5,            // 1-10, higher = processed first
+    val timeout: Int = 300,           // Seconds
+    val max_retries: Int = 2,
+    val expires_in: Int? = null       // Seconds from now
+)
+
+data class BrowserJob(
+    val id: String,
+    val agent_id: String,
+    val room_id: String,
+    val user_id: String?,
+    val definition_id: String?,
+    val status: JobStatus,            // "pending" | "running" | "completed" | "failed" | "cancelled"
+    val priority: Int,
+    val attempts: Int,
+    val current_step: Int,
+    val total_steps: Int,
+    val error: String?,
+    val created_at: Long,
+    val started_at: Long?,
+    val completed_at: Long?,
+    val result: Map<String, Any?>?
+)
+
+data class QueueStats(
+    val total: Int,
+    val pending: Int,
+    val running: Int,
+    val completed: Int,
+    val failed: Int,
+    val cancelled: Int,
+    val awaiting_pii: Int,
+    val active_workers: Int,
+    val queue_depth: Int
+)
+```
+
+### PII Response Handling
+
+```kotlin
+// When user approves/denies in BlindFill dialog:
+fun respondToPIIRequest(requestId: String, approved: Boolean, values: Map<String, String>?) {
+    // Send PII response as Matrix event
+    matrixClient.sendEvent(roomId, mapOf(
+        "type" to "com.armorclaw.pii.response",
+        "content" to mapOf(
+            "request_id" to requestId,
+            "approved" to approved,
+            "values" to (values ?: emptyMap<String, String>())
+        )
+    ))
+
+    // Clear pending request
+    controlPlaneStore.removePiiRequest(requestId)
+}
+
+// In ChatViewModel - connect to existing approvePiiRequest
+fun approvePiiRequest(approvedFields: Set<String>) {
+    val request = _pendingPiiRequest.value ?: return
+
+    val values = mutableMapOf<String, String>()
+    approvedFields.forEach { fieldName ->
+        when (fieldName) {
+            "Card Number" -> values["payment.card_number"] = secureStorage.getCardNumber()
+            "CVV" -> values["payment.cvv"] = secureStorage.getCVV()
+            "Expiry Date" -> values["payment.card_expiry"] = secureStorage.getCardExpiry()
+            "Cardholder Name" -> values["payment.card_name"] = userPrefs.getCardName()
+            "Full Name" -> values["personal.name"] = userPrefs.getFullName()
+            "Address" -> values["personal.address"] = userPrefs.getAddress()
+            "Email" -> values["personal.email"] = userPrefs.getEmail()
+            "Phone" -> values["personal.phone"] = userPrefs.getPhone()
+        }
+    }
+
+    respondToPIIRequest(request.requestId, approved = true, values = values)
+}
+```
+
+### Complete Checkout Flow Example
+
+```kotlin
+fun startCheckout(url: String, agent: AgentDefinition) = scope.launch {
+    // 1. Create browser job via JSON-RPC
+    val job = queueClient.enqueueJob(
+        EnqueueJobRequest(
+            agent_id = agent.id,
+            room_id = currentRoomId,
+            definition_id = agent.definitionId,
+            commands = listOf(
+                BrowserCommandJson("navigate", mapOf("url" to url, "waitUntil" to "load")),
+                BrowserCommandJson("fill", mapOf(
+                    "fields" to listOf(
+                        mapOf("selector" to "#email", "value" to userPrefs.email),
+                        mapOf("selector" to "#address", "value_ref" to "personal.address")
+                    )
+                )),
+                BrowserCommandJson("click", mapOf("selector" to "#continue-btn", "waitFor" to "navigation"))
+            ),
+            priority = 5,
+            timeout = 300
+        )
+    ).getOrThrow()
+
+    // 2. Subscribe to status updates
+    matrixService.onEvent("com.armorclaw.agent.status")
+        .filter { it.content.agent_id == agent.id }
+        .collect { event ->
+            val status = AgentStatusEvent.fromJson(event.content)
+            when (status.status) {
+                "awaiting_approval" -> {
+                    showBlindFillDialog(status.metadata?.fields_requested ?: emptyList())
+                }
+                "complete" -> {
+                    showCheckoutComplete(status.metadata)
+                }
+                "error" -> {
+                    showError(status.metadata?.error ?: "Unknown error")
+                }
+            }
+        }
+}
+```
+
+---
+
 ## Version History
 
 | Version | Date | Changes |
