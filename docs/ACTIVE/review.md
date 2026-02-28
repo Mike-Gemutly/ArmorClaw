@@ -1,8 +1,8 @@
 # ArmorClaw Quickstart Review
 
 > **Purpose:** Complete guide to the Docker quickstart process and post-deployment steps
-> **Version:** 0.3.3
-> **Last Updated:** 2026-02-26
+> **Version:** 0.4.0
+> **Last Updated:** 2026-02-28
 > **Status:** Active Reference
 
 ---
@@ -15,6 +15,9 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 - **Matrix Conduit** - Homeserver for E2EE messaging
 - **Setup Wizard** - Huh? TUI for interactive configuration (or env vars for non-interactive)
 - **Agent Runtime** - Python venv + Node.js for agent execution
+- **Agent Studio** - No-code agent factory with skill/PII registries
+- **Browser Automation** - Event-based browser control with PII protection
+- **MCP Marketplace** - External data connections with approval workflow
 
 **Key Design Principle:** Zero persistent secrets on disk. All credentials are injected into the SQLCipher-encrypted keystore at runtime.
 
@@ -24,7 +27,7 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                     ARMORCLAW QUICKSTART FLOW (v0.3.3)                      │
+│                     ARMORCLAW QUICKSTART FLOW (v0.4.0)                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  USER RUNS: docker run -it -v /var/run/docker.sock:... armorclaw:latest   │
@@ -65,6 +68,7 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 │  │    • Save admin password to /var/lib/armorclaw/.admin_password     │   │
 │  │    • Write config.toml                                             │   │
 │  │    • Initialize SQLCipher keystore                                 │   │
+│  │    • Initialize Agent Studio database (studio.db)                  │   │
 │  │    • Start Matrix stack (docker compose up)                        │   │
 │  │    • Register bridge + admin users on Conduit                      │   │
 │  │    • Create "ArmorClaw Bridge" room with admin as Owner            │   │
@@ -87,6 +91,82 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## New Features (v0.4.0)
+
+### Agent Studio
+
+The Agent Studio provides a **no-code interface** for creating and managing AI agents through Matrix chat commands or JSON-RPC.
+
+**Key Components:**
+- **Skill Registry** - 8 default skills (browser_navigate, form_filler, pdf_generator, etc.)
+- **PII Registry** - 10 default PII fields with sensitivity levels (low/medium/high/critical)
+- **Resource Profiles** - 3 tiers (low/medium/high) with memory/CPU limits
+- **Agent Definitions** - Combine skills + PII access + resource limits
+- **Instance Manager** - Docker container spawning with security hardening
+
+**Matrix Commands:**
+```
+!agent help              Show command help
+!agent list-skills       List available skills
+!agent list-pii          List PII fields
+!agent create <name>     Start interactive wizard
+!agent list              List agent definitions
+!agent spawn <id>        Spawn agent instance
+!agent stop <instance>   Stop running instance
+!agent stats             Show statistics
+```
+
+### Browser Skill API v1.1
+
+Event-based protocol for ArmorChat to control a headless browser on the bridge.
+
+**Event Namespace:** `com.armorclaw.browser.*`
+
+**Commands:**
+| Event | Purpose |
+|-------|---------|
+| `navigate` | Load URL with wait conditions |
+| `fill` | Form field population |
+| `click` | Element interaction |
+| `wait` | Conditional pauses |
+| `extract` | Data retrieval |
+| `screenshot` | Page capture |
+
+**PII Protection:**
+- Automatic regex-based redaction (credit cards, SSN, email, phone, API keys)
+- BlindFill references for secure PII injection via user approval
+- Audit logging for compliance
+
+### MCP Approval Workflow
+
+Role-based access control for external MCP (Model Context Protocol) connections.
+
+**Default MCPs:**
+| MCP | Risk Level | Type |
+|-----|------------|------|
+| filesystem | high | local |
+| web-search | low | external |
+| database | critical | requires PII |
+| github | medium | requires token |
+| slack | medium | requires token |
+
+**Approval Flow:**
+1. Non-admin user requests MCP access → Creates pending approval
+2. Admins notified via Matrix/push
+3. Admin reviews and approves/rejects
+4. User notified of decision
+5. Approved MCPs auto-added to agent definition
+
+**RPC Methods:**
+- `studio.list_mcps` - List available MCPs
+- `studio.get_mcp_warning` - Get risk assessment (admin)
+- `studio.request_mcp_approval` - Request access (non-admin)
+- `studio.list_pending_approvals` - View pending requests (admin)
+- `studio.approve_mcp_request` - Approve request (admin)
+- `studio.reject_mcp_request` - Reject request (admin)
 
 ---
 
@@ -202,9 +282,23 @@ You should receive a response like:
 ✓ Matrix connected
 ✓ Keystore initialized
 ✓ 1 API key configured
+✓ Agent Studio ready
 ```
 
-### 4. Test AI Functionality
+### 4. Create Your First Agent
+
+Using Matrix commands:
+
+```
+!agent create "Document Processor"
+```
+
+Follow the interactive wizard to:
+- Select skills (pdf_generator, template_filler)
+- Configure PII access (client_name, client_email)
+- Set resource tier (medium)
+
+### 5. Test AI Functionality
 
 Send a message to the bridge:
 
@@ -214,7 +308,7 @@ Hello, can you help me with something?
 
 The bridge should respond using your configured AI provider.
 
-### 5. Delete Password File (Security)
+### 6. Delete Password File (Security)
 
 After successful login:
 
@@ -272,6 +366,10 @@ curl http://localhost:6167/_matrix/client/versions
 
 # View setup log
 docker exec armorclaw cat /var/log/armorclaw/setup.log
+
+# Agent Studio stats
+echo '{"jsonrpc":"2.0","id":1,"method":"studio.stats"}' | \
+  docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
 ```
 
 ### Add Another API Key
@@ -298,6 +396,13 @@ docker exec armorclaw view-setup-log --follow
 
 # Errors only
 docker exec armorclaw view-setup-log --errors
+```
+
+### List Available MCPs
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"studio.list_mcps"}' | \
+  docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
 ```
 
 ---
@@ -367,6 +472,25 @@ Last 30 lines of log:
      docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
    ```
 
+### Agent Studio Issues
+
+1. **Check studio database:**
+   ```bash
+   docker exec armorclaw ls -la /var/lib/armorclaw/studio.db
+   ```
+
+2. **List skills:**
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"studio.list_skills"}' | \
+     docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+   ```
+
+3. **Check agent instances:**
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"studio.list_instances"}' | \
+     docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+   ```
+
 ---
 
 ## Architecture Reference
@@ -387,6 +511,7 @@ armorclaw container
 │   └── .setup_complete      # Setup flag
 ├── /var/lib/armorclaw/
 │   ├── keystore.db          # SQLCipher encrypted
+│   ├── studio.db            # Agent Studio database
 │   ├── .admin_user          # Admin info for OWNER claim
 │   └── .admin_password      # Temp password file
 ├── /run/armorclaw/
@@ -408,7 +533,11 @@ armorclaw container
 │  │  │ Bridge      │    │ Matrix      │            │   │
 │  │  │ (Go binary) │◄──►│ Conduit     │            │   │
 │  │  │ :8443/RPC   │    │ :6167       │            │   │
-│  │  └─────────────┘    └─────────────┘            │   │
+│  │  │             │    │             │            │   │
+│  │  │ + Studio    │    └─────────────┘            │   │
+│  │  │ + Browser   │                              │   │
+│  │  │ + MCP       │                              │   │
+│  │  └─────────────┘                              │   │
 │  │         │                   │                   │   │
 │  │         │    ┌─────────────┐│                   │   │
 │  │         └───►│ Sygnal      ││                   │   │
@@ -431,6 +560,7 @@ armorclaw container
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 0.4.0 | 2026-02-28 | Agent Studio, Browser Skill API, MCP Approval Workflow |
 | 0.3.3 | 2026-02-26 | Preflight checks, progress indication, rollback, password file |
 | 0.3.2 | 2026-02-25 | Crash handler, logging, dev mode log backup |
 | 0.3.1 | 2026-02-24 | Initial Docker Hub release |
@@ -444,9 +574,10 @@ armorclaw container
 - **[configuration.md](../guides/configuration.md)** - Post-setup configuration
 - **[troubleshooting.md](../guides/troubleshooting.md)** - Detailed troubleshooting
 - **[rpc-api.md](../reference/rpc-api.md)** - Complete JSON-RPC API reference
+- **[agent-studio-rpc-api.md](../reference/agent-studio-rpc-api.md)** - Agent Studio RPC methods
 
 ---
 
-**Document Version:** 1.0.0
-**Last Updated:** 2026-02-26
+**Document Version:** 1.1.0
+**Last Updated:** 2026-02-28
 **Maintainer:** ArmorClaw Team
