@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.3
+# Version: 0.3.6
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -434,7 +434,7 @@ print_header() {
     printf '%b' "${CYAN}"
     printf '╔══════════════════════════════════════════════════════╗\n'
     printf '║        %bArmorClaw Container Setup%b%b                     ║\n' "${BOLD}" "${NC}" "${CYAN}"
-    printf '║        %bVersion 0.3.3%b%b                                  ║\n' "${BOLD}" "${NC}" "${CYAN}"
+    printf '║        %bVersion 0.3.6%b%b                                  ║\n' "${BOLD}" "${NC}" "${CYAN}"
     printf '╚══════════════════════════════════════════════════════╝\n'
     printf '%b' "${NC}"
 }
@@ -1767,7 +1767,7 @@ main() {
     # Initialize logging first
     init_logging
     log_section "ArmorClaw Container Setup Starting"
-    log_info "Setup version: 0.3.3"
+    log_info "Setup version: 0.3.6"
     log_info "Debug mode: $DEBUG"
 
     # Enable debug tracing if requested
