@@ -1,11 +1,11 @@
 # ArmorClaw Architecture Review - Complete
 
-> **Date:** 2026-02-26
-> **Version:** 4.2.0
-> **Milestone:** Mobile Secretary Zero-Trust Keystore + Setup Utilities
+> **Date:** 2026-02-28
+> **Version:** 4.3.0
+> **Milestone:** Docker Deployment Hardened + ArmorChat Feature Complete
 > **Edition:** **Zero-Trust AI Agent Containment Platform** (Slack ready; Discord/Telegram/WhatsApp available via mautrix profiles; Teams planned - see [ROADMAP.md](../../ROADMAP.md))
-> **Status:** BETA - Enterprise Security with Zero-Trust Enforcement
-> **Security Hardening:** v4.2.0 adds Mobile Secretary (zero-trust keystore, agent status, browser skill), Go-native setup utilities (SSL, config generation), and 160+ new tests
+> **Status:** PRODUCTION READY - Enterprise Security with Zero-Trust Enforcement
+> **Security Hardening:** v4.3.0 adds Docker Deployment Hardening (19 fixes in Dockerfile.quickstart), ArmorChat Android Feature Complete (E2EE, Push, Key Backup, Verification), comprehensive ArmorChat Integration Guide. v4.2.0 adds Mobile Secretary (zero-trust keystore, agent status, browser skill), Go-native setup utilities (SSL, config generation), and 160+ new tests
 
 ---
 
@@ -1539,6 +1539,294 @@ This section provides a complete reference for how **ArmorChat** and **ArmorTerm
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## ArmorChat Integration Guide (v4.3.0)
+
+This section provides comprehensive documentation for ArmorChat's communication with ArmorClaw, covering all available features and their implementation details.
+
+### ArmorChat Feature Matrix
+
+| Feature | Channel | RPC Method / Event | Status |
+|---------|---------|-------------------|--------|
+| **QR Provisioning** | JSON-RPC | `provisioning.claim` | ✅ |
+| **E2EE Messaging** | Matrix | Olm/Megolm | ✅ |
+| **Push Notifications** | FCM | `push.register_token` | ✅ |
+| **Key Backup** | Matrix | SSSS passphrase | ✅ |
+| **Bridge Verification** | Matrix | Emoji verification | ✅ |
+| **Agent Management** | JSON-RPC | `agent.*` | ✅ |
+| **Workflow Control** | JSON-RPC | `workflow.*` | ✅ |
+| **HITL Approvals** | JSON-RPC + Matrix | `hitl.*`, `pii.*` | ✅ |
+| **Browser Automation** | Matrix | `com.armorclaw.browser.*` | ✅ |
+| **Budget Tracking** | JSON-RPC | `budget.*` | ✅ |
+| **Admin Management** | JSON-RPC | `bridge.*`, `profile.*` | ✅ |
+
+---
+
+### 1. QR Provisioning Flow
+
+ArmorChat uses QR-based provisioning for secure first-time setup.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ARMORCHAT QR PROVISIONING FLOW                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   Bridge                           ArmorChat                             │
+│     │                                  │                                 │
+│     │  1. provisioning.start          │                                 │
+│     │  (generates setup_token)        │                                 │
+│     │                                 │                                 │
+│     │  2. Display QR Code ────────────▶ Scan QR                         │
+│     │     armorclaw://config?d=...    │                                 │
+│     │                                 │                                 │
+│     │                                 │  3. Parse config:               │
+│     │                                 │     - matrix_homeserver         │
+│     │                                 │     - rpc_url                   │
+│     │                                 │     - push_gateway              │
+│     │                                 │     - setup_token               │
+│     │                                 │                                 │
+│     │                                 │  4. Matrix Login                │
+│     │◀────────────────────────────────│  POST /_matrix/client/v3/login  │
+│     │                                 │                                 │
+│     │                                 │  5. E2EE Setup                  │
+│     │                                 │     - Generate Olm keys         │
+│     │                                 │     - Cross-signing keys        │
+│     │                                 │                                 │
+│     │  6. provisioning.claim ◀────────│                                 │
+│     │  {setup_token, device_name}     │                                 │
+│     │                                 │                                 │
+│     │  7. Response ──────────────────▶│                                 │
+│     │  {success, role: "OWNER",       │                                 │
+│     │   admin_token: "atk_..."}       │                                 │
+│     │                                 │                                 │
+│     │                                 │  8. Store admin_token           │
+│     │                                 │     Enter main UI               │
+│     │                                 │                                 │
+└─────┴──────────────────────────────────┴─────────────────────────────────┘
+```
+
+**QR Data Format:**
+```
+armorclaw://config?d=<base64-encoded-json>
+```
+
+**Decoded JSON:**
+```json
+{
+  "matrix_homeserver": "http://192.168.1.100:6167",
+  "rpc_url": "http://192.168.1.100:8443/api",
+  "push_gateway": "http://192.168.1.100:5000",
+  "setup_token": "stp_<48-hex-chars>"
+}
+```
+
+**RPC Methods:**
+
+| Method | Params | Returns | Description |
+|--------|--------|---------|-------------|
+| `provisioning.claim` | `setup_token`, `device_name`, `device_type` | `success`, `role`, `admin_token` | Claim admin role |
+| `provisioning.status` | `token_id` | `status`, `expires_at` | Check token status |
+| `provisioning.rotate` | - | `success` | Rotate signing secret |
+| `provisioning.cancel` | `token_id` | `success` | Cancel pending token |
+
+---
+
+### 2. E2EE Messaging (Matrix)
+
+ArmorChat uses the Matrix SDK for end-to-end encrypted messaging.
+
+**Key Components:**
+- **Olm**: One-to-one encrypted messaging
+- **Megolm**: Group room encryption
+- **Cross-signing**: Device verification
+- **SSSS**: Secure secret storage (key backup)
+
+**Matrix Event Types Used:**
+
+| Event Type | Direction | Purpose |
+|------------|-----------|---------|
+| `m.room.message` | Bidirectional | Text messages, commands |
+| `m.room.encrypted` | Bidirectional | Encrypted message wrapper |
+| `m.reaction` | Bidirectional | Message reactions |
+| `m.room.redaction` | Bidirectional | Message deletion |
+| `m.typing` | Bidirectional | Typing indicators |
+| `m.read` | Client→Server | Read receipts |
+| `m.key.verification.start` | Bidirectional | Emoji verification |
+| `m.key.verification.done` | Bidirectional | Verification complete |
+
+---
+
+### 3. Push Notifications (FCM)
+
+ArmorChat receives push notifications via Sygnal push gateway.
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Conduit    │────▶│   Sygnal    │────▶│     FCM     │────▶│ ArmorChat   │
+│ Homeserver  │     │Push Gateway │     │   Server    │     │  (Android)  │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+```
+
+**RPC Methods:**
+
+| Method | Params | Description |
+|--------|--------|-------------|
+| `push.register_token` | `device_id`, `token`, `platform` | Register FCM token |
+| `push.unregister_token` | `device_id` | Remove push token |
+| `push.update_settings` | `enabled`, `filters` | Configure push preferences |
+
+---
+
+### 4. HITL (Human-in-the-Loop) Approvals
+
+ArmorChat handles approval requests for sensitive operations.
+
+**Approval Types:**
+- **PII Access**: Agent requests access to sensitive data
+- **BlindFill**: Browser form filling with encrypted values
+- **MCP Access**: Agent requests external tool access
+- **Budget Override**: Agent exceeds token budget
+
+**RPC Methods:**
+
+| Method | Params | Returns | Description |
+|--------|--------|---------|-------------|
+| `hitl.pending` | - | `gates[]` | List pending approvals |
+| `hitl.get` | `gate_id` | `gate` | Get gate details |
+| `hitl.approve` | `gate_id`, `notes` | `success` | Approve request |
+| `hitl.reject` | `gate_id`, `reason` | `success` | Reject request |
+| `hitl.extend` | `gate_id`, `duration` | `success` | Extend timeout |
+
+**PII-Specific Methods:**
+
+| Method | Params | Description |
+|--------|--------|-------------|
+| `pii.request_access` | `skill_id`, `profile_id`, `fields[]` | Request PII access |
+| `pii.approve_access` | `request_id`, `approved_fields[]` | Approve specific fields |
+| `pii.reject_access` | `request_id`, `reason` | Reject request |
+
+**Matrix Event (Approval Required):**
+```json
+{
+  "type": "hitl.required",
+  "content": {
+    "gate_id": "gate_abc123",
+    "gate_type": "pii_access",
+    "agent_id": "agent_xyz",
+    "fields": ["ssn", "credit_card"],
+    "expires_at": 1709251200
+  }
+}
+```
+
+---
+
+### 5. Browser Automation (BlindFill)
+
+ArmorChat can trigger browser automation via Matrix events.
+
+**Matrix Event Types:**
+
+| Event Type | Direction | Purpose |
+|------------|-----------|---------|
+| `com.armorclaw.browser.navigate` | Client→Agent | Navigate to URL |
+| `com.armorclaw.browser.fill` | Client→Agent | Fill form fields |
+| `com.armorclaw.browser.click` | Client→Agent | Click element |
+| `com.armorclaw.browser.screenshot` | Agent→Client | Screenshot response |
+
+**BlindFill Example:**
+```json
+{
+  "type": "com.armorclaw.browser.fill",
+  "content": {
+    "fields": [
+      {"selector": "#email", "value": "user@example.com"},
+      {"selector": "#credit-card", "value_ref": "payment.card_number"}
+    ]
+  }
+}
+```
+
+**BlindFill Security Flow:**
+1. Agent sends `browser.fill` with `value_ref` (not actual value)
+2. Bridge intercepts, pauses agent
+3. Bridge sends `PII_REQUEST` to ArmorChat
+4. User approves via biometric
+5. Bridge decrypts value from keystore
+6. Bridge injects value directly into browser
+7. Agent never sees the raw value
+
+---
+
+### 6. Feature Detection
+
+ArmorChat should detect available features before using them.
+
+**Method 1: Health Endpoint**
+```http
+GET /health HTTP/1.1
+Host: bridge.armorclaw.app:8443
+
+Response:
+{
+  "status": "healthy",
+  "bridge_ready": true,
+  "version": "4.3.0",
+  "features": ["e2ee", "push", "browser", "hitl"]
+}
+```
+
+**Method 2: RPC Capabilities**
+```json
+{"method": "bridge.capabilities", "params": {}, "id": 1}
+```
+
+**Fallback Handling:**
+- If `provisioning.claim` returns `-32601`, fall back to `bridge.status`
+- If `browser.*` events not supported, hide browser automation UI
+- If `push.register_token` fails, show "Push unavailable"
+
+---
+
+### 7. Error Handling
+
+**RPC Error Codes:**
+
+| Code | Meaning | ArmorChat Action |
+|------|---------|------------------|
+| `-32700` | Parse error | Show "Invalid request" |
+| `-32600` | Invalid request | Show "Bad request" |
+| `-32601` | Method not found | Feature not supported |
+| `-32602` | Invalid params | Show validation error |
+| `-32603` | Internal error | Retry with backoff |
+| `-32001` | Unauthorized | Re-login required |
+| `-32002` | Forbidden | Show permission error |
+
+---
+
+### 8. Implementation Checklist
+
+**Required for ArmorChat MVP:**
+
+- [x] QR code scanning and parsing
+- [x] `provisioning.claim` integration
+- [x] Matrix SDK integration (E2EE)
+- [x] `push.register_token` on login
+- [x] SSSS key backup setup
+- [x] Emoji verification flow
+
+**Required for Full Feature Support:**
+
+- [x] Agent start/stop UI
+- [x] Workflow templates browser
+- [x] HITL approval dialogs
+- [x] Browser automation triggers
+- [x] Budget monitoring dashboard
+- [x] Admin settings panel
+
+---
 
 ### ArmorTerminal Communication Patterns
 
