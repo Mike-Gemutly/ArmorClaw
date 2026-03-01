@@ -150,6 +150,31 @@ var (
 		ExitCode: 1,
 	}
 
+	// ErrProviderSelection is returned when provider selection fails.
+	ErrProviderSelection = &SetupError{
+		Code:     "INS-015",
+		Title:    "Invalid provider selection",
+		Cause:    "The selected provider format was not recognized.",
+		Fix: []string{
+			"Try running setup again",
+			"If the issue persists, report this as a bug",
+		},
+		ExitCode: 1,
+	}
+
+	// ErrFormInput is returned when form input fails.
+	ErrFormInput = &SetupError{
+		Code:     "INS-016",
+		Title:    "Form input error",
+		Cause:    "The interactive form encountered an input error.",
+		Fix: []string{
+			"Try running setup again",
+			"If using a limited terminal, try: -e ARMORCLAW_ACCESSIBLE=true",
+			"Or use environment variables for non-interactive setup",
+		},
+		ExitCode: 1,
+	}
+
 	// ErrNetworkUnavailable is returned when network connectivity fails.
 	ErrNetworkUnavailable = &SetupError{
 		Code:     "INS-012",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/charmbracelet/huh"
 )
 
@@ -25,8 +26,8 @@ var apiProviders = []apiProviderOption{
 
 // runQuickStartForms collects Quick Start configuration through two form pages:
 //
-//   Page 1: AI provider selection + API key
-//   Page 2: Admin password + deployment confirmation
+//	Page 1: AI provider selection + API key
+//	Page 2: Admin password + deployment confirmation
 //
 // Secrets (API key, passwords) are stored in result.Secrets (memory only).
 func runQuickStartForms(result *WizardResult, accessible bool) error {
@@ -59,16 +60,22 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 
 	page1 = formOpts(page1, accessible)
 	if err := page1.Run(); err != nil {
-		return err
+		return wrapFormError(err, "Step 1: AI Provider Configuration", "page1.Run")
 	}
 
 	// Parse provider choice
 	parts := strings.SplitN(providerChoice, "|", 2)
-	providerKey := parts[0]
-	baseURL := ""
-	if len(parts) > 1 {
-		baseURL = parts[1]
+	if len(parts) < 2 {
+		return &setup.SetupError{
+			Code:     "INS-005",
+			Title:    "Invalid provider selection",
+			Cause:    fmt.Sprintf("Provider choice did not contain expected format 'key|url', got: %q", providerChoice),
+			Fix:      []string{"Try running setup again", "If the issue persists, report this as a bug"},
+			ExitCode: 1,
+		}
 	}
+	providerKey := parts[0]
+	baseURL := parts[1]
 
 	// If custom provider, ask for URL
 	if providerKey == "custom" {
@@ -84,7 +91,7 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 		)
 		customForm = formOpts(customForm, accessible)
 		if err := customForm.Run(); err != nil {
-			return err
+			return wrapFormError(err, "Custom Provider URL", "customForm.Run")
 		}
 		baseURL = customURL
 		providerKey = "openai" // custom providers use the OpenAI-compatible interface
@@ -119,7 +126,7 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 
 	page2 = formOpts(page2, accessible)
 	if err := page2.Run(); err != nil {
-		return err
+		return wrapFormError(err, "Step 2: Admin & Deployment", "page2.Run")
 	}
 
 	if !confirmDeploy {
@@ -130,7 +137,13 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 	if adminPassword == "" {
 		generated, err := generatePassword(16)
 		if err != nil {
-			return fmt.Errorf("generate admin password: %w", err)
+			return &setup.SetupError{
+				Code:     "INS-003",
+				Title:    "Failed to generate admin password",
+				Cause:    fmt.Sprintf("Crypto/rand error: %v (function: generatePassword)", err),
+				Fix:      []string{"This is likely a system issue - try restarting the container", "If the issue persists, set ARMORCLAW_ADMIN_PASSWORD env var manually"},
+				ExitCode: 1,
+			}
 		}
 		adminPassword = generated
 		fmt.Printf("  Generated admin password: %s\n", adminPassword)
@@ -143,11 +156,36 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 	// Generate bridge password (never user-facing in quick mode)
 	bridgePass, err := generatePassword(16)
 	if err != nil {
-		return fmt.Errorf("generate bridge password: %w", err)
+		return &setup.SetupError{
+			Code:     "INS-003",
+			Title:    "Failed to generate bridge password",
+			Cause:    fmt.Sprintf("Crypto/rand error: %v (function: generatePassword)", err),
+			Fix:      []string{"This is likely a system issue - try restarting the container"},
+			ExitCode: 1,
+		}
 	}
 	result.Secrets.BridgePassword = bridgePass
 
 	return nil
+}
+
+// wrapFormError wraps a Huh? form error with context about which step failed.
+func wrapFormError(err error, stepName, functionName string) error {
+	if err == huh.ErrUserAborted {
+		return err // Don't wrap user abort
+	}
+
+	return &setup.SetupError{
+		Code:     "INS-002",
+		Title:    fmt.Sprintf("Form error in %s", stepName),
+		Cause:    fmt.Sprintf("Function %s failed: %v", functionName, err),
+		Fix: []string{
+			"Try running setup again",
+			"If using a limited terminal, try: -e ARMORCLAW_ACCESSIBLE=true",
+			"Or use environment variables for non-interactive setup",
+		},
+		ExitCode: 1,
+	}
 }
 
 // generatePassword creates a random URL-safe password of the given length.
@@ -155,7 +193,7 @@ func generatePassword(length int) (string, error) {
 	// Generate enough random bytes, then base64-encode and trim
 	buf := make([]byte, length)
 	if _, err := rand.Read(buf); err != nil {
-		return "", err
+		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
 	}
 	encoded := base64.URLEncoding.EncodeToString(buf)
 	// Remove padding and trim to desired length

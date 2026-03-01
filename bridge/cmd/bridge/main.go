@@ -358,13 +358,13 @@ func runContainerSetupCommand(cliCfg cliConfig) {
 			fmt.Println("\nSetup cancelled.")
 			os.Exit(130)
 		}
-		log.Fatalf("Setup wizard failed: %v", err)
+		fatalSetupError(err, "Wizard", "wizard.Run")
 	}
 
 	// Write non-secret config to temporary JSON file
 	wizardJSON := "/tmp/armorclaw-wizard.json"
 	if err := wizard.WriteConfigJSON(wizardJSON, &result.Config); err != nil {
-		log.Fatalf("Failed to write wizard config: %v", err)
+		fatalSetupError(err, "Config Write", fmt.Sprintf("wizard.WriteConfigJSON(%s)", wizardJSON))
 	}
 	defer os.Remove(wizardJSON) // Clean up immediately after container-setup.sh reads it
 
@@ -379,8 +379,51 @@ func runContainerSetupCommand(cliCfg cliConfig) {
 	cmd.Env = append(os.Environ(), wizard.SecretEnvVars(&result.Secrets)...)
 
 	if err := cmd.Run(); err != nil {
-		log.Fatalf("Container setup failed: %v", err)
+		fatalSetupError(err, "Container Setup", fmt.Sprintf("exec.Command(%s).Run()", setupScript))
 	}
+}
+
+// fatalSetupError displays a setup error with full context and exits.
+// If the error is already a SetupError, it displays it directly.
+// Otherwise, it wraps the error with context.
+func fatalSetupError(err error, operation, function string) {
+	if setupErr, ok := err.(*setup.SetupError); ok {
+		// Already a SetupError - display it directly
+		fmt.Println()
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Printf("ERROR [%s]: %s\n", setupErr.Code, setupErr.Title)
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println()
+		if setupErr.Cause != "" {
+			fmt.Printf("Cause:\n  %s\n\n", setupErr.Cause)
+		}
+		if len(setupErr.Fix) > 0 {
+			fmt.Println("Suggested fixes:")
+			for i, fix := range setupErr.Fix {
+				fmt.Printf("  %d. %s\n", i+1, fix)
+			}
+			fmt.Println()
+		}
+		if setupErr.DocLink != "" {
+			fmt.Printf("Learn more: %s\n", setupErr.DocLink)
+		}
+		os.Exit(setupErr.ExitCode)
+	}
+
+	// Not a SetupError - wrap it with context
+	fmt.Println()
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Printf("ERROR: %s failed\n", operation)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+	fmt.Printf("Function: %s\n", function)
+	fmt.Printf("Error: %v\n", err)
+	fmt.Println()
+	fmt.Println("Suggested fixes:")
+	fmt.Println("  1. Check the error message above for clues")
+	fmt.Println("  2. Try running with -e ARMORCLAW_DEBUG=true for more info")
+	fmt.Println("  3. Report this issue: https://github.com/armorclaw/armorclaw/issues")
+	os.Exit(1)
 }
 
 // runSetupCommandLegacy is the original bufio-based setup wizard (kept for
