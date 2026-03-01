@@ -60,7 +60,7 @@ ARG VCS_REF
 
 LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
       org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
-      org.opencontainers.image.version="0.3.4" \
+      org.opencontainers.image.version="0.3.5" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -78,6 +78,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     # System utilities
     ca-certificates procps openssl gnupg \
+    # Terminal capabilities for Huh? TUI framework
+    # ncurses-base provides terminfo database for proper terminal handling
+    ncurses-base \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker Compose V2 as both standalone binary and CLI plugin
@@ -140,7 +143,7 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 #!/bin/bash
 # ArmorClaw Quick Start Entrypoint
 # Launches container setup on first run, then starts bridge
-# Version: 0.3.3
+# Version: 0.3.5
 
 # NOTE: Do NOT use set -e. Transient failures must not kill the container.
 # Critical commands check errors explicitly.
@@ -151,7 +154,7 @@ API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
 PASSWORD_FILE="/var/lib/armorclaw/.admin_password"
 LOG_DIR="/var/log/armorclaw"
 LOG_FILE="$LOG_DIR/setup.log"
-VERSION="0.3.3"
+VERSION="0.3.5"
 
 # Debug mode (set ARMORCLAW_DEBUG=true to enable)
 DEBUG="${ARMORCLAW_DEBUG:-false}"
@@ -457,6 +460,49 @@ if [ ! -f "$SETUP_FLAG" ]; then
     fi
     echo -e "${GREEN}Docker connectivity OK${NC}"
     echo ""
+
+    #=============================================================================
+    # Terminal Setup for Huh? TUI
+    #=============================================================================
+    # Huh? requires proper terminal capabilities. Ensure TERM is set
+    # and terminal supports ANSI escape codes.
+
+    setup_terminal() {
+        # Ensure TERM is set - default to xterm-256color for modern terminals
+        if [ -z "${TERM:-}" ] || [ "${TERM}" = "dumb" ]; then
+            # Try to detect terminal capabilities
+            if command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
+                # Terminal supports colors, use 256-color mode
+                export TERM="xterm-256color"
+            elif [ -t 0 ]; then
+                # We have a TTY but no tput - assume basic xterm
+                export TERM="xterm"
+            fi
+            log_info "Set TERM=$TERM (was: ${TERM:-<unset>})"
+        fi
+
+        # Verify terminal capabilities
+        if [ "${TERM}" != "dumb" ] && [ -t 0 ] && [ -t 1 ]; then
+            log_info "Terminal setup complete: TERM=$TERM"
+            return 0
+        fi
+
+        # Terminal may not support TUI
+        log_info "Terminal has limited capabilities"
+        return 1
+    }
+
+    # Setup terminal before launching wizard
+    setup_terminal
+    TERM_SETUP_RESULT=$?
+
+    # If terminal setup failed but we have env vars, proceed anyway
+    if [ $TERM_SETUP_RESULT -ne 0 ] && [ -z "${ARMORCLAW_API_KEY:-}" ]; then
+        echo -e "${YELLOW}Note: Terminal has limited capabilities.${NC}"
+        echo -e "${YELLOW}If the wizard doesn't display correctly, use environment variables:${NC}"
+        echo -e "${YELLOW}  -e ARMORCLAW_API_KEY=sk-your-key${NC}"
+        echo ""
+    fi
 
     # Run container setup via the Huh? TUI wizard.
     # The Go binary handles BOTH interactive and non-interactive modes:

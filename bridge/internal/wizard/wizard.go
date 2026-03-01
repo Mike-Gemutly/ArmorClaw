@@ -22,7 +22,7 @@ import (
 
 // Version is the wizard version, matching the container setup version.
 // Update this when releasing new versions - should match VERSION file in repo root.
-const Version = "0.3.3"
+const Version = "0.3.5"
 
 // Profile represents a deployment profile.
 const (
@@ -66,22 +66,32 @@ type WizardResult struct {
 
 // TerminalCheckResult contains information about terminal capabilities.
 type TerminalCheckResult struct {
-	IsTTY        bool
-	Width        int
-	Height       int
-	StdinOpen    bool
+	IsTTY         bool
+	StdinIsTTY    bool
+	StdoutIsTTY   bool
+	Width         int
+	Height        int
+	StdinOpen     bool
 	SupportsColor bool
+	TERM          string
+	CanRunHuh     bool // Combined check for all requirements
 }
 
 // checkTerminal verifies terminal capabilities for TUI operation.
+// Huh? requires BOTH stdin AND stdout to be TTYs for interactive forms.
 func checkTerminal() TerminalCheckResult {
 	result := TerminalCheckResult{
-		IsTTY:        term.IsTerminal(int(os.Stdout.Fd())),
-		StdinOpen:    true,
+		StdoutIsTTY:   term.IsTerminal(int(os.Stdout.Fd())),
+		StdinIsTTY:    term.IsTerminal(int(os.Stdin.Fd())),
+		StdinOpen:     true,
 		SupportsColor: true,
 	}
 
-	// Check if stdin is open
+	// IsTTY is true only if BOTH stdin and stdout are TTYs
+	// This is required for interactive Huh? forms
+	result.IsTTY = result.StdinIsTTY && result.StdoutIsTTY
+
+	// Check if stdin is open (not closed or piped)
 	stat, err := os.Stdin.Stat()
 	if err != nil {
 		result.StdinOpen = false
@@ -92,16 +102,27 @@ func checkTerminal() TerminalCheckResult {
 		}
 	}
 
-	// Get terminal size if available
-	if result.IsTTY {
+	// Get terminal size if available (use stdout fd)
+	if result.StdoutIsTTY {
 		result.Width, result.Height, _ = term.GetSize(int(os.Stdout.Fd()))
 	}
 
-	// Check for color support via TERM env
-	termEnv := os.Getenv("TERM")
-	if termEnv == "dumb" || termEnv == "" {
+	// Check for color/ANSI support via TERM env
+	result.TERM = os.Getenv("TERM")
+	if result.TERM == "dumb" || result.TERM == "" {
 		result.SupportsColor = false
 	}
+
+	// Determine if Huh? can run properly
+	// Requirements:
+	// 1. Both stdin and stdout must be TTYs
+	// 2. Stdin must be open
+	// 3. Terminal width must be >= 60 (if detectable)
+	// 4. TERM should not be "dumb"
+	result.CanRunHuh = result.IsTTY &&
+		result.StdinOpen &&
+		(result.Width == 0 || result.Width >= 60) &&
+		result.TERM != "dumb"
 
 	return result
 }
@@ -114,8 +135,32 @@ func printTerminalError(check TerminalCheckResult) {
 	fmt.Println("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 
-	if !check.IsTTY {
-		fmt.Println("  The TUI wizard requires an interactive terminal.")
+	// Show diagnostic information
+	fmt.Println("  Terminal Diagnostics:")
+	fmt.Printf("    Stdin is TTY:  %v\n", check.StdinIsTTY)
+	fmt.Printf("    Stdout is TTY: %v\n", check.StdoutIsTTY)
+	fmt.Printf("    Stdin open:    %v\n", check.StdinOpen)
+	fmt.Printf("    TERM:          %s\n", func() string {
+		if check.TERM == "" {
+			return "(not set)"
+		}
+		return check.TERM
+	}())
+	if check.Width > 0 {
+		fmt.Printf("    Terminal size: %dx%d\n", check.Width, check.Height)
+	}
+	fmt.Println()
+
+	if !check.StdinIsTTY || !check.StdoutIsTTY {
+		fmt.Println("  The TUI wizard requires BOTH stdin and stdout to be terminals.")
+		fmt.Println()
+		fmt.Println("  Common causes:")
+		if !check.StdinIsTTY {
+			fmt.Println("    • Stdin is piped or redirected")
+		}
+		if !check.StdoutIsTTY {
+			fmt.Println("    • Stdout is piped or redirected")
+		}
 		fmt.Println()
 		fmt.Println("  Solutions:")
 		fmt.Println("    1. Run with -it flags: docker run -it ...")
@@ -124,11 +169,11 @@ func printTerminalError(check TerminalCheckResult) {
 		fmt.Println("       -e ARMORCLAW_PROFILE=quick")
 	}
 
-	if !check.StdinOpen && check.IsTTY {
-		fmt.Println("  Stdin is not connected (piped input detected).")
+	if check.TERM == "dumb" {
+		fmt.Println("  TERM is set to 'dumb' - terminal does not support ANSI codes.")
 		fmt.Println()
 		fmt.Println("  Solutions:")
-		fmt.Println("    1. Run without piping input")
+		fmt.Println("    1. Use a terminal that supports ANSI escape codes")
 		fmt.Println("    2. Use environment variables for non-interactive setup")
 	}
 
@@ -161,13 +206,23 @@ func Run(accessible bool) (*WizardResult, error) {
 
 	// No env vars - check terminal capabilities before launching TUI
 	termCheck := checkTerminal()
-	if !termCheck.IsTTY {
-		// No env vars AND no TTY - show error
-		printTerminalError(termCheck)
-		return nil, setup.ErrTerminalNotTTY
+
+	// If terminal is not suitable for Huh? TUI, try accessible mode first
+	if !termCheck.CanRunHuh && !accessible {
+		// If we have a TTY but just missing some capabilities, try accessible mode
+		if termCheck.IsTTY {
+			fmt.Println("  Terminal has limited capabilities - using accessible mode")
+			fmt.Println("  (Arrow keys and colors may not work properly)")
+			fmt.Println()
+			accessible = true
+		} else {
+			// No TTY at all - show error and exit
+			printTerminalError(termCheck)
+			return nil, setup.ErrTerminalNotTTY
+		}
 	}
 
-	// Check terminal width
+	// Check terminal width (only if we could detect it)
 	if termCheck.Width > 0 && termCheck.Width < 60 {
 		printTerminalError(termCheck)
 		return nil, setup.ErrTerminalTooNarrow
