@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.8
+# Version: 0.3.9
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -579,6 +579,52 @@ prompt_input() {
     echo "${result:-$default}"
 }
 
+# Prompt for sensitive input (passwords, API keys) - hides input on screen
+prompt_password() {
+    local prompt="$1"
+    local default="$2"
+    local result
+
+    # CRITICAL: Drain any pending input from corrupted terminal state
+    if IFS= read -t 0.01 -r discard 2>/dev/null; then
+        while IFS= read -t 0.01 -r discard 2>/dev/null; do :; done
+    fi
+
+    # Build the full prompt string
+    local full_prompt
+    if [ -n "$default" ]; then
+        full_prompt="${CYAN}${prompt} [${default}]: ${NC}"
+    else
+        full_prompt="${CYAN}${prompt}: ${NC}"
+    fi
+
+    # Use read -s for silent input (hidden), -p for prompt
+    # The -s flag prevents echo of typed characters
+    IFS= read -s -p "$full_prompt" -r result || true
+
+    # Print newline after hidden input (cursor is still on same line)
+    echo ""
+
+    # Step 1: Strip carriage returns
+    result="${result%$'\r'}"
+
+    # Step 2: Strip ANSI escape sequences
+    result=$(printf '%s' "$result" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' 2>/dev/null || echo "$result")
+
+    # Step 3: Strip leading and trailing whitespace
+    result="${result#"${result%%[![:space:]]*}"}"
+    result="${result%"${result##*[![:space:]]}"}"
+
+    # Step 4: If result contains colon (prompt leaked), extract last part
+    if [[ "$result" == *":"* ]]; then
+        result="${result##*:}"
+        result="${result#"${result%%[![:space:]]*}"}"
+    fi
+
+    # Step 5: Return default if empty
+    echo "${result:-$default}"
+}
+
 prompt_yes_no() {
     local prompt="$1"
     local default="${2:-n}"
@@ -1040,7 +1086,7 @@ configure_matrix() {
     echo ""
     if prompt_yes_no "Create bridge user on Matrix?" "y"; then
         BRIDGE_USER=$(prompt_input "Bridge username" "bridge")
-        BRIDGE_PASSWORD=$(prompt_input "Bridge password" "")
+        BRIDGE_PASSWORD=$(prompt_password "Bridge password" "")
         if [ -z "$BRIDGE_PASSWORD" ]; then
             # Generate random password
             BRIDGE_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
@@ -1114,7 +1160,7 @@ configure_api() {
         done
 
         while true; do
-            API_KEY=$(prompt_input "API key" "")
+            API_KEY=$(prompt_password "API key" "")
             if [ -z "$API_KEY" ]; then
                 print_warning "API key is required."
                 continue
@@ -1576,7 +1622,7 @@ configure_admin_user() {
     fi
 
     while true; do
-        ADMIN_PASSWORD=$(prompt_input "Admin password (min 8 chars, press Enter to auto-generate)" "")
+        ADMIN_PASSWORD=$(prompt_password "Admin password (min 8 chars, press Enter to auto-generate)" "")
         if [ -z "$ADMIN_PASSWORD" ]; then
             # Generate a random password
             ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
