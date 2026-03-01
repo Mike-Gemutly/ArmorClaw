@@ -584,9 +584,25 @@ if [ ! -f "$SETUP_FLAG" ]; then
             # Log error code INS-002 for wizard crash
             log_error "[INS-002] Wizard crashed - attempting fallback"
 
-            # Reset terminal state ONLY on crash (not on normal exit)
-            stty sane 2>/dev/null || true
-            tput reset 2>/dev/null || true
+            # FULL terminal reset - critical after Go TUI crash
+            # The Go huh? library leaves terminal in raw mode on crash
+            if [ -t 0 ]; then
+                # Step 1: Restore all terminal modes to sane defaults
+                stty sane 2>/dev/null || true
+                # Step 2: Explicitly re-enable critical modes
+                stty echo icanon isig ixon 2>/dev/null || true
+                # Step 3: Flush pending input
+                stty min 1 time 0 2>/dev/null || true
+                # Step 4: Reset rendering state
+                if command -v tput >/dev/null 2>&1; then
+                    tput sgr0 2>/dev/null || true
+                    tput cnorm 2>/dev/null || true
+                    tput cr 2>/dev/null || true
+                    tput ed 2>/dev/null || true
+                fi
+                # Step 5: Small delay to let terminal settle
+                sleep 0.1 2>/dev/null || sleep 1 2>/dev/null || true
+            fi
 
             echo -e "${YELLOW}Attempting fallback to bash wizard...${NC}"
             cd /opt/armorclaw

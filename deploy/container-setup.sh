@@ -6,14 +6,36 @@
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+# Colors for output (only if terminal supports them)
+# Detect color support - avoid ANSI codes when terminal doesn't support them
+detect_color_support() {
+    if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null)" -ge 8 ]; then
+        COLOR_SUPPORTED=true
+    else
+        COLOR_SUPPORTED=false
+    fi
+}
+
+# Initialize color detection
+detect_color_support
+
+if [ "$COLOR_SUPPORTED" = true ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    BOLD=''
+    NC=''
+fi
 
 # Paths
 CONFIG_DIR="/etc/armorclaw"
@@ -38,6 +60,52 @@ MATRIX_AVAILABLE=false
 
 # Track if setup succeeded (for cleanup trap)
 SETUP_SUCCEEDED=false
+
+#=============================================================================
+# Terminal Handling (Critical for Go wizard crash recovery)
+#=============================================================================
+
+# Full terminal reset - call this before ANY interactive input
+# This is critical because the Go TUI wizard (huh) may crash and leave
+# the terminal in raw mode, which breaks bash read/input handling.
+reset_terminal_full() {
+    # Only attempt terminal reset if we have a TTY
+    if [ -t 0 ]; then
+        # Step 1: Restore all terminal modes to sane defaults
+        # This MUST be done first before any other terminal operations
+        stty sane 2>/dev/null || true
+
+        # Step 2: Explicitly re-enable critical modes that may be disabled
+        # - echo: show typed characters
+        # - icanon: enable canonical mode (line buffering)
+        # - isig: enable interrupt/suspend/quit characters
+        # - ixon: enable XON/XOFF flow control
+        stty echo icanon isig ixon 2>/dev/null || true
+
+        # Step 3: Flush any pending input in the buffer
+        # This prevents garbage input from previous raw mode
+        stty min 1 time 0 2>/dev/null || true
+
+        # Step 4: Reset terminal rendering state using tput
+        if command -v tput >/dev/null 2>&1; then
+            tput sgr0 2>/dev/null || true    # Reset all attributes (bold, colors, etc.)
+            tput cnorm 2>/dev/null || true   # Show cursor
+            tput cr 2>/dev/null || true      # Move cursor to beginning of line
+            tput ed 2>/dev/null || true      # Clear to end of screen
+        fi
+
+        # Step 5: Force terminal to process pending output
+        # This ensures all reset sequences are processed before we continue
+        command -v sync >/dev/null 2>&1 && sync 2>/dev/null || true
+
+        # Step 6: Small delay to let terminal settle
+        # This is critical - some terminals need time to process reset
+        sleep 0.1 2>/dev/null || sleep 1 2>/dev/null || true
+
+        # Step 7: Re-detect color support after reset
+        detect_color_support
+    fi
+}
 
 #=============================================================================
 # Logging Functions (Phase 1: Persistent Log File System)
@@ -476,10 +544,22 @@ prompt_input() {
         echo -ne "${CYAN}$prompt: ${NC}"
     fi
 
-    read -r result
-    # Strip carriage returns and trailing whitespace (handles CRLF from terminals)
+    # Use IFS= to prevent field splitting, -r to prevent backslash interpretation
+    # This is critical when terminal may be in corrupted state
+    IFS= read -r result || true
+
+    # Step 1: Strip carriage returns (handles CRLF from terminals)
     result="${result%$'\r'}"
+
+    # Step 2: Strip ANSI escape sequences (may be present if terminal was corrupted)
+    # This removes patterns like ^[[1m, ^[[0m, etc.
+    result=$(printf '%s' "$result" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' 2>/dev/null || echo "$result")
+
+    # Step 3: Strip leading and trailing whitespace
+    result="${result#"${result%%[![:space:]]*}"}"
     result="${result%"${result##*[![:space:]]}"}"
+
+    # Step 4: Return default if empty
     echo "${result:-$default}"
 }
 
@@ -494,7 +574,15 @@ prompt_yes_no() {
             echo -ne "${CYAN}$prompt [y/N]: ${NC}"
         fi
 
-        read -r response
+        # Use IFS= to prevent field splitting, -r to prevent backslash interpretation
+        IFS= read -r response || true
+
+        # Strip carriage returns and ANSI escape sequences
+        response="${response%$'\r'}"
+        response=$(printf '%s' "$response" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' 2>/dev/null || echo "$response")
+        response="${response#"${response%%[![:space:]]*}"}"
+        response="${response%"${response##*[![:space:]]}"}"
+
         response=${response:-$default}
 
         case "$response" in
@@ -671,6 +759,13 @@ select_profile() {
         return
     fi
 
+    # CRITICAL: Reset terminal before any interactive input
+    # The Go TUI wizard may have crashed and left terminal in raw mode
+    reset_terminal_full
+
+    # Small additional delay to ensure terminal is fully settled
+    sleep 0.05 2>/dev/null || true
+
     echo -e "${CYAN}Choose your deployment profile:${NC}"
     echo ""
     echo "  ${BOLD}1) Quick Start${NC} (default)"
@@ -684,7 +779,15 @@ select_profile() {
     echo ""
 
     while true; do
-        local choice=$(prompt_input "Profile" "1")
+        local choice
+        choice=$(prompt_input "Profile" "1")
+
+        # Debug: show what we received (helps diagnose terminal issues)
+        log_debug "Profile selection received: '$choice' (length: ${#choice})"
+
+        # Strip any remaining escape sequences and whitespace
+        choice=$(echo "$choice" | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
+
         case "$choice" in
             1)
                 DEPLOY_PROFILE="quick"
@@ -697,7 +800,7 @@ select_profile() {
                 break
                 ;;
             *)
-                print_warning "Please enter 1 or 2."
+                print_warning "Please enter 1 or 2. (received: '$choice')"
                 ;;
         esac
     done
@@ -1766,6 +1869,10 @@ offer_post_setup_options() {
 #=============================================================================
 
 main() {
+    # CRITICAL: Reset terminal state FIRST before any output
+    # This handles the case where Go TUI wizard crashed and left terminal corrupted
+    reset_terminal_full
+
     # Initialize logging first
     init_logging
     log_section "ArmorClaw Container Setup Starting"
