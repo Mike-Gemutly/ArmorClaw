@@ -60,9 +60,13 @@ ARG VCS_REF
 
 LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
       org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
-      org.opencontainers.image.version="0.3.3" \
+      org.opencontainers.image.version="0.3.4" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
+
+# Copy Docker CLI from official image (ensures API compatibility with modern Docker daemons)
+# Debian's docker.io package (20.10.x, API 1.41) is too old for Docker 25+ (min API 1.44)
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -70,8 +74,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv \
     # Required for setup wizard and bridge
     curl wget jq socat \
-    # Docker CLI client (container uses host's Docker socket)
-    docker.io \
     # SQLite runtime library (bridge binary may dynamically link against it)
     libsqlite3-0 \
     # System utilities
