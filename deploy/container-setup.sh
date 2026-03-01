@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.7
+# Version: 0.3.8
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -538,40 +538,39 @@ prompt_input() {
     local default="$2"
     local result
 
-    # CRITICAL: Flush stdin before reading to discard any buffered garbage
-    # This fixes the issue where prompt text gets mixed with input
-    # when terminal was left in corrupted state by Go TUI wizard
-    while IFS= read -r -t 0.01 discard_line 2>/dev/null; do :; done
-
-    if [ -n "$default" ]; then
-        echo -ne "${CYAN}$prompt [$default]: ${NC}"
-    else
-        echo -ne "${CYAN}$prompt: ${NC}"
+    # CRITICAL: Drain any pending input from corrupted terminal state
+    # The Go TUI wizard may have left garbage in the input buffer
+    # This reads and discards anything already in the buffer
+    if IFS= read -t 0.01 -r discard 2>/dev/null; then
+        # Keep draining until buffer is empty
+        while IFS= read -t 0.01 -r discard 2>/dev/null; do :; done
     fi
 
-    # Force flush the prompt output before reading
-    printf '%s' "" >/dev/null
+    # Build the full prompt string
+    local full_prompt
+    if [ -n "$default" ]; then
+        full_prompt="${CYAN}${prompt} [${default}]: ${NC}"
+    else
+        full_prompt="${CYAN}${prompt}: ${NC}"
+    fi
 
-    # Use IFS= to prevent field splitting, -r to prevent backslash interpretation
-    # This is critical when terminal may be in corrupted state
-    IFS= read -r result || true
+    # Use read -p to print prompt AND read input in one atomic operation
+    # This prevents the prompt echo from being captured as input
+    # The -r prevents backslash interpretation
+    IFS= read -p "$full_prompt" -r result || true
 
     # Step 1: Strip carriage returns (handles CRLF from terminals)
     result="${result%$'\r'}"
 
     # Step 2: Strip ANSI escape sequences (may be present if terminal was corrupted)
-    # This removes patterns like ^[[1m, ^[[0m, etc.
     result=$(printf '%s' "$result" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' 2>/dev/null || echo "$result")
 
     # Step 3: Strip leading and trailing whitespace
     result="${result#"${result%%[![:space:]]*}"}"
     result="${result%"${result##*[![:space:]]}"}"
 
-    # Step 4: If result contains the prompt text, extract just the user input
-    # This handles the case where terminal echo mixed prompt with input
-    # e.g., "Profile[1]:1" -> "1"
+    # Step 4: If result contains colon (prompt leaked into input), extract last part
     if [[ "$result" == *":"* ]]; then
-        # Extract everything after the last colon and space
         result="${result##*:}"
         result="${result#"${result%%[![:space:]]*}"}"
     fi
@@ -585,20 +584,21 @@ prompt_yes_no() {
     local default="${2:-n}"
 
     while true; do
-        # CRITICAL: Flush stdin before reading to discard any buffered garbage
-        while IFS= read -r -t 0.01 discard_line 2>/dev/null; do :; done
-
-        if [ "$default" = "y" ]; then
-            echo -ne "${CYAN}$prompt [Y/n]: ${NC}"
-        else
-            echo -ne "${CYAN}$prompt [y/N]: ${NC}"
+        # CRITICAL: Drain any pending input from corrupted terminal state
+        if IFS= read -t 0.01 -r discard 2>/dev/null; then
+            while IFS= read -t 0.01 -r discard 2>/dev/null; do :; done
         fi
 
-        # Force flush the prompt output before reading
-        printf '%s' "" >/dev/null
+        # Build the full prompt string
+        local full_prompt
+        if [ "$default" = "y" ]; then
+            full_prompt="${CYAN}${prompt} [Y/n]: ${NC}"
+        else
+            full_prompt="${CYAN}${prompt} [y/N]: ${NC}"
+        fi
 
-        # Use IFS= to prevent field splitting, -r to prevent backslash interpretation
-        IFS= read -r response || true
+        # Use read -p for atomic prompt + read operation
+        IFS= read -p "$full_prompt" -r response || true
 
         # Strip carriage returns and ANSI escape sequences
         response="${response%$'\r'}"
