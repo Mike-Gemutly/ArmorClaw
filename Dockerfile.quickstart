@@ -79,8 +79,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # System utilities
     ca-certificates procps openssl gnupg \
     # Terminal capabilities for Huh? TUI framework
-    # ncurses-base provides terminfo database for proper terminal handling
-    ncurses-base \
+    # ncurses-base provides basic terminfo (xterm, vt100, linux)
+    # ncurses-term provides extended terminfo for screen, tmux, alacritty, etc.
+    ncurses-base ncurses-term \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker Compose V2 as both standalone binary and CLI plugin
@@ -154,7 +155,7 @@ API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
 PASSWORD_FILE="/var/lib/armorclaw/.admin_password"
 LOG_DIR="/var/log/armorclaw"
 LOG_FILE="$LOG_DIR/setup.log"
-VERSION="0.3.5"
+VERSION="0.3.6"
 
 # Debug mode (set ARMORCLAW_DEBUG=true to enable)
 DEBUG="${ARMORCLAW_DEBUG:-false}"
@@ -498,20 +499,30 @@ if [ ! -f "$SETUP_FLAG" ]; then
     }
 
     # Terminal cleanup on exit (handles crashes gracefully)
-    cleanup_terminal() {
-        # Only reset if we're in a TTY
+    # This extends crash_handler with terminal reset for the TUI wizard phase
+    cleanup_and_handle_crash() {
+        local exit_code=$?
+
+        # Always reset terminal state first (even if crash_handler will run)
         if [ -t 0 ]; then
-            # Reset terminal to sane state
             stty sane 2>/dev/null || true
-            # Show cursor (in case TUI hid it)
-            tput cnorm 2>/dev/null || true
-            # Reset colors
-            tput sgr0 2>/dev/null || true
+            tput cnorm 2>/dev/null || true  # Show cursor
+            tput sgr0 2>/dev/null || true   # Reset colors
         fi
+
+        # Then delegate to the main crash_handler for rollback and error display
+        # Only if this is a failure (non-zero exit and not succeeded)
+        if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
+            # Restore the original crash_handler trap and call it
+            trap crash_handler INT TERM EXIT
+            crash_handler
+        fi
+
+        exit $exit_code
     }
 
-    # Register cleanup for various exit scenarios
-    trap cleanup_terminal EXIT INT TERM
+    # Register cleanup for various exit scenarios (replaces earlier trap during setup)
+    trap cleanup_and_handle_crash EXIT INT TERM
 
     # Setup terminal before launching wizard
     setup_terminal
