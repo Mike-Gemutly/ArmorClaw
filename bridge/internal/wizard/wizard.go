@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/armorclaw/bridge/pkg/setup"
 
@@ -22,7 +24,7 @@ import (
 
 // Version is the wizard version, matching the container setup version.
 // Update this when releasing new versions - should match VERSION file in repo root.
-const Version = "0.3.5"
+const Version = "0.3.6"
 
 // Profile represents a deployment profile.
 const (
@@ -227,6 +229,18 @@ func Run(accessible bool) (*WizardResult, error) {
 		printTerminalError(termCheck)
 		return nil, setup.ErrTerminalTooNarrow
 	}
+
+	// Setup signal handling for graceful terminal cleanup
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		// Clean up terminal state before exit
+		fmt.Print("\033[?25h") // Show cursor
+		fmt.Print("\033[0m")   // Reset colors
+		fmt.Println("\nSetup cancelled.")
+		os.Exit(130)
+	}()
 
 	printBanner()
 

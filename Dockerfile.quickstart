@@ -60,7 +60,7 @@ ARG VCS_REF
 
 LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
       org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
-      org.opencontainers.image.version="0.3.5" \
+      org.opencontainers.image.version="0.3.6" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -143,7 +143,7 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 #!/bin/bash
 # ArmorClaw Quick Start Entrypoint
 # Launches container setup on first run, then starts bridge
-# Version: 0.3.5
+# Version: 0.3.6
 
 # NOTE: Do NOT use set -e. Transient failures must not kill the container.
 # Critical commands check errors explicitly.
@@ -468,6 +468,8 @@ if [ ! -f "$SETUP_FLAG" ]; then
     # and terminal supports ANSI escape codes.
 
     setup_terminal() {
+        local old_term="${TERM:-<unset>}"
+
         # Ensure TERM is set - default to xterm-256color for modern terminals
         if [ -z "${TERM:-}" ] || [ "${TERM}" = "dumb" ]; then
             # Try to detect terminal capabilities
@@ -477,8 +479,11 @@ if [ ! -f "$SETUP_FLAG" ]; then
             elif [ -t 0 ]; then
                 # We have a TTY but no tput - assume basic xterm
                 export TERM="xterm"
+            else
+                # No TTY - set TERM anyway for non-interactive mode
+                export TERM="xterm"
             fi
-            log_info "Set TERM=$TERM (was: ${TERM:-<unset>})"
+            log_info "Set TERM=$TERM (was: $old_term)"
         fi
 
         # Verify terminal capabilities
@@ -491,6 +496,22 @@ if [ ! -f "$SETUP_FLAG" ]; then
         log_info "Terminal has limited capabilities"
         return 1
     }
+
+    # Terminal cleanup on exit (handles crashes gracefully)
+    cleanup_terminal() {
+        # Only reset if we're in a TTY
+        if [ -t 0 ]; then
+            # Reset terminal to sane state
+            stty sane 2>/dev/null || true
+            # Show cursor (in case TUI hid it)
+            tput cnorm 2>/dev/null || true
+            # Reset colors
+            tput sgr0 2>/dev/null || true
+        fi
+    }
+
+    # Register cleanup for various exit scenarios
+    trap cleanup_terminal EXIT INT TERM
 
     # Setup terminal before launching wizard
     setup_terminal

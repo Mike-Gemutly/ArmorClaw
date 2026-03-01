@@ -1,6 +1,6 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.1.1-blue)](https://github.com/armorclaw/armorclaw)
+[![Version](https://img.shields.io/badge/version-v4.1.2-blue)](https://github.com/armorclaw/armorclaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/armorclaw/armorclaw)
 
 **Autonomous agents working 24/7 on your VPS, controlled from your pocket.**
