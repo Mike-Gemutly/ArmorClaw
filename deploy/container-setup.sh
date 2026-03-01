@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.6
+# Version: 0.3.7
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -538,11 +538,19 @@ prompt_input() {
     local default="$2"
     local result
 
+    # CRITICAL: Flush stdin before reading to discard any buffered garbage
+    # This fixes the issue where prompt text gets mixed with input
+    # when terminal was left in corrupted state by Go TUI wizard
+    while IFS= read -r -t 0.01 discard_line 2>/dev/null; do :; done
+
     if [ -n "$default" ]; then
         echo -ne "${CYAN}$prompt [$default]: ${NC}"
     else
         echo -ne "${CYAN}$prompt: ${NC}"
     fi
+
+    # Force flush the prompt output before reading
+    printf '%s' "" >/dev/null
 
     # Use IFS= to prevent field splitting, -r to prevent backslash interpretation
     # This is critical when terminal may be in corrupted state
@@ -559,7 +567,16 @@ prompt_input() {
     result="${result#"${result%%[![:space:]]*}"}"
     result="${result%"${result##*[![:space:]]}"}"
 
-    # Step 4: Return default if empty
+    # Step 4: If result contains the prompt text, extract just the user input
+    # This handles the case where terminal echo mixed prompt with input
+    # e.g., "Profile[1]:1" -> "1"
+    if [[ "$result" == *":"* ]]; then
+        # Extract everything after the last colon and space
+        result="${result##*:}"
+        result="${result#"${result%%[![:space:]]*}"}"
+    fi
+
+    # Step 5: Return default if empty
     echo "${result:-$default}"
 }
 
@@ -568,11 +585,17 @@ prompt_yes_no() {
     local default="${2:-n}"
 
     while true; do
+        # CRITICAL: Flush stdin before reading to discard any buffered garbage
+        while IFS= read -r -t 0.01 discard_line 2>/dev/null; do :; done
+
         if [ "$default" = "y" ]; then
             echo -ne "${CYAN}$prompt [Y/n]: ${NC}"
         else
             echo -ne "${CYAN}$prompt [y/N]: ${NC}"
         fi
+
+        # Force flush the prompt output before reading
+        printf '%s' "" >/dev/null
 
         # Use IFS= to prevent field splitting, -r to prevent backslash interpretation
         IFS= read -r response || true
@@ -582,6 +605,12 @@ prompt_yes_no() {
         response=$(printf '%s' "$response" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' 2>/dev/null || echo "$response")
         response="${response#"${response%%[![:space:]]*}"}"
         response="${response%"${response##*[![:space:]]}"}"
+
+        # If response contains colon, extract just the user input
+        if [[ "$response" == *":"* ]]; then
+            response="${response##*:}"
+            response="${response#"${response%%[![:space:]]*}"}"
+        fi
 
         response=${response:-$default}
 
