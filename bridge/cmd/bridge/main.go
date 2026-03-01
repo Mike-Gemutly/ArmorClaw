@@ -49,6 +49,17 @@ var (
 	buildTime = "unknown"
 )
 
+// resetTerminal restores terminal state after TUI operations.
+// This ensures the terminal is usable if the TUI (Huh?) left it in an altered state.
+func resetTerminal() {
+	// Show cursor (in case TUI hid it)
+	fmt.Print("\033[?25h")
+	// Reset colors and attributes
+	fmt.Print("\033[0m")
+	// Also try stty sane via shell for raw mode terminals
+	exec.Command("stty", "sane").Run()
+}
+
 type cliConfig struct {
 	command          string
 	configPath       string

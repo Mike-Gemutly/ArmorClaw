@@ -239,8 +239,10 @@ cleanup_on_failure() {
         # Clean up wizard JSON if it exists
         rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
 
-        # Reset terminal state
+        # Reset terminal state (in case TUI left it in raw mode)
         stty sane 2>/dev/null || true
+        tput cnorm 2>/dev/null || true  # Show cursor
+        tput sgr0 2>/dev/null || true   # Reset colors
 
         # Show error summary if we have an error code
         if [ -n "${ERROR_CODE:-}" ]; then
