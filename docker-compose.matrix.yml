@@ -41,7 +41,7 @@ services:
 
     volumes:
       - conduit_data:/var/lib/matrix-conduit
-      - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit/conduit.toml:ro
+      - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit.toml:ro
 
     ports:
       - "6167:6167"   # Client API
