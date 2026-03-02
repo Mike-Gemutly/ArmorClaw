@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.4.0
+# Version: 0.4.1
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
