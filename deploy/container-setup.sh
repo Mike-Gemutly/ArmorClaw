@@ -1515,8 +1515,90 @@ wait_for_conduit() {
     log_info "Waiting for Conduit homeserver to be ready..."
     local max_attempts=24  # 24 * 5s = 120s
     local attempt=0
+    local container_checked=false
 
     while [ $attempt -lt $max_attempts ]; do
+        # First, check if container is actually running (only check once)
+        if ! $container_checked; then
+            local container_state
+            container_state=$(docker inspect --format '{{.State.Status}}' armorclaw-conduit 2>/dev/null || echo "not found")
+
+            if [ "$container_state" != "running" ]; then
+                # Container isn't running - get detailed diagnostics
+                print_error ""
+                print_error "══════════════════════════════════════════════════════"
+                print_error "CONDUIT CONTAINER DIAGNOSTICS"
+                print_error "══════════════════════════════════════════════════════"
+
+                # Check if container exists at all
+                local container_exists
+                container_exists=$(docker ps -aq --filter "name=armorclaw-conduit" --format "{{.Names}}")
+
+                if [ -z "$container_exists" ]; then
+                    print_error "❌ Container 'armorclaw-conduit' does NOT exist"
+                    print_error "   Docker Compose may have failed to create the container"
+                    print_error ""
+                    print_error "Possible causes:"
+                    print_error "  1. Port conflict (port 6167 already in use)"
+                    print_error "  2. Volume mount failure (config file not accessible)"
+                    print_error "  3. Image pull failure (check network)"
+                    print_error ""
+                    print_error "Run: docker compose -f docker-compose.matrix.yml logs"
+                else
+                    # Container exists but not running - check exit code
+                    local exit_code
+                    exit_code=$(docker inspect --format '{{.State.ExitCode}}' armorclaw-conduit 2>/dev/null || echo "N/A")
+
+                    print_error "❌ Container exited with code: $exit_code"
+                    print_error ""
+
+                    # Get container logs
+                    print_error "Container logs (last 50 lines):"
+                    docker logs armorclaw-conduit --tail 50 2>&1 | sed 's/^/.*//' | head -20
+
+                    print_error ""
+                    print_error "Common Conduit startup failures:"
+                    print_error "  • Config file not found at expected path"
+                    print_error "  • Config file has syntax errors"
+                    print_error "  • Database initialization failed"
+                    print_error "  • Permission denied"
+                    print_error ""
+
+                    # Check if config file exists inside container
+                    print_error "Checking config file mount..."
+                    local config_check
+                    config_check=$(docker exec armorclaw-conduit ls -la /etc/conduit.toml 2>&1 || echo "not found")
+
+                    if [ "$config_check" = "not found" ]; then
+                        print_error "❌ Config file /etc/conduit.toml NOT FOUND in container"
+                        print_error "   Volume mount may have failed"
+                        print_error ""
+                        print_error "Expected mount: ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit.toml"
+                        print_error "Host path: ${ARMORCLAW_CONFIGS}/conduit.toml"
+
+                        # Check if file exists on host
+                        if [ -n "$ARMORCLAW_CONFIGS" ]; then
+                            local host_file
+                            host_file=$(docker run --rm -v /tmp:/tmp alpine ls -la "$ARMORCLAW_CONFIGS/conduit.toml" 2>&1 || echo "not found")
+                            if [ "$host_file" = "not found" ]; then
+                                print_error "❌ Config file DOES NOT EXIST on host at: $ARMORCLAW_CONFIGS/conduit.toml"
+                                print_error "   The file copy in start_matrix_stack() may have failed silently"
+                            else
+                                print_error "✓ Config file exists on host at: $ARMORCLAW_CONFIGS/conduit.toml"
+                                print_error "   File size: $(docker run --rm -v /tmp:/tmp alpine stat -c "$ARMORCLAW_CONFIGS/conduit.toml" 2>&1 || echo "bytes")"
+                            fi
+                        fi
+                    fi
+
+                    print_error "══════════════════════════════════════════════════════"
+                    return 1
+                fi
+
+                # Container is running - don't check again
+                container_checked=true
+            fi
+        fi
+
         # Check if Conduit responds to the versions endpoint
         if curl -sf --connect-timeout 3 "http://localhost:6167/_matrix/client/versions" >/dev/null 2>&1; then
             log_success "Conduit homeserver is ready"
