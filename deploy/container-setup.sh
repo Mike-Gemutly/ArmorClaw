@@ -1449,7 +1449,7 @@ start_matrix_stack() {
         cp "$CONDUIT_TEMPLATE" "$CONDUIT_STAGING"
         sed -i "s|^server_name = .*|server_name = \"${MATRIX_SERVER_NAME}\"|" "$CONDUIT_STAGING"
         sed -i "s|^client = .*|client = \"https://${MATRIX_SERVER_NAME}\"|" "$CONDUIT_STAGING"
-        sed -i "s|^server = .*|server = \"${MATRIX_SERVER_NAME}:443\"|" "$CONDUIT_STAGING"
+        sed -i "s|^server = .*|server = \"${MATRIX_SERVER_NAME}:6167\"|" "$CONDUIT_STAGING"
         # Append registration_shared_secret for user creation
         echo "" >> "$CONDUIT_STAGING"
         echo "# Temporary: shared secret for user registration (removed after setup)" >> "$CONDUIT_STAGING"
