@@ -17,6 +17,9 @@ services:
     restart: unless-stopped
 
     environment:
+      # Config file location (REQUIRED by Conduit image)
+      CONDUIT_CONFIG: "/etc/conduit.toml"
+
       # Server configuration
       CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-matrix.armorclaw.com}"
       CONDUIT_ADDRESS: "0.0.0.0"
