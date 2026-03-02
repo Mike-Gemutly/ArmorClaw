@@ -287,7 +287,7 @@ database_backend = "rocksdb"
 
 [global.well_known]
 client = "https://$DOMAIN"
-server = "https://$DOMAIN:8448"
+server = "$DOMAIN:8448"
 
 # Performance tuning
 [global.performance]

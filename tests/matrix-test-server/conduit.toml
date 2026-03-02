@@ -55,5 +55,5 @@ turn_password = "test-password"
 
 # CORS settings for web clients
 [global.well_known]
-server = "http://localhost:8008"
+server = "localhost:8008"
 client = "http://localhost:8008"

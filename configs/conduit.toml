@@ -47,4 +47,4 @@ allow_check_for_updates = true
 # Trusted servers (for federation)
 [global.well_known]
 client = "https://matrix.armorclaw.com"
-server = "https://matrix.armorclaw.com:443"
+server = "matrix.armorclaw.com:443"
