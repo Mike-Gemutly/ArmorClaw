@@ -1,7 +1,7 @@
 #!/bin/bash
 # ArmorClaw Container Setup Wizard
 # Simplified setup for Docker container deployment
-# Version: 0.3.9
+# Version: 0.4.0
 
 # NOTE: Do NOT use set -e here. Transient failures (curl timeouts, docker pulls)
 # must not kill the setup wizard. Critical commands check errors explicitly.
@@ -1423,7 +1423,16 @@ start_matrix_stack() {
     # bind mount paths in compose files resolve on the HOST filesystem.
     local HOST_CONFIGS="/tmp/armorclaw-configs"
     print_info "Copying config files to host ($HOST_CONFIGS)..."
+
+    # Create config directory on HOST
     docker run --rm -v /tmp:/tmp alpine mkdir -p "$HOST_CONFIGS" 2>/dev/null || true
+
+    # Verify directory was created
+    if ! docker run --rm -v /tmp:/tmp alpine test -d "$HOST_CONFIGS" 2>/dev/null; then
+        print_error "Failed to create config directory on host"
+        return 1
+    fi
+    log_debug "Config directory created on host: $HOST_CONFIGS"
 
     # Export server name without port for Conduit's federation identity
     export MATRIX_SERVER_NAME="${MATRIX_SERVER%%:*}"
@@ -1445,9 +1454,13 @@ start_matrix_stack() {
         echo "" >> "$CONDUIT_STAGING"
         echo "# Temporary: shared secret for user registration (removed after setup)" >> "$CONDUIT_STAGING"
         echo "registration_shared_secret = \"${REGISTRATION_SHARED_SECRET}\"" >> "$CONDUIT_STAGING"
+        log_debug "Generated conduit.toml with server_name=$MATRIX_SERVER_NAME"
+    else
+        print_error "Conduit template not found: $CONDUIT_TEMPLATE"
+        return 1
     fi
 
-    # Copy configs to host-accessible path
+    # Copy configs to host-accessible path with explicit error checking
     for f in conduit.toml turnserver.conf; do
         local src="/opt/armorclaw/configs/$f"
         # Use staged conduit.toml with dynamic values
@@ -1455,14 +1468,26 @@ start_matrix_stack() {
             src="$CONDUIT_STAGING"
         fi
         if [ -f "$src" ]; then
-            cat "$src" | \
-                docker run --rm -i -v /tmp:/tmp alpine sh -c "cat > $HOST_CONFIGS/$f" 2>/dev/null || true
+            log_debug "Copying $src to host at $HOST_CONFIGS/$f"
+            if ! cat "$src" | docker run --rm -i -v /tmp:/tmp alpine sh -c "cat > $HOST_CONFIGS/$f" 2>&1; then
+                print_error "Failed to copy $f to host"
+                return 1
+            fi
+            # Verify file was written
+            if ! docker run --rm -v /tmp:/tmp alpine test -f "$HOST_CONFIGS/$f" 2>/dev/null; then
+                print_error "Config file not found on host after copy: $HOST_CONFIGS/$f"
+                return 1
+            fi
+            log_debug "Verified: $HOST_CONFIGS/$f exists on host"
+        else
+            print_warning "Source config not found: $src"
         fi
     done
     rm -f "$CONDUIT_STAGING"
 
     # Set ARMORCLAW_CONFIGS so compose resolves bind mounts to the host path
     export ARMORCLAW_CONFIGS="$HOST_CONFIGS"
+    log_debug "ARMORCLAW_CONFIGS set to: $ARMORCLAW_CONFIGS"
 
     # Generate a random TURN secret for Coturn authentication
     export TURN_SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')"
