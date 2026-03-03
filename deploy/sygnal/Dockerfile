@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create sygnal user
 RUN useradd -r -s /bin/false sygnal
 
-# Install sygnal
-RUN pip install --no-cache-dir matrix-sygnal
+# Install sygnal from Matrix.org (not available as matrix-sygnal on PyPI)
+RUN pip install --no-cache-dir git+https://github.com/matrix-org/sygnal.git
 
 # Create directories
 RUN mkdir -p /data /etc/sygnal && \
