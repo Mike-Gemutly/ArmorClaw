@@ -1,6 +1,6 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.1.2-blue)](https://github.com/armorclaw/armorclaw)
+[![Version](https://img.shields.io/badge/version-v4.1.3-blue)](https://github.com/armorclaw/armorclaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/armorclaw/armorclaw)
 
 **Autonomous agents working 24/7 on your VPS, controlled from your pocket.**
@@ -61,14 +61,15 @@ ArmorClaw is a Zero-Trust orchestration layer that runs AI agents (OpenClaw) on 
 ## Getting Started
 
 ### Prerequisites
-*   Docker & Docker Compose
+*   Docker & Docker Compose V2
 *   A VPS (Recommended) or local server
 
-### 1. Run the Stack
+### 1. Quick Start (Recommended)
 
 ```bash
 docker run -it --name armorclaw \
   --restart unless-stopped \
+  --user root \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-data:/etc/armorclaw \
   -v armorclaw-keystore:/var/lib/armorclaw \
@@ -78,12 +79,28 @@ docker run -it --name armorclaw \
   mikegemut/armorclaw:latest
 ```
 
-### 2. Connect via ArmorChat
+### 2. Build from Source (Full Stack)
+
+```bash
+# Clone the repository
+git clone https://github.com/armorclaw/armorclaw.git
+cd armorclaw
+
+# Build and run the complete stack (Bridge + Matrix + Sygnal + Caddy)
+docker compose -f docker-compose-full.yml up -d --build
+
+# Or build just the quickstart image
+docker build -t armorclaw/quickstart:latest -f Dockerfile.quickstart .
+```
+
+**Note:** The bridge requires Debian-based images (not Alpine) for SQLCipher compatibility.
+
+### 3. Connect via ArmorChat
 1.  Open the ArmorChat Android app.
 2.  Scan the QR code displayed in the container logs.
 3.  Set up your biometric key for the keystore.
 
-### 3. Create Your First Agent (No-Code)
+### 4. Create Your First Agent (No-Code)
 In the Matrix room, type:
 ```
 !agent create name="Travel Booker" skills="web_browsing, form_filling"
@@ -146,7 +163,7 @@ You can run a fleet of specialized agents on a single VPS.
 *   **Agent State Machine:** ✅ Complete
 *   **Browser RPC:** ✅ Complete
 *   **ArmorChat Android:** ✅ Feature Complete
-*   **Docker Deployment:** ✅ Hardened (v4.1.0)
+*   **Docker Deployment:** ✅ Hardened (v4.1.3)
 *   **No-Code Agent Studio:** ✅ Complete
 *   **MCP Approval Workflow:** ✅ Complete
 
