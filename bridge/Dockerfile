@@ -1,15 +1,18 @@
 # ArmorClaw Bridge Dockerfile
 # This Dockerfile builds the bridge with CGO enabled for SQLCipher support
+# NOTE: Must use Debian (glibc) instead of Alpine (musl) because go-sqlcipher
+# requires glibc-specific functions (pread64, pwrite64, off64_t)
 
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-bookworm AS builder
 
 # Install build dependencies for CGO and SQLCipher
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    musl-dev \
-    sqlite-dev \
-    pkgconfig \
-    git
+    libc-dev \
+    libsqlcipher-dev \
+    pkg-config \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
@@ -27,14 +30,14 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
     ./cmd/bridge
 
 # Runtime stage
-FROM alpine:latest
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     docker-cli \
-    libgcc \
-    sqlite-libs
+    libsqlcipher0 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
