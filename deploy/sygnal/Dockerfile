@@ -6,11 +6,12 @@ FROM python:3.11-slim
 LABEL maintainer="ArmorClaw <security@armorclaw.app>"
 LABEL description="Sygnal Matrix Push Gateway for ArmorClaw"
 
-# Install dependencies
+# Install dependencies (git required for pip install from git repos)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libffi-dev \
     libssl-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create sygnal user
