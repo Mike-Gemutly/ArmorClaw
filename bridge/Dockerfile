@@ -32,10 +32,12 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
 # Runtime stage
 FROM debian:bookworm-slim
 
+# Copy Docker CLI from official image (ensures API compatibility with modern Docker daemons)
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    docker-cli \
     libsqlcipher0 \
     && rm -rf /var/lib/apt/lists/*
 
