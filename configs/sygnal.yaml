@@ -52,35 +52,10 @@ apps:
   #   topic: "app.armorclaw.armorchat"
   #   sandbox: false
 
-## Stats and metrics
-stats:
-  host: 0.0.0.0
-  port: 9100
-  # Prometheus metrics endpoint
-
-## Rate limiting
-rate_limits:
-  # Maximum notifications per second per device
-  notifications_per_second: 20
-  # Maximum concurrent pushes per app
-  concurrent_pushes: 1000
-
-## Timeout settings
-timeouts:
-  # Connect timeout in seconds
-  connect: 5
-  # Read timeout in seconds
-  read: 15
-  # Total timeout in seconds
-  total: 30
-
-## Retry settings
-retry:
-  # Enable retries
-  enabled: true
-  # Maximum retry attempts
-  max_attempts: 3
-  # Delay between retries (exponential backoff base)
-  delay_base: 1
-  # Maximum delay between retries
-  max_delay: 60
+## Health check - simple HTTP GET on / /health endpoint
+healthcheck:
+  test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 10s
