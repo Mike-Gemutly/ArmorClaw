@@ -66,7 +66,17 @@ ArmorClaw is a Zero-Trust orchestration layer that runs AI agents (OpenClaw) on 
 
 ### 1. Quick Start (Recommended)
 
-**Bridge-Only Mode (No Matrix)** - Simplest option for testing:
+**One-line install** - Run this on your VPS:
+
+```bash
+# Bridge-only mode (fastest, no Matrix)
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+
+# Or with Matrix (for ArmorChat)
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --with-matrix
+```
+
+**Manual Docker command** - Bridge-only mode:
 
 ```bash
 docker run -it --name armorclaw \
