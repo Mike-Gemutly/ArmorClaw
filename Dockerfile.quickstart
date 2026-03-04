@@ -60,7 +60,7 @@ ARG VCS_REF
 
 LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
       org.opencontainers.image.description="Self-contained ArmorClaw deployment with setup wizard" \
-      org.opencontainers.image.version="0.3.6" \
+      org.opencontainers.image.version="0.3.7" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -144,7 +144,7 @@ RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
 #!/bin/bash
 # ArmorClaw Quick Start Entrypoint
 # Launches container setup on first run, then starts bridge
-# Version: 0.3.6
+# Version: 0.3.7
 
 # NOTE: Do NOT use set -e. Transient failures must not kill the container.
 # Critical commands check errors explicitly.
@@ -155,7 +155,7 @@ API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
 PASSWORD_FILE="/var/lib/armorclaw/.admin_password"
 LOG_DIR="/var/log/armorclaw"
 LOG_FILE="$LOG_DIR/setup.log"
-VERSION="0.3.6"
+VERSION="0.3.7"
 
 # Debug mode (set ARMORCLAW_DEBUG=true to enable)
 DEBUG="${ARMORCLAW_DEBUG:-false}"
@@ -371,11 +371,21 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  ARMORCLAW_SERVER_NAME  Server domain or IP"
     echo "  ARMORCLAW_API_KEY      AI provider API key"
     echo "  ARMORCLAW_PROFILE      Deployment profile (quick|enterprise)"
+    echo "  ARMORCLAW_SKIP_MATRIX  Skip Matrix setup, run bridge only (true|false)"
     echo "  ARMORCLAW_HIPAA        Enable HIPAA mode (true|false)"
     echo "  ARMORCLAW_QUARANTINE   Enable quarantine mode (true|false)"
     echo "  ARMORCLAW_DEBUG        Enable debug mode (true|false)"
     echo ""
     echo "Examples:"
+    echo "  # Bridge only (no Matrix, fastest):"
+    echo "  docker run -it --name armorclaw \\"
+    echo "    --user root \\"
+    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
+    echo "    -v armorclaw-keystore:/var/lib/armorclaw \\"
+    echo "    -p 8443:8443 \\"
+    echo "    -e ARMORCLAW_SKIP_MATRIX=true \\"
+    echo "    mikegemut/armorclaw:latest"
+    echo ""
     echo "  # Quick start (interactive):"
     echo "  docker run -it --name armorclaw \\"
     echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
@@ -463,8 +473,51 @@ if [ ! -f "$SETUP_FLAG" ]; then
     echo ""
 
     #=============================================================================
-    # Terminal Setup for Huh? TUI
+    # Quick Mode: Skip Matrix setup entirely
     #=============================================================================
+    # If ARMORCLAW_SKIP_MATRIX=true, create a minimal config and skip wizard
+    # This is useful for testing or when you don't need Matrix integration
+
+    if [ "${ARMORCLAW_SKIP_MATRIX:-false}" = true ]; then
+        echo -e "${CYAN}Quick mode: Skipping Matrix setup${NC}"
+        log_info "Quick mode enabled - skipping Matrix setup"
+
+        # Create minimal config with Matrix disabled
+        cat > "$CONFIG_FILE" << 'QUICKCONFIG'
+# ArmorClaw Bridge Configuration
+# Generated in quick mode (Matrix disabled)
+
+socket_path = "/run/armorclaw/bridge.sock"
+db_path = "/var/lib/armorclaw/keystore.db"
+log_level = "info"
+
+[server]
+socket_path = "/run/armorclaw/bridge.sock"
+
+[keystore]
+db_path = "/var/lib/armorclaw/keystore.db"
+
+[matrix]
+enabled = false
+homeserver_url = ""
+
+[logging]
+level = "info"
+format = "text"
+output = "stdout"
+QUICKCONFIG
+
+        # Mark setup complete
+        touch "$SETUP_FLAG"
+
+        echo -e "${GREEN}✓ Minimal config created (Matrix disabled)${NC}"
+        echo -e "${GREEN}✓ Setup complete${NC}"
+        echo ""
+        log_info "Quick mode setup complete"
+    else
+        #=============================================================================
+        # Terminal Setup for Huh? TUI
+        #=============================================================================
     # Huh? requires proper terminal capabilities. Ensure TERM is set
     # and terminal supports ANSI escape codes.
 
@@ -672,6 +725,8 @@ if [ ! -f "$SETUP_FLAG" ]; then
 
     # Mark setup complete
     touch "$SETUP_FLAG"
+
+    fi # End of else block (ARMORCLAW_SKIP_MATRIX)
 fi
 
 # Check configuration exists and has required fields

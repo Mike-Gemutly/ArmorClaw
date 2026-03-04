@@ -66,6 +66,52 @@ ArmorClaw is a Zero-Trust orchestration layer that runs AI agents (OpenClaw) on 
 
 ### 1. Quick Start (Recommended)
 
+**Bridge-Only Mode (No Matrix)** - Simplest option for testing:
+
+```bash
+docker run -it --name armorclaw \
+  --restart unless-stopped \
+  --user root \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-keystore:/var/lib/armorclaw \
+  -p 8443:8443 \
+  -e ARMORCLAW_SKIP_MATRIX=true \
+  mikegemut/armorclaw:latest
+```
+
+**Or with a custom config file** (for more control):
+
+```bash
+# Create config directory
+sudo mkdir -p /tmp/armorclaw-config
+
+# Create minimal config (Matrix disabled)
+sudo tee /tmp/armorclaw-config/config.toml << 'EOF'
+socket_path = "/run/armorclaw/bridge.sock"
+db_path = "/var/lib/armorclaw/keystore.db"
+log_level = "info"
+
+[matrix]
+enabled = false
+homeserver_url = ""
+EOF
+
+# Create setup flag to skip wizard
+sudo touch /tmp/armorclaw-config/.setup_complete
+
+# Run the container
+docker run -it --name armorclaw \
+  --restart unless-stopped \
+  --user root \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /tmp/armorclaw-config:/etc/armorclaw \
+  -v armorclaw-keystore:/var/lib/armorclaw \
+  -p 8443:8443 \
+  mikegemut/armorclaw:latest
+```
+
+**Full Stack Mode (With Matrix)** - For ArmorChat mobile integration:
+
 ```bash
 docker run -it --name armorclaw \
   --restart unless-stopped \
@@ -78,6 +124,8 @@ docker run -it --name armorclaw \
   -p 5000:5000 \
   mikegemut/armorclaw:latest
 ```
+
+The setup wizard will guide you through Matrix configuration.
 
 ### 2. Build from Source (Full Stack)
 
@@ -166,6 +214,8 @@ You can run a fleet of specialized agents on a single VPS.
 *   **Docker Deployment:** ✅ Hardened (v4.1.3)
 *   **No-Code Agent Studio:** ✅ Complete
 *   **MCP Approval Workflow:** ✅ Complete
+*   **Matrix Conduit:** ✅ v0.10.12 (latest)
+*   **Sygnal Push Gateway:** ✅ Running
 
 ---
 
