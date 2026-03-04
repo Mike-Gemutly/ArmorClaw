@@ -2,44 +2,37 @@
 # HTTP reverse proxy with TLS termination
 
 matrix.armorclaw.com {
-	tls internal
+    tls internal
 
-	 # Matrix client-server API
-	handle /_matrix/client/* {
-	 reverse_proxy matrix:6167
-        header_up {
-            Access-Control-Allow-Origin *
-            Server "ArmorClaw"
-        }
+    # Health check
+    handle /health {
+        respond "OK" 200
+    }
+
+    # Matrix client-server API
+    handle /_matrix/* {
+        reverse_proxy matrix:6167
+        header Access-Control-Allow-Origin "*"
+        header Server "ArmorClaw"
     }
 
     # Matrix federation API
     handle /_matrix/federation/* {
         reverse_proxy matrix:6167
-        header_up {
-            Access-Control-Allow-Origin *
-        }
-    }
-
-    # Well-known delegation
-    handle /.well-known/matrix/* {
-        reverse_proxy matrix:6167
+        header Access-Control-Allow-Origin "*"
+        header Server "ArmorClaw"
     }
 
     # Sygnal push Gateway
     handle_path /sygnal/* {
         reverse_proxy sygnal:5000
-        header_up {
-            Content-Security-Policy "frame-ancestors 'none';"
-        }
+        header Content-Security-Policy "frame-ancestors 'none';"
     }
 
     # Element X web UI
     handle_path /element/* {
         reverse_proxy element-web:80
-        header_up {
-            Content-Security-Policy "frame-ancestors 'none';"
-        }
+        header Content-Security-Policy "frame-ancestors 'none';"
     }
 
     # Fallback - Root goes to Element Web
