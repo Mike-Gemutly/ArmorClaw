@@ -1,7 +1,7 @@
 # ArmorClaw Docker Hub Overview
 
 > **Image:** `mikegemut/armorclaw:latest`
-> **Version:** 4.2.0
+> **Version:** 4.3.0
 > **Last Updated:** 2026-03-05
 
 ---
@@ -257,6 +257,114 @@ echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
 # Test Matrix API
 curl http://localhost:6167/_matrix/client/versions
 ```
+
+---
+
+## Deployment Profiles
+
+ArmorClaw supports three deployment profiles for different use cases:
+
+### Quick Setup (Default)
+
+For developers and testing.
+
+```
+Runtime: Docker
+Security: Standard hardening
+Setup Time: ~2 minutes
+```
+
+**Includes:**
+- Docker runtime with seccomp profiles
+- Standard container isolation
+- Matrix + Bridge + Push gateway
+
+### Advanced Setup
+
+For production teams.
+
+```
+Runtime: Docker (hardened)
+Security: Enhanced hardening
+Setup Time: ~5 minutes
+```
+
+**Includes:**
+- Docker runtime with custom security profiles
+- Resource limits (CPU, memory, PIDs)
+- Audit logging
+- Custom network policies
+
+### Enterprise Setup
+
+For regulated environments (HIPAA, SOC2, ISO27001).
+
+```
+Runtime: Docker / containerd / Firecracker
+Security: Maximum isolation
+Setup Time: ~10 minutes
+```
+
+**Runtime Options:**
+
+| Runtime | Status | Use Case |
+|---------|--------|----------|
+| Docker hardened | ✅ Available | Default enterprise option |
+| containerd | 🔜 v5.0 | Kubernetes-native environments |
+| Firecracker | 🔜 On request | Maximum isolation (microVM) |
+
+**Enterprise Features:**
+- Audit logging with 90-day retention
+- Compliance configurations
+- Enhanced security profiles
+- Memory-only secret injection
+- Network isolation
+
+---
+
+## Enterprise Runtime Options
+
+### Docker Hardened (Default)
+
+Standard Docker runtime with maximum security hardening:
+
+```yaml
+security:
+  - seccomp: armorclaw-enterprise
+  - apparmor: armorclaw-enterprise
+  - read_only_root_fs: true
+  - no_new_privileges: true
+  - cap_drop: ["ALL"]
+resources:
+  - memory: 256MB
+  - cpu: 0.5
+  - pids: 50
+network:
+  - disabled: true  # Must proxy through bridge
+```
+
+### containerd (v5.0)
+
+For Kubernetes-native and reduced attack surface:
+
+- No Docker daemon required
+- Smaller attack surface
+- Native container runtime
+- Better for production infrastructure
+
+### Firecracker (On Request)
+
+For maximum isolation with microVMs:
+
+- VM-grade isolation between agents
+- Prevents container escape attacks
+- Strong multi-tenant separation
+- Used by AWS Lambda, Fly.io
+
+**Requirements:**
+- Linux host with KVM (`/dev/kvm`)
+- Additional ~200ms startup latency
+- Higher memory overhead
 
 ---
 

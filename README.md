@@ -1,6 +1,6 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.2.0-blue)](https://github.com/armorclaw/armorclaw)
+[![Version](https://img.shields.io/badge/version-v4.3.0-blue)](https://github.com/armorclaw/armorclaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/armorclaw/armorclaw)
 
 **Autonomous agents working 24/7 on your VPS, controlled from your pocket.**
@@ -87,6 +87,21 @@ The simplified wizard asks just **4 questions**:
 | **Full Stack** | `bash` (default) | ArmorChat mobile integration |
 | **Bridge-only** | `bash -s -- --bridge-only` | Testing, no Matrix |
 | **Bootstrap** | `bash -s -- --bootstrap` | Generate docker-compose.yml |
+
+### Deployment Profiles
+
+During setup, choose your security profile:
+
+| Profile | Runtime | Security | Best For |
+|---------|---------|----------|----------|
+| **Quick** | Docker | Standard hardening | Developers, testing |
+| **Advanced** | Docker | Enhanced profiles | Production teams |
+| **Enterprise** | Docker/containerd/Firecracker | Maximum isolation | Regulated environments |
+
+**Enterprise runtime options:**
+- **Docker hardened** (default) - Maximum Docker security
+- **containerd** (v5.0) - Kubernetes-native, reduced attack surface
+- **Firecracker** (on request) - MicroVM isolation for high-security needs
 
 ### Non-Interactive Deployment
 
