@@ -125,12 +125,14 @@ docker build -t armorclaw/quickstart:latest -f Dockerfile.quickstart .
 
 **Note:** The bridge requires Debian-based images (not Alpine) for SQLCipher compatibility.
 
-### 3. Connect via ArmorChat
-1.  Open the ArmorChat Android app.
-2.  Scan the QR code displayed in the container logs.
-3.  Set up your biometric key for the keystore.
+### Connect via ArmorChat
 
-### 4. Create Your First Agent (No-Code)
+1. Open the ArmorChat Android app.
+2. Scan the QR code displayed in the container logs.
+3. Set up your biometric key for the keystore.
+
+### Create Your First Agent (No-Code)
+
 In the Matrix room, type:
 ```
 !agent create name="Travel Booker" skills="web_browsing, form_filling"
