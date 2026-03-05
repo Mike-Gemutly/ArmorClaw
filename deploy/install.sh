@@ -6,10 +6,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 #
 # Or with options:
-#   curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --with-matrix
+#   curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --bridge-only
 #
 # Options:
-#   --with-matrix    Enable Matrix integration (for ArmorChat)
+#   --bridge-only    Run bridge only, no Matrix (for testing)
 #   --no-start       Install but don't start the container
 #   --help           Show this help
 
@@ -23,8 +23,8 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Defaults
-WITH_MATRIX=false
+# Defaults - Matrix is ENABLED by default
+BRIDGE_ONLY=false
 NO_START=false
 CONTAINER_NAME="armorclaw"
 IMAGE="mikegemut/armorclaw:latest"
@@ -34,8 +34,8 @@ DATA_DIR="/var/lib/armorclaw"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --with-matrix)
-            WITH_MATRIX=true
+        --bridge-only)
+            BRIDGE_ONLY=true
             shift
             ;;
         --no-start)
@@ -49,16 +49,16 @@ while [[ $# -gt 0 ]]; do
             echo "  curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash"
             echo ""
             echo "Options:"
-            echo "  --with-matrix    Enable Matrix integration (for ArmorChat)"
+            echo "  --bridge-only    Run bridge only, no Matrix (for testing)"
             echo "  --no-start       Install but don't start the container"
             echo "  --help           Show this help"
             echo ""
             echo "Examples:"
-            echo "  # Bridge-only mode (default, fastest):"
+            echo "  # Full stack with Matrix (default, for ArmorChat):"
             echo "  curl -fsSL ... | bash"
             echo ""
-            echo "  # With Matrix (for ArmorChat):"
-            echo "  curl -fsSL ... | bash -s -- --with-matrix"
+            echo "  # Bridge only (for testing):"
+            echo "  curl -fsSL ... | bash -s -- --bridge-only"
             exit 0
             ;;
         *)
@@ -121,42 +121,7 @@ echo -e "${CYAN}Creating directories...${NC}"
 $SUDO mkdir -p ${CONFIG_DIR}
 $SUDO mkdir -p ${DATA_DIR}
 
-if [ "$WITH_MATRIX" = true ]; then
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════╗"
-    echo "║        ${BOLD}Full Stack Mode (With Matrix)${NC}${CYAN}               ║"
-    echo "╚══════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo "Starting ArmorClaw with Matrix integration..."
-    echo "The setup wizard will guide you through configuration."
-    echo ""
-
-    if [ "$NO_START" = true ]; then
-        echo -e "${YELLOW}--no-start specified. Container not started.${NC}"
-        echo ""
-        echo "To start manually:"
-        echo "  docker run -it --name ${CONTAINER_NAME} \\"
-        echo "    --restart unless-stopped \\"
-        echo "    --user root \\"
-        echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-        echo "    -v ${CONFIG_DIR}:/etc/armorclaw \\"
-        echo "    -v ${DATA_DIR}:/var/lib/armorclaw \\"
-        echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
-        echo "    ${IMAGE}"
-        exit 0
-    fi
-
-    docker run -it --name ${CONTAINER_NAME} \
-        --restart unless-stopped \
-        --user root \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v ${CONFIG_DIR}:/etc/armorclaw \
-        -v ${DATA_DIR}:/var/lib/armorclaw \
-        -p 8443:8443 \
-        -p 6167:6167 \
-        -p 5000:5000 \
-        ${IMAGE}
-else
+if [ "$BRIDGE_ONLY" = true ]; then
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════╗"
     echo "║        ${BOLD}Bridge-Only Mode (No Matrix)${NC}${CYAN}                 ║"
@@ -250,4 +215,39 @@ EOF
         echo "  docker logs ${CONTAINER_NAME}"
         exit 1
     fi
+else
+    echo -e "${CYAN}"
+    echo "╔══════════════════════════════════════════════════════╗"
+    echo "║        ${BOLD}Full Stack Mode (With Matrix)${NC}${CYAN}               ║"
+    echo "╚══════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo "Starting ArmorClaw with Matrix integration..."
+    echo "The setup wizard will guide you through configuration."
+    echo ""
+
+    if [ "$NO_START" = true ]; then
+        echo -e "${YELLOW}--no-start specified. Container not started.${NC}"
+        echo ""
+        echo "To start manually:"
+        echo "  docker run -it --name ${CONTAINER_NAME} \\"
+        echo "    --restart unless-stopped \\"
+        echo "    --user root \\"
+        echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
+        echo "    -v ${CONFIG_DIR}:/etc/armorclaw \\"
+        echo "    -v ${DATA_DIR}:/var/lib/armorclaw \\"
+        echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
+        echo "    ${IMAGE}"
+        exit 0
+    fi
+
+    docker run -it --name ${CONTAINER_NAME} \
+        --restart unless-stopped \
+        --user root \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v ${CONFIG_DIR}:/etc/armorclaw \
+        -v ${DATA_DIR}:/var/lib/armorclaw \
+        -p 8443:8443 \
+        -p 6167:6167 \
+        -p 5000:5000 \
+        ${IMAGE}
 fi

@@ -72,30 +72,18 @@ Run this on your VPS:
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
 
-That's it! ArmorClaw will be running in bridge-only mode.
+The setup wizard will guide you through Matrix configuration for ArmorChat integration.
 
 ### Deployment Options
 
 | Mode | Command | Use Case |
 |------|---------|----------|
-| **Bridge-only** | `bash` | Fastest. For testing or standalone use. |
-| **With Matrix** | `bash -s -- --with-matrix` | For ArmorChat mobile integration. |
+| **Full Stack** | `bash` (default) | For ArmorChat mobile integration. |
+| **Bridge-only** | `bash -s -- --bridge-only` | For testing, no Matrix. |
 
 ### Manual Docker Commands
 
-**Bridge-only mode:**
-```bash
-docker run -d --name armorclaw \
-  --restart unless-stopped \
-  --user root \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v armorclaw-keystore:/var/lib/armorclaw \
-  -p 8443:8443 \
-  -e ARMORCLAW_SKIP_MATRIX=true \
-  mikegemut/armorclaw:latest
-```
-
-**With Matrix (for ArmorChat):**
+**Full Stack (with Matrix, for ArmorChat):**
 ```bash
 docker run -it --name armorclaw \
   --restart unless-stopped \
@@ -106,6 +94,18 @@ docker run -it --name armorclaw \
   -p 8443:8443 \
   -p 6167:6167 \
   -p 5000:5000 \
+  mikegemut/armorclaw:latest
+```
+
+**Bridge-only (for testing):**
+```bash
+docker run -d --name armorclaw \
+  --restart unless-stopped \
+  --user root \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v armorclaw-keystore:/var/lib/armorclaw \
+  -p 8443:8443 \
+  -e ARMORCLAW_SKIP_MATRIX=true \
   mikegemut/armorclaw:latest
 ```
 
