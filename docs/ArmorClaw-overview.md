@@ -6,34 +6,116 @@
 
 ---
 
-## What is ArmorClaw?
-
-ArmorClaw is a **Zero-Trust VPS orchestration platform** that runs AI agents (OpenClaw) on your server. These agents act as "Digital Secretaries"—browsing websites, filling forms, managing tasks—while you stay mobile via the ArmorChat Android app.
-
-### Key Features
-
-- **VPS-Based Agents** - Run desktop-class tasks 24/7 on your server
-- **Mobile Control** - Monitor and approve actions via ArmorChat (Android)
-- **End-to-End Encryption** - All messages secured via Matrix protocol
-- **BlindFill Security** - Sensitive data decrypted only in memory
-- **No-Code Agent Studio** - Define agents via chat, no programming required
-
----
-
-## Quick Start
-
-### One-Line Install (Recommended)
+## Quick Start (2 minutes)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
 
-The wizard asks **4 questions** and deploys in ~2 minutes:
+**What the wizard asks:**
+1. AI Provider (OpenAI, Anthropic, Google, etc.)
+2. API Key (encrypted, never logged)
+3. Admin Username
+4. Admin Password (auto-generated if empty)
 
-1. **AI Provider** - OpenAI, Anthropic, Google, OpenRouter, xAI, or Skip
-2. **API Key** - Your provider's API key (encrypted, never logged)
-3. **Admin Username** - Default: admin
-4. **Admin Password** - Auto-generated secure password if empty
+**What you'll see:**
+
+```
+╔══════════════════════════════════════════════════════╗
+║        ArmorClaw is Ready!                           ║
+╚══════════════════════════════════════════════════════╝
+
+Bridge:  http://192.168.1.50:8443
+Matrix:  http://192.168.1.50:6167
+
+Admin:   admin / <generated-password>
+
+[QR CODE - Scan with ArmorChat]
+```
+
+**Next:**
+1. Install ArmorChat from Google Play
+2. Scan the QR code
+3. Done - your digital secretary is online
+
+---
+
+## What is ArmorClaw?
+
+ArmorClaw runs AI agents 24/7 on your VPS. They browse websites, fill forms, and manage tasks—while you approve sensitive actions via your phone.
+
+### Why ArmorClaw?
+
+**Traditional AI agents see your passwords.** When you give an AI your credit card, it can log or leak it.
+
+**ArmorClaw agents never see your secrets.** BlindFill™ injects secrets directly into the browser—the agent requests "credit card" but never sees the number.
+
+### Key Features
+
+- **VPS-Based Agents** - Run desktop-class tasks 24/7
+- **Mobile Control** - Monitor and approve via ArmorChat
+- **End-to-End Encryption** - All messages secured via Matrix
+- **BlindFill™ Security** - Secrets decrypted only in memory
+- **No-Code Agent Studio** - Define agents via chat
+
+---
+
+## Your First Task
+
+Once connected via ArmorChat:
+
+```
+!agent create name="Researcher" skills="web_browsing"
+```
+
+Then ask:
+
+```
+Research the best restaurants in NYC for a birthday dinner
+```
+
+Watch it browse, gather information, and report back.
+
+---
+
+## How It Works
+
+```
+┌─────────────┐
+│   Phone     │  Your pocket
+│ ArmorChat   │
+└──────┬──────┘
+       │ End-to-end encrypted
+       ▼
+┌─────────────┐
+│   Bridge    │  Your VPS
+│ Orchestrator│
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│    Agent    │  Isolated container
+│  OpenClaw   │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│  Browser    │  Automated tasks
+│ Playwright  │
+└─────────────┘
+```
+
+---
+
+## System Requirements
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| CPU | 1 core | 2+ cores |
+| RAM | 2 GB | 4 GB |
+| Disk | 10 GB | 20 GB |
+| OS | Linux (Ubuntu 20.04+) | Ubuntu 22.04 |
+| Docker | 24.0+ | Latest |
 
 ---
 
@@ -41,10 +123,10 @@ The wizard asks **4 questions** and deploys in ~2 minutes:
 
 | Mode | Command | Description | Use Case |
 |------|---------|-------------|----------|
-| **Full Stack** | `bash` (default) | Bridge + Matrix + Push | ArmorChat mobile integration |
-| **Bridge-only** | `bash -s -- --bridge-only` | Bridge only, no Matrix | Testing, development |
-| **Bootstrap** | `bash -s -- --bootstrap` | Generate compose file | Production planning, GitOps |
-| **Show Ports** | `bash -s -- --ports` | Display auto-detected ports | Port conflict debugging |
+| **Full Stack** | `bash` (default) | Bridge + Matrix + Push | ArmorChat integration |
+| **Bridge-only** | `bash -s -- --bridge-only` | Bridge only, no Matrix | Testing |
+| **Bootstrap** | `bash -s -- --bootstrap` | Generate compose file | GitOps, CI/CD |
+| **Show Ports** | `bash -s -- --ports` | Display detected ports | Debugging |
 
 ---
 
