@@ -1,6 +1,6 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.1.4-blue)](https://github.com/armorclaw/armorclaw)
+[![Version](https://img.shields.io/badge/version-v4.2.0-blue)](https://github.com/armorclaw/armorclaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/armorclaw/armorclaw)
 
 **Autonomous agents working 24/7 on your VPS, controlled from your pocket.**
@@ -64,7 +64,7 @@ ArmorClaw is a Zero-Trust orchestration layer that runs AI agents (OpenClaw) on 
 *   Docker & Docker Compose V2
 *   A VPS (Recommended) or local server
 
-### Quick Install
+### Quick Install (Recommended)
 
 Run this on your VPS:
 
@@ -72,14 +72,34 @@ Run this on your VPS:
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
 
-The setup wizard will guide you through Matrix configuration for ArmorChat integration.
+The simplified wizard asks just **4 questions**:
+1. **AI Provider** - OpenAI, Anthropic, Google, OpenRouter, xAI, or Skip
+2. **API Key** - Your provider's API key (encrypted, never logged)
+3. **Admin Username** - Default: admin
+4. **Admin Password** - Auto-generated if empty
+
+**Ports are auto-detected** - no need to specify 8443, 6167, 5000 manually.
 
 ### Deployment Options
 
 | Mode | Command | Use Case |
 |------|---------|----------|
-| **Full Stack** | `bash` (default) | For ArmorChat mobile integration. |
-| **Bridge-only** | `bash -s -- --bridge-only` | For testing, no Matrix. |
+| **Full Stack** | `bash` (default) | ArmorChat mobile integration |
+| **Bridge-only** | `bash -s -- --bridge-only` | Testing, no Matrix |
+| **Bootstrap** | `bash -s -- --bootstrap` | Generate docker-compose.yml |
+
+### Non-Interactive Deployment
+
+Set environment variables for automated deployment:
+
+```bash
+export ARMORCLAW_PROVIDER=openai
+export ARMORCLAW_API_KEY=sk-your-key
+export ARMORCLAW_ADMIN_USER=admin
+export ARMORCLAW_ADMIN_PASSWORD=$(openssl rand -base64 24)
+
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+```
 
 ### Manual Docker Commands
 
