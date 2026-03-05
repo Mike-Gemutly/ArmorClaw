@@ -15,7 +15,7 @@ ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, 
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
 
-**That's it.** The wizard asks 4 questions and sets everything up.
+**That's it.** The wizard asks 3 questions and sets everything up.
 
 ### What You'll See
 
@@ -24,16 +24,14 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 ║        ArmorClaw Quick Setup                         ║
 ╚══════════════════════════════════════════════════════╝
 
-Step 1: Choose AI Provider
-  1) OpenAI    2) Anthropic    3) Google
-  4) OpenRouter    5) xAI    6) Skip
+Step 1 of 2: AI Provider Configuration
+  AI Provider: [OpenAI ▾]
+              (OpenAI, Anthropic, GLM-5, or Custom)
+  API Key: ••••••••
 
-Step 2: Enter API Key
-  Enter OpenAI API key (sk-...): ••••••••
-
-Step 3: Admin Username [admin]:
-
-Step 4: Admin Password [auto-generate]:
+Step 2 of 2: Admin & Deployment
+  Admin Password: (press Enter to auto-generate)
+  Ready to deploy? [Yes]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ArmorClaw is Ready!
@@ -161,9 +159,8 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 ### Non-Interactive (CI/CD)
 
 ```bash
-export ARMORCLAW_PROVIDER=openai
 export ARMORCLAW_API_KEY=sk-your-key
-export ARMORCLAW_ADMIN_USER=admin
+export ARMORCLAW_SERVER_NAME=your-domain.com
 export ARMORCLAW_ADMIN_PASSWORD=$(openssl rand -base64 24)
 
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash

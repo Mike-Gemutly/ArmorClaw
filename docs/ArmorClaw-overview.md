@@ -13,10 +13,9 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 ```
 
 **What the wizard asks:**
-1. AI Provider (OpenAI, Anthropic, Google, etc.)
+1. AI Provider (OpenAI, Anthropic, GLM-5, or Custom)
 2. API Key (encrypted, never logged)
-3. Admin Username
-4. Admin Password (auto-generated if empty)
+3. Admin Password (auto-generated if empty)
 
 **What you'll see:**
 
@@ -229,11 +228,9 @@ Ports detected:
 Deploy without any prompts using environment variables.
 
 ```bash
-export ARMORCLAW_PROVIDER=openai
 export ARMORCLAW_API_KEY=sk-your-api-key
-export ARMORCLAW_ADMIN_USER=admin
-export ARMORCLAW_ADMIN_PASSWORD=$(openssl rand -base64 24)
 export ARMORCLAW_SERVER_NAME=your-domain.com
+export ARMORCLAW_ADMIN_PASSWORD=$(openssl rand -base64 24)
 
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
@@ -242,13 +239,13 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ARMORCLAW_PROVIDER` | No | - | AI provider: `openai`, `anthropic`, `google`, `openrouter`, `xai` |
-| `ARMORCLAW_API_KEY` | No* | - | API key for AI provider |
-| `ARMORCLAW_ADMIN_USER` | No | `admin` | Admin username for Matrix |
-| `ARMORCLAW_ADMIN_PASSWORD` | No | auto-generated | Admin password |
+| `ARMORCLAW_API_KEY` | Yes* | - | API key for AI provider (triggers non-interactive mode) |
+| `ARMORCLAW_API_BASE_URL` | No | OpenAI URL | Custom API endpoint (for Anthropic, GLM-5, etc.) |
+| `ARMORCLAW_PROFILE` | No | `quick` | Deployment profile: `quick` or `enterprise` |
 | `ARMORCLAW_SERVER_NAME` | No | auto-detected IP | Server hostname or IP |
+| `ARMORCLAW_ADMIN_PASSWORD` | No | auto-generated | Admin password for Matrix |
 
-*API key can be skipped and added later via ArmorChat or RPC.
+*API key is required for non-interactive mode. Without it, the interactive wizard runs instead.
 
 ---
 
