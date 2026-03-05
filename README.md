@@ -1,6 +1,6 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.1.3-blue)](https://github.com/armorclaw/armorclaw)
+[![Version](https://img.shields.io/badge/version-v4.1.4-blue)](https://github.com/armorclaw/armorclaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/armorclaw/armorclaw)
 
 **Autonomous agents working 24/7 on your VPS, controlled from your pocket.**
@@ -64,22 +64,28 @@ ArmorClaw is a Zero-Trust orchestration layer that runs AI agents (OpenClaw) on 
 *   Docker & Docker Compose V2
 *   A VPS (Recommended) or local server
 
-### 1. Quick Start (Recommended)
+### Quick Install
 
-**One-line install** - Run this on your VPS:
+Run this on your VPS:
 
 ```bash
-# Bridge-only mode (fastest, no Matrix)
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
-
-# Or with Matrix (for ArmorChat)
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --with-matrix
 ```
 
-**Manual Docker command** - Bridge-only mode:
+That's it! ArmorClaw will be running in bridge-only mode.
 
+### Deployment Options
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| **Bridge-only** | `bash` | Fastest. For testing or standalone use. |
+| **With Matrix** | `bash -s -- --with-matrix` | For ArmorChat mobile integration. |
+
+### Manual Docker Commands
+
+**Bridge-only mode:**
 ```bash
-docker run -it --name armorclaw \
+docker run -d --name armorclaw \
   --restart unless-stopped \
   --user root \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -89,39 +95,7 @@ docker run -it --name armorclaw \
   mikegemut/armorclaw:latest
 ```
 
-**Or with a custom config file** (for more control):
-
-```bash
-# Create config directory
-sudo mkdir -p /tmp/armorclaw-config
-
-# Create minimal config (Matrix disabled)
-sudo tee /tmp/armorclaw-config/config.toml << 'EOF'
-socket_path = "/run/armorclaw/bridge.sock"
-db_path = "/var/lib/armorclaw/keystore.db"
-log_level = "info"
-
-[matrix]
-enabled = false
-homeserver_url = ""
-EOF
-
-# Create setup flag to skip wizard
-sudo touch /tmp/armorclaw-config/.setup_complete
-
-# Run the container
-docker run -it --name armorclaw \
-  --restart unless-stopped \
-  --user root \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /tmp/armorclaw-config:/etc/armorclaw \
-  -v armorclaw-keystore:/var/lib/armorclaw \
-  -p 8443:8443 \
-  mikegemut/armorclaw:latest
-```
-
-**Full Stack Mode (With Matrix)** - For ArmorChat mobile integration:
-
+**With Matrix (for ArmorChat):**
 ```bash
 docker run -it --name armorclaw \
   --restart unless-stopped \
@@ -135,9 +109,7 @@ docker run -it --name armorclaw \
   mikegemut/armorclaw:latest
 ```
 
-The setup wizard will guide you through Matrix configuration.
-
-### 2. Build from Source (Full Stack)
+### Build from Source
 
 ```bash
 # Clone the repository
@@ -221,7 +193,7 @@ You can run a fleet of specialized agents on a single VPS.
 *   **Agent State Machine:** ✅ Complete
 *   **Browser RPC:** ✅ Complete
 *   **ArmorChat Android:** ✅ Feature Complete
-*   **Docker Deployment:** ✅ Hardened (v4.1.3)
+*   **Docker Deployment:** ✅ Hardened (v4.1.4)
 *   **No-Code Agent Studio:** ✅ Complete
 *   **MCP Approval Workflow:** ✅ Complete
 *   **Matrix Conduit:** ✅ v0.10.12 (latest)
