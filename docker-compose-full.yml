@@ -7,29 +7,29 @@ services:
   # Matrix Conduit Homeserver
   # ========================================
   matrix:
-    image: matrixconduit/matrix-conduit:v0.4.0
+    image: matrixconduit/matrix-conduit:latest
     container_name: armorclaw-matrix
     restart: unless-stopped
     volumes:
-      - conduit_data:/var/lib/matrix-conduit
-      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
+      - conduit_data:/var/lib/conduit
+      - ./configs/conduit.toml:/etc/conduit.toml:ro
     environment:
-      - CONDUIT_CONFIG=/etc/conduit/conduit.toml
+      - CONDUIT_CONFIG=/etc/conduit.toml
     ports:
       - "6167:6167"   # Client API
       - "8448:8448"   # Federation
     networks:
       - armorclaw-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:6167/_matrix/client/versions"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:6167/_matrix/client/versions || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     deploy:
       resources:
         limits:
-          memory: 300M
+          memory: 400M
         reservations:
           memory: 50M
 
@@ -112,11 +112,12 @@ services:
       - sygnal
     environment:
       - ARMORCLAW_CONFIG=/etc/armorclaw/config.toml
-      - ARMORCLAW_MATRIX_ENABLED=false
+      - ARMORCLAW_MATRIX_ENABLED=${ARMORCLAW_MATRIX_ENABLED:-true}
       - ARMORCLAW_MATRIX_HOMESERVER_URL=http://matrix:6167
       - ARMORCLAW_MATRIX_USERNAME=${MATRIX_BRIDGE_USER:-bridge}
-      - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-change-me}
+      - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-bridgepass}
       - ARMORCLAW_PUSH_GATEWAY_URL=http://sygnal:5000/_matrix/push/v1/notify
+      - ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY:-}
     deploy:
       resources:
         limits:

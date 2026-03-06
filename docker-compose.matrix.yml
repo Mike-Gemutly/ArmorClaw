@@ -1,46 +1,14 @@
-# Docker Compose: Matrix Homeserver Stack
+# Docker Compose: Matrix Support Services
 # Part of Topology Separation (G-06)
 #
-# This stack runs the Matrix homeserver infrastructure.
-# Can be deployed independently for homeserver-only deployments.
+# This stack runs support services for Matrix (Coturn, Nginx).
+# Conduit homeserver is started directly via 'docker run' with shared
+# network namespace to the armorclaw container (see container-setup.sh).
 #
 # Usage:
 #   docker-compose -f docker-compose.matrix.yml up -d
 
 services:
-  # ========================================
-  # Matrix Conduit Homeserver
-  # ========================================
-  matrix-conduit:
-    image: matrixconduit/matrix-conduit:latest
-    container_name: armorclaw-conduit
-    restart: unless-stopped
-
-    environment:
-      # Use config file (mounted below)
-      CONDUIT_CONFIG: "/etc/conduit.toml"
-
-    volumes:
-      - conduit_data:/var/lib/conduit
-      - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit.toml:ro
-
-    # Share network namespace with bridge container (avoids port conflicts)
-    network_mode: "service:armorclaw"
-
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:6167/_matrix/client/versions || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-
-    deploy:
-      resources:
-        limits:
-          memory: 400M
-        reservations:
-          memory: 50M
-
   # ========================================
   # Coturn STUN/TURN Server (Voice/Video)
   # ========================================
@@ -114,9 +82,6 @@ services:
     networks:
       - matrix-net
 
-    depends_on:
-      - matrix-conduit
-
     deploy:
       resources:
         limits:
@@ -145,15 +110,9 @@ networks:
 # Volumes
 # ========================================
 volumes:
-  conduit_data:
-    driver: local
-    name: armorclaw-conduit-data
   letsencrypt:
     driver: local
     name: armorclaw-letsencrypt
   coturn_data:
     driver: local
     name: armorclaw-coturn-data
-  letsencrypt:
-    driver: local
-    name: armorclaw-letsencrypt

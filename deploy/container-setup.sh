@@ -1411,6 +1411,32 @@ start_matrix_stack() {
 
     cd /opt/armorclaw
 
+    # Check if using external Matrix server
+    if [ "${ARMORCLAW_EXTERNAL_MATRIX:-false}" = "true" ]; then
+        print_info "External Matrix mode enabled - skipping internal Matrix management"
+
+        # Verify external Matrix is reachable
+        local matrix_url="${ARMORCLAW_MATRIX_HOMESERVER_URL:-http://127.0.0.1:6167}"
+        if curl -sf --connect-timeout 5 "${matrix_url}/_matrix/client/versions" >/dev/null 2>&1; then
+            print_success "External Matrix server is reachable at $matrix_url"
+            MATRIX_AVAILABLE=true
+            return
+        else
+            print_warning "External Matrix server not reachable at $matrix_url"
+            print_warning "Bridge will attempt to connect when Matrix becomes available"
+            MATRIX_AVAILABLE=false
+            return
+        fi
+    fi
+
+    # Check if Matrix is available on localhost (external deployment via docker-compose-full.yml)
+    if curl -sf --connect-timeout 3 "http://127.0.0.1:6167/_matrix/client/versions" >/dev/null 2>&1; then
+        print_success "Matrix server detected on localhost:6167 - using external Matrix"
+        print_info "Set ARMORCLAW_EXTERNAL_MATRIX=true to skip this check"
+        MATRIX_AVAILABLE=true
+        return
+    fi
+
     if [ ! -f "docker-compose.matrix.yml" ]; then
         print_warning "docker-compose.matrix.yml not found - skipping Matrix stack"
         return
@@ -1505,7 +1531,7 @@ start_matrix_stack() {
             print_warning "Source config not found: $src"
         fi
     done
-    rm -f "$CONDUIT_STAGING"
+    # Note: CONDUIT_STAGING is cleaned up after Conduit container starts
 
     # Set ARMORCLAW_CONFIGS so compose resolves bind mounts to the host path
     export ARMORCLAW_CONFIGS="$HOST_CONFIGS"
@@ -1514,46 +1540,69 @@ start_matrix_stack() {
     # Generate a random TURN secret for Coturn authentication
     export TURN_SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
-    # --- Start containers ---
-    print_info "Starting Matrix containers (this may take a few minutes on first run)..."
-    local COMPOSE_OUTPUT
-    COMPOSE_OUTPUT=$(docker compose -f docker-compose.matrix.yml up -d 2>&1)
-    local COMPOSE_EXIT=$?
-    if [ $COMPOSE_EXIT -ne 0 ]; then
-        print_error "Docker Compose failed (exit $COMPOSE_EXIT):"
-        echo "$COMPOSE_OUTPUT" | tail -20
+    # --- Prepare Conduit database directory on HOST ---
+    # Conduit runs as UID 10000 inside the container
+    print_info "Creating Conduit database directory on host..."
+    docker run --rm -v /var/lib:/var/lib alpine sh -c "
+        mkdir -p /var/lib/conduit && \
+        chown -R 10000:10000 /var/lib/conduit && \
+        chmod 755 /var/lib/conduit
+    " 2>/dev/null || {
+        print_error "Failed to create /var/lib/conduit on host"
+        return 1
+    }
+    log_debug "Created /var/lib/conduit with UID 10000:10000 ownership"
+
+    # --- Copy conduit.toml to permanent HOST location ---
+    # Write to /opt/armorclaw/conduit.toml (not /tmp) for persistence
+    print_info "Writing Conduit config to /opt/armorclaw/conduit.toml..."
+    docker run --rm -v /opt:/opt alpine sh -c "mkdir -p /opt/armorclaw" 2>/dev/null || true
+    if ! cat "$CONDUIT_STAGING" | docker run --rm -i -v /opt:/opt alpine sh -c "cat > /opt/armorclaw/conduit.toml" 2>&1; then
+        print_error "Failed to write conduit.toml to /opt/armorclaw/"
+        return 1
+    fi
+    log_debug "Wrote conduit.toml to /opt/armorclaw/conduit.toml"
+
+    # --- Start Conduit with shared network namespace ---
+    # Use direct 'docker run' instead of compose because network_mode: "service:armorclaw"
+    # doesn't work in compose (armorclaw is not a compose service, it's the quickstart container)
+    print_info "Starting Conduit container (this may take a few minutes on first run)..."
+
+    # Remove any existing container first
+    docker rm -f armorclaw-conduit 2>/dev/null || true
+
+    local CONDUIT_OUTPUT
+    CONDUIT_OUTPUT=$(docker run -d \
+        --name armorclaw-conduit \
+        --restart unless-stopped \
+        --network container:armorclaw \
+        -v /opt/armorclaw/conduit.toml:/etc/conduit.toml:ro \
+        -v /var/lib/conduit:/var/lib/conduit \
+        -e CONDUIT_CONFIG=/etc/conduit.toml \
+        matrixconduit/matrix-conduit:latest 2>&1)
+    local CONDUIT_EXIT=$?
+
+    if [ $CONDUIT_EXIT -ne 0 ]; then
+        print_error "Failed to start Conduit container (exit $CONDUIT_EXIT):"
+        echo "$CONDUIT_OUTPUT" | tail -20
 
         # Check for specific error types and provide actionable guidance
-        if echo "$COMPOSE_OUTPUT" | grep -qi "network"; then
+        if echo "$CONDUIT_OUTPUT" | grep -qi "port"; then
             print_error ""
             print_error "══════════════════════════════════════════════════════"
-            print_error "NETWORK ERROR DETECTED"
+            print_error "PORT CONFLICT DETECTED"
             print_error "══════════════════════════════════════════════════════"
             print_error ""
-            print_error "Docker failed to create a network. This is usually caused by:"
+            print_error "Port 6167 is already in use. This is usually caused by:"
             print_error ""
-            print_error "  1. Network name conflict from a previous failed run"
-            print_error "  2. Docker daemon overloaded or unresponsive"
-            print_error "  3. Insufficient system resources"
+            print_error "  1. A previous Conduit container still running"
+            print_error "  2. Another service using port 6167"
             print_error ""
-            print_error "Quick fixes to try:"
-            print_error ""
-            print_error "  # Clean up all ArmorClaw resources and retry:"
-            print_error "  docker rm -f armorclaw 2>/dev/null; \\"
-            print_error "    docker network prune -f; \\"
-            print_error "    docker volume prune -f"
-            print_error ""
-            print_error "  # Then re-run the installation"
-            print_error ""
-            print_error "If the issue persists, check Docker daemon:"
-            print_error "  systemctl restart docker"
+            print_error "Quick fix:"
+            print_error "  docker rm -f armorclaw-conduit 2>/dev/null"
+            print_error "  docker rm -f \$(docker ps -aq --filter 'ancestor=matrixconduit/matrix-conduit') 2>/dev/null"
             print_error "══════════════════════════════════════════════════════"
         fi
-
-        # Attempt cleanup of partial resources
-        print_info "Attempting cleanup of partial resources..."
-        docker compose -f docker-compose.matrix.yml down --volumes 2>/dev/null || true
-        docker network rm armorclaw-matrix 2>/dev/null || true
 
         # Set Matrix as unavailable and disable in config
         MATRIX_AVAILABLE=false
@@ -1568,7 +1617,10 @@ start_matrix_stack() {
 
         return 1
     fi
-    print_success "Docker Compose started"
+    print_success "Conduit container started"
+
+    # Clean up staging file
+    rm -f "$CONDUIT_STAGING"
 
     # --- Wait for Conduit to be healthy ---
     if wait_for_conduit; then
@@ -1601,14 +1653,14 @@ wait_for_conduit() {
 
                 if [ -z "$container_exists" ]; then
                     print_error "❌ Container 'armorclaw-conduit' does NOT exist"
-                    print_error "   Docker Compose may have failed to create the container"
+                    print_error "   The docker run command may have failed to create the container"
                     print_error ""
                     print_error "Possible causes:"
                     print_error "  1. Port conflict (port 6167 already in use)"
                     print_error "  2. Volume mount failure (config file not accessible)"
                     print_error "  3. Image pull failure (check network)"
                     print_error ""
-                    print_error "Run: docker compose -f docker-compose.matrix.yml logs"
+                    print_error "Run: docker logs armorclaw-conduit"
                 else
                     # Container exists but not running - check exit code
                     local exit_code
