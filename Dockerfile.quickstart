@@ -82,6 +82,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ncurses-base provides basic terminfo (xterm, vt100, linux)
     # ncurses-term provides extended terminfo for screen, tmux, alacritty, etc.
     ncurses-base ncurses-term \
+    # QR code generation for ArmorChat mobile app connection
+    qrencode \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker Compose V2 as both standalone binary and CLI plugin
