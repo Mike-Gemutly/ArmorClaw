@@ -628,6 +628,33 @@ function buildChatCommands(): ChatCommandDefinition[] {
       formatArgs: COMMAND_ARG_FORMATTERS.queue,
     }),
     defineChatCommand({
+      key: "ai",
+      nativeName: "ai",
+      description: "AI provider and model management",
+      textAlias: "/ai",
+      category: "options",
+      args: [
+        {
+          name: "action",
+          description: "providers, models, switch, or status",
+          type: "string",
+          choices: ["providers", "models", "switch", "status"],
+        },
+        {
+          name: "provider",
+          description: "Provider name (for models/switch)",
+          type: "string",
+        },
+        {
+          name: "model",
+          description: "Model name (for switch)",
+          type: "string",
+        },
+      ],
+      argsParsing: "none",
+      acceptsArgs: true,
+    }),
+    defineChatCommand({
       key: "bash",
       description: "Run host shell commands (host-only).",
       textAlias: "/bash",

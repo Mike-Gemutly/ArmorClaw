@@ -17,6 +17,22 @@ type apiProviderOption struct {
 	BaseURL string
 }
 
+// getProviderOptions returns provider options, first trying Catwalk then falling back to hardcoded list.
+func getProviderOptions() ([]apiProviderOption, bool) {
+	catwalk := NewCatwalkClient("http://localhost:8080")
+
+	if catwalk.IsAvailable() {
+		providers, err := catwalk.FetchProviders()
+		if err == nil && len(providers) > 0 {
+			fmt.Println("  [Catwalk] Discovered providers from local registry")
+			return ProvidersFromCatwalk(providers), true
+		}
+	}
+
+	fmt.Println("  [Wizard] Using default provider list")
+	return apiProviders, false
+}
+
 var apiProviders = []apiProviderOption{
 	{Name: "OpenAI", Key: "openai", BaseURL: "https://api.openai.com/v1"},
 	{Name: "Anthropic (Claude)", Key: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
@@ -44,8 +60,11 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 	var apiKey string
 	var customURL string
 
-	providerOptions := make([]huh.Option[string], 0, len(apiProviders))
-	for _, p := range apiProviders {
+	providers, fromCatwalk := getProviderOptions()
+	_ = fromCatwalk // Could be used for logging/debugging
+
+	providerOptions := make([]huh.Option[string], 0, len(providers))
+	for _, p := range providers {
 		providerOptions = append(providerOptions, huh.NewOption(p.Name, p.Key+"|"+p.BaseURL))
 	}
 
@@ -184,9 +203,9 @@ func wrapFormError(err error, stepName, functionName string) error {
 	}
 
 	return &setup.SetupError{
-		Code:     "INS-002",
-		Title:    fmt.Sprintf("Form error in %s", stepName),
-		Cause:    fmt.Sprintf("Function %s failed: %v", functionName, err),
+		Code:  "INS-002",
+		Title: fmt.Sprintf("Form error in %s", stepName),
+		Cause: fmt.Sprintf("Function %s failed: %v", functionName, err),
 		Fix: []string{
 			"Try running setup again",
 			"If using a limited terminal, try: -e ARMORCLAW_ACCESSIBLE=true",

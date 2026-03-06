@@ -10,6 +10,14 @@ import (
 	"sync"
 )
 
+type AIRuntime interface {
+	ListProviders() ([]string, error)
+	ListModels(provider string) ([]string, error)
+	SwitchProvider(provider, model string) error
+	GetStatus() string
+	GetCurrent() (provider, model string)
+}
+
 // CommandHandler handles Matrix commands
 type CommandHandler struct {
 	mu sync.RWMutex
@@ -19,6 +27,9 @@ type CommandHandler struct {
 
 	// Claim manager interface
 	claimManager ClaimManager
+
+	// AI runtime for provider/model management
+	aiRuntime AIRuntime
 
 	// Response sender
 	sendMessage func(roomID, userID, message string) error
@@ -89,7 +100,18 @@ func NewCommandHandler(
 		"Show available commands",
 		h.handleHelp)
 
+	h.registerCommand("ai", `^/ai\s*(.*)$`,
+		"AI provider and model management",
+		h.handleAI)
+
 	return h
+}
+
+// SetAIRuntime sets the AI runtime for provider/model management
+func (h *CommandHandler) SetAIRuntime(ai AIRuntime) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.aiRuntime = ai
 }
 
 func (h *CommandHandler) registerCommand(name, pattern, description string,
@@ -323,4 +345,73 @@ func (h *CommandHandler) GetCommands() map[string]string {
 		commands[name] = cmd.description
 	}
 	return commands
+}
+
+// handleAI handles the /ai command for AI provider/model management
+func (h *CommandHandler) handleAI(ctx context.Context, roomID, userID string, args []string) (string, error) {
+	h.mu.RLock()
+	ai := h.aiRuntime
+	h.mu.RUnlock()
+
+	if ai == nil {
+		return "", fmt.Errorf("AI runtime not configured")
+	}
+
+	subcmd := ""
+	if len(args) > 0 {
+		subcmd = strings.TrimSpace(args[0])
+	}
+
+	if subcmd == "" {
+		return "🤖 **AI Management**\n\n" +
+			"Available commands:\n" +
+			"- `/ai providers` - List available AI providers\n" +
+			"- `/ai models <provider>` - List models for a provider\n" +
+			"- `/ai switch <provider> <model>` - Switch AI provider and model\n" +
+			"- `/ai status` - Show current AI configuration\n\n" +
+			"Example: `/ai switch openai gpt-4o`", nil
+	}
+
+	parts := strings.Fields(subcmd)
+	if len(parts) == 0 {
+		return "Usage: /ai [providers|models|switch|status]", nil
+	}
+
+	switch parts[0] {
+	case "providers":
+		providers, err := ai.ListProviders()
+		if err != nil {
+			return "", fmt.Errorf("failed to list providers: %w", err)
+		}
+		return "🤖 **Available Providers**\n\n" + strings.Join(providers, "\n"), nil
+
+	case "models":
+		if len(parts) < 2 {
+			return "Usage: `/ai models <provider>`\nExample: `/ai models openai`", nil
+		}
+		provider := parts[1]
+		models, err := ai.ListModels(provider)
+		if err != nil {
+			return "", fmt.Errorf("failed to list models: %w", err)
+		}
+		return fmt.Sprintf("🤖 **Models for %s**\n\n%s", provider, strings.Join(models, "\n")), nil
+
+	case "switch":
+		if len(parts) < 3 {
+			return "Usage: `/ai switch <provider> <model>`\nExample: `/ai switch openai gpt-4o`", nil
+		}
+		provider := parts[1]
+		model := parts[2]
+		err := ai.SwitchProvider(provider, model)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✅ **AI Switched**\n\nProvider: %s\nModel: %s", provider, model), nil
+
+	case "status":
+		return "🤖 **Current AI Configuration**\n\n" + ai.GetStatus(), nil
+
+	default:
+		return fmt.Sprintf("Unknown AI command: %s\nUse `/ai` for help.", parts[0]), nil
+	}
 }

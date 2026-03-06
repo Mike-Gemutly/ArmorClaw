@@ -32,14 +32,21 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Copy Docker CLI from official image (ensures API compatibility with modern Docker daemons)
-COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
-
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlcipher0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Download and install Catwalk (provider/model registry)
+# Catwalk v0.28.3 for Linux amd64
+ENV CATWALK_VERSION=0.28.3
+RUN curl -sL "https://github.com/charmbracelet/catwalk/releases/download/v${CATWALK_VERSION}/catwalk_${CATWALK_VERSION}_linux_amd64.tar.gz" | tar xz -C /usr/local/bin catwalk && \
+    chmod +x /usr/local/bin/catwalk
+
+# Copy Docker CLI from official image (ensures API compatibility with modern Docker daemons)
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
 WORKDIR /app
 
