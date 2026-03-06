@@ -228,10 +228,13 @@ Ports detected:
 Deploy without any prompts using environment variables.
 
 ```bash
+# Minimal - auto-detects server IP
 export ARMORCLAW_API_KEY=sk-your-api-key
-export ARMORCLAW_SERVER_NAME=your-domain.com
-export ARMORCLAW_ADMIN_PASSWORD=$(openssl rand -base64 24)
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 
+# Or specify IP/domain explicitly
+export ARMORCLAW_API_KEY=sk-your-api-key
+export ARMORCLAW_SERVER_NAME=192.168.1.50  # or your-domain.com
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
 
@@ -242,7 +245,7 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 | `ARMORCLAW_API_KEY` | Yes* | - | API key for AI provider (triggers non-interactive mode) |
 | `ARMORCLAW_API_BASE_URL` | No | OpenAI URL | Custom API endpoint (for Anthropic, GLM-5, etc.) |
 | `ARMORCLAW_PROFILE` | No | `quick` | Deployment profile: `quick` or `enterprise` |
-| `ARMORCLAW_SERVER_NAME` | No | auto-detected IP | Server hostname or IP |
+| `ARMORCLAW_SERVER_NAME` | No | auto-detected IP | Server IP or hostname (omit to auto-detect) |
 | `ARMORCLAW_ADMIN_PASSWORD` | No | auto-generated | Admin password for Matrix |
 
 *API key is required for non-interactive mode. Without it, the interactive wizard runs instead.

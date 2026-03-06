@@ -159,10 +159,13 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 ### Non-Interactive (CI/CD)
 
 ```bash
+# Minimal - auto-detects server IP
 export ARMORCLAW_API_KEY=sk-your-key
-export ARMORCLAW_SERVER_NAME=your-domain.com
-export ARMORCLAW_ADMIN_PASSWORD=$(openssl rand -base64 24)
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 
+# Or with explicit server IP/domain
+export ARMORCLAW_API_KEY=sk-your-key
+export ARMORCLAW_SERVER_NAME=192.168.1.50
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
 
