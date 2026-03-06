@@ -2035,6 +2035,100 @@ final_summary() {
         fi
     fi
     echo ""
+
+    # Auto-generate QR code for ArmorChat mobile app
+    generate_qr_code
+}
+
+#=============================================================================
+# QR Code Generation
+#=============================================================================
+
+generate_qr_code() {
+    local hostname="${SERVER_NAME:-localhost}"
+    local port="${BRIDGE_PORT:-8443}"
+
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}ArmorChat Mobile App Connection${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    # Check if armorclaw-bridge command exists
+    if command -v armorclaw-bridge &> /dev/null; then
+        print_info "Generating QR code for ArmorChat..."
+        echo ""
+
+        # Generate QR code using the bridge CLI
+        if armorclaw-bridge generate-qr --host "$hostname" --port "$port" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # Fallback: Generate QR code manually if bridge command not available
+    print_info "Generating QR code..."
+
+    # Create config JSON for deep link
+    local matrix_url="http://${hostname}:6167"
+    local rpc_url="http://${hostname}:${port}/api"
+    local ws_url="ws://${hostname}:${port}/ws"
+    local push_url="${matrix_url}/_matrix/push/v1/notify"
+    local timestamp=$(date +%s)
+    local expiry=$((timestamp + 86400))  # 24 hours
+
+    # Build JSON payload
+    local json_data="{\"matrix_url\":\"${matrix_url}\",\"rpc_url\":\"${rpc_url}\",\"ws_url\":\"${ws_url}\",\"push_gateway\":\"${push_url}\",\"server_name\":\"${hostname}\",\"expires_at\":${expiry}}"
+
+    # Base64 encode (using jq if available, otherwise fallback)
+    local encoded_data
+    if command -v jq &> /dev/null; then
+        encoded_data=$(echo -n "$json_data" | jq -sRr @uri | base64 -w 0 2>/dev/null || echo -n "$json_data" | base64 -w 0 2>/dev/null || echo -n "$json_data" | base64)
+    else
+        encoded_data=$(echo -n "$json_data" | base64 -w 0 2>/dev/null || echo -n "$json_data" | base64)
+    fi
+
+    # Create deep link
+    local deep_link="armorclaw://config?d=${encoded_data}"
+    local web_link="https://armorclaw.app/config?d=${encoded_data}"
+
+    # Display configuration
+    echo -e "${DIM}Configuration:${NC}"
+    echo -e "  Server:    ${GREEN}${hostname}${NC}"
+    echo -e "  Port:      ${GREEN}${port}${NC}"
+    echo -e "  Matrix:    ${GREEN}${matrix_url}${NC}"
+    echo -e "  RPC:       ${GREEN}${rpc_url}${NC}"
+    echo -e "  WebSocket: ${GREEN}${ws_url}${NC}"
+    echo -e "  Valid:     ${GREEN}24 hours${NC}"
+    echo ""
+
+    # Display deep link
+    echo -e "${BOLD}Deep Link (copy to device):${NC}"
+    echo -e "  ${CYAN}${deep_link}${NC}"
+    echo ""
+
+    # Display web link
+    echo -e "${BOLD}Web Link (for browsers):${NC}"
+    echo -e "  ${CYAN}${web_link}${NC}"
+    echo ""
+
+    # Try to display ASCII QR code if qrencode is available
+    if command -v qrencode &> /dev/null; then
+        echo -e "${BOLD}QR Code (scan with ArmorChat):${NC}"
+        echo ""
+        echo "$deep_link" | qrencode -t UTF8 2>/dev/null || {
+            echo -e "${YELLOW}Note: QR encoding failed. Use the deep link above.${NC}"
+        }
+        echo ""
+    else
+        echo -e "${YELLOW}Tip: Install 'qrencode' to display ASCII QR code:${NC}"
+        echo -e "  ${DIM}apt-get install qrencode${NC}"
+        echo ""
+        echo -e "${BOLD}Or generate QR manually:${NC}"
+        echo -e "  ${DIM}echo '${deep_link}' | qrencode -t UTF8${NC}"
+        echo ""
+    fi
+
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
 }
 
 #=============================================================================
