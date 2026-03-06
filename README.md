@@ -50,7 +50,22 @@ Bridge:  http://192.168.1.50:8443
 Matrix:  http://192.168.1.50:6167
 Admin:   admin / <generated-password>
 
-[QR CODE - Scan with ArmorChat]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ArmorChat Mobile App Connection
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Configuration:
+  Server:    192.168.1.50
+  Port:      8443
+  Matrix:    http://192.168.1.50:6167
+  Valid:     24 hours
+
+Deep Link: armorclaw://config?d=...
+
+██████████████████████████████████
+██████████████████████████████████
+██ ▄▄▄▄▄ █▀▄█▀▄▀█ ▄▀█ █ ▄▄▄▄▄ ██
+... (ASCII QR - scan with ArmorChat)
 ```
 
 ### Next: Connect Your Phone

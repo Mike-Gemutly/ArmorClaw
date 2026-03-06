@@ -1,7 +1,7 @@
 # ArmorClaw Quickstart Review
 
 > **Purpose:** Complete guide to the Docker quickstart process and post-deployment steps
-> **Version:** 0.4.2
+> **Version:** 0.4.3
 > **Last Updated:** 2026-03-05
 > **Status:** Active Reference
 
@@ -451,8 +451,15 @@ echo '{"jsonrpc":"2.0","id":1,"method":"store_key","params":{"id":"anthropic-bac
 
 ### Generate New ArmorChat QR
 
+The QR code is **automatically generated** at setup completion. It displays:
+- ASCII QR code (scan with ArmorChat)
+- Deep link (copy/paste to device)
+- Web link (for browsers)
+
+To regenerate:
+
 ```bash
-docker exec armorclaw armorclaw-bridge generate-qr
+docker exec armorclaw armorclaw-bridge generate-qr --host <server-ip> --port 8443
 ```
 
 ### View Logs
