@@ -1284,6 +1284,7 @@ output = "stdout"
 
 [discovery]
 enabled = true
+instance_name = "${SERVER_NAME}"
 port = 8080
 tls = false
 api_path = "/api"

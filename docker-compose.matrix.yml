@@ -17,30 +17,8 @@ services:
     restart: unless-stopped
 
     environment:
-      # Config file location (REQUIRED by Conduit image)
+      # Config file location - all settings come from the mounted config
       CONDUIT_CONFIG: "/etc/conduit.toml"
-
-      # Server configuration
-      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-matrix.armorclaw.com}"
-      CONDUIT_ADDRESS: "0.0.0.0"
-      CONDUIT_PORT: "6167"
-
-      # Database (embedded SQLite for low memory)
-      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit/conduit.db"
-      CONDUIT_DATABASE_BACKEND: "sqlite"
-
-      # Security
-      CONDUIT_ALLOW_ENCRYPTION: "true"
-      CONDUIT_ALLOW_REGISTRATION: "false"  # Set to true for initial setup
-      CONDUIT_ALLOW_FEDERATION: "true"
-      CONDUIT_ALLOW_CHECK_FOR_UPDATES: "true"
-
-      # Performance tuning
-      CONDUIT_MAX_REQUEST_SIZE: "10485760"  # 10 MB
-      CONDUIT_MAX_CONCURRENT_REQUESTS: "100"
-
-      # Logging
-      CONDUIT_LOG: "info"
 
     volumes:
       - conduit_data:/var/lib/matrix-conduit
@@ -55,10 +33,10 @@ services:
 
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:6167/_matrix/client/versions || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
     deploy:
       resources:
