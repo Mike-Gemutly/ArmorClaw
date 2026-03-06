@@ -1653,10 +1653,11 @@ wait_for_conduit() {
                             fi
                         fi
                     fi
-
-                    print_error "══════════════════════════════════════════════════════"
-                    return 1
                 fi
+
+                print_error "══════════════════════════════════════════════════════"
+                return 1
+            fi
 
             # Container is running - don't check again
             container_checked=true
