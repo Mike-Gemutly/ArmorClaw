@@ -392,9 +392,13 @@ EOF
     echo -e "${CYAN}Starting ArmorClaw Bridge...${NC}"
 
     # Build environment args (bridge-only still needs server name)
-    ENV_ARGS="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
-    [ -n "${ARMORCLAW_API_KEY:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
-    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+    # Only pass env vars when ARMORCLAW_API_KEY is set (non-interactive mode)
+    ENV_ARGS=""
+    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+        ENV_ARGS="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
+        ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
+        [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+    fi
 
     docker run -d --name ${CONTAINER_NAME} \
         --restart unless-stopped \
