@@ -252,11 +252,21 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 
 ---
 
-## Manual Docker Run
+## Advanced / Manual Setup
 
-For users who prefer direct Docker commands.
+> **Most users should use the one-liner at the top.** This section is for advanced customization.
 
-### Full Stack
+### Bootstrap Mode (Generate docker-compose.yml)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --bootstrap
+```
+
+Creates `/opt/armorclaw/docker-compose.yml` for GitOps, CI/CD, or Terraform workflows.
+
+### Manual Docker Run
+
+For full control over configuration:
 
 ```bash
 docker run -it --name armorclaw \
@@ -265,22 +275,7 @@ docker run -it --name armorclaw \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v armorclaw-config:/etc/armorclaw \
   -v armorclaw-keystore:/var/lib/armorclaw \
-  -p 8443:8443 \
-  -p 6167:6167 \
-  -p 5000:5000 \
-  mikegemut/armorclaw:latest
-```
-
-### Bridge-Only
-
-```bash
-docker run -d --name armorclaw \
-  --restart unless-stopped \
-  --user root \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v armorclaw-keystore:/var/lib/armorclaw \
-  -p 8443:8443 \
-  -e ARMORCLAW_SKIP_MATRIX=true \
+  -p 8443:8443 -p 6167:6167 -p 5000:5000 \
   mikegemut/armorclaw:latest
 ```
 

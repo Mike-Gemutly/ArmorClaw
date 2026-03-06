@@ -186,9 +186,21 @@ Use for:
 
 ---
 
-## Manual Docker Commands
+## Advanced / Manual Setup
 
-### Full Stack
+> **Most users should use the one-liner above.** This section is for advanced customization.
+
+### Generate Config (GitOps/CI/CD)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --bootstrap
+```
+
+Creates `/opt/armorclaw/docker-compose.yml` for version control.
+
+### Manual Docker Run
+
+If you need full control over ports, volumes, or environment:
 
 ```bash
 docker run -it --name armorclaw \
@@ -201,25 +213,14 @@ docker run -it --name armorclaw \
   mikegemut/armorclaw:latest
 ```
 
-### About Docker Socket Access
+### Why Docker Socket?
 
 ArmorClaw uses the Docker socket to create isolated agent containers. This is safe because:
 
-- Containers run with restricted privileges (no root, limited capabilities)
-- Agents never receive Docker access
+- Agent containers run with restricted privileges (no root, limited capabilities)
+- Agents never receive Docker socket access
 - Seccomp/AppArmor profiles prevent escape attempts
 - Each agent runs in its own isolated container
-
-### Bridge-Only (Testing)
-
-```bash
-docker run -d --name armorclaw \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v armorclaw-keystore:/var/lib/armorclaw \
-  -p 8443:8443 \
-  -e ARMORCLAW_SKIP_MATRIX=true \
-  mikegemut/armorclaw:latest
-```
 
 ---
 
