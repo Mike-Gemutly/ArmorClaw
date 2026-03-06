@@ -1089,6 +1089,8 @@ configure_matrix() {
     echo ""
     if prompt_yes_no "Create bridge user on Matrix?" "y"; then
         BRIDGE_USER=$(prompt_input "Bridge username" "bridge")
+        # Strip @ prefix and :server suffix if user enters full Matrix ID format
+        BRIDGE_USER=$(echo "$BRIDGE_USER" | sed 's/^@//' | cut -d: -f1)
         BRIDGE_PASSWORD=$(prompt_password "Bridge password" "")
         if [ -z "$BRIDGE_PASSWORD" ]; then
             # Generate random password
@@ -1211,6 +1213,10 @@ configure_bridge() {
 
 write_config() {
     print_info "Writing configuration..."
+
+    # Safety: Strip @ prefix and :server suffix from username if present
+    # Matrix login API expects just the localpart (e.g., "bridge" not "@bridge:server.com")
+    BRIDGE_USER=$(echo "${BRIDGE_USER:-bridge}" | sed 's/^@//' | cut -d: -f1)
 
     print_info "Creating config.toml..."
 
@@ -1745,74 +1751,84 @@ register_matrix_user() {
     local is_admin="${3:-false}"
     local server_name="${MATRIX_SERVER_NAME:-${MATRIX_SERVER%%:*}}"
 
-    if [ -z "$REGISTRATION_SHARED_SECRET" ]; then
-        print_warning "No registration shared secret available - cannot register $username"
-        return 1
-    fi
+    # Strip @ prefix and :server suffix if present (handle both formats)
+    username=$(echo "$username" | sed 's/^@//' | cut -d: -f1)
 
-    # Conduit supports Synapse-compatible shared-secret registration:
-    # 1. GET /_synapse/admin/v1/register (get nonce)
-    # 2. POST /_synapse/admin/v1/register (register with HMAC)
+    print_info "Registering Matrix user: $username"
 
-    # Step 1: Get nonce
-    local NONCE_RESPONSE
-    NONCE_RESPONSE=$(curl -sf --connect-timeout 10 "http://localhost:6167/_synapse/admin/v1/register" 2>/dev/null)
-    if [ $? -ne 0 ] || [ -z "$NONCE_RESPONSE" ]; then
-        print_warning "Failed to get registration nonce for $username"
-        return 1
-    fi
-
-    local NONCE
-    NONCE=$(echo "$NONCE_RESPONSE" | jq -r '.nonce // empty' 2>/dev/null)
-    if [ -z "$NONCE" ]; then
-        print_warning "Invalid nonce response for $username"
-        return 1
-    fi
-
-    # Step 2: Compute HMAC
-    # HMAC = HMAC-SHA1(shared_secret, nonce + "\0" + username + "\0" + password + "\0" + admin_flag)
-    local admin_flag="notadmin"
-    if [ "$is_admin" = "true" ]; then
-        admin_flag="admin"
-    fi
-
-    local MAC
-    MAC=$(printf '%s\0%s\0%s\0%s' "$NONCE" "$username" "$password" "$admin_flag" | \
-        openssl dgst -sha1 -hmac "$REGISTRATION_SHARED_SECRET" | awk '{print $NF}')
-
-    if [ -z "$MAC" ]; then
-        print_warning "Failed to compute HMAC for $username"
-        return 1
-    fi
-
-    # Step 3: Register
+    # Method 1: Try standard Matrix v3 registration API (works with Conduit)
+    # This requires allow_registration = true in conduit.toml
     local REG_RESPONSE
     REG_RESPONSE=$(curl -sf --connect-timeout 10 -X POST \
-        "http://localhost:6167/_synapse/admin/v1/register" \
+        "http://localhost:6167/_matrix/client/v3/register" \
         -H "Content-Type: application/json" \
-        -d "{\"nonce\":\"$NONCE\",\"username\":\"$username\",\"password\":\"$password\",\"admin\":$is_admin,\"mac\":\"$MAC\"}" 2>/dev/null)
+        -d "{\"username\":\"$username\",\"password\":\"$password\",\"auth\":{\"type\":\"m.login.dummy\"}}" 2>/dev/null)
     local REG_EXIT=$?
 
-    if [ $REG_EXIT -ne 0 ]; then
-        # Check if user already exists
-        local ERROR_MSG
-        ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.error // empty' 2>/dev/null)
-        if echo "$ERROR_MSG" | grep -qi "exists\|already"; then
-            print_info "User @${username}:${server_name} already exists"
+    if [ $REG_EXIT -eq 0 ] && [ -n "$REG_RESPONSE" ]; then
+        local USER_ID
+        USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // .access_token // empty' 2>/dev/null)
+        if [ -n "$USER_ID" ]; then
+            print_success "Registered Matrix user: $USER_ID"
             return 0
         fi
-        print_warning "Failed to register $username: $ERROR_MSG"
-        return 1
     fi
 
-    local USER_ID
-    USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // empty' 2>/dev/null)
-    if [ -n "$USER_ID" ]; then
-        print_success "Registered Matrix user: $USER_ID"
+    # Check if user already exists
+    local ERROR_MSG
+    ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.errcode // .error // empty' 2>/dev/null)
+    if [ "$ERROR_MSG" = "M_USER_IN_USE" ] || echo "$REG_RESPONSE" | grep -qi "already\|exists\|in.use"; then
+        print_info "User @${username}:${server_name} already exists"
         return 0
     fi
 
-    print_warning "Registration returned unexpected response for $username"
+    # Method 2: Try Synapse admin API (for Synapse compatibility)
+    if [ -n "$REGISTRATION_SHARED_SECRET" ]; then
+        print_info "Trying Synapse admin API for registration..."
+
+        # Step 1: Get nonce
+        local NONCE_RESPONSE
+        NONCE_RESPONSE=$(curl -sf --connect-timeout 10 "http://localhost:6167/_synapse/admin/v1/register" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$NONCE_RESPONSE" ]; then
+            local NONCE
+            NONCE=$(echo "$NONCE_RESPONSE" | jq -r '.nonce // empty' 2>/dev/null)
+            if [ -n "$NONCE" ]; then
+                # Step 2: Compute HMAC
+                local admin_flag="notadmin"
+                if [ "$is_admin" = "true" ]; then
+                    admin_flag="admin"
+                fi
+
+                local MAC
+                MAC=$(printf '%s\0%s\0%s\0%s' "$NONCE" "$username" "$password" "$admin_flag" | \
+                    openssl dgst -sha1 -hmac "$REGISTRATION_SHARED_SECRET" | awk '{print $NF}')
+
+                if [ -n "$MAC" ]; then
+                    # Step 3: Register with Synapse API
+                    REG_RESPONSE=$(curl -sf --connect-timeout 10 -X POST \
+                        "http://localhost:6167/_synapse/admin/v1/register" \
+                        -H "Content-Type: application/json" \
+                        -d "{\"nonce\":\"$NONCE\",\"username\":\"$username\",\"password\":\"$password\",\"admin\":$is_admin,\"mac\":\"$MAC\"}" 2>/dev/null)
+
+                    local USER_ID
+                    USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // empty' 2>/dev/null)
+                    if [ -n "$USER_ID" ]; then
+                        print_success "Registered Matrix user: $USER_ID"
+                        return 0
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    # If we got here, registration failed
+    print_warning "Failed to register $username"
+    print_info "Response: $REG_RESPONSE"
+    print_info ""
+    print_info "Manual registration command:"
+    print_info "  curl -X POST http://localhost:6167/_matrix/client/v3/register \\"
+    print_info "    -H 'Content-Type: application/json' \\"
+    print_info "    -d '{\"username\":\"$username\",\"password\":\"$password\",\"auth\":{\"type\":\"m.login.dummy\"}}'"
     return 1
 }
 
@@ -1866,6 +1882,40 @@ configure_admin_user() {
 
     echo ""
     print_info "Admin user: @${ADMIN_USER}:${MATRIX_SERVER_NAME:-${MATRIX_SERVER%%:*}}"
+}
+
+# Wait for Matrix server to be ready (works with Conduit, Synapse, Dendrite)
+wait_for_matrix() {
+    local matrix_url="${1:-http://localhost:6167}"
+    local max_attempts="${2:-30}"
+    local attempt=0
+
+    print_info "Waiting for Matrix server at $matrix_url..."
+
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -sf --connect-timeout 2 "${matrix_url}/_matrix/client/versions" >/dev/null 2>&1; then
+            print_success "Matrix server is ready"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+        if [ $((attempt % 5)) -eq 0 ]; then
+            print_info "Still waiting for Matrix... (${attempt}/${max_attempts})"
+        fi
+        sleep 2
+    done
+
+    print_error "Matrix server not available at $matrix_url after $((max_attempts * 2)) seconds"
+    print_error ""
+    print_error "Possible causes:"
+    print_error "  1. Matrix container not started"
+    print_error "  2. Wrong Docker network (containers must share a network)"
+    print_error "  3. Wrong URL (expected $matrix_url)"
+    print_error ""
+    print_error "Quick fix for docker-compose deployments:"
+    print_error "  docker compose -f docker-compose-full.yml up -d"
+    print_error "  docker compose -f docker-compose-full.yml logs matrix"
+    return 1
 }
 
 register_users() {
@@ -2372,6 +2422,12 @@ main() {
 
     # Register bridge + admin users on Conduit (requires Matrix stack running)
     if [ "$MATRIX_AVAILABLE" = true ]; then
+        # Wait for Matrix to be ready before attempting registration
+        local matrix_url="${ARMORCLAW_MATRIX_HOMESERVER_URL:-http://localhost:6167}"
+        if ! wait_for_matrix "$matrix_url" 30; then
+            print_warning "Matrix not ready - will attempt registration anyway"
+        fi
+
         next_step "Registering users and creating rooms"
         register_users
 
