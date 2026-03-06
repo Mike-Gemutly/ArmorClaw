@@ -166,19 +166,79 @@ This is why ArmorClaw is safe for sensitive tasks.
 
 ## Installation Options
 
-### Interactive Install (Recommended)
+### Option 1: Quickstart (Recommended for First-Time Users)
+
+The quickstart container includes everything in one image:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)"
 ```
 
-### Deployment Modes
+**What it includes:**
+- ArmorClaw Bridge
+- Matrix Conduit homeserver
+- Automatic user registration
+- QR code for mobile app setup
+
+### Option 2: Production Deployment (Docker Compose)
+
+For production, use the full stack compose file with all services as peers:
+
+```bash
+# Clone the repository
+git clone https://github.com/Gemutly/ArmorClaw.git
+cd ArmorClaw
+
+# Create config directory
+mkdir -p configs
+
+# Copy example configs (or create your own)
+cp configs/conduit.toml.example configs/conduit.toml 2>/dev/null || true
+
+# Set your server IP/domain
+export MATRIX_DOMAIN=your-server.example.com
+export ARMORCLAW_API_KEY=sk-your-key
+
+# Start the stack
+docker compose -f docker-compose-full.yml up -d
+```
+
+**Services started:**
+- `matrix` - Conduit homeserver (port 6167)
+- `sygnal` - Push notifications (port 5000)
+- `caddy` - Reverse proxy with auto-SSL (ports 80, 443)
+- `bridge` - ArmorClaw orchestrator (port 8443)
+
+**Create the bridge Matrix user:**
+```bash
+curl -X POST http://localhost:6167/_matrix/client/v3/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"bridge","password":"bridgepass","auth":{"type":"m.login.dummy"}}'
+```
+
+### Option 3: Bridge-Only (No Matrix)
+
+For testing or when using an external Matrix server:
+
+```bash
+# Using quickstart with --bridge-only flag
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bridge-only
+
+# Or with external Matrix
+export ARMORCLAW_API_KEY=sk-your-key
+export ARMORCLAW_EXTERNAL_MATRIX=true
+export ARMORCLAW_MATRIX_HOMESERVER_URL=http://your-matrix-server:6167
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+```
+
+### Deployment Modes Summary
 
 | Mode | Command | Use Case |
 |------|---------|----------|
-| **Full Stack** | `bash` (default) | ArmorChat mobile integration |
-| **Bridge-only** | `bash -s -- --bridge-only` | Testing, no Matrix |
-| **Bootstrap** | `bash -s -- --bootstrap` | Generate docker-compose.yml |
+| **Quickstart** | `bash install.sh` | First-time users, all-in-one |
+| **Production** | `docker compose -f docker-compose-full.yml up -d` | Production, scalable |
+| **Bridge-only** | `bash install.sh --bridge-only` | Testing, external Matrix |
+| **External Matrix** | `ARMORCLAW_EXTERNAL_MATRIX=true` | Use existing Matrix server |
 
 ### Non-Interactive (CI/CD)
 
@@ -212,15 +272,20 @@ Use for:
 
 ## Advanced / Manual Setup
 
-> **Most users should use the one-liner above.** This section is for advanced customization.
+> **Most users should use the options above.** This section is for advanced customization.
 
-### Generate Config (GitOps/CI/CD)
+### Environment Variables
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bootstrap
-```
-
-Creates `/opt/armorclaw/docker-compose.yml` for version control.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ARMORCLAW_API_KEY` | AI provider API key | (required) |
+| `ARMORCLAW_SERVER_NAME` | Server hostname or IP | auto-detected |
+| `ARMORCLAW_EXTERNAL_MATRIX` | Use external Matrix server | `false` |
+| `ARMORCLAW_MATRIX_HOMESERVER_URL` | External Matrix URL | `http://127.0.0.1:6167` |
+| `ARMORCLAW_MATRIX_ENABLED` | Enable Matrix integration | `true` |
+| `ARMORCLAW_MATRIX_USERNAME` | Bridge Matrix username | `bridge` |
+| `ARMORCLAW_MATRIX_PASSWORD` | Bridge Matrix password | `bridgepass` |
+| `ARMORCLAW_ADMIN_PASSWORD` | Admin password | auto-generated |
 
 ### Manual Docker Run
 
@@ -234,6 +299,8 @@ docker run -it --name armorclaw \
   -v armorclaw-data:/etc/armorclaw \
   -v armorclaw-keystore:/var/lib/armorclaw \
   -p 8443:8443 -p 6167:6167 -p 5000:5000 \
+  -e ARMORCLAW_API_KEY=sk-your-key \
+  -e ARMORCLAW_EXTERNAL_MATRIX=true \
   mikegemut/armorclaw:latest
 ```
 
@@ -312,15 +379,41 @@ curl http://localhost:6167/_matrix/client/versions
 
 ## Build from Source
 
+### Quickstart Image (All-in-One)
+
 ```bash
 git clone https://github.com/Gemutly/ArmorClaw.git
-cd armorclaw
+cd ArmorClaw
 
-# Full stack (Bridge + Matrix + Sygnal + Caddy)
-docker compose -f docker-compose-full.yml up -d --build
-
-# Or build just the quickstart image
+# Build the quickstart image
 docker build -t armorclaw/quickstart:latest -f Dockerfile.quickstart .
+```
+
+### Production Stack (Multi-Service)
+
+```bash
+git clone https://github.com/Gemutly/ArmorClaw.git
+cd ArmorClaw
+
+# Configure your server
+export MATRIX_DOMAIN=your-server.example.com
+export ARMORCLAW_API_KEY=sk-your-key
+
+# Start all services (Matrix, Sygnal, Caddy, Bridge)
+docker compose -f docker-compose-full.yml up -d --build
+```
+
+**Services:**
+- `matrix` - Conduit homeserver (port 6167)
+- `sygnal` - Push notifications (port 5000)
+- `caddy` - Reverse proxy with auto-SSL (ports 80, 443)
+- `bridge` - ArmorClaw orchestrator (port 8443)
+
+### Bridge-Only Build
+
+```bash
+cd ArmorClaw/bridge
+go build -o armorclaw-bridge ./cmd/bridge
 ```
 
 **Note:** Bridge requires Debian-based images for SQLCipher compatibility.
