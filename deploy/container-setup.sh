@@ -1415,19 +1415,29 @@ start_matrix_stack() {
         return
     fi
 
-    # Check if Matrix is already running
-    if docker ps 2>/dev/null | grep -q "armorclaw-matrix\|matrix-conduit"; then
-        print_success "Matrix stack already running"
-        return
+    # Check if Matrix is already running (verify health before cleanup)
+    local matrix_already_running=false
+    if docker ps 2>/dev/null | grep -q "armorclaw-conduit"; then
+        print_info "Matrix container already running - verifying health..."
+        matrix_already_running=true
+
+        # Wait for Matrix to be healthy (up to 60 seconds)
+        local health_attempt=0
+        while [ $health_attempt -lt 12 ]; do
+            if curl -sf --connect-timeout 3 "http://localhost:6167/_matrix/client/versions" >/dev/null 2>&1; then
+                print_success "Matrix is already running and healthy"
+                MATRIX_AVAILABLE=true
+                return
+            fi
+            health_attempt=$((health_attempt + 1))
+            sleep 5
+        done
+
+        # Matrix container running but not healthy - will restart
+        print_warning "Matrix container running but not healthy - will restart"
     fi
 
-    # --- Pre-flight cleanup: Remove stale networks and containers ---
-    # This prevents "network already exists" errors from previous failed runs
-    print_info "Cleaning up any stale Docker resources..."
-    docker rm -f armorclaw-conduit armorclaw-sygnal 2>/dev/null || true
-    docker network rm armorclaw-matrix armorclaw_default 2>/dev/null || true
-    # Wait a moment for Docker to process the removals
-    sleep 2
+
 
     # --- Prepare config files on the HOST filesystem ---
     # When running inside a container with the Docker socket mounted,
@@ -1648,9 +1658,8 @@ wait_for_conduit() {
                     return 1
                 fi
 
-                # Container is running - don't check again
-                container_checked=true
-            fi
+            # Container is running - don't check again
+            container_checked=true
         fi
 
         # Check if Conduit responds to the versions endpoint
