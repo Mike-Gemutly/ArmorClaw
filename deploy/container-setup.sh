@@ -777,7 +777,8 @@ load_wizard_json() {
 check_env_vars() {
     # Check for minimal required env vars for non-interactive mode
     # ARMORCLAW_API_KEY is required for non-interactive setup
-    # ARMORCLAW_SERVER_NAME alone is NOT enough for    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+    # ARMORCLAW_SERVER_NAME alone is NOT enough for non-interactive mode
+    if [ -z "${ARMORCLAW_API_KEY:-}" ]; then
         # No API key - not non-interactive mode
         NON_INTERACTIVE=false
         return
