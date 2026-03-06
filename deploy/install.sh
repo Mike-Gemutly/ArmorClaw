@@ -211,7 +211,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ARMORCLAW_PROVIDER       AI provider (openai, anthropic, google)"
             echo "  ARMORCLAW_ADMIN_USER     Admin username (default: admin)"
             echo "  ARMORCLAW_ADMIN_PASSWORD Admin password (auto-generated)"
-            echo "  ARMORCLAW_SERVER_NAME    Server hostname or IP"
+            echo "  ARMORCLAW_SERVER_NAME    Server hostname or IP (auto-detected if not set)"
             echo ""
             echo "Examples:"
             echo "  # Full stack with Matrix (default)"
@@ -299,6 +299,12 @@ echo -e "${CYAN}Creating directories...${NC}"
 $SUDO mkdir -p ${CONFIG_DIR}
 $SUDO mkdir -p ${DATA_DIR}
 
+# Detect server IP for bridge-only mode too
+DETECTED_SERVER_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
+if [ -z "$DETECTED_SERVER_IP" ]; then
+    DETECTED_SERVER_IP="localhost"
+fi
+
 # Bridge-only mode
 if [ "$BRIDGE_ONLY" = true ]; then
     echo -e "${CYAN}"
@@ -306,6 +312,8 @@ if [ "$BRIDGE_ONLY" = true ]; then
     echo "║        ${BOLD}Bridge-Only Mode (No Matrix)${NC}${CYAN}                 ║"
     echo "╚══════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+    echo -e "${DIM}Server IP: ${DETECTED_SERVER_IP}${NC}"
+    echo ""
 
     $SUDO tee ${CONFIG_DIR}/config.toml > /dev/null << EOF
 # ArmorClaw Bridge Configuration
@@ -346,6 +354,7 @@ EOF
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v ${CONFIG_DIR}:/etc/armorclaw \
         -v ${DATA_DIR}:/var/lib/armorclaw \
+        -e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP} \
         -p ${BRIDGE_PORT}:8443 \
         ${IMAGE}
 
@@ -384,6 +393,14 @@ echo "Starting ArmorClaw with Matrix integration..."
 echo "The setup wizard will guide you through configuration."
 echo ""
 
+# Detect server IP on host (more reliable than container-side detection)
+DETECTED_SERVER_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
+if [ -z "$DETECTED_SERVER_IP" ]; then
+    DETECTED_SERVER_IP="localhost"
+fi
+echo -e "${DIM}Detected server IP: ${DETECTED_SERVER_IP}${NC}"
+echo ""
+
 if [ "$NO_START" = true ]; then
     echo -e "${YELLOW}--no-start specified. Container not started.${NC}"
     echo ""
@@ -394,6 +411,7 @@ if [ "$NO_START" = true ]; then
     echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
     echo "    -v ${CONFIG_DIR}:/etc/armorclaw \\"
     echo "    -v ${DATA_DIR}:/var/lib/armorclaw \\"
+    echo "    -e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP} \\"
     echo "    -p ${BRIDGE_PORT}:8443 -p ${MATRIX_PORT}:6167 -p ${PUSH_PORT}:5000 \\"
     echo "    ${IMAGE}"
     exit 0
@@ -405,6 +423,7 @@ docker run -it --name ${CONTAINER_NAME} \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v ${CONFIG_DIR}:/etc/armorclaw \
     -v ${DATA_DIR}:/var/lib/armorclaw \
+    -e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP} \
     -p ${BRIDGE_PORT}:8443 \
     -p ${MATRIX_PORT}:6167 \
     -p ${PUSH_PORT}:5000 \
