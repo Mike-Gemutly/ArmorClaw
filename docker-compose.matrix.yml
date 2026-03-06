@@ -17,32 +17,15 @@ services:
     restart: unless-stopped
 
     environment:
-      # Use environment variables only (no config file)
-      CONDUIT_CONFIG: ""
-      # Server configuration
-      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-5.183.11.149}"
-      CONDUIT_ADDRESS: "0.0.0.0"
-      CONDUIT_PORT: "6167"
-      # Database
-      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit"
-      # Security - registration enabled for initial setup
-      CONDUIT_ALLOW_REGISTRATION: "true"
-      CONDUIT_ALLOW_ENCRYPTION: "true"
-      CONDUIT_ALLOW_FEDERATION: "true"
-      # Registration secret (for admin/bridge user creation)
-      CONDUIT_REGISTRATION_TOKEN: "${REGISTRATION_SHARED_SECRET:-}"
-      # Logging
-      CONDUIT_LOG: "info"
+      # Use config file (mounted below)
+      CONDUIT_CONFIG: "/etc/conduit.toml"
 
     volumes:
-      - conduit_data:/var/lib/matrix-conduit
+      - conduit_data:/var/lib/conduit
+      - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit.toml:ro
 
-    ports:
-      - "6167:6167"   # Client API
-      - "8448:8448"   # Federation
-
-    networks:
-      - matrix-net
+    # Share network namespace with bridge container (avoids port conflicts)
+    network_mode: "service:armorclaw"
 
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:6167/_matrix/client/versions || exit 1"]
@@ -165,6 +148,9 @@ volumes:
   conduit_data:
     driver: local
     name: armorclaw-conduit-data
+  letsencrypt:
+    driver: local
+    name: armorclaw-letsencrypt
   coturn_data:
     driver: local
     name: armorclaw-coturn-data

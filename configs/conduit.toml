@@ -1,17 +1,17 @@
 [global]
 # Server name will be replaced by container-setup.sh
 server_name = "armorclaw.local"
+
 database_backend = "rocksdb"
-database_path = "/var/lib/matrix-conduit/conduit.db"
-max_request_size = 20000000
-max_concurrent_requests = 100
+database_path = "/var/lib/conduit"
+
 address = "0.0.0.0"
 port = 6167
-log = "info"
-# Registration enabled for initial setup - shared secret added by container-setup.sh
+
+max_request_size = 20000000
+
 allow_registration = true
 allow_federation = true
 allow_check_for_updates = true
-trusted_servers = ["matrix.org"]
 
-# well_known section removed - use environment variables instead
+trusted_servers = ["matrix.org"]
