@@ -1143,8 +1143,8 @@ flyctl regions add nrt  # Tokyo
 - **GitHub:** https://github.com/superfly/flyctl
 
 **ArmorClaw Resources:**
-- **Documentation:** https://github.com/armorclaw/armorclaw
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
+- **Documentation:** https://github.com/Gemutly/ArmorClaw
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
 
 ---
 

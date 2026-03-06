@@ -52,7 +52,7 @@ SECURITY:
     - LD_PRELOAD hooks block dangerous syscalls
     - Read-only root filesystem recommended
 
-For more information: https://github.com/armorclaw/armorclaw
+For more information: https://github.com/Gemutly/ArmorClaw
 """)
     sys.exit(0)
 

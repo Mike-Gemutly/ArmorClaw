@@ -225,7 +225,7 @@ install_systemd_service() {
     cat > "/etc/systemd/system/armorclaw-bridge.service" <<EOF
 [Unit]
 Description=ArmorClaw Bridge - Secure AI Agent Container Manager
-Documentation=https://github.com/armorclaw/armorclaw
+Documentation=https://github.com/Gemutly/ArmorClaw
 After=network-online.target docker.socket
 Wants=network-online.target docker.socket
 

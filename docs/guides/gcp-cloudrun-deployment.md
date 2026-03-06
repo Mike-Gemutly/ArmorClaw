@@ -1218,8 +1218,8 @@ gcloud projects add-iam-policy-binding armorclaw-deployment \
 - **Stack Overflow:** Tag questions with `google-cloud-run`
 
 **ArmorClaw Resources:**
-- **Documentation:** https://github.com/armorclaw/armorclaw
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
+- **Documentation:** https://github.com/Gemutly/ArmorClaw
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
 
 ---
 

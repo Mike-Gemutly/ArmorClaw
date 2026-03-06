@@ -175,7 +175,7 @@ The interactive setup wizard runs automatically on first boot. All prompts have 
 | Phase | Command | Purpose |
 |-------|---------|---------|
 | 1. VPS Setup | `apt install -y docker.io docker-compose-plugin` | Install prerequisites |
-| 2. Clone | `git clone https://github.com/armorclaw/armorclaw.git` | Get source code |
+| 2. Clone | `git clone https://github.com/Gemutly/ArmorClaw.git` | Get source code |
 | 3. Build Bridge | `cd bridge && go build -o armorclaw-bridge ./cmd/bridge` | Compile Go binary |
 | 4. Start Matrix | `docker compose -f docker-compose.matrix.yml up -d` | Start homeserver |
 | 5. Create Admin | `./deploy/create-matrix-admin.sh admin` | Secure user creation |
@@ -7521,7 +7521,7 @@ ufw enable
 
 # Clone repository
 cd /opt
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 ```
 

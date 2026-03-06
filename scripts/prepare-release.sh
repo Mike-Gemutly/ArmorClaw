@@ -84,14 +84,14 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy.sh 
 ### Option 2: Manual Install
 \`\`\`bash
 # Download binary for your platform
-wget https://github.com/armorclaw/armorclaw/releases/download/$VERSION/armorclaw-bridge-linux-amd64
+wget https://github.com/Gemutly/ArmorClaw/releases/download/$VERSION/armorclaw-bridge-linux-amd64
 chmod +x armorclaw-bridge-linux-amd64
 sudo mv armorclaw-bridge-linux-amd64 /usr/local/bin/armorclaw-bridge
 \`\`\`
 
 ### Option 3: Docker Deploy
 \`\`\`bash
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 ./deploy/deploy-all.sh
 \`\`\`
@@ -105,9 +105,9 @@ sha256sum -c SHA256SUMS
 
 ## Full Documentation
 
-- [Quick Start Guide](https://github.com/armorclaw/armorclaw/blob/main/doc/guides/quick-start.md)
-- [Deployment Guide](https://github.com/armorclaw/armorclaw/blob/main/doc/guides/deployment-guide.md)
-- [Element X Setup](https://github.com/armorclaw/armorclaw/blob/main/doc/guides/element-x-deployment.md)
+- [Quick Start Guide](https://github.com/Gemutly/ArmorClaw/blob/main/doc/guides/quick-start.md)
+- [Deployment Guide](https://github.com/Gemutly/ArmorClaw/blob/main/doc/guides/deployment-guide.md)
+- [Element X Setup](https://github.com/Gemutly/ArmorClaw/blob/main/doc/guides/element-x-deployment.md)
 
 ## Changelog
 

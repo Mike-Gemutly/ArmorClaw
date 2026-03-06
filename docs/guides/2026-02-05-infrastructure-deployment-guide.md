@@ -88,7 +88,7 @@ docker-compose --version
 
 ```bash
 # Clone repository (if not already)
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # Make scripts executable

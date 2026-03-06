@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy.sh 
 
 **Or deploy manually:**
 ```bash
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 ./deploy/deploy-all.sh
 ```
@@ -82,4 +82,4 @@ Planned: Full audit logging, RBAC policy engine, enterprise secret integrations 
 
 ---
 
-[MIT License](LICENSE) • [Security Reports](SECURITY.md) • [GitHub Issues](https://github.com/armorclaw/armorclaw/issues)
+[MIT License](LICENSE) • [Security Reports](SECURITY.md) • [GitHub Issues](https://github.com/Gemutly/ArmorClaw/issues)

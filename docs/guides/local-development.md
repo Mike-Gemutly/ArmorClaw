@@ -92,7 +92,7 @@ docker-compose --version
 ### 3. Clone ArmorClaw
 
 ```bash
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 ```
 

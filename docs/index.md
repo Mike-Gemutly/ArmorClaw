@@ -636,7 +636,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for complete version history with commit ref
 
 ## Support
 
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
 - **Documentation Issues:** Create issue with `docs:` label
 - **Bug Reports:** Create issue with `bug:` label
 

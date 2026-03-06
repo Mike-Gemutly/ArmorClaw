@@ -414,7 +414,7 @@ sudo systemctl status docker
 sudo apt install -y git
 
 # Clone repository
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 
 # Navigate to project directory
 cd armorclaw
@@ -1162,8 +1162,8 @@ sudo reboot
 - **Email:** support@hostinger.com
 
 **ArmorClaw Resources:**
-- **Documentation:** https://github.com/armorclaw/armorclaw
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
+- **Documentation:** https://github.com/Gemutly/ArmorClaw
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
 - **Troubleshooting Guide:** `docs/guides/troubleshooting.md`
 
 ---

@@ -193,7 +193,7 @@ See [Infrastructure Deployment Guide](2026-02-05-infrastructure-deployment-guide
 Quick version:
 ```bash
 # Clone on your server
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # Deploy Matrix, Nginx, Coturn

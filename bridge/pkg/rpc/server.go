@@ -89,7 +89,7 @@ Troubleshooting:
   3. Check logs for detailed error messages
 
 If the problem persists, please report this issue at:
-  https://github.com/armorclaw/armorclaw/issues
+  https://github.com/Gemutly/ArmorClaw/issues
 `,
 }
 

@@ -51,7 +51,7 @@ ArmorClaw/
 # Fork repository on GitHub
 git clone https://github.com/YOUR_USERNAME/armorclaw.git
 cd armorclaw
-git remote add upstream https://github.com/armorclaw/armorclaw.git
+git remote add upstream https://github.com/Gemutly/ArmorClaw.git
 ```
 
 ### 2. Install Dependencies
@@ -223,7 +223,7 @@ git push origin feature/amazing-feature
 
 ### 2. Create Pull Request
 
-1. Visit https://github.com/armorclaw/armorclaw
+1. Visit https://github.com/Gemutly/ArmorClaw
 2. Click "New Pull Request"
 3. Provide clear description of changes
 4. Link related issues
@@ -254,7 +254,7 @@ git push origin feature/amazing-feature
 - **Matrix Spec:** https://spec.matrix.org/
 
 ### Community
-- **GitHub Issues:** https://github.com/armorclaw/armorclaw/issues
+- **GitHub Issues:** https://github.com/Gemutly/ArmorClaw/issues
 - **Matrix Room:** #armorclaw:matrix.org
 - **Email:** dev@armorclaw.com
 

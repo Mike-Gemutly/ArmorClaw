@@ -45,7 +45,7 @@ docker ps
 
 ```bash
 # Clone the repository
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # Build the bridge binary
@@ -340,7 +340,7 @@ See [Error Catalog](error-catalog.md) for complete error reference.
 ### Getting Help
 
 - **Documentation:** [docs/index.md](../index.md)
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
 - **Security Issues:** security@armorclaw.com
 
 ---

@@ -92,7 +92,7 @@ ufw enable
 ### Step 1.3: Clone Repository
 ```bash
 cd /opt
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 ```
 
@@ -568,7 +568,7 @@ systemctl restart armorclaw-bridge
 ## Support
 
 - **Documentation:** `/opt/armorclaw/docs/`
-- **GitHub Issues:** https://github.com/armorclaw/armorclaw/issues
+- **GitHub Issues:** https://github.com/Gemutly/ArmorClaw/issues
 - **Error Catalog:** `docs/guides/error-catalog.md`
 - **Health Check:** `./deploy/health-check.sh`
 

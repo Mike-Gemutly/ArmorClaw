@@ -594,7 +594,7 @@ apt update && apt install git -y
 
 # Clone ArmorClaw repository
 cd /opt
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # Continue from Step 4 above

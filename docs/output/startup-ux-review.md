@@ -357,7 +357,7 @@ armorclaw start
 
 ```bash
 # Step 1: Clone and build
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw/bridge
 go build -o build/armorclaw-bridge ./cmd/bridge
 

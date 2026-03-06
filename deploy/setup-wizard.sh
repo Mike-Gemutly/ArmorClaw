@@ -1438,7 +1438,7 @@ print_completion() {
     echo "  Element X Quick Start: docs/guides/element-x-quickstart.md ⭐"
     echo "  Setup Guide:           docs/guides/setup-guide.md"
     echo "  Full Docs:              docs/index.md"
-    echo "  GitHub:                 https://github.com/armorclaw/armorclaw"
+    echo "  GitHub:                 https://github.com/Gemutly/ArmorClaw"
     echo ""
 
     if [ -f "$LOG_FILE" ]; then

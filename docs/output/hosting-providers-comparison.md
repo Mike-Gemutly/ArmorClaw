@@ -93,7 +93,7 @@ ArmorClaw has unique hosting requirements due to its architecture:
 ```bash
 # Install Docker Desktop
 # Clone ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 docker-compose up -d
 ```
@@ -405,7 +405,7 @@ ssh root@linode-ip
 curl -fsSL https://get.docker.com | sh
 
 # Deploy ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 docker-compose up -d
 ```
@@ -453,7 +453,7 @@ ssh root@instance-ip
 curl -fsSL https://get.docker.com | sh
 
 # Deploy ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 docker-compose up -d
 ```
@@ -517,7 +517,7 @@ az container create \
 ```bash
 # Install Docker Desktop
 # Clone ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 docker-compose up -d
 ```
@@ -662,7 +662,7 @@ ssh root@your-vps-ip
 curl -fsSL https://get.docker.com | sh
 
 # 4. Clone ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # 5. Deploy infrastructure

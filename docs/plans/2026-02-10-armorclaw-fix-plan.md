@@ -934,7 +934,7 @@ echo "Test 1: Build Bridge Binary"
 echo "-------------------------"
 
 cd "$TEST_DIR"
-git clone https://github.com/armorclaw/armorclaw.git armorclaw 2>/dev/null || true
+git clone https://github.com/Gemutly/ArmorClaw.git armorclaw 2>/dev/null || true
 cd armorclaw/bridge
 
 if go build -o "$BRIDGE_BIN" ./cmd/bridge; then

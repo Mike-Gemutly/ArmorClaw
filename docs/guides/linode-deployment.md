@@ -71,7 +71,7 @@ ssh root@your_linode_ip
 curl -fsSL https://get.docker.com | sh
 
 # Deploy ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 docker-compose up -d
 ```
@@ -128,7 +128,7 @@ chmod +x /usr/local/bin/docker-compose
 
 ```bash
 # Clone repository
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # Build and deploy

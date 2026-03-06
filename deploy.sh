@@ -61,7 +61,7 @@ if ! command -v docker &>/dev/null; then
 fi
 
 # Download appropriate binary
-BINARY_URL="https://github.com/armorclaw/armorclaw/releases/download/v1.0.0/armorclaw-bridge-${PLATFORM}"
+BINARY_URL="https://github.com/Gemutly/ArmorClaw/releases/download/v1.0.0/armorclaw-bridge-${PLATFORM}"
 BINARY_NAME="armorclaw-bridge"
 
 if [[ "$PLATFORM" == "windows-amd64" ]]; then

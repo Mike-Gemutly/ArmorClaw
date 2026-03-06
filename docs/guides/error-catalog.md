@@ -265,7 +265,7 @@ Required tools missing: openssl jq socat curl docker
 docker pull mikegemut/armorclaw:latest
 
 # Or rebuild from source
-git clone https://github.com/armorclaw/armorclaw
+git clone https://github.com/Gemutly/ArmorClaw
 cd armorclaw
 docker build -f Dockerfile.quickstart -t armorclaw/quickstart .
 ```
@@ -1305,4 +1305,4 @@ filter := EventFilter{
 ---
 
 **Error Catalog Last Updated:** 2026-02-21
-**For additional help:** https://github.com/armorclaw/armorclaw/issues
+**For additional help:** https://github.com/Gemutly/ArmorClaw/issues

@@ -703,7 +703,7 @@ For issues or questions:
 1. Check the [Error Catalog](error-catalog.md) for specific error solutions
 2. Review [Troubleshooting Guide](troubleshooting.md) for systematic debugging
 3. Check [Project Status](../status/2026-02-05-status.md) for known issues
-4. Create an issue on [GitHub](https://github.com/armorclaw/armorclaw)
+4. Create an issue on [GitHub](https://github.com/Gemutly/ArmorClaw)
 
 ---
 

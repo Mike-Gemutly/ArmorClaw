@@ -85,8 +85,8 @@
 
 7. **GitHub URL References** ⚠️ PARTIALLY COVERED
    - **Files:** 39 files with `github.com/armorclaw/` URLs
-   - **Current:** `github.com/armorclaw/armorclaw`, `github.com/armorclaw/bridge`
-   - **Required:** `github.com/armorclaw/armorclaw`, `github.com/armorclaw/bridge`
+   - **Current:** `github.com/Gemutly/ArmorClaw`, `github.com/armorclaw/bridge`
+   - **Required:** `github.com/Gemutly/ArmorClaw`, `github.com/armorclaw/bridge`
    - **Impact:** Broken links, incorrect clone URLs
    - **Assigned To:** Agent 2 (Phase 2 - Documentation)
 
@@ -545,7 +545,7 @@ docker-compose -f docker-compose.yml config
 
 **Special Instructions:**
 - **🔴 GitHub URLs (39 files):** Update all `github.com/armorclaw/` → `github.com/armorclaw/`
-  - Includes: `github.com/armorclaw/armorclaw`, `github.com/armorclaw/bridge`
+  - Includes: `github.com/Gemutly/ArmorClaw`, `github.com/armorclaw/bridge`
   - Update clone URLs, import paths, API references
 - **🔴 README Badge URLs:** Update badge image URLs and link URLs
 - **🔴 LICENSE Files:** Update copyright notice in both `LICENSE` and `LICENSE.md`

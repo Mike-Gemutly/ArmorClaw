@@ -4,7 +4,7 @@ ArmorClaw v1.0.0 Release Manifest
 Release Date: 2026-02-06
 Version: v1.0.0
 License: MIT
-GitHub: https://github.com/armorclaw/armorclaw
+GitHub: https://github.com/Gemutly/ArmorClaw
 
 Release Contents:
 -----------------
@@ -51,5 +51,5 @@ Requirements:
 
 Support:
 --------
-- Issues: https://github.com/armorclaw/armorclaw/issues
-- Documentation: https://github.com/armorclaw/armorclaw/blob/main/doc/index.md
+- Issues: https://github.com/Gemutly/ArmorClaw/issues
+- Documentation: https://github.com/Gemutly/ArmorClaw/blob/main/doc/index.md

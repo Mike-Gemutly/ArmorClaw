@@ -513,9 +513,9 @@ rm /opt/armorclaw/docker-compose.yml
 
 ## Support
 
-- **GitHub:** https://github.com/armorclaw/armorclaw
+- **GitHub:** https://github.com/Gemutly/ArmorClaw
 - **Documentation:** See `docs/` directory
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
 
 ---
 

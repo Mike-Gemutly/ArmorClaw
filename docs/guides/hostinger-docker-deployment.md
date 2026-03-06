@@ -168,7 +168,7 @@ Total Phase 4:    ~1.74 GB  ✅ Fits in KVM1 (2.26 GB headroom)
 
      bridge:
        build:
-         context: https://github.com/armorclaw/armorclaw.git#main
+         context: https://github.com/Gemutly/ArmorClaw.git#main
          dockerfile: bridge/Dockerfile
        container_name: armorclaw-bridge
        restart: unless-stopped
@@ -213,7 +213,7 @@ Total Phase 4:    ~1.74 GB  ✅ Fits in KVM1 (2.26 GB headroom)
 2. **In Docker Manager:**
    - Click **New Project**
    - Select **Compose from URL**
-   - Enter repository URL: `https://github.com/armorclaw/armorclaw.git`
+   - Enter repository URL: `https://github.com/Gemutly/ArmorClaw.git`
    - Select branch: `main`
    - Click **Import**
 
@@ -351,7 +351,7 @@ mkdir -p /opt/armorclaw
 cd /opt/armorclaw
 
 # Download ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git .
+git clone https://github.com/Gemutly/ArmorClaw.git .
 # OR upload tarball (see docs/guides/hostinger-deployment.md)
 ```
 

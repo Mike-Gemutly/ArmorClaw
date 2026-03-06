@@ -1,7 +1,7 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.3.0-blue)](https://github.com/armorclaw/armorclaw)
-[![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/armorclaw/armorclaw)
+[![Version](https://img.shields.io/badge/version-v4.3.0-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
 
@@ -289,7 +289,7 @@ curl http://localhost:6167/_matrix/client/versions
 ## Build from Source
 
 ```bash
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 
 # Full stack (Bridge + Matrix + Sygnal + Caddy)
@@ -364,7 +364,7 @@ The Bridge provisions the agent and invites you to its dedicated room.
 
 ## Links
 
-* **GitHub:** https://github.com/armorclaw/armorclaw
+* **GitHub:** https://github.com/Gemutly/ArmorClaw
 * **Docker Hub:** https://hub.docker.com/r/mikegemut/armorclaw
 
 ## License

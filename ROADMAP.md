@@ -204,4 +204,4 @@ To implement a new platform adapter:
 ---
 
 **Roadmap Owner:** ArmorClaw Team
-**Contact:** https://github.com/armorclaw/armorclaw/issues
+**Contact:** https://github.com/Gemutly/ArmorClaw/issues

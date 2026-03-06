@@ -316,13 +316,13 @@ rm ~/.armorclaw/keystore.db
 
 1. **Check logs:** Enable debug logging and capture output
 2. **Run diagnostics:** Use health check commands above
-3. **Search issues:** Check https://github.com/armorclaw/armorclaw/issues
+3. **Search issues:** Check https://github.com/Gemutly/ArmorClaw/issues
 4. **Read docs:** Review relevant documentation sections
 
 ### Resources
 
 - **Documentation:** https://docs.armorclaw.com
-- **GitHub Issues:** https://github.com/armorclaw/armorclaw/issues
+- **GitHub Issues:** https://github.com/Gemutly/ArmorClaw/issues
 - **Matrix Room:** #armorclaw:matrix.org
 - **Email:** support@armorclaw.com
 

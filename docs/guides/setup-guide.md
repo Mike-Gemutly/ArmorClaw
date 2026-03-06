@@ -1054,8 +1054,8 @@ If you encounter issues during container build, particularly related to circular
 ## Getting Help
 
 - **Documentation:** [docs/](../index.md)
-- **Issues:** https://github.com/armorclaw/armorclaw/issues
-- **Discussions:** https://github.com/armorclaw/armorclaw/discussions
+- **Issues:** https://github.com/Gemutly/ArmorClaw/issues
+- **Discussions:** https://github.com/Gemutly/ArmorClaw/discussions
 
 ---
 

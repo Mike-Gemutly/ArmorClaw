@@ -374,7 +374,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
 
 ## 📞 Support
 
-- **GitHub:** https://github.com/armorclaw/armorclaw
+- **GitHub:** https://github.com/Gemutly/ArmorClaw
 - **Documentation Issues:** Create issue with `docs:` label
 - **Bug Reports:** Create issue with `bug:` label
 

@@ -311,7 +311,7 @@ func runContainerSetupCommand(cliCfg cliConfig) {
 			fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 			fmt.Println()
 			fmt.Println("This is an internal error. Please report this issue:")
-			fmt.Println("  https://github.com/armorclaw/armorclaw/issues")
+			fmt.Println("  https://github.com/Gemutly/ArmorClaw/issues")
 			fmt.Println()
 			fmt.Println("Include the stack trace above in your report.")
 			os.Exit(1)
@@ -433,7 +433,7 @@ func fatalSetupError(err error, operation, function string) {
 	fmt.Println("Suggested fixes:")
 	fmt.Println("  1. Check the error message above for clues")
 	fmt.Println("  2. Try running with -e ARMORCLAW_DEBUG=true for more info")
-	fmt.Println("  3. Report this issue: https://github.com/armorclaw/armorclaw/issues")
+	fmt.Println("  3. Report this issue: https://github.com/Gemutly/ArmorClaw/issues")
 	os.Exit(1)
 }
 
@@ -703,7 +703,7 @@ func runSetupCommandLegacy(cliCfg cliConfig) {
 	}
 
 	fmt.Println("")
-	fmt.Println("📚 Documentation: https://github.com/armorclaw/armorclaw")
+	fmt.Println("📚 Documentation: https://github.com/Gemutly/ArmorClaw")
 	fmt.Println("")
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
 	fmt.Println("")
@@ -2435,7 +2435,7 @@ func printVersion() {
 	fmt.Printf("ArmorClaw Bridge v%s\n", version)
 	fmt.Printf("Build time: %s\n", buildTime)
 	fmt.Println("License: MIT")
-	fmt.Println("https://github.com/armorclaw/armorclaw")
+	fmt.Println("https://github.com/Gemutly/ArmorClaw")
 }
 
 func printHelp() {
@@ -2496,11 +2496,11 @@ ENVIRONMENT VARIABLES:
     ARMORCLAW_CONFIG      Path to configuration file
 
 DOCUMENTATION:
-    https://github.com/armorclaw/armorclaw
+    https://github.com/Gemutly/ArmorClaw
     https://docs.armorclaw.com
 
 SUPPORT:
-    Issues: https://github.com/armorclaw/armorclaw/issues
+    Issues: https://github.com/Gemutly/ArmorClaw/issues
 `
 	fmt.Println(helpText)
 }
@@ -2635,7 +2635,7 @@ func printConnectionGuidance(cfg *config.Config) {
 	fmt.Println("  • For remote VPS, ensure your domain's DNS is properly configured")
 	fmt.Println("  • Generate QR: armorclaw-bridge generate-qr --help")
 	fmt.Println("  • Check status: armorclaw-bridge daemon status")
-	fmt.Println("  • View docs:    https://github.com/armorclaw/armorclaw/tree/main/docs/guides")
+	fmt.Println("  • View docs:    https://github.com/Gemutly/ArmorClaw/tree/main/docs/guides")
 	fmt.Println("")
 }
 

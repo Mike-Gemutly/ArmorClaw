@@ -512,7 +512,7 @@ EOF
     echo "  docker compose -f $DEPLOY_DIR/docker-compose-stack.yml logs"
     echo ""
     echo "For common issues:"
-    echo "  https://github.com/armorclaw/armorclaw/wiki/Troubleshooting"
+    echo "  https://github.com/Gemutly/ArmorClaw/wiki/Troubleshooting"
     echo ""
 
     if [ "$ERRORS_OCCURRED" -eq 0 ]; then

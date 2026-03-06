@@ -161,4 +161,4 @@ This ensures consistent formatting, structure, and quality across all documentat
 
 **Last Updated:** 2026-02-06
 **Maintained By:** ArmorClaw Documentation Team
-**Feedback:** Open an issue on [GitHub](https://github.com/armorclaw/armorclaw/issues)
+**Feedback:** Open an issue on [GitHub](https://github.com/Gemutly/ArmorClaw/issues)

@@ -109,7 +109,7 @@ ssh root@$INSTANCE_IP
 curl -fsSL https://get.docker.com | sh
 
 # Deploy ArmorClaw
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 docker-compose up -d
 ```
@@ -203,7 +203,7 @@ chmod +x /usr/local/bin/docker-compose
 
 **Clone Repository:**
 ```bash
-git clone https://github.com/armorclaw/armorclaw.git
+git clone https://github.com/Gemutly/ArmorClaw.git
 cd armorclaw
 ```
 
