@@ -776,10 +776,15 @@ load_wizard_json() {
 # Check for environment variables (non-interactive mode)
 check_env_vars() {
     # Check for minimal required env vars for non-interactive mode
-    # Only SERVER_NAME and API_KEY are required - everything else has defaults
-    if [ -n "$ARMORCLAW_SERVER_NAME" ] || [ -n "$ARMORCLAW_API_KEY" ]; then
-        print_info "Environment variables detected - using non-interactive mode"
-        NON_INTERACTIVE=true
+    # ARMORCLAW_API_KEY is required for non-interactive setup
+    # ARMORCLAW_SERVER_NAME alone is NOT enough for    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+        # No API key - not non-interactive mode
+        NON_INTERACTIVE=false
+        return
+    fi
+
+    print_info "Environment variables detected - using non-interactive mode"
+    NON_INTERACTIVE=true
 
         # Profile support
         DEPLOY_PROFILE="${ARMORCLAW_PROFILE:-quick}"
