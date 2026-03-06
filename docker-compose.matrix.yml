@@ -17,11 +17,29 @@ services:
     restart: unless-stopped
 
     environment:
-      # Config file location - all settings come from the mounted config
-      CONDUIT_CONFIG: "/etc/conduit.toml"
+      # Server configuration (env vars take precedence over config file)
+      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-5.183.11.149}"
+      CONDUIT_ADDRESS: "0.0.0.0"
+      CONDUIT_PORT: "6167"
+
+      # Database - RocksDB for better performance
+      CONDUIT_DATABASE_BACKEND: "rocksdb"
+      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit/"
+
+      # Security - registration enabled for initial setup
+      CONDUIT_ALLOW_REGISTRATION: "true"
+      CONDUIT_ALLOW_ENCRYPTION: "true"
+      CONDUIT_ALLOW_FEDERATION: "true"
+
+      # Registration secret (for admin/bridge user creation)
+      CONDUIT_REGISTRATION_SHARED_SECRET: "${REGISTRATION_SHARED_SECRET:-}"
+
+      # Logging
+      CONDUIT_LOG: "info"
 
     volumes:
       - conduit_data:/var/lib/matrix-conduit
+      # Config file mount (optional - env vars above take precedence)
       - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit.toml:ro
 
     ports:
@@ -32,11 +50,11 @@ services:
       - matrix-net
 
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:6167/_matrix/client/versions || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:6167/_matrix/client/versions || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 30s
+      start_period: 60s
 
     deploy:
       resources:

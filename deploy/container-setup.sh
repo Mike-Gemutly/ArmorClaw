@@ -1462,7 +1462,7 @@ start_matrix_stack() {
     # Generate a registration shared secret for creating users without open registration.
     # This is written into conduit.toml, used to register bridge + admin users,
     # then removed after registration is complete.
-    REGISTRATION_SHARED_SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    export REGISTRATION_SHARED_SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
     # Dynamically update conduit.toml with the correct server_name and shared secret
     local CONDUIT_TEMPLATE="/opt/armorclaw/configs/conduit.toml"
