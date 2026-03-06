@@ -232,13 +232,94 @@ After fixes, verify:
 
 ---
 
+### 8. AI Provider Base URL Support
+
+**File:** `bridge/cmd/bridge/main.go`, `bridge/pkg/keystore/keystore.go`
+**Function:** `add-key` command, credential storage
+
+**Issue:**
+The `add-key` command did not support `--base-url` flag for OpenAI-compatible providers.
+
+**Fix (COMPLETED):**
+```bash
+# Now supports custom base URLs
+armorclaw-bridge add-key --provider openai --base-url https://open.bigmodel.cn/api/paas/v4 --id zhipu --token your-api-key
+```
+
+**Supported OpenAI-Compatible Providers:**
+| Provider | Base URL |
+|----------|----------|
+| Zhipu AI | `https://open.bigmodel.cn/api/paas/v4` |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Moonshot | `https://api.moonshot.cn/v1` |
+| NVIDIA NIM | `https://integrate.api.nvidia.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Cloudflare AI Gateway | `https://gateway.ai.cloudflare.com/v1` |
+| Custom | `https://your-api.com/v1` |
+
+---
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `deploy/container-setup.sh` | All items 1-6 above |
+| `bridge/internal/adapter/matrix.go` | Item 7 - username normalization |
+| `bridge/cmd/bridge/main.go` | Item 8 - base URL support |
+| `bridge/pkg/keystore/keystore.go` | Item 8 - base URL storage |
+| `docker-compose-full.yml` | Ensure correct service names and networking |
+
+---
+
+## Verification Steps
+
+After fixes, verify:
+
+1. **Fresh install works:**
+   ```bash
+   docker compose down -v
+   docker compose up -d
+   # Should work without manual intervention
+   ```
+
+2. **Config preserved on restart:**
+   ```bash
+   # Edit config manually
+   docker compose restart
+   # Config should still have manual edits
+   ```
+
+3. **External Matrix mode:**
+   ```bash
+   ARMORCLAW_EXTERNAL_MATRIX=true docker compose up -d
+   # Should skip internal Matrix management
+   ```
+
+4. **Custom AI provider:**
+   ```bash
+   armorclaw-bridge add-key --provider openai --base-url https://api.deepseek.com/v1 --id deepseek --token your-key
+   armorclaw-bridge list-keys
+   # Should show the key with base URL
+   ```
+
+---
+
+## Related Documentation
+
+- [Production Deployment Guide](production-deployment.md)
+- [README Deployment Options](../../README.md#installation-options)
+
+---
+
 ## Progress
 
 - [x] Added `ARMORCLAW_EXTERNAL_MATRIX` support
-- [ ] Replace Synapse API with standard Matrix API
-- [ ] Fix username format in config generation
-- [ ] Add Matrix wait/retry logic
-- [ ] Preserve existing config on restart
-- [ ] Docker DNS auto-detection
-- [ ] Improved error messages
+- [x] Replace Synapse API with standard Matrix API
+- [x] Fix username format in config generation
+- [x] Add Matrix wait/retry logic
+- [x] Preserve existing config on restart
+- [x] Docker DNS auto-detection
+- [x] Improved error messages
 - [ ] Username normalization in Go
+- [x] AI Provider base URL support (`--base-url` flag)

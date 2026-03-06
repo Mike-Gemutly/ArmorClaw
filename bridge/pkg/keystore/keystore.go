@@ -72,7 +72,8 @@ const (
 type Credential struct {
 	ID          string   `json:"id"`
 	Provider    Provider `json:"provider"`
-	Token       string   `json:"token"`        // Encrypted
+	Token       string   `json:"token"`                 // Encrypted
+	BaseURL     string   `json:"base_url,omitempty"`    // Custom API base URL for OpenAI-compatible providers
 	DisplayName string   `json:"display_name"`
 	CreatedAt   int64    `json:"created_at"`
 	ExpiresAt   int64    `json:"expires_at,omitempty"` // Unix timestamp
@@ -83,6 +84,7 @@ type Credential struct {
 type KeyInfo struct {
 	ID          string   `json:"id"`
 	Provider    Provider `json:"provider"`
+	BaseURL     string   `json:"base_url,omitempty"` // Custom API base URL
 	DisplayName string   `json:"display_name"`
 	CreatedAt   int64    `json:"created_at"`
 	ExpiresAt   int64    `json:"expires_at,omitempty"`
@@ -365,6 +367,7 @@ func (ks *Keystore) initSchema(db *sql.DB) error {
 		provider TEXT NOT NULL,
 		token_encrypted BLOB NOT NULL,
 		nonce BLOB NOT NULL,
+		base_url TEXT,
 		display_name TEXT NOT NULL,
 		created_at INTEGER NOT NULL,
 		expires_at INTEGER,
@@ -487,8 +490,8 @@ func (ks *Keystore) Store(cred Credential) error {
 	// Insert into database
 	query := `
 	INSERT OR REPLACE INTO credentials
-	(id, provider, token_encrypted, nonce, display_name, created_at, expires_at, tags)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	(id, provider, token_encrypted, nonce, base_url, display_name, created_at, expires_at, tags)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = ks.db.Exec(query,
@@ -496,6 +499,7 @@ func (ks *Keystore) Store(cred Credential) error {
 		string(cred.Provider),
 		encrypted,
 		nonce,
+		cred.BaseURL,
 		cred.DisplayName,
 		cred.CreatedAt,
 		cred.ExpiresAt,
@@ -515,7 +519,7 @@ func (ks *Keystore) Retrieve(id string) (*Credential, error) {
 	}
 
 	query := `
-	SELECT id, provider, token_encrypted, nonce, display_name, created_at, expires_at, tags
+	SELECT id, provider, token_encrypted, nonce, base_url, display_name, created_at, expires_at, tags
 	FROM credentials WHERE id = ?
 	`
 
@@ -524,17 +528,23 @@ func (ks *Keystore) Retrieve(id string) (*Credential, error) {
 	var cred Credential
 	var encryptedToken, nonce []byte
 	var tagsJSON string
+	var baseURL sql.NullString
 
 	err := row.Scan(
 		&cred.ID,
 		&cred.Provider,
 		&encryptedToken,
 		&nonce,
+		&baseURL,
 		&cred.DisplayName,
 		&cred.CreatedAt,
 		&cred.ExpiresAt,
 		&tagsJSON,
 	)
+
+	if baseURL.Valid {
+		cred.BaseURL = baseURL.String
+	}
 
 	if err == sql.ErrNoRows {
 		// Log failed access to audit
@@ -593,7 +603,7 @@ func (ks *Keystore) List(provider Provider) ([]KeyInfo, error) {
 	}
 
 	query := `
-	SELECT id, provider, display_name, created_at, expires_at, tags
+	SELECT id, provider, base_url, display_name, created_at, expires_at, tags
 	FROM credentials
 	`
 
@@ -613,10 +623,12 @@ func (ks *Keystore) List(provider Provider) ([]KeyInfo, error) {
 	for rows.Next() {
 		var info KeyInfo
 		var tagsJSON string
+		var baseURL sql.NullString
 
 		err := rows.Scan(
 			&info.ID,
 			&info.Provider,
+			&baseURL,
 			&info.DisplayName,
 			&info.CreatedAt,
 			&info.ExpiresAt,
@@ -624,6 +636,10 @@ func (ks *Keystore) List(provider Provider) ([]KeyInfo, error) {
 		)
 		if err != nil {
 			continue
+		}
+
+		if baseURL.Valid {
+			info.BaseURL = baseURL.String
 		}
 
 		if tagsJSON != "[]" {

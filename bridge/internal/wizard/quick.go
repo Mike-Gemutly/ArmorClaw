@@ -20,7 +20,15 @@ type apiProviderOption struct {
 var apiProviders = []apiProviderOption{
 	{Name: "OpenAI", Key: "openai", BaseURL: "https://api.openai.com/v1"},
 	{Name: "Anthropic (Claude)", Key: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
-	{Name: "GLM-5 (Zhipu AI)", Key: "openai", BaseURL: "https://api.z.ai/api/coding/paas/v4"},
+	{Name: "Google (Gemini)", Key: "google", BaseURL: "https://generativelanguage.googleapis.com/v1"},
+	{Name: "xAI (Grok)", Key: "xai", BaseURL: "https://api.x.ai/v1"},
+	{Name: "Zhipu AI (GLM)", Key: "openai", BaseURL: "https://open.bigmodel.cn/api/paas/v4"},
+	{Name: "DeepSeek", Key: "openai", BaseURL: "https://api.deepseek.com/v1"},
+	{Name: "Moonshot AI", Key: "openai", BaseURL: "https://api.moonshot.cn/v1"},
+	{Name: "NVIDIA NIM", Key: "openai", BaseURL: "https://integrate.api.nvidia.com/v1"},
+	{Name: "OpenRouter", Key: "openai", BaseURL: "https://openrouter.ai/api/v1"},
+	{Name: "Groq", Key: "openai", BaseURL: "https://api.groq.com/openai/v1"},
+	{Name: "Cloudflare AI Gateway", Key: "openai", BaseURL: "https://gateway.ai.cloudflare.com/v1"},
 	{Name: "Custom (OpenAI-compatible)", Key: "custom", BaseURL: ""},
 }
 

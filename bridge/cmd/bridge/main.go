@@ -75,11 +75,12 @@ type cliConfig struct {
 	version          bool
 	help             bool
 	// Quick-start command flags
-	addKeyProvider   string
-	addKeyToken      string
-	addKeyId         string
+	addKeyProvider    string
+	addKeyToken       string
+	addKeyId          string
 	addKeyDisplayName string
-	startKeyId       string
+	addKeyBaseURL     string
+	startKeyId        string
 	// QR code command flags
 	qrHost string
 	qrPort int
@@ -1286,6 +1287,7 @@ func runAddKeyCommand(cliCfg cliConfig) {
 		ID:          keyID,
 		Provider:    keystore.Provider(cliCfg.addKeyProvider),
 		Token:       cliCfg.addKeyToken,
+		BaseURL:     cliCfg.addKeyBaseURL,
 		DisplayName: displayName,
 		Tags:        []string{"cli", "quick-start"},
 	}
@@ -1297,7 +1299,10 @@ func runAddKeyCommand(cliCfg cliConfig) {
 
 	log.Printf("✓ API key stored as '%s'", keyID)
 	log.Printf("  Provider: %s", cliCfg.addKeyProvider)
-	log.Printf("  Display name: %s", cliCfg.addKeyDisplayName)
+	if cliCfg.addKeyBaseURL != "" {
+		log.Printf("  Base URL: %s", cliCfg.addKeyBaseURL)
+	}
+	log.Printf("  Display name: %s", displayName)
 	log.Println("")
 	log.Println("Start an agent with this key:")
 	log.Printf("  armorclaw-bridge start --key %s", keyID)
@@ -1341,6 +1346,9 @@ func runListKeysCommand(cliCfg cliConfig) {
 	for _, cred := range creds {
 		log.Printf("  • %s", cred.ID)
 		log.Printf("    Provider: %s", cred.Provider)
+		if cred.BaseURL != "" {
+			log.Printf("    Base URL: %s", cred.BaseURL)
+		}
 		if cred.DisplayName != "" {
 			log.Printf("    Name: %s", cred.DisplayName)
 		}
@@ -2410,10 +2418,11 @@ func parseFlags() cliConfig {
 	flag.BoolVar(&cfg.help, "help", false, "Show help message")
 
 	// Quick-start command flags
-	flag.StringVar(&cfg.addKeyProvider, "provider", "", "Provider for add-key (openai, anthropic, openrouter, google, xai)")
+	flag.StringVar(&cfg.addKeyProvider, "provider", "", "Provider for add-key (openai, anthropic, openrouter, google, xai, or any OpenAI-compatible)")
 	flag.StringVar(&cfg.addKeyToken, "token", "", "API token for add-key (or use ARMORCLAW_API_KEY env var)")
 	flag.StringVar(&cfg.addKeyId, "id", "", "Key ID for add-key (default: <provider>-default)")
 	flag.StringVar(&cfg.addKeyDisplayName, "display-name", "", "Display name for add-key")
+	flag.StringVar(&cfg.addKeyBaseURL, "base-url", "", "Base URL for OpenAI-compatible API providers")
 	flag.StringVar(&cfg.startKeyId, "key", "", "Key ID for start command")
 	// QR code command flags
 	flag.StringVar(&cfg.qrHost, "host", "", "Host/domain for QR code (generate-qr command)")
@@ -2491,6 +2500,9 @@ EXAMPLES:
     ./build/armorclaw-bridge init
     ./build/armorclaw-bridge add-key --provider openai --token sk-proj-...
     ./build/armorclaw-bridge start --key openai-default
+
+    # Add key with custom base URL (for OpenAI-compatible providers)
+    ./build/armorclaw-bridge add-key --provider openai --base-url https://open.bigmodel.cn/api/paas/v4 --id zhipu --token your-api-key
 
     # List stored keys
     ./build/armorclaw-bridge list-keys
@@ -2719,10 +2731,11 @@ USAGE:
     armorclaw-bridge add-key -p PROVIDER -t TOKEN [flags]
 
 FLAGS:
-    -p, --provider string   AI provider (openai, anthropic, openrouter, google, xai)
-    -t, --token string      API token (or use ARMORCLAW_API_KEY env var)
-    -i, --id string         Key ID (default: <provider>-default)
-    -n, --name string       Display name for the key
+    -p, --provider string     AI provider (openai, anthropic, openrouter, google, xai, or any OpenAI-compatible)
+    -t, --token string        API token (or use ARMORCLAW_API_KEY env var)
+    -i, --id string           Key ID (default: <provider>-default)
+    -n, --display-name string Display name for the key
+    -b, --base-url string     Base URL for OpenAI-compatible API providers
 
 PROVIDERS:
     openai      OpenAI (GPT-4, GPT-3.5)
@@ -2731,12 +2744,24 @@ PROVIDERS:
     google      Google (Gemini)
     xai         xAI (Grok)
 
+OPENAI-COMPATIBLE PROVIDERS (use --base-url):
+    Zhipu AI        --base-url https://open.bigmodel.cn/api/paas/v4
+    DeepSeek        --base-url https://api.deepseek.com/v1
+    Moonshot        --base-url https://api.moonshot.cn/v1
+    NVIDIA NIM      --base-url https://integrate.api.nvidia.com/v1
+    OpenRouter      --base-url https://openrouter.ai/api/v1
+    Groq            --base-url https://api.groq.com/openai/v1
+    Custom endpoint --base-url https://your-api.com/v1
+
 EXAMPLES:
     # Add OpenAI key
     armorclaw-bridge add-key --provider openai --token sk-proj-xxx
 
     # Add Anthropic key with custom ID
     armorclaw-bridge add-key --provider anthropic --token sk-ant-xxx --id claude-prod
+
+    # Add Zhipu AI key with custom base URL
+    armorclaw-bridge add-key --provider openai --base-url https://open.bigmodel.cn/api/paas/v4 --id zhipu --token your-api-key
 
     # Add key using environment variable
     export ARMORCLAW_API_KEY="sk-xxx"

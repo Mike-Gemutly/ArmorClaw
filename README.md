@@ -152,6 +152,52 @@ This is why ArmorClaw is safe for sensitive tasks.
 
 ---
 
+## Supported AI Providers
+
+ArmorClaw supports multiple AI providers through a unified interface:
+
+### Native Providers
+| Provider | Provider ID | API Key Format |
+|----------|-------------|----------------|
+| OpenAI | `openai` | `sk-proj-...` |
+| Anthropic | `anthropic` | `sk-ant-...` |
+| Google Gemini | `google` | `AIza...` |
+| xAI (Grok) | `xai` | `xai-...` |
+
+### OpenAI-Compatible Providers
+Use `--provider openai` with `--base-url` for these providers:
+
+| Provider | Base URL |
+|----------|----------|
+| Zhipu AI (GLM) | `https://open.bigmodel.cn/api/paas/v4` |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Moonshot AI | `https://api.moonshot.cn/v1` |
+| NVIDIA NIM | `https://integrate.api.nvidia.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Cloudflare AI Gateway | `https://gateway.ai.cloudflare.com/v1` |
+| Custom | `https://your-api.com/v1` |
+
+### Adding a Custom Provider
+
+```bash
+# Example: Adding Zhipu AI
+armorclaw-bridge add-key \
+  --provider openai \
+  --base-url https://open.bigmodel.cn/api/paas/v4 \
+  --id zhipu \
+  --token your-api-key
+
+# Example: Adding DeepSeek
+armorclaw-bridge add-key \
+  --provider openai \
+  --base-url https://api.deepseek.com/v1 \
+  --id deepseek \
+  --token your-api-key
+```
+
+---
+
 ## System Requirements
 
 | Requirement | Minimum | Recommended |
