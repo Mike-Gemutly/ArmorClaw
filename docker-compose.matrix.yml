@@ -17,12 +17,25 @@ services:
     restart: unless-stopped
 
     environment:
-      # Config file location - all settings come from the mounted config
-      CONDUIT_CONFIG: "/etc/conduit.toml"
+      # Use environment variables only (no config file)
+      CONDUIT_CONFIG: ""
+      # Server configuration
+      CONDUIT_SERVER_NAME: "${MATRIX_SERVER_NAME:-5.183.11.149}"
+      CONDUIT_ADDRESS: "0.0.0.0"
+      CONDUIT_PORT: "6167"
+      # Database
+      CONDUIT_DATABASE_PATH: "/var/lib/matrix-conduit"
+      # Security - registration enabled for initial setup
+      CONDUIT_ALLOW_REGISTRATION: "true"
+      CONDUIT_ALLOW_ENCRYPTION: "true"
+      CONDUIT_ALLOW_FEDERATION: "true"
+      # Registration secret (for admin/bridge user creation)
+      CONDUIT_REGISTRATION_TOKEN: "${REGISTRATION_SHARED_SECRET:-}"
+      # Logging
+      CONDUIT_LOG: "info"
 
     volumes:
       - conduit_data:/var/lib/matrix-conduit
-      - ${ARMORCLAW_CONFIGS:-./configs}/conduit.toml:/etc/conduit.toml:ro
 
     ports:
       - "6167:6167"   # Client API
