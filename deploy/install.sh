@@ -44,17 +44,19 @@ PUSH_PORT=5000
 #=============================================================================
 
 # Build environment variable args for docker run (for non-interactive mode)
+# Only pass env vars when ARMORCLAW_API_KEY is set (triggers non-interactive mode)
 build_env_args() {
     local args=""
 
-    # Always pass server name (detected or overridden)
-    args="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
-
-    # Pass through user-set environment variables for non-interactive mode
-    [ -n "${ARMORCLAW_API_KEY:-}" ] && args="$args -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
-    [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && args="$args -e ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}"
-    [ -n "${ARMORCLAW_PROFILE:-}" ] && args="$args -e ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}"
-    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && args="$args -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+    # Only pass environment variables when non-interactive mode is requested
+    # If ARMORCLAW_API_KEY is set, pass all config vars for unattended setup
+    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+        args="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
+        args="$args -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
+        [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && args="$args -e ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}"
+        [ -n "${ARMORCLAW_PROFILE:-}" ] && args="$args -e ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}"
+        [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && args="$args -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+    fi
 
     echo "$args"
 }
