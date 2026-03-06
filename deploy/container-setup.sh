@@ -787,46 +787,43 @@ check_env_vars() {
     print_info "Environment variables detected - using non-interactive mode"
     NON_INTERACTIVE=true
 
-        # Profile support
-        DEPLOY_PROFILE="${ARMORCLAW_PROFILE:-quick}"
+    # Profile support
+    DEPLOY_PROFILE="${ARMORCLAW_PROFILE:-quick}"
 
-        # Server name - auto-detect if not provided
-        SERVER_NAME="${ARMORCLAW_SERVER_NAME:-$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')}"
+    # Server name - auto-detect if not provided
+    SERVER_NAME="${ARMORCLAW_SERVER_NAME:-$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')}"
 
-        # Matrix config - use internal by default
-        MATRIX_SERVER="${ARMORCLAW_MATRIX_SERVER:-$SERVER_NAME:6167}"
-        MATRIX_URL="${ARMORCLAW_MATRIX_URL:-http://localhost:6167}"
+    # Matrix config - use internal by default
+    MATRIX_SERVER="${ARMORCLAW_MATRIX_SERVER:-$SERVER_NAME:6167}"
+    MATRIX_URL="${ARMORCLAW_MATRIX_URL:-http://localhost:6167}"
 
-        # API config
-        API_KEY="${ARMORCLAW_API_KEY:-}"
-        API_BASE_URL="${ARMORCLAW_API_BASE_URL:-https://api.openai.com/v1}"
-        # Detect provider from base URL
-        case "$API_BASE_URL" in
-            *anthropic*) API_PROVIDER="anthropic" ;;
-            *) API_PROVIDER="openai" ;;
-        esac
+    # API config
+    API_KEY="${ARMORCLAW_API_KEY:-}"
+    API_BASE_URL="${ARMORCLAW_API_BASE_URL:-https://api.openai.com/v1}"
+    # Detect provider from base URL
+    case "$API_BASE_URL" in
+        *anthropic*) API_PROVIDER="anthropic" ;;
+        *) API_PROVIDER="openai" ;;
+    esac
 
-        # Bridge config
-        BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)}"
-        LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
-        SOCKET_PATH="${ARMORCLAW_SOCKET_PATH:-/run/armorclaw/bridge.sock}"
+    # Bridge config
+    BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)}"
+    LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
+    SOCKET_PATH="${ARMORCLAW_SOCKET_PATH:-/run/armorclaw/bridge.sock}"
 
-        # Enterprise profile env vars
-        if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
-            SECURITY_TIER="maximum"
-            HIPAA_ENABLED="${ARMORCLAW_HIPAA:-false}"
-            QUARANTINE_ENABLED="${ARMORCLAW_QUARANTINE:-true}"
-            AUDIT_RETENTION_DAYS="${ARMORCLAW_AUDIT_RETENTION:-90}"
-            COMPLIANCE_PATTERNS_PII="true"
-            if [ "$HIPAA_ENABLED" = "true" ]; then
-                COMPLIANCE_PATTERNS_PHI="true"
-            fi
-            LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
-        else
-            SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
+    # Enterprise profile env vars
+    if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
+        SECURITY_TIER="maximum"
+        HIPAA_ENABLED="${ARMORCLAW_HIPAA:-false}"
+        QUARANTINE_ENABLED="${ARMORCLAW_QUARANTINE:-true}"
+        AUDIT_RETENTION_DAYS="${ARMORCLAW_AUDIT_RETENTION:-90}"
+        COMPLIANCE_PATTERNS_PII="true"
+        if [ "$HIPAA_ENABLED" = "true" ]; then
+            COMPLIANCE_PATTERNS_PHI="true"
         fi
+        LOG_LEVEL="${ARMORCLAW_LOG_LEVEL:-info}"
     else
-        NON_INTERACTIVE=false
+        SECURITY_TIER="${ARMORCLAW_SECURITY_TIER:-enhanced}"
     fi
 }
 
