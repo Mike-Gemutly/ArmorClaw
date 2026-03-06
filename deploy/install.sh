@@ -40,6 +40,26 @@ MATRIX_PORT=6167
 PUSH_PORT=5000
 
 #=============================================================================
+# Environment Variable Pass-through
+#=============================================================================
+
+# Build environment variable args for docker run (for non-interactive mode)
+build_env_args() {
+    local args=""
+
+    # Always pass server name (detected or overridden)
+    args="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
+
+    # Pass through user-set environment variables for non-interactive mode
+    [ -n "${ARMORCLAW_API_KEY:-}" ] && args="$args -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
+    [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && args="$args -e ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}"
+    [ -n "${ARMORCLAW_PROFILE:-}" ] && args="$args -e ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}"
+    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && args="$args -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+
+    echo "$args"
+}
+
+#=============================================================================
 # Port Detection
 #=============================================================================
 
@@ -141,9 +161,9 @@ EOF
 
     # Add optional env vars
     [ -n "${ARMORCLAW_API_KEY:-}" ] && echo "      - ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}" >> "$COMPOSE_FILE"
-    [ -n "${ARMORCLAW_ADMIN_USER:-}" ] && echo "      - ARMORCLAW_ADMIN_USER=${ARMORCLAW_ADMIN_USER}" >> "$COMPOSE_FILE"
+    [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && echo "      - ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}" >> "$COMPOSE_FILE"
+    [ -n "${ARMORCLAW_PROFILE:-}" ] && echo "      - ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}" >> "$COMPOSE_FILE"
     [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && echo "      - ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}" >> "$COMPOSE_FILE"
-    [ -n "${ARMORCLAW_PROVIDER:-}" ] && echo "      - ARMORCLAW_PROVIDER=${ARMORCLAW_PROVIDER}" >> "$COMPOSE_FILE"
 
     cat >> "$COMPOSE_FILE" << EOF
     healthcheck:
@@ -165,7 +185,6 @@ EOF
     echo ""
     echo -e "${CYAN}Customize with environment variables:${NC}"
     echo "  export ARMORCLAW_API_KEY=sk-your-key"
-    echo "  export ARMORCLAW_ADMIN_USER=admin"
     echo "  export ARMORCLAW_ADMIN_PASSWORD=\$(openssl rand -base64 24)"
     echo "  $0 --bootstrap"
     echo ""
@@ -207,14 +226,18 @@ while [[ $# -gt 0 ]]; do
             echo "  --help           Show this help"
             echo ""
             echo "Environment Variables:"
-            echo "  ARMORCLAW_API_KEY        AI provider API key"
-            echo "  ARMORCLAW_PROVIDER       AI provider (openai, anthropic, google)"
-            echo "  ARMORCLAW_ADMIN_USER     Admin username (default: admin)"
-            echo "  ARMORCLAW_ADMIN_PASSWORD Admin password (auto-generated)"
+            echo "  ARMORCLAW_API_KEY        AI provider API key (enables non-interactive mode)"
+            echo "  ARMORCLAW_API_BASE_URL   Custom API endpoint (optional)"
+            echo "  ARMORCLAW_PROFILE        Deployment profile: quick (default) or enterprise"
+            echo "  ARMORCLAW_ADMIN_PASSWORD Admin password (auto-generated if not set)"
             echo "  ARMORCLAW_SERVER_NAME    Server hostname or IP (auto-detected if not set)"
             echo ""
             echo "Examples:"
             echo "  # Full stack with Matrix (default)"
+            echo "  curl -fsSL ... | bash"
+            echo ""
+            echo "  # Non-interactive (CI/CD)"
+            echo "  export ARMORCLAW_API_KEY=sk-your-key"
             echo "  curl -fsSL ... | bash"
             echo ""
             echo "  # Generate compose file for customization"
@@ -348,13 +371,19 @@ EOF
     fi
 
     echo -e "${CYAN}Starting ArmorClaw Bridge...${NC}"
+
+    # Build environment args (bridge-only still needs server name)
+    ENV_ARGS="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
+    [ -n "${ARMORCLAW_API_KEY:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
+    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+
     docker run -d --name ${CONTAINER_NAME} \
         --restart unless-stopped \
         --user root \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v ${CONFIG_DIR}:/etc/armorclaw \
         -v ${DATA_DIR}:/var/lib/armorclaw \
-        -e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP} \
+        ${ENV_ARGS} \
         -p ${BRIDGE_PORT}:8443 \
         ${IMAGE}
 
@@ -404,6 +433,12 @@ echo ""
 if [ "$NO_START" = true ]; then
     echo -e "${YELLOW}--no-start specified. Container not started.${NC}"
     echo ""
+    # Build env args for display
+    ENV_ARGS="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
+    [ -n "${ARMORCLAW_API_KEY:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_KEY=***"
+    [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}"
+    [ -n "${ARMORCLAW_PROFILE:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}"
+    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_ADMIN_PASSWORD=***"
     echo "To start:"
     echo "  docker run -it --name ${CONTAINER_NAME} \\"
     echo "    --restart unless-stopped \\"
@@ -411,11 +446,14 @@ if [ "$NO_START" = true ]; then
     echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
     echo "    -v ${CONFIG_DIR}:/etc/armorclaw \\"
     echo "    -v ${DATA_DIR}:/var/lib/armorclaw \\"
-    echo "    -e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP} \\"
+    echo "    ${ENV_ARGS} \\"
     echo "    -p ${BRIDGE_PORT}:8443 -p ${MATRIX_PORT}:6167 -p ${PUSH_PORT}:5000 \\"
     echo "    ${IMAGE}"
     exit 0
 fi
+
+# Build environment args
+ENV_ARGS=$(build_env_args)
 
 docker run -it --name ${CONTAINER_NAME} \
     --restart unless-stopped \
@@ -423,7 +461,7 @@ docker run -it --name ${CONTAINER_NAME} \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v ${CONFIG_DIR}:/etc/armorclaw \
     -v ${DATA_DIR}:/var/lib/armorclaw \
-    -e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP} \
+    ${ENV_ARGS} \
     -p ${BRIDGE_PORT}:8443 \
     -p ${MATRIX_PORT}:6167 \
     -p ${PUSH_PORT}:5000 \
