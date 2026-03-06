@@ -64,6 +64,9 @@ echo "----------------------"
 cat > "$BRIDGE_BIN" <<'EOF'
 #!/bin/bash
 # E2E test stub for armorclaw-bridge
+# Trap SIGPIPE to prevent "Broken pipe" errors when grep -q closes early
+
+trap '' PIPE 2>/dev/null || true
 
 case "${1:-}" in
   status)
