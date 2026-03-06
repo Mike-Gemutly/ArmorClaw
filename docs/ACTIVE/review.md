@@ -1,8 +1,8 @@
 # ArmorClaw Quickstart Review
 
 > **Purpose:** Complete guide to the Docker quickstart process and post-deployment steps
-> **Version:** 0.4.0
-> **Last Updated:** 2026-02-28
+> **Version:** 0.4.2
+> **Last Updated:** 2026-03-05
 > **Status:** Active Reference
 
 ---
@@ -46,12 +46,11 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 │  │ 2. GO WIZARD (armorclaw-bridge container-setup)                     │   │
 │  │    • Check env vars FIRST (tryNonInteractive)                      │   │
 │  │      - If ARMORCLAW_API_KEY set → non-interactive mode             │   │
-│  │      - Auto-detect server name if not provided                     │   │
+│  │      - Server name passed from host (ARMORCLAW_SERVER_NAME)        │   │
 │  │    • Else: Check terminal (TTY, color support, size)               │   │
 │  │    • Launch Huh? TUI wizard if terminal OK                         │   │
-│  │      - Page 1: Profile selection (Quick/Enterprise)                │   │
-│  │      - Page 2: AI provider + API key                               │   │
-│  │      - Page 3: Admin password + Deploy confirmation                │   │
+│  │      - Step 1 of 2: AI Provider + API Key                          │   │
+│  │      - Step 2 of 2: Admin Password + Deploy confirmation           │   │
 │  │    • Output: /tmp/armorclaw-wizard.json + env vars for secrets     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                 │                                           │
@@ -90,6 +89,77 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 │                          ARMORCLAW RUNNING                                  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Install Script Flow (v0.4.2)
+
+The `install.sh` script orchestrates the entire deployment process:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     INSTALL.SH FLOW (v0.4.2)                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  USER RUNS: curl -fsSL .../install.sh | bash                                │
+│                                 │                                           │
+│                                 ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ 1. PREFLIGHT CHECKS                                                  │   │
+│  │    • Verify Docker is installed and running                         │   │
+│  │    • Check for root/sudo permissions                                │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                 │                                           │
+│                                 ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ 2. AUTO-DETECTION (on host, before container)                        │   │
+│  │    • Detect available ports (8443, 6167, 5000 or fallback)          │   │
+│  │    • Detect server IP: ip route get 1                               │   │
+│  │    • Collect env vars from user's shell                             │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                 │                                           │
+│                                 ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ 3. DOCKER RUN (passes env vars to container)                         │   │
+│  │    docker run ... \                                                 │   │
+│  │      -e ARMORCLAW_SERVER_NAME=<detected-ip> \                       │   │
+│  │      -e ARMORCLAW_API_KEY=<if-set> \                                │   │
+│  │      -e ARMORCLAW_API_BASE_URL=<if-set> \                           │   │
+│  │      -e ARMORCLAW_PROFILE=<if-set> \                                │   │
+│  │      -e ARMORCLAW_ADMIN_PASSWORD=<if-set> \                         │   │
+│  │      ...                                                            │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                 │                                           │
+│                                 ▼                                           │
+│                     CONTAINER STARTS (see Quickstart Flow)                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why Host-Side IP Detection?
+
+Container-side IP detection returns the **container's internal IP** (172.17.x.x), not the host's public IP. This would break ArmorChat connectivity. The install script detects the IP on the host and passes it via `ARMORCLAW_SERVER_NAME`.
+
+### Non-Interactive Mode
+
+```bash
+# Minimal - just API key (IP auto-detected)
+export ARMORCLAW_API_KEY=sk-your-key
+curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+
+# With explicit server
+export ARMORCLAW_API_KEY=sk-your-key
+export ARMORCLAW_SERVER_NAME=192.168.1.50
+curl -fsSL ... | bash
+```
+
+### Bootstrap Mode (GitOps)
+
+```bash
+# Generate docker-compose.yml without starting
+curl -fsSL ... | bash -s -- --bootstrap
+# Output: /opt/armorclaw/docker-compose.yml
 ```
 
 ---
@@ -187,11 +257,12 @@ If using the TUI wizard:
 
 | Step | What Happens | User Action |
 |------|--------------|-------------|
-| Profile | Select Quick Start or Enterprise | Arrow keys + Enter |
 | AI Provider | Choose OpenAI, Anthropic, GLM-5, or Custom | Arrow keys + Enter |
 | API Key | Enter your API key (masked) | Type key + Enter |
 | Admin Password | Enter password or press Enter to auto-generate | Type + Enter or just Enter |
 | Deploy | Confirm deployment | Select "Deploy" + Enter |
+
+**Note:** Profile selection (Quick/Enterprise) is determined by `ARMORCLAW_PROFILE` env var (defaults to Quick).
 
 ### Infrastructure Setup (1-3 minutes)
 
@@ -325,18 +396,17 @@ docker exec armorclaw rm /var/lib/armorclaw/.admin_password
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ARMORCLAW_API_KEY` | **Yes** | Triggers non-interactive mode. Your AI provider's API key. |
-| `ARMORCLAW_SERVER_NAME` | Auto | Server domain or IP. Auto-detected if omitted. |
+| `ARMORCLAW_SERVER_NAME` | Auto | Server domain or IP. **Auto-detected on host** and passed to container. |
 
 ### Optional Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ARMORCLAW_API_BASE_URL` | OpenAI URL | Custom API endpoint (for Anthropic, GLM-5, etc.) |
 | `ARMORCLAW_PROFILE` | `quick` | `quick` or `enterprise` |
-| `ARMORCLAW_API_BASE_URL` | OpenAI | Provider API URL |
-| `ARMORCLAW_ADMIN_USER` | `admin` | Admin username |
-| `ARMORCLAW_ADMIN_PASSWORD` | (generated) | Admin password |
-| `ARMORCLAW_HIPAA` | `false` | Enable HIPAA mode |
-| `ARMORCLAW_QUARANTINE` | `false` | Enable quarantine mode |
+| `ARMORCLAW_ADMIN_PASSWORD` | (generated) | Admin password for Matrix |
+| `ARMORCLAW_HIPAA` | `false` | Enable HIPAA mode (enterprise profile) |
+| `ARMORCLAW_QUARANTINE` | `false` | Enable quarantine mode (enterprise profile) |
 | `ARMORCLAW_DEBUG` | `false` | Enable debug logging |
 
 ### Development/Debugging
@@ -943,6 +1013,7 @@ services:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 0.4.2 | 2026-03-05 | **Install script fixes**: Host-side IP detection, env var pass-through, corrected wizard flow docs |
 | 0.4.1 | 2026-02-28 | Browser Service (TypeScript/Playwright), Browser Client, Queue Processor |
 | 0.4.0 | 2026-02-28 | Agent Studio, Browser Skill API, MCP Approval Workflow |
 | 0.3.3 | 2026-02-26 | Preflight checks, progress indication, rollback, password file |
@@ -962,6 +1033,6 @@ services:
 
 ---
 
-**Document Version:** 1.1.0
-**Last Updated:** 2026-02-28
+**Document Version:** 1.2.0
+**Last Updated:** 2026-03-05
 **Maintainer:** ArmorClaw Team
