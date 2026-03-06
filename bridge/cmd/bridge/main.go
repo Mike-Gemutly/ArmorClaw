@@ -1721,7 +1721,7 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 	log.Printf("Runtime directory ready: %s", runtimeDir)
 
-	// Initialize keystore
+	// Initialize keystore with recovery for corrupted databases
 	log.Println("Initializing encrypted keystore...")
 	ks, err := keystore.New(cfg.ToKeystoreConfig())
 	if err != nil {
@@ -1729,7 +1729,34 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 
 	if err := ks.Open(); err != nil {
-		log.Fatalf("Failed to open keystore: %v", err)
+		// Check if database is corrupted - try to recover
+		if strings.Contains(err.Error(), "file is not a database") || strings.Contains(err.Error(), "database disk image is malformed") {
+			log.Printf("Warning: Corrupted keystore detected, attempting recovery...")
+			dbPath := cfg.Keystore.DBPath
+
+			// Backup corrupted file
+			backupPath := dbPath + ".corrupted." + time.Now().Format("20060102-150405")
+			if renameErr := os.Rename(dbPath, backupPath); renameErr != nil {
+				log.Printf("Warning: Could not backup corrupted database: %v", renameErr)
+				// Try to delete directly
+				os.Remove(dbPath)
+				os.Remove(dbPath + "-shm")
+				os.Remove(dbPath + "-wal")
+			}
+			log.Printf("Corrupted database backed up to: %s", backupPath)
+
+			// Retry opening
+			ks, err = keystore.New(cfg.ToKeystoreConfig())
+			if err != nil {
+				log.Fatalf("Failed to reinitialize keystore: %v", err)
+			}
+			if err := ks.Open(); err != nil {
+				log.Fatalf("Failed to open keystore after recovery: %v", err)
+			}
+			log.Printf("Keystore recovered successfully (previous data lost)")
+		} else {
+			log.Fatalf("Failed to open keystore: %v", err)
+		}
 	}
 	defer ks.Close()
 

@@ -443,19 +443,23 @@ func New(cfg Config) (*Server, error) {
 			DeviceID:      "armorclaw-bridge",
 		})
 		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to create Matrix adapter: %w", err)
-		}
-		server.matrix = matrix
+			// Log warning but don't fail - Matrix is optional
+			slog.Warn("Failed to create Matrix adapter", "error", err)
+			slog.Info("Bridge will run without Matrix integration")
+		} else {
+			server.matrix = matrix
 
-		// Auto-login if credentials provided
-		if cfg.MatrixUsername != "" && cfg.MatrixPassword != "" {
-			if err := matrix.Login(cfg.MatrixUsername, cfg.MatrixPassword); err != nil {
-				cancel()
-				return nil, fmt.Errorf("failed to login to Matrix: %w", err)
+			// Auto-login if credentials provided
+			if cfg.MatrixUsername != "" && cfg.MatrixPassword != "" {
+				if err := matrix.Login(cfg.MatrixUsername, cfg.MatrixPassword); err != nil {
+					// Log warning but don't fail - Matrix login can be retried via RPC
+					slog.Warn("Failed to login to Matrix", "error", err)
+					slog.Info("Matrix integration disabled. Retry with: matrix_login RPC method")
+				} else {
+					// Start background sync only if login succeeded
+					matrix.StartSync()
+				}
 			}
-			// Start background sync
-			matrix.StartSync()
 		}
 	}
 

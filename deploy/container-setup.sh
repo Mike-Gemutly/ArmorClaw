@@ -1418,6 +1418,14 @@ start_matrix_stack() {
         return
     fi
 
+    # --- Pre-flight cleanup: Remove stale networks and containers ---
+    # This prevents "network already exists" errors from previous failed runs
+    print_info "Cleaning up any stale Docker resources..."
+    docker rm -f armorclaw-conduit armorclaw-sygnal 2>/dev/null || true
+    docker network rm armorclaw-matrix armorclaw_default 2>/dev/null || true
+    # Wait a moment for Docker to process the removals
+    sleep 2
+
     # --- Prepare config files on the HOST filesystem ---
     # When running inside a container with the Docker socket mounted,
     # bind mount paths in compose files resolve on the HOST filesystem.
@@ -1500,8 +1508,51 @@ start_matrix_stack() {
     if [ $COMPOSE_EXIT -ne 0 ]; then
         print_error "Docker Compose failed (exit $COMPOSE_EXIT):"
         echo "$COMPOSE_OUTPUT" | tail -20
-        print_warning "Matrix stack may not be available. Check 'docker compose logs' for details."
-        return
+
+        # Check for specific error types and provide actionable guidance
+        if echo "$COMPOSE_OUTPUT" | grep -qi "network"; then
+            print_error ""
+            print_error "══════════════════════════════════════════════════════"
+            print_error "NETWORK ERROR DETECTED"
+            print_error "══════════════════════════════════════════════════════"
+            print_error ""
+            print_error "Docker failed to create a network. This is usually caused by:"
+            print_error ""
+            print_error "  1. Network name conflict from a previous failed run"
+            print_error "  2. Docker daemon overloaded or unresponsive"
+            print_error "  3. Insufficient system resources"
+            print_error ""
+            print_error "Quick fixes to try:"
+            print_error ""
+            print_error "  # Clean up all ArmorClaw resources and retry:"
+            print_error "  docker rm -f armorclaw 2>/dev/null; \\"
+            print_error "    docker network prune -f; \\"
+            print_error "    docker volume prune -f"
+            print_error ""
+            print_error "  # Then re-run the installation"
+            print_error ""
+            print_error "If the issue persists, check Docker daemon:"
+            print_error "  systemctl restart docker"
+            print_error "══════════════════════════════════════════════════════"
+        fi
+
+        # Attempt cleanup of partial resources
+        print_info "Attempting cleanup of partial resources..."
+        docker compose -f docker-compose.matrix.yml down --volumes 2>/dev/null || true
+        docker network rm armorclaw-matrix 2>/dev/null || true
+
+        # Set Matrix as unavailable and disable in config
+        MATRIX_AVAILABLE=false
+        print_warning "Matrix stack unavailable - bridge will run in standalone mode"
+
+        # Update config to disable Matrix
+        if [ -f "$CONFIG_FILE" ]; then
+            sed -i 's/^enabled = true/enabled = false/' "$CONFIG_FILE" 2>/dev/null || true
+            sed -i 's|^homeserver_url = .*|homeserver_url = ""|' "$CONFIG_FILE" 2>/dev/null || true
+            print_info "Updated config to disable Matrix integration"
+        fi
+
+        return 1
     fi
     print_success "Docker Compose started"
 

@@ -744,6 +744,17 @@ for field in socket_path homeserver_url db_path; do
     fi
 done
 
+# Check for corrupted keystore database
+KEYSTORE_DB="/var/lib/armorclaw/keystore.db"
+if [ -f "$KEYSTORE_DB" ]; then
+    # Check if it's a valid SQLite database (corrupted files fail this)
+    if ! file "$KEYSTORE_DB" 2>/dev/null | grep -q "SQLite"; then
+        echo -e "${YELLOW}Warning: Corrupted keystore detected, rebuilding...${NC}"
+        rm -f "$KEYSTORE_DB" "$KEYSTORE_DB-shm" "$KEYSTORE_DB-wal" 2>/dev/null
+        log_info "Removed corrupted keystore database"
+    fi
+fi
+
 echo -e "${GREEN}Starting ArmorClaw Bridge...${NC}"
 echo ""
 

@@ -216,7 +216,12 @@ while [[ $# -gt 0 ]]; do
             echo "ArmorClaw Quick Install v0.4.0"
             echo ""
             echo "Usage:"
-            echo "  curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash"
+            echo "  # Interactive (requires TTY):"
+            echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)\""
+            echo ""
+            echo "  # Non-interactive (CI/CD, no TTY required):"
+            echo "  export ARMORCLAW_API_KEY=sk-your-key"
+            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash"
             echo ""
             echo "Options:"
             echo "  --bootstrap      Generate docker-compose.yml (no container start)"
@@ -225,26 +230,26 @@ while [[ $# -gt 0 ]]; do
             echo "  --ports          Show auto-detected ports"
             echo "  --help           Show this help"
             echo ""
-            echo "Environment Variables:"
-            echo "  ARMORCLAW_API_KEY        AI provider API key (enables non-interactive mode)"
+            echo "Environment Variables (for non-interactive mode):"
+            echo "  ARMORCLAW_API_KEY        AI provider API key (required for non-interactive)"
             echo "  ARMORCLAW_API_BASE_URL   Custom API endpoint (optional)"
             echo "  ARMORCLAW_PROFILE        Deployment profile: quick (default) or enterprise"
             echo "  ARMORCLAW_ADMIN_PASSWORD Admin password (auto-generated if not set)"
             echo "  ARMORCLAW_SERVER_NAME    Server hostname or IP (auto-detected if not set)"
             echo ""
             echo "Examples:"
-            echo "  # Full stack with Matrix (default)"
-            echo "  curl -fsSL ... | bash"
+            echo "  # Interactive with TTY"
+            echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)\""
             echo ""
             echo "  # Non-interactive (CI/CD)"
             echo "  export ARMORCLAW_API_KEY=sk-your-key"
-            echo "  curl -fsSL ... | bash"
+            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash"
             echo ""
             echo "  # Generate compose file for customization"
-            echo "  curl -fsSL ... | bash -s -- --bootstrap"
+            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bootstrap"
             echo ""
             echo "  # Bridge-only for testing"
-            echo "  curl -fsSL ... | bash -s -- --bridge-only"
+            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bridge-only"
             echo ""
             exit 0
             ;;
@@ -311,6 +316,18 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo -e "${YELLOW}Removing existing container...${NC}"
     docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 fi
+
+# Clean up previous failed installs (fresh start)
+echo -e "${CYAN}Cleaning up previous installation state...${NC}"
+$SUDO rm -f ${CONFIG_DIR}/.setup_complete 2>/dev/null || true
+$SUDO rm -f ${DATA_DIR}/keystore.db 2>/dev/null || true
+$SUDO rm -f ${DATA_DIR}/keystore.db-shm 2>/dev/null || true
+$SUDO rm -f ${DATA_DIR}/keystore.db-wal 2>/dev/null || true
+$SUDO rm -f ${DATA_DIR}/.api_key_temp 2>/dev/null || true
+$SUDO rm -f ${DATA_DIR}/.admin_password 2>/dev/null || true
+$SUDO rm -f ${DATA_DIR}/.admin_user 2>/dev/null || true
+# Also clean up Matrix config from previous runs
+$SUDO rm -rf /tmp/armorclaw-configs 2>/dev/null || true
 
 # Pull image
 echo -e "${CYAN}Pulling image: ${IMAGE}${NC}"
@@ -455,7 +472,31 @@ fi
 # Build environment args
 ENV_ARGS=$(build_env_args)
 
-docker run -it --name ${CONTAINER_NAME} \
+# Determine run mode based on TTY availability and environment
+DOCKER_FLAGS=""
+if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
+    # Non-interactive mode (API key provided) - run detached
+    DOCKER_FLAGS="-d"
+elif [ -t 0 ]; then
+    # Interactive mode with TTY - run with interactive terminal
+    DOCKER_FLAGS="-it"
+else
+    # No TTY and no API key - show error with instructions
+    echo -e "${RED}ERROR: No TTY detected and no API key provided.${NC}"
+    echo ""
+    echo "To run in non-interactive mode, set environment variables:"
+    echo ""
+    echo "  export ARMORCLAW_API_KEY=sk-your-key"
+    echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash"
+    echo ""
+    echo "Or run with a TTY:"
+    echo ""
+    echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)\""
+    echo ""
+    exit 1
+fi
+
+docker run ${DOCKER_FLAGS} --name ${CONTAINER_NAME} \
     --restart unless-stopped \
     --user root \
     -v /var/run/docker.sock:/var/run/docker.sock \

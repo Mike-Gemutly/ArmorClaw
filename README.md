@@ -11,11 +11,20 @@ ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, 
 
 ## Quick Start (2 minutes)
 
+### Interactive Setup (with TTY)
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)"
 ```
 
-**That's it.** The wizard asks 3 questions and sets everything up.
+**That's it.** The wizard asks 2 questions and sets everything up.
+
+### Non-Interactive Setup (CI/CD, no TTY)
+
+```bash
+export ARMORCLAW_API_KEY=sk-your-key
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+```
 
 ### What You'll See
 
@@ -142,10 +151,10 @@ This is why ArmorClaw is safe for sensitive tasks.
 
 ## Installation Options
 
-### One-Line Install (Recommended)
+### Interactive Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)"
 ```
 
 ### Deployment Modes
@@ -161,12 +170,12 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 ```bash
 # Minimal - auto-detects server IP
 export ARMORCLAW_API_KEY=sk-your-key
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 
 # Or with explicit server IP/domain
 export ARMORCLAW_API_KEY=sk-your-key
 export ARMORCLAW_SERVER_NAME=192.168.1.50
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
 
 ### Bootstrap Mode (GitOps)
@@ -174,7 +183,7 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 Generates production-ready config:
 
 ```bash
-curl -fsSL ... | bash -s -- --bootstrap
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bootstrap
 ```
 
 Output: `/opt/armorclaw/docker-compose.yml`
@@ -193,7 +202,7 @@ Use for:
 ### Generate Config (GitOps/CI/CD)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash -s -- --bootstrap
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bootstrap
 ```
 
 Creates `/opt/armorclaw/docker-compose.yml` for version control.
