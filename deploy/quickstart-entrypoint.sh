@@ -56,14 +56,40 @@ fi
 # Ensure required directories exist
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 
-# Check if Conduit config exists
+# Copy Conduit config from template if not exists
+TEMPLATE_CONFIG="/opt/armorclaw/configs/conduit.toml"
 if [ ! -f "$CONDUIT_CONFIG" ]; then
-    log_error "Conduit config not found at $CONDUIT_CONFIG"
-    exit 1
+    if [ -f "$TEMPLATE_CONFIG" ]; then
+        log "Copying Conduit config template..."
+        cp "$TEMPLATE_CONFIG" "$CONDUIT_CONFIG"
+    else
+        log_error "Conduit config template not found at $TEMPLATE_CONFIG"
+        exit 1
+    fi
 fi
 
-# Extract server name from config for display
-SERVER_NAME=$(grep -E '^server_name\s*=' "$CONDUIT_CONFIG" | sed 's/^.*=\s*"\(.*\)".*/\1/' || echo "localhost")
+# Detect or use provided server name
+if [ -z "$ARMORCLAW_SERVER_NAME" ]; then
+    # Auto-detect: try external IP, fallback to hostname, then localhost
+    ARMORCLAW_SERVER_NAME=$(curl -sf --connect-timeout 3 ifconfig.me 2>/dev/null || \
+                           hostname -I 2>/dev/null | awk '{print $1}' || \
+                           hostname 2>/dev/null || \
+                           echo "localhost")
+    log "Auto-detected server name: $ARMORCLAW_SERVER_NAME"
+else
+    log "Using provided server name: $ARMORCLAW_SERVER_NAME"
+fi
+
+# Update server_name in config
+if grep -q '^server_name\s*=' "$CONDUIT_CONFIG"; then
+    sed -i "s/^server_name\s*=.*/server_name = \"$ARMORCLAW_SERVER_NAME\"/" "$CONDUIT_CONFIG"
+    log "Updated server_name in config to: $ARMORCLAW_SERVER_NAME"
+else
+    echo "server_name = \"$ARMORCLAW_SERVER_NAME\"" >> "$CONDUIT_CONFIG"
+fi
+
+# Export for later use
+SERVER_NAME="$ARMORCLAW_SERVER_NAME"
 log "Server name: $SERVER_NAME"
 
 # Start Conduit in background
