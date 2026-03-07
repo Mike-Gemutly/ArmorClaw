@@ -38,6 +38,7 @@ type WizardConfig struct {
 	Profile       string `json:"profile"`
 	APIProvider   string `json:"api_provider"`
 	APIBaseURL    string `json:"api_base_url"`
+	DefaultModel  string `json:"default_model,omitempty"`
 	AdminUser     string `json:"admin_user"`
 	ServerName    string `json:"server_name,omitempty"`
 	MatrixServer  string `json:"matrix_server,omitempty"`

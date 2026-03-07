@@ -3,6 +3,9 @@
 # ArmorClaw Infrastructure Deployment Script
 # Target: Hostinger KVM2 (4 GB RAM, Ubuntu 22.04/24.04)
 # Purpose: Provision Docker, Nginx (SSL), and Matrix Conduit
+# Version: 1.0
+# Idempotent: Yes
+# Safe to re-run: Yes
 # =============================================================================
 
 set -euo pipefail

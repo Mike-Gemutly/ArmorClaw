@@ -1,8 +1,20 @@
 #!/bin/bash
+# =============================================================================
+# DEPRECATED - Kept for historical reference only
+# Status: Deprecated as of 2026-03-06
+# Reason: Superseded by deploy-infra.sh and install.sh
+# Use Instead: deploy/install.sh
+# =============================================================================
+
+echo "⚠️  This script is deprecated. Use deploy/install.sh instead."
+exit 1
+
+# =============================================================================
+# ORIGINAL SCRIPT BELOW (for reference only)
+# =============================================================================
+
 # ArmorClaw VPS Deployment Script
 # Usage: Upload this script + armorclaw-deploy.tar.gz to VPS, then run this script
-
-set -e
 
 # Colors for output
 RED='\033[0;31m'

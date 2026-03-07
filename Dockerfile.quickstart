@@ -24,6 +24,9 @@ COPY bridge/ ./
 # Build with CGO enabled (required for go-sqlcipher)
 RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o armorclaw-bridge ./cmd/bridge
 
+# Build bootstrap-admin binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o bootstrap-admin ./cmd/bootstrap-admin
+
 # ============================================================================
 # Stage 2: Agent Runtime Builder
 # ============================================================================
@@ -107,8 +110,10 @@ RUN mkdir -p /opt/armorclaw \
 
 # Copy bridge binary from builder
 COPY --from=bridge-builder /build/armorclaw-bridge /opt/armorclaw/
-RUN chmod +x /opt/armorclaw/armorclaw-bridge && \
-    ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge
+COPY --from=bridge-builder /build/bootstrap-admin /opt/armorclaw/
+RUN chmod +x /opt/armorclaw/armorclaw-bridge /opt/armorclaw/bootstrap-admin && \
+    ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge && \
+    ln -sf /opt/armorclaw/bootstrap-admin /usr/local/bin/bootstrap-admin
 
 # Copy agent runtime from builder
 COPY --from=agent-builder /opt/venv /opt/venv
@@ -127,12 +132,10 @@ COPY deploy/health-check.sh /opt/armorclaw/
 COPY deploy/create-matrix-admin.sh /opt/armorclaw/
 COPY deploy/view-setup-log.sh /opt/armorclaw/
 COPY deploy/quickstart-entrypoint.sh /opt/armorclaw/
-COPY deploy/bootstrap-admin.py /opt/armorclaw/
 COPY deploy/rename-admin.sh /opt/armorclaw/
-RUN chmod +x /opt/armorclaw/*.sh /opt/armorclaw/*.py && \
+RUN chmod +x /opt/armorclaw/*.sh && \
     ln -sf /opt/armorclaw/view-setup-log.sh /usr/local/bin/view-setup-log && \
-    ln -sf /opt/armorclaw/rename-admin.sh /usr/local/bin/rename-admin && \
-    pip install --no-cache-dir toml requests urllib3
+    ln -sf /opt/armorclaw/rename-admin.sh /usr/local/bin/rename-admin
 
 # Copy configuration templates
 COPY configs/ /opt/armorclaw/configs/

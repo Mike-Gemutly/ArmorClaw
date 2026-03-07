@@ -1,11 +1,14 @@
 #!/bin/bash
+# =============================================================================
 # ArmorClaw Matrix Setup
-# Post-setup Matrix configuration script
-# Version: 0.3.1
+# Version: 1.0
+# Idempotent: Yes
+# Safe to re-run: Yes
+# =============================================================================
 #
 # Usage: sudo ./deploy/setup-matrix.sh [--enable] [--domain example.com]
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

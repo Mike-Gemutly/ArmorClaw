@@ -54,6 +54,28 @@ echo "========================================"
 echo ""
 
 # ========================================
+# Docker Checks
+# ========================================
+echo "--- Docker ---"
+
+# Check Docker daemon
+if docker info >/dev/null 2>&1; then
+    check_pass "Docker daemon is running"
+else
+    check_fail "Docker daemon is not running"
+    echo "  Run: sudo systemctl start docker"
+fi
+
+# Check ArmorClaw containers
+if docker ps --format '{{.Names}}' | grep -q '^armorclaw-'; then
+    check_pass "ArmorClaw containers are running"
+else
+    check_warn "No ArmorClaw containers detected"
+fi
+
+echo ""
+
+# ========================================
 # Matrix Stack Checks
 # ========================================
 echo "--- Matrix Stack ---"
@@ -97,6 +119,32 @@ if curl -sf http://localhost:5000/_matrix/push/v1/notify > /dev/null 2>&1; then
     check_pass "Sygnal push gateway is responding"
 else
     check_fail "Sygnal push gateway is not responding"
+fi
+
+# ========================================
+# AI Stack Checks
+# ========================================
+echo ""
+echo "--- AI Stack ---"
+
+# Check Catwalk
+if curl -sf http://localhost:8080/healthz > /dev/null 2>&1; then
+    check_pass "Catwalk AI service is responding"
+else
+    check_warn "Catwalk AI service is not responding (AI provider discovery unavailable)"
+fi
+
+# ========================================
+# Bridge Checks
+# ========================================
+echo ""
+echo "--- Bridge ---"
+
+# Check Bridge RPC (HTTP)
+if curl -sf http://localhost:8443/health > /dev/null 2>&1; then
+    check_pass "Bridge RPC HTTP endpoint is responding"
+else
+    check_fail "Bridge RPC HTTP endpoint is not responding"
 fi
 
 # Check ArmorClaw Bridge (Unix Socket)

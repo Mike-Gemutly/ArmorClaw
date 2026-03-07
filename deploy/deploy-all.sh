@@ -1,8 +1,14 @@
 #!/bin/bash
+# =============================================================================
 # ArmorClaw Unified Deployment Script
+# Version: 1.0
+# Idempotent: Yes
+# Safe to re-run: Yes
+# =============================================================================
 
-set -e
+set -euo pipefail
 
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

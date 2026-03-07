@@ -1,11 +1,12 @@
 #!/bin/bash
 # ArmorClaw Quick Setup - Express Installation
-# Streamlined 3-minute setup with secure defaults
-# Version: 0.3.1
+# Version: 1.0
+# Idempotent: Yes
+# Safe to re-run: Yes
 #
 # Usage: sudo ./deploy/setup-quick.sh [--non-interactive]
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

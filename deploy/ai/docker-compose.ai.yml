@@ -1,0 +1,49 @@
+# Docker Compose: ArmorClaw AI Services Stack
+# Provides AI provider discovery via Catwalk
+# Version: 1.0
+
+version: "3.8"
+
+services:
+  # ========================================
+  # Catwalk - AI Provider Discovery
+  # ========================================
+  # Note: Using explicit container_name for predictable operations.
+  # Remove container_name for auto-generated names in multi-env setups.
+  catwalk:
+    image: ghcr.io/charmbracelet/catwalk:latest
+    container_name: armorclaw-catwalk
+    restart: unless-stopped
+    
+    ports:
+      - "8080:8080"
+    
+    environment:
+      - CATWALK_LOG_LEVEL=${CATWALK_LOG_LEVEL:-info}
+    
+    # Health check using netcat (more portable than curl/wget)
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    networks:
+      - armorclaw-net
+    
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+networks:
+  armorclaw-net:
+    name: armorclaw-net
+    driver: bridge
+
+volumes:
+  catwalk-data:
+    driver: local

@@ -1,515 +1,449 @@
-#!/bin/bash
-# ArmorClaw Quick Install Script
-# Version: 0.4.0
+#!/usr/bin/env bash
+# =============================================================================
+# ArmorClaw Unified Installer
+# Version: 1.0.0
+# Idempotent: Yes
+# Safe to re-run: Yes
+# =============================================================================
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
+#   sudo ./deploy/install.sh
+#   curl -fsSL https://install.armorclaw.com | bash
 #
 # Options:
-#   --bootstrap      Generate docker-compose.yml for deployment
-#   --bridge-only    Run bridge only, no Matrix (for testing)
-#   --no-start       Install but don't start the container
-#   --ports          Show detected ports
-#   --help           Show this help
+#   --yes              Non-interactive mode
+#   --domain DOMAIN    Set domain (optional)
+#   --matrix           Deploy Matrix stack
+#   --no-matrix        Skip Matrix (default)
+#   --ai-stack         Deploy AI stack (Catwalk)
+#   --no-ai-stack      Skip AI stack (default)
+#   --help             Show help
+#
+# Environment Variables:
+#   ARMORCLAW_MATRIX      true/false - Deploy Matrix stack
+#   ARMORCLAW_AI_STACK    true/false - Deploy AI stack (default: false)
+#   ARMORCLAW_DOMAIN      Domain name (optional)
+#   ARMORCLAW_API_KEY     AI provider API key
+#   ARMORCLAW_PROVIDER    AI provider (openai, anthropic, etc.)
+# =============================================================================
 
-set -e
+set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# =============================================================================
+# Constants
+# =============================================================================
+readonly VERSION="1.0.0"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Defaults
-BOOTSTRAP_MODE=false
-BRIDGE_ONLY=false
-NO_START=false
-SHOW_PORTS=false
-CONTAINER_NAME="armorclaw"
-IMAGE="mikegemut/armorclaw:latest"
-CONFIG_DIR="/etc/armorclaw"
-DATA_DIR="/var/lib/armorclaw"
-COMPOSE_FILE="/opt/armorclaw/docker-compose.yml"
+# Default settings (SECURE DEFAULTS)
+ARMORCLAW_MATRIX="${ARMORCLAW_MATRIX:-false}"
+ARMORCLAW_AI_STACK="${ARMORCLAW_AI_STACK:-false}"
+ARMORCLAW_DOMAIN="${ARMORCLAW_DOMAIN:-}"
+ARMORCLAW_API_KEY="${ARMORCLAW_API_KEY:-}"
+ARMORCLAW_PROVIDER="${ARMORCLAW_PROVIDER:-}"
+NON_INTERACTIVE="${NON_INTERACTIVE:-false}"
 
-# Default ports
-BRIDGE_PORT=8443
-MATRIX_PORT=6167
-PUSH_PORT=5000
+# =============================================================================
+# Error Handling
+# =============================================================================
+trap 'echo "[ERROR] Installer failed on line $LINENO: $BASH_COMMAND"' ERR
 
-#=============================================================================
-# Environment Variable Pass-through
-#=============================================================================
+# =============================================================================
+# Helper Functions
+# =============================================================================
+log_info()    { echo "[INFO] $*"; }
+log_success() { echo "[SUCCESS] $*"; }
+log_warn()    { echo "[WARN] $*"; }
+log_error()   { echo "[ERROR] $*" >&2; exit 1; }
 
-# Build environment variable args for docker run (for non-interactive mode)
-# Only pass env vars when ARMORCLAW_API_KEY is set (triggers non-interactive mode)
-build_env_args() {
-    local args=""
+usage() {
+    cat <<EOF
+ArmorClaw Unified Installer v${VERSION}
 
-    # Only pass environment variables when non-interactive mode is requested
-    # If ARMORCLAW_API_KEY is set, pass all config vars for unattended setup
-    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
-        args="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
-        args="$args -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
-        [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && args="$args -e ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}"
-        [ -n "${ARMORCLAW_PROFILE:-}" ] && args="$args -e ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}"
-        [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && args="$args -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
-    fi
+Usage: $0 [OPTIONS]
 
-    echo "$args"
-}
+OPTIONS:
+    --yes              Non-interactive mode
+    --domain DOMAIN    Set domain (optional, enables TLS)
+    --matrix           Deploy Matrix stack
+    --no-matrix        Skip Matrix deployment (default)
+    --ai-stack         Deploy AI stack (Catwalk)
+    --no-ai-stack      Skip AI stack (default)
+    --help             Show this help
 
-#=============================================================================
-# Port Detection
-#=============================================================================
+ENVIRONMENT VARIABLES:
+    ARMORCLAW_MATRIX     true/false - Deploy Matrix stack
+    ARMORCLAW_AI_STACK   true/false - Deploy AI stack (default: false)
+    ARMORCLAW_DOMAIN     Domain name
+    ARMORCLAW_API_KEY    AI provider API key
+    ARMORCLAW_PROVIDER   AI provider (openai, anthropic, etc.)
 
-check_port() {
-    local port="$1"
-    if ss -ltn 2>/dev/null | grep -qE ":${port}\s"; then
-        return 1  # In use
-    fi
-    return 0  # Available
-}
+EXAMPLES:
+    # Interactive install
+    sudo ./install.sh
 
-find_port() {
-    local start="$1"
-    local port="$start"
+    # Non-interactive with Matrix
+    ARMORCLAW_MATRIX=true ARMORCLAW_DOMAIN=matrix.example.com sudo ./install.sh
 
-    if check_port "$port"; then
-        echo "$port"
-        return
-    fi
-
-    # Try random high ports
-    for i in {1..100}; do
-        port=$((RANDOM % 10000 + 30000))
-        if check_port "$port"; then
-            echo "$port"
-            return
-        fi
-    done
-
-    # Sequential fallback
-    port=$((start + 1))
-    while [ $((port - start)) -lt 1000 ]; do
-        if check_port "$port"; then
-            echo "$port"
-            return
-        fi
-        port=$((port + 1))
-    done
-}
-
-auto_detect_ports() {
-    echo -e "${CYAN}Detecting available ports...${NC}"
-
-    if ! check_port "$BRIDGE_PORT"; then
-        BRIDGE_PORT=$(find_port "$BRIDGE_PORT")
-        [ -z "$BRIDGE_PORT" ] && { echo -e "${RED}No available port for Bridge${NC}"; exit 1; }
-    fi
-
-    if ! check_port "$MATRIX_PORT"; then
-        MATRIX_PORT=$(find_port "$MATRIX_PORT")
-        [ -z "$MATRIX_PORT" ] && { echo -e "${RED}No available port for Matrix${NC}"; exit 1; }
-    fi
-
-    if ! check_port "$PUSH_PORT"; then
-        PUSH_PORT=$(find_port "$PUSH_PORT")
-        [ -z "$PUSH_PORT" ] && { echo -e "${RED}No available port for Push${NC}"; exit 1; }
-    fi
-
-    echo -e "${GREEN}Ports detected:${NC}"
-    echo -e "  ${DIM}Bridge:${NC}  $BRIDGE_PORT"
-    echo -e "  ${DIM}Matrix:${NC}  $MATRIX_PORT"
-    echo -e "  ${DIM}Push:${NC}    $PUSH_PORT"
-    echo ""
-}
-
-#=============================================================================
-# Bootstrap Mode - Generate Compose File
-#=============================================================================
-
-generate_compose() {
-    local server_ip
-    server_ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
-    [ -z "$server_ip" ] && server_ip="your-server-ip"
-
-    mkdir -p /opt/armorclaw
-
-    cat > "$COMPOSE_FILE" << EOF
-# ArmorClaw Docker Compose
-# Generated: $(date -Iseconds)
-# Server: $server_ip
-
-services:
-  armorclaw:
-    image: $IMAGE
-    container_name: $CONTAINER_NAME
-    restart: unless-stopped
-    user: root
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - armorclaw-config:/etc/armorclaw
-      - armorclaw-keystore:/var/lib/armorclaw
-    ports:
-      - "${BRIDGE_PORT}:8443"
-      - "${MATRIX_PORT}:6167"
-      - "${PUSH_PORT}:5000"
-    environment:
-      - ARMORCLAW_SERVER_NAME=${ARMORCLAW_SERVER_NAME:-$server_ip}
+    # Minimal install (bridge only)
+    ARMORCLAW_MATRIX=false ARMORCLAW_AI_STACK=false sudo ./install.sh
 EOF
-
-    # Add optional env vars
-    [ -n "${ARMORCLAW_API_KEY:-}" ] && echo "      - ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}" >> "$COMPOSE_FILE"
-    [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && echo "      - ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}" >> "$COMPOSE_FILE"
-    [ -n "${ARMORCLAW_PROFILE:-}" ] && echo "      - ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}" >> "$COMPOSE_FILE"
-    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && echo "      - ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}" >> "$COMPOSE_FILE"
-
-    cat >> "$COMPOSE_FILE" << EOF
-    healthcheck:
-      test: ["CMD-SHELL", "socat -t 1 STDIN UNIX-CONNECT:/run/armorclaw/bridge.sock || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-volumes:
-  armorclaw-config:
-  armorclaw-keystore:
-EOF
-
-    echo -e "${GREEN}Generated: $COMPOSE_FILE${NC}"
-    echo ""
-    echo -e "${CYAN}Deploy with:${NC}"
-    echo "  docker compose -f $COMPOSE_FILE up -d"
-    echo ""
-    echo -e "${CYAN}Customize with environment variables:${NC}"
-    echo "  export ARMORCLAW_API_KEY=sk-your-key"
-    echo "  export ARMORCLAW_ADMIN_PASSWORD=\$(openssl rand -base64 24)"
-    echo "  $0 --bootstrap"
-    echo ""
-}
-
-#=============================================================================
-# Parse Arguments
-#=============================================================================
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --bootstrap)
-            BOOTSTRAP_MODE=true
-            shift
-            ;;
-        --bridge-only)
-            BRIDGE_ONLY=true
-            shift
-            ;;
-        --no-start)
-            NO_START=true
-            shift
-            ;;
-        --ports)
-            SHOW_PORTS=true
-            shift
-            ;;
-        --help|-h)
-            echo "ArmorClaw Quick Install v0.4.0"
-            echo ""
-            echo "Usage:"
-            echo "  # Interactive (requires TTY):"
-            echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)\""
-            echo ""
-            echo "  # Non-interactive (CI/CD, no TTY required):"
-            echo "  export ARMORCLAW_API_KEY=sk-your-key"
-            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash"
-            echo ""
-            echo "Options:"
-            echo "  --bootstrap      Generate docker-compose.yml (no container start)"
-            echo "  --bridge-only    Run bridge only, no Matrix (for testing)"
-            echo "  --no-start       Pull image but don't start container"
-            echo "  --ports          Show auto-detected ports"
-            echo "  --help           Show this help"
-            echo ""
-            echo "Environment Variables (for non-interactive mode):"
-            echo "  ARMORCLAW_API_KEY        AI provider API key (required for non-interactive)"
-            echo "  ARMORCLAW_API_BASE_URL   Custom API endpoint (optional)"
-            echo "  ARMORCLAW_PROFILE        Deployment profile: quick (default) or enterprise"
-            echo "  ARMORCLAW_ADMIN_PASSWORD Admin password (auto-generated if not set)"
-            echo "  ARMORCLAW_SERVER_NAME    Server hostname or IP (auto-detected if not set)"
-            echo ""
-            echo "Examples:"
-            echo "  # Interactive with TTY"
-            echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)\""
-            echo ""
-            echo "  # Non-interactive (CI/CD)"
-            echo "  export ARMORCLAW_API_KEY=sk-your-key"
-            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash"
-            echo ""
-            echo "  # Generate compose file for customization"
-            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bootstrap"
-            echo ""
-            echo "  # Bridge-only for testing"
-            echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bridge-only"
-            echo ""
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            exit 1
-            ;;
-    esac
-done
-
-#=============================================================================
-# Main
-#=============================================================================
-
-echo -e "${CYAN}"
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║        ${BOLD}ArmorClaw Quick Install${NC}${CYAN}  v0.4.0              ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-
-# Check root/sudo
-SUDO=""
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}Note: Not running as root. Using sudo for system directories.${NC}"
-    SUDO="sudo"
-fi
-
-# Check Docker
-echo -e "${CYAN}Checking prerequisites...${NC}"
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}ERROR: Docker is not installed.${NC}"
-    echo ""
-    echo "Install Docker:"
-    echo "  curl -fsSL https://get.docker.com | sh"
-    exit 1
-fi
-
-if ! docker info &> /dev/null; then
-    echo -e "${RED}ERROR: Docker daemon is not running.${NC}"
-    echo ""
-    echo "Start Docker:"
-    echo "  sudo systemctl start docker"
-    exit 1
-fi
-
-echo -e "${GREEN}Docker is running${NC}"
-
-# Port detection
-auto_detect_ports
-
-# Handle --ports only
-if [ "$SHOW_PORTS" = true ]; then
     exit 0
-fi
+}
 
-# Bootstrap mode
-if [ "$BOOTSTRAP_MODE" = true ]; then
-    generate_compose
-    exit 0
-fi
+# =============================================================================
+# Prerequisites Check
+# =============================================================================
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Must run as root (use sudo)"
+    fi
+}
 
-# Stop existing container
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo -e "${YELLOW}Removing existing container...${NC}"
-    docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
-fi
-
-# Clean up previous failed installs (fresh start)
-echo -e "${CYAN}Cleaning up previous installation state...${NC}"
-$SUDO rm -f ${CONFIG_DIR}/.setup_complete 2>/dev/null || true
-$SUDO rm -f ${DATA_DIR}/keystore.db 2>/dev/null || true
-$SUDO rm -f ${DATA_DIR}/keystore.db-shm 2>/dev/null || true
-$SUDO rm -f ${DATA_DIR}/keystore.db-wal 2>/dev/null || true
-$SUDO rm -f ${DATA_DIR}/.api_key_temp 2>/dev/null || true
-$SUDO rm -f ${DATA_DIR}/.admin_password 2>/dev/null || true
-$SUDO rm -f ${DATA_DIR}/.admin_user 2>/dev/null || true
-# Also clean up Matrix config from previous runs
-$SUDO rm -rf /tmp/armorclaw-configs 2>/dev/null || true
-
-# Pull image
-echo -e "${CYAN}Pulling image: ${IMAGE}${NC}"
-docker pull ${IMAGE}
-echo -e "${GREEN}Image pulled${NC}"
-
-# Create directories
-echo -e "${CYAN}Creating directories...${NC}"
-$SUDO mkdir -p ${CONFIG_DIR}
-$SUDO mkdir -p ${DATA_DIR}
-
-# Detect server IP for bridge-only mode too
-DETECTED_SERVER_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
-if [ -z "$DETECTED_SERVER_IP" ]; then
-    DETECTED_SERVER_IP="localhost"
-fi
-
-# Bridge-only mode
-if [ "$BRIDGE_ONLY" = true ]; then
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════╗"
-    echo "║        ${BOLD}Bridge-Only Mode (No Matrix)${NC}${CYAN}                 ║"
-    echo "╚══════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo -e "${DIM}Server IP: ${DETECTED_SERVER_IP}${NC}"
-    echo ""
-
-    $SUDO tee ${CONFIG_DIR}/config.toml > /dev/null << EOF
-# ArmorClaw Bridge Configuration
-# Generated by install.sh (Matrix disabled)
-
-socket_path = "/run/armorclaw/bridge.sock"
-db_path = "/var/lib/armorclaw/keystore.db"
-log_level = "info"
-
-[server]
-socket_path = "/run/armorclaw/bridge.sock"
-
-[keystore]
-db_path = "/var/lib/armorclaw/keystore.db"
-
-[matrix]
-enabled = false
-homeserver_url = ""
-
-[logging]
-level = "info"
-format = "text"
-output = "stdout"
-EOF
-
-    $SUDO touch ${CONFIG_DIR}/.setup_complete
-    echo -e "${GREEN}Configuration created${NC}"
-
-    if [ "$NO_START" = true ]; then
-        echo -e "${YELLOW}--no-start specified. Container not started.${NC}"
-        exit 0
+check_docker() {
+    log_info "Checking Docker installation..."
+    
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "Docker not installed. Install with: curl -fsSL https://get.docker.com | sh"
     fi
 
-    echo -e "${CYAN}Starting ArmorClaw Bridge...${NC}"
-
-    # Build environment args (bridge-only still needs server name)
-    # Only pass env vars when ARMORCLAW_API_KEY is set (non-interactive mode)
-    ENV_ARGS=""
-    if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
-        ENV_ARGS="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
-        ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}"
-        [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}"
+    if ! docker info >/dev/null 2>&1; then
+        log_error "Docker daemon not running. Run: sudo systemctl start docker"
     fi
 
-    docker run -d --name ${CONTAINER_NAME} \
-        --restart unless-stopped \
-        --user root \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v ${CONFIG_DIR}:/etc/armorclaw \
-        -v ${DATA_DIR}:/var/lib/armorclaw \
-        ${ENV_ARGS} \
-        -p ${BRIDGE_PORT}:8443 \
-        ${IMAGE}
+    if ! docker compose version >/dev/null 2>&1; then
+        log_error "Docker Compose plugin missing. Install docker-compose-plugin"
+    fi
+    
+    log_success "Docker is ready"
+}
 
-    sleep 3
+wait_for_docker() {
+    log_info "Waiting for Docker daemon..."
+    
+    for i in {1..15}; do
+        if docker info >/dev/null 2>&1; then
+            log_success "Docker daemon ready"
+            return 0
+        fi
+        
+        if [ "$i" -eq 15 ]; then
+            log_error "Docker daemon failed to start"
+        fi
+        
+        log_info "Waiting for Docker... ($i/15)"
+        sleep 2
+    done
+}
 
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo ""
-        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${GREEN}ArmorClaw Bridge is running!${NC}"
-        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-        echo "Container: ${CONTAINER_NAME}"
-        echo "Config:    ${CONFIG_DIR}/config.toml"
-        echo "RPC:       http://localhost:${BRIDGE_PORT}"
-        echo ""
-        echo -e "${CYAN}Commands:${NC}"
-        echo "  Logs:    docker logs -f ${CONTAINER_NAME}"
-        echo "  Stop:    docker stop ${CONTAINER_NAME}"
-        echo "  Remove:  docker rm -f ${CONTAINER_NAME}"
-        echo ""
+# =============================================================================
+# Idempotency Checks
+# =============================================================================
+check_bridge_running() {
+    systemctl is-active --quiet armorclaw-bridge 2>/dev/null
+}
+
+check_matrix_running() {
+    docker ps --filter "name=^armorclaw-conduit$" --format '{{.Names}}' 2>/dev/null | grep -q '^armorclaw-conduit$'
+}
+
+check_catwalk_running() {
+    docker ps --filter "name=^armorclaw-catwalk$" --format '{{.Names}}' 2>/dev/null | grep -q '^armorclaw-catwalk$'
+}
+
+# =============================================================================
+# Deployment Functions
+# =============================================================================
+deploy_bridge() {
+    if check_bridge_running; then
+        log_info "Bridge already running"
+        return 0
+    fi
+    
+    log_info "Deploying ArmorClaw Bridge..."
+    
+    if [ -f "$SCRIPT_DIR/setup-quick.sh" ]; then
+        bash "$SCRIPT_DIR/setup-quick.sh"
+        log_success "Bridge deployed"
     else
-        echo -e "${RED}Container failed to start. Check logs:${NC}"
-        echo "  docker logs ${CONTAINER_NAME}"
-        exit 1
+        log_error "setup-quick.sh not found at $SCRIPT_DIR/setup-quick.sh"
     fi
-    exit 0
-fi
+}
 
-# Full stack mode (default)
-echo -e "${CYAN}"
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║        ${BOLD}Full Stack Mode (With Matrix)${NC}${CYAN}               ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-echo "Starting ArmorClaw with Matrix integration..."
-echo "The setup wizard will guide you through configuration."
-echo ""
+deploy_matrix() {
+    if check_matrix_running; then
+        log_info "Matrix stack already running"
+        return 0
+    fi
+    
+    log_info "Deploying Matrix stack..."
+    
+    if [ -f "$SCRIPT_DIR/setup-matrix.sh" ]; then
+        bash "$SCRIPT_DIR/setup-matrix.sh"
+        verify_matrix_health
+        log_success "Matrix stack deployed"
+    else
+        log_error "setup-matrix.sh not found at $SCRIPT_DIR/setup-matrix.sh"
+    fi
+}
 
-# Detect server IP on host (more reliable than container-side detection)
-DETECTED_SERVER_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
-if [ -z "$DETECTED_SERVER_IP" ]; then
-    DETECTED_SERVER_IP="localhost"
-fi
-echo -e "${DIM}Detected server IP: ${DETECTED_SERVER_IP}${NC}"
-echo ""
+deploy_ai_stack() {
+    if check_catwalk_running; then
+        log_info "AI stack already running"
+        return 0
+    fi
+    
+    log_info "Deploying AI stack (Catwalk)..."
+    
+    local compose_file="$SCRIPT_DIR/ai/docker-compose.ai.yml"
+    
+    if [ -f "$compose_file" ]; then
+        docker compose \
+            --project-name armorclaw-ai \
+            -f "$compose_file" \
+            up -d
+        
+        verify_catwalk_health
+        log_success "AI stack deployed"
+    else
+        log_warn "AI stack compose file not found: $compose_file"
+        log_info "Skipping AI stack deployment"
+    fi
+}
 
-if [ "$NO_START" = true ]; then
-    echo -e "${YELLOW}--no-start specified. Container not started.${NC}"
-    echo ""
-    # Build env args for display
-    ENV_ARGS="-e ARMORCLAW_SERVER_NAME=${DETECTED_SERVER_IP}"
-    [ -n "${ARMORCLAW_API_KEY:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_KEY=***"
-    [ -n "${ARMORCLAW_API_BASE_URL:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_API_BASE_URL=${ARMORCLAW_API_BASE_URL}"
-    [ -n "${ARMORCLAW_PROFILE:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_PROFILE=${ARMORCLAW_PROFILE}"
-    [ -n "${ARMORCLAW_ADMIN_PASSWORD:-}" ] && ENV_ARGS="$ENV_ARGS -e ARMORCLAW_ADMIN_PASSWORD=***"
-    echo "To start:"
-    echo "  docker run -it --name ${CONTAINER_NAME} \\"
-    echo "    --restart unless-stopped \\"
-    echo "    --user root \\"
-    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-    echo "    -v ${CONFIG_DIR}:/etc/armorclaw \\"
-    echo "    -v ${DATA_DIR}:/var/lib/armorclaw \\"
-    echo "    ${ENV_ARGS} \\"
-    echo "    -p ${BRIDGE_PORT}:8443 -p ${MATRIX_PORT}:6167 -p ${PUSH_PORT}:5000 \\"
-    echo "    ${IMAGE}"
-    exit 0
-fi
+# =============================================================================
+# Health Verification
+# =============================================================================
+verify_matrix_health() {
+    log_info "Verifying Matrix health..."
+    
+    local max_attempts=30
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -sf http://localhost:6167/_matrix/client/versions &>/dev/null; then
+            log_success "Matrix stack healthy"
+            return 0
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    log_warn "Matrix health check failed - service may still be starting"
+}
 
-# Build environment args
-ENV_ARGS=$(build_env_args)
+verify_catwalk_health() {
+    log_info "Verifying Catwalk health..."
+    
+    local max_attempts=30
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -sf http://localhost:8080/healthz &>/dev/null; then
+            log_success "Catwalk healthy"
+            return 0
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    log_warn "Catwalk health check failed - AI provider discovery may be limited"
+}
 
-# Determine run mode based on TTY availability and environment
-DOCKER_FLAGS=""
-if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
-    # Non-interactive mode (API key provided) - run detached
-    DOCKER_FLAGS="-d"
-elif [ -t 0 ]; then
-    # Interactive mode with TTY - run with interactive terminal
-    DOCKER_FLAGS="-it"
-else
-    # No TTY and no API key - show error with instructions
-    echo -e "${RED}ERROR: No TTY detected and no API key provided.${NC}"
-    echo ""
-    echo "To run in non-interactive mode, set environment variables:"
-    echo ""
-    echo "  export ARMORCLAW_API_KEY=sk-your-key"
-    echo "  curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash"
-    echo ""
-    echo "Or run with a TTY:"
-    echo ""
-    echo "  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)\""
-    echo ""
-    exit 1
-fi
+verify_bridge_health() {
+    # HTTP check
+    if curl -sf http://localhost:8443/health &>/dev/null; then
+        return 0
+    fi
+    
+    # Socket fallback
+    if [ -S /run/armorclaw/bridge.sock ]; then
+        return 0
+    fi
+    
+    return 1
+}
 
-docker run ${DOCKER_FLAGS} --name ${CONTAINER_NAME} \
-    --restart unless-stopped \
-    --user root \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v ${CONFIG_DIR}:/etc/armorclaw \
-    -v ${DATA_DIR}:/var/lib/armorclaw \
-    ${ENV_ARGS} \
-    -p ${BRIDGE_PORT}:8443 \
-    -p ${MATRIX_PORT}:6167 \
-    -p ${PUSH_PORT}:5000 \
-    ${IMAGE}
+wait_for_bridge() {
+    log_info "Waiting for bridge to initialize..."
+    
+    for i in {1..20}; do
+        if verify_bridge_health; then
+            log_success "Bridge ready"
+            return 0
+        fi
+        log_info "Waiting for bridge... ($i/20)"
+        sleep 2
+    done
+    
+    log_warn "Bridge health check failed"
+}
+
+# =============================================================================
+# Service Management
+# =============================================================================
+start_bridge_service() {
+    if ! systemctl is-enabled armorclaw-bridge >/dev/null 2>&1; then
+        log_warn "armorclaw-bridge service not installed"
+        log_info "Run setup-quick.sh first to install the bridge service"
+        return 1
+    fi
+    
+    if systemctl is-active --quiet armorclaw-bridge; then
+        log_info "Bridge already running"
+        return 0
+    fi
+    
+    log_info "Starting bridge service..."
+    systemctl start armorclaw-bridge
+}
+
+# =============================================================================
+# AI Provider Setup
+# =============================================================================
+setup_ai_provider() {
+    if [ -z "$ARMORCLAW_API_KEY" ]; then
+        log_info "No API key provided - skip AI provider setup"
+        log_info "Add keys later with: armorclaw-bridge add-key --provider <provider> --token <key>"
+        return 0
+    fi
+    
+    log_info "Setting up AI provider..."
+    
+    local provider="${ARMORCLAW_PROVIDER:-openai}"
+    
+    if command -v armorclaw-bridge &>/dev/null; then
+        armorclaw-bridge add-key --provider "$provider" --token "$ARMORCLAW_API_KEY"
+        log_success "AI provider configured: $provider"
+    else
+        log_warn "armorclaw-bridge not found in PATH"
+        log_info "Add API key manually after bridge is installed"
+    fi
+}
+
+# =============================================================================
+# Parse Arguments
+# =============================================================================
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --yes)
+                NON_INTERACTIVE=true
+                shift
+                ;;
+            --domain)
+                ARMORCLAW_DOMAIN="$2"
+                shift 2
+                ;;
+            --matrix)
+                ARMORCLAW_MATRIX=true
+                shift
+                ;;
+            --no-matrix)
+                ARMORCLAW_MATRIX=false
+                shift
+                ;;
+            --ai-stack)
+                ARMORCLAW_AI_STACK=true
+                shift
+                ;;
+            --no-ai-stack)
+                ARMORCLAW_AI_STACK=false
+                shift
+                ;;
+            --help)
+                usage
+                ;;
+            *)
+                echo "Unknown option: $1"
+                usage
+                ;;
+        esac
+    done
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+main() {
+    # Banner
+    echo ""
+    echo "===================================="
+    echo " ArmorClaw Installer v$VERSION"
+    echo "===================================="
+    echo ""
+    
+    log_info "Installation started at $(date)"
+    
+    # Create lock directory
+    mkdir -p /var/lock
+    
+    # Prevent concurrent runs
+    exec 200>/var/lock/armorclaw-install.lock
+    flock -n 200 || log_error "Installer already running. Multiple instances not allowed."
+    
+    # Prerequisites
+    check_root
+    check_docker
+    wait_for_docker
+    
+    # Deploy Bridge
+    deploy_bridge
+    
+    # Deploy Matrix (optional)
+    if [ "$ARMORCLAW_MATRIX" = "true" ]; then
+        deploy_matrix
+    else
+        log_info "Skipping Matrix deployment (--matrix not specified)"
+    fi
+    
+    # Deploy AI Stack (optional)
+    if [ "$ARMORCLAW_AI_STACK" = "true" ]; then
+        deploy_ai_stack
+    else
+        log_info "Skipping AI stack (--ai-stack not specified)"
+    fi
+    
+    # Setup AI Provider
+    setup_ai_provider
+    
+    # Start services
+    start_bridge_service || true
+    
+    # Wait for bridge
+    wait_for_bridge
+    
+    # Success footer
+    echo ""
+    echo "===================================="
+    echo " ArmorClaw installation complete"
+    echo "===================================="
+    echo ""
+    
+    log_info "Installation completed at $(date)"
+    
+    # Show next steps
+    echo "Next steps:"
+    echo ""
+    echo "  1. Check bridge status: systemctl status armorclaw-bridge"
+    
+    if [ "$ARMORCLAW_MATRIX" = "true" ]; then
+        echo "  2. Check Matrix status: docker ps | grep armorclaw"
+        echo "  3. Connect to Matrix: http://localhost:6167"
+    fi
+    
+    if [ "$ARMORCLAW_AI_STACK" = "true" ]; then
+        echo "  4. Check Catwalk status: curl http://localhost:8080/healthz"
+    fi
+    
+    echo ""
+    echo "Health check: $SCRIPT_DIR/health-check.sh"
+    echo ""
+}
+
+# =============================================================================
+# Entry Point
+# =============================================================================
+parse_args "$@"
+main

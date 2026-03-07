@@ -7,7 +7,7 @@ set -e
 # Paths
 CONFIG_DIR="/etc/armorclaw"
 DATA_DIR="/var/lib/armorclaw"
-BOOTSTRAP_SCRIPT="/opt/armorclaw/bootstrap-admin.py"
+BOOTSTRAP_SCRIPT="/opt/armorclaw/bootstrap-admin"
 INIT_FLAG="$DATA_DIR/.bootstrapped"
 CONDUIT_CONFIG="$CONFIG_DIR/conduit.toml"
 
@@ -76,7 +76,7 @@ docker run -d \
     -v "$CONFIG_DIR:/etc/armorclaw:ro" \
     -v /var/lib/conduit:/var/lib/conduit \
     -p 6167:6167 \
-    mikegemut/conduit:latest
+    ghcr.io/matrix-conduit/matrix-conduit:latest
 
 # Wait for Conduit to be ready
 log "Waiting for Conduit to start..."
@@ -97,14 +97,14 @@ if [ $WAITED -eq $MAX_WAIT ]; then
     exit 1
 fi
 
-# Run the Python bootstrap script
+# Run the bootstrap binary
 log "Running admin bootstrap..."
-if [ -f "$BOOTSTRAP_SCRIPT" ]; then
+if [ -x "$BOOTSTRAP_SCRIPT" ]; then
     # Set environment for bootstrap script
     export ARMORCLAW_ADMIN_PASSWORD="$ARMORCLAW_ADMIN_PASSWORD"
     export ARMORCLAW_SERVER_NAME="$SERVER_NAME"
     
-    if python3 "$BOOTSTRAP_SCRIPT"; then
+    if "$BOOTSTRAP_SCRIPT"; then
         log_success "Admin bootstrap completed"
         
         # Show admin credentials

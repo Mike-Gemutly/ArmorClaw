@@ -17,6 +17,19 @@ type apiProviderOption struct {
 	BaseURL string
 }
 
+// fallbackModels provides static model lists when Catwalk is unavailable.
+var fallbackModels = map[string][]string{
+	"openai":     {"gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"},
+	"anthropic":  {"claude-3-opus", "claude-3-sonnet", "claude-3-haiku"},
+	"google":     {"gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"},
+	"xai":        {"grok-2", "grok-2-vision", "grok-beta"},
+	"zhipu":      {"glm-4", "glm-4v", "glm-4-flash", "glm-3-turbo"},
+	"deepseek":   {"deepseek-chat", "deepseek-coder"},
+	"moonshot":   {"moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
+	"groq":       {"llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"},
+	"openrouter": {"openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-pro-1.5"},
+}
+
 // getProviderOptions returns provider options, first trying Catwalk then falling back to hardcoded list.
 func getProviderOptions() ([]apiProviderOption, bool) {
 	catwalk := NewCatwalkClient("http://localhost:8080")
@@ -31,6 +44,38 @@ func getProviderOptions() ([]apiProviderOption, bool) {
 
 	fmt.Println("  [Wizard] Using default provider list")
 	return apiProviders, false
+}
+
+// getModelOptions returns available models for a provider.
+// First tries Catwalk, then falls back to static list.
+func getModelOptions(providerKey string) []string {
+	catwalk := NewCatwalkClient("http://localhost:8080")
+
+	// Try to fetch from Catwalk
+	if catwalk.IsAvailable() {
+		providers, err := catwalk.FetchProviders()
+		if err == nil {
+			for _, p := range providers {
+				if p.ID == providerKey && len(p.Models) > 0 {
+					models := make([]string, len(p.Models))
+					for i, m := range p.Models {
+						models[i] = m.ID
+					}
+					fmt.Println("  [Catwalk] Discovered models for provider:", providerKey)
+					return models
+				}
+			}
+		}
+	}
+
+	// Fallback to static list
+	if models, ok := fallbackModels[providerKey]; ok {
+		fmt.Println("  [Wizard] Using default model list for provider:", providerKey)
+		return models
+	}
+
+	// No models known - return generic default
+	return []string{"default"}
 }
 
 var apiProviders = []apiProviderOption{
@@ -124,8 +169,39 @@ func runQuickStartForms(result *WizardResult, accessible bool) error {
 		providerKey = "openai" // custom providers use the OpenAI-compatible interface
 	}
 
+	// --- Model Selection ---
+	var modelChoice string
+	models := getModelOptions(providerKey)
+
+	if len(models) > 0 {
+		modelOptions := make([]huh.Option[string], 0, len(models))
+		for _, m := range models {
+			modelOptions = append(modelOptions, huh.NewOption(m, m))
+		}
+
+		modelForm := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("AI Model").
+					Description("Select the default model to use with this provider.").
+					Options(modelOptions...).
+					Value(&modelChoice),
+			).Title("Model Selection"),
+		)
+
+		modelForm = formOpts(modelForm, accessible)
+		if err := modelForm.Run(); err != nil {
+			// Soft-fail: use first model as default
+			modelChoice = models[0]
+			fmt.Printf("  Using default model: %s\n", modelChoice)
+		}
+	} else {
+		modelChoice = "default"
+	}
+
 	result.Config.APIProvider = providerKey
 	result.Config.APIBaseURL = baseURL
+	result.Config.DefaultModel = modelChoice
 	result.Secrets.APIKey = strings.TrimSpace(apiKey)
 
 	// --- Page 2: Admin Password + Confirm ---
