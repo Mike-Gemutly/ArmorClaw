@@ -376,6 +376,9 @@ main() {
     
     log_info "Installation started at $(date)"
     
+    # Prerequisites
+    check_root
+    
     # Create lock directory
     mkdir -p /var/lock
     
@@ -383,8 +386,7 @@ main() {
     exec 200>/var/lock/armorclaw-install.lock
     flock -n 200 || log_error "Installer already running. Multiple instances not allowed."
     
-    # Prerequisites
-    check_root
+    # Check Docker
     check_docker
     wait_for_docker
     
