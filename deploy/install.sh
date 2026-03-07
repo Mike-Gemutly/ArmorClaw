@@ -379,11 +379,8 @@ main() {
     # Prerequisites
     check_root
     
-    # Create lock directory
-    mkdir -p /var/lock
-    
-    # Prevent concurrent runs
-    exec 200>/var/lock/armorclaw-install.lock
+    # Prevent concurrent runs (use /tmp for lock file)
+    exec 200>/tmp/armorclaw-install.lock
     flock -n 200 || log_error "Installer already running. Multiple instances not allowed."
     
     # Check Docker
