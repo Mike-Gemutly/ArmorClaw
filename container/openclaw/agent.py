@@ -14,13 +14,14 @@ import signal
 import asyncio
 import json
 import logging
-from typing import Optional, Dict, Any
+import re
+from typing import Optional, Dict, Any, List, Tuple
 
 # ArmorClaw: Import bridge client for communication
 from .bridge_client import AsyncBridgeClient, get_default_client
 
 # Version info
-__version__ = "1.0.0-sc"
+__version__ = "1.1.0-sk"  # Skills-enabled version
 
 # Configure logging (without exposing secrets)
 logging.basicConfig(
@@ -98,8 +99,8 @@ class ArmorClawAgent:
         if body.startswith("/"):
             return await self._handle_command(body, sender)
 
-        # Regular message - process as agent request
-        return await self._process_agent_request(body, sender)
+        # Regular message - process as agent request with ReAct loop
+        return await self._process_agent_request_with_react(body, sender)
 
     async def _handle_command(self, command: str, sender: str) -> Optional[str]:
         """
@@ -133,8 +134,14 @@ class ArmorClawAgent:
 /help - Show this help message
 /ping - Pong!
 /attach_config <name> <content> - Attach a config file
+/skills - List available skills
 
 For agent requests, just send your message directly.
+
+## Skill Examples:
+"What's the weather in San Francisco?"
+"Get info about the openai/chatgpt repository"
+"Create a GitHub issue for bug XYZ"
 
 **Config Attachment Examples:**
 /attach_config agent.env MODEL=gpt-4
@@ -144,6 +151,33 @@ For agent requests, just send your message directly.
 
         elif cmd == "/ping":
             return "🏓 Pong! ArmorClaw agent is running."
+            
+        elif cmd == "/skills":
+            if not self.bridge_client:
+                return "⚠️ Bridge not connected. Cannot list skills."
+            
+            try:
+                skills_result = await self.bridge_client.skills_list()
+                skills = skills_result.get("skills", [])
+                count = skills_result.get("count", 0)
+                
+                if count == 0:
+                    return "No skills available."
+                
+                # Format skills output
+                response = f"**Available Skills ({count}):**\n\n"
+                for skill in skills[:10]:  # Limit to first 10 for readability
+                    name = skill.get("name", "Unknown")
+                    domain = skill.get("domain", "general")
+                    description = skill.get("description", "No description")
+                    response += f"• **{name}** ({domain})\n  {description}\n"
+                
+                if count > 10:
+                    response += f"\n... and {count - 10} more skills."
+                
+                return response
+            except Exception as e:
+                return f"❌ Failed to list skills: {e}"
 
         elif cmd == "/attach_config":
             # Usage: /attach_config <name> <content>
@@ -174,10 +208,7 @@ For agent requests, just send your message directly.
         """
         Process an agent request (non-command message).
 
-        In production, this would:
-        1. Parse the request
-        2. Execute the requested agent operation
-        3. Return the result
+        Sends the request to AI via the bridge and returns the response.
 
         Args:
             request: Agent request text
@@ -188,36 +219,236 @@ For agent requests, just send your message directly.
         """
         logger.info(f"Processing agent request from {sender}")
 
-        # TODO: Implement actual agent logic here
-        # For now, provide a placeholder response
+        # Build messages for AI
+        system_message = {
+            "role": "system",
+            "content": "You are ArmorClaw, a secure AI assistant. Provide helpful, accurate responses. Keep responses concise and friendly."
+        }
+        user_message = {
+            "role": "user",
+            "content": request
+        }
+        messages = [system_message, user_message]
 
-        # Check if any API keys are configured
-        has_keys = any(
-            os.getenv(key) for key in [
-                "OPENAI_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "OPENROUTER_API_KEY",
-                "GOOGLE_API_KEY",
-                "GEMINI_API_KEY",
-                "XAI_API_KEY"
-            ]
-        )
+        try:
+            # Call AI via bridge
+            if self.bridge_client:
+                result = await self.bridge_client.ai_chat(
+                    messages=messages,
+                    model="gpt-4o",
+                    temperature=0.7,
+                    max_tokens=1024
+                )
+                return result.get("content", "No response generated")
+            else:
+                return "Agent running in standalone mode without bridge connection."
+                
+        except Exception as e:
+            logger.error(f"AI chat error: {e}")
+            return f"Sorry, I encountered an error processing your request: {e}"
 
-        if has_keys:
-            response = (
-                "🤖 **ArmorClaw Agent Response**\n\n"
-                f"I received your request: \"{request[:100]}\"\n\n"
-                f"Note: Full agent capabilities will be implemented in Phase 2. "
-                f"Currently running in compatibility mode with {len(os.sys.argv)} configured providers.\n\n"
-                f"Agent version: {__version__}"
+    async def _process_agent_request_with_react(self, request: str, sender: str) -> Optional[str]:
+        """
+        Process an agent request using ReAct (Reasoning + Acting) loop.
+        
+        This enhanced version:
+        1. Analyzes the request to determine if tools are needed
+        2. Fetches available skill schemas from the bridge
+        3. Includes skill definitions in the AI context
+        4. Handles skill execution when requested by AI
+        5. Formats results for the next iteration
+        
+        Args:
+            request: Agent request text
+            sender: Message sender
+            
+        Returns:
+            Agent response
+        """
+        if not self.bridge_client:
+            return await self._process_agent_request(request, sender)  # Fallback to simple AI chat
+        
+        try:
+            # Step 1: Get available skills and their schemas
+            skills_list = await self.bridge_client.skills_list()
+            available_skills = skills_list.get("skills", [])
+            
+            # Build system message with skill information
+            system_message = {
+                "role": "system",
+                "content": self._build_react_system_prompt(available_skills)
+            }
+            
+            # Build user message with original request
+            user_message = {
+                "role": "user", 
+                "content": request
+            }
+            
+            messages = [system_message, user_message]
+            
+            # Step 2: AI reasoning step - decide what to do
+            reasoning_result = await self.bridge_client.ai_chat(
+                messages=messages,
+                model="gpt-4o",
+                temperature=0.1,  # Lower temperature for consistent reasoning
+                max_tokens=2048
             )
-            return response
-        else:
-            return (
-                "⚠️ **No API Keys Configured**\n\n"
-                "This agent needs API keys to function. "
-                "Please inject credentials via the bridge using the `start` RPC method."
-            )
+            
+            reasoning = reasoning_result.get("content", "")
+            
+            # Step 3: Check if AI wants to execute a skill
+            skill_execution = self._extract_skill_execution(reasoning)
+            
+            if skill_execution:
+                # Step 4: Execute skill and provide results to AI
+                skill_result = await self._execute_skill(skill_execution)
+                
+                # Step 5: Continue conversation with skill results
+                messages.append({
+                    "role": "assistant", 
+                    "content": reasoning
+                })
+                
+                messages.append({
+                    "role": "function",
+                    "name": skill_execution["skill_name"],
+                    "content": json.dumps(skill_result)
+                })
+                
+                # Step 6: Final response with skill results
+                final_result = await self.bridge_client.ai_chat(
+                    messages=messages,
+                    model="gpt-4o",
+                    temperature=0.7,  # Higher temperature for natural response
+                    max_tokens=1024
+                )
+                
+                return final_result.get("content", "No response generated")
+            else:
+                # No skills needed, return reasoning directly
+                return reasoning
+                
+        except Exception as e:
+            logger.error(f"ReAct loop error: {e}")
+            # Fallback to simple AI chat
+            return await self._process_agent_request(request, sender)
+    
+    def _build_react_system_prompt(self, skills: List[Dict]) -> str:
+        """
+        Build system prompt with available skills information.
+        
+        Args:
+            skills: List of available skills from bridge
+            
+        Returns:
+            System prompt string
+        """
+        prompt = """You are ArmorClaw, an AI assistant with access to secure tools. 
+
+You can use the following skills to help answer requests:
+
+## Available Skills:
+
+"""
+        
+        for skill in skills:
+            skill_name = skill.get("name", "")
+            skill_desc = skill.get("description", "")
+            skill_domain = skill.get("domain", "")
+            prompt += f"- **{skill_name}**: {skill_desc} (Domain: {skill_domain})\n"
+        
+        prompt += """
+## Skill Execution:
+
+When you need to execute a skill, use this format:
+
+```
+I need to execute a skill to help with this request.
+
+Skill: [skill_name]
+Parameters: [JSON object with required parameters]
+
+For example:
+Skill: weather.get
+Parameters: {"location": "San Francisco, CA"}
+```
+
+## ReAct Process:
+
+1. **Reason**: Analyze the request and determine if skills are needed
+2. **Act**: If skills are needed, request execution with proper parameters
+3. **Observe**: Review the skill results
+4. **Adjust**: Provide the final response to the user
+
+## Important Notes:
+
+- Only execute skills that are available (listed above)
+- Include all required parameters in the JSON format
+- Keep responses concise and helpful
+- Do not make up skill names or parameters
+- If a skill fails, explain the issue and suggest alternatives
+
+Ready to help! What would you like me to assist you with?
+"""
+        return prompt
+    
+    def _extract_skill_execution(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract skill execution request from AI response.
+        
+        Args:
+            text: AI response text
+            
+        Returns:
+            Skill execution dict or None if no skill requested
+        """
+        # Pattern to match skill execution blocks
+        pattern = r'Skill:\s*([a-zA-Z0-9_.-]+)\s*Parameters:\s*(\{.*?\})'
+        
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            skill_name = match.group(1).strip()
+            params_str = match.group(2).strip()
+            
+            try:
+                params = json.loads(params_str)
+                return {
+                    "skill_name": skill_name,
+                    "params": params
+                }
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in skill parameters: {params_str}")
+                return None
+        
+        return None
+    
+    async def _execute_skill(self, skill_execution: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute a skill via the bridge.
+        
+        Args:
+            skill_execution: Dict with skill_name and params
+            
+        Returns:
+            Skill execution result
+        """
+        skill_name = skill_execution["skill_name"]
+        params = skill_execution["params"]
+        
+        logger.info(f"Executing skill: {skill_name} with params: {params}")
+        
+        try:
+            result = await self.bridge_client.skills_execute(skill_name, params)
+            logger.info(f"Skill execution result: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Skill execution error: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "type": "error"
+            }
 
     async def run_matrix_loop(self) -> None:
         """

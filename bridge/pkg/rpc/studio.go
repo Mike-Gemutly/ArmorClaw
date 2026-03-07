@@ -2,20 +2,18 @@
 package rpc
 
 import (
+	"context"
+
 	"github.com/armorclaw/bridge/pkg/studio"
 )
 
 // handleStudio routes all studio.* methods to the Agent Studio integration
-func (s *Server) handleStudio(req *Request) *Response {
+func (s *Server) handleStudio(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	// Check if studio is initialized
 	if s.studio == nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    MethodNotFound,
-				Message: "Agent Studio not initialized",
-			},
+		return nil, &ErrorObj{
+			Code:    MethodNotFound,
+			Message: "Agent Studio not initialized",
 		}
 	}
 
@@ -37,7 +35,7 @@ func (s *Server) handleStudio(req *Request) *Response {
 		resp.Result = studioResp.Result
 	}
 
-	return resp
+	return resp, nil
 }
 
 // GetStudio returns the studio integration for Matrix command handling
@@ -45,7 +43,7 @@ func (s *Server) GetStudio() *studio.StudioIntegration {
 	if s.studio == nil {
 		return nil
 	}
-	return s.studio
+	return s.studio.(*studio.StudioIntegration)
 }
 
 // StudioMethodList returns all available studio methods

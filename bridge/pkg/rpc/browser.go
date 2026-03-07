@@ -112,9 +112,14 @@ func (m *BrowserJobManager) CleanupOldJobs(maxAge time.Duration) int {
 	return removed
 }
 
+// generateID creates a simple unique ID
+func generateID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
 // handleBrowserNavigate handles browser.navigate RPC method
 // Starts a new browser navigation job and returns the job ID
-func (s *Server) handleBrowserNavigate(req *Request) *Response {
+func (s *Server) handleBrowserNavigate(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		URL     string `json:"url"`
 		AgentID string `json:"agent_id"`
@@ -122,24 +127,16 @@ func (s *Server) handleBrowserNavigate(req *Request) *Response {
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.URL == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "url is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "url is required",
 		}
 	}
 
@@ -159,7 +156,7 @@ func (s *Server) handleBrowserNavigate(req *Request) *Response {
 	job.Status = "running"
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	job.cancelFunc = cancel
 
 	// Start navigation in background
@@ -179,23 +176,19 @@ func (s *Server) handleBrowserNavigate(req *Request) *Response {
 		job.Session = job.skill.GetSession()
 	}()
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":    jobID,
-			"status":    "running",
-			"url":       params.URL,
-			"agent_id":  params.AgentID,
-			"message":   "Navigation started. Use browser.status to poll for completion.",
-			"created_at": job.CreatedAt.Format(time.RFC3339),
-		},
-	}
+	return map[string]interface{}{
+		"job_id":    jobID,
+		"status":    "running",
+		"url":       params.URL,
+		"agent_id":  params.AgentID,
+		"message":   "Navigation started. Use browser.status to poll for completion.",
+		"created_at": job.CreatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // handleBrowserFill handles browser.fill RPC method
 // Fills a form field in an active browser job
-func (s *Server) handleBrowserFill(req *Request) *Response {
+func (s *Server) handleBrowserFill(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID    string `json:"job_id"`
 		Selector string `json:"selector"`
@@ -203,222 +196,154 @@ func (s *Server) handleBrowserFill(req *Request) *Response {
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	if params.Selector == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "selector is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "selector is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	if job.Status == "failed" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InternalError,
-				Message: "job has failed: " + job.Error,
-			},
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "job has failed: " + job.Error,
 		}
 	}
 
 	// Fill form
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	err := job.skill.FillForm(ctx, params.Selector, params.Value)
 	if err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InternalError,
-				Message: "failed to fill form: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "failed to fill form: " + err.Error(),
 		}
 	}
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":   params.JobID,
-			"status":   "filled",
-			"selector": params.Selector,
-			"success":  true,
-		},
-	}
+	return map[string]interface{}{
+		"job_id":   params.JobID,
+		"status":   "filled",
+		"selector": params.Selector,
+		"success":  true,
+	}, nil
 }
 
 // handleBrowserClick handles browser.click RPC method
 // Clicks an element in an active browser job
-func (s *Server) handleBrowserClick(req *Request) *Response {
+func (s *Server) handleBrowserClick(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID    string `json:"job_id"`
 		Selector string `json:"selector"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	if params.Selector == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "selector is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "selector is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	if job.Status == "failed" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InternalError,
-				Message: "job has failed: " + job.Error,
-			},
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "job has failed: " + job.Error,
 		}
 	}
 
 	// Click element
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	err := job.skill.Click(ctx, params.Selector)
 	if err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InternalError,
-				Message: "failed to click: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "failed to click: " + err.Error(),
 		}
 	}
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":   params.JobID,
-			"status":   "clicked",
-			"selector": params.Selector,
-			"success":  true,
-		},
-	}
+	return map[string]interface{}{
+		"job_id":   params.JobID,
+		"status":   "clicked",
+		"selector": params.Selector,
+		"success":  true,
+	}, nil
 }
 
 // handleBrowserStatus handles browser.status RPC method
 // Polls for job completion and returns current state
-func (s *Server) handleBrowserStatus(req *Request) *Response {
+func (s *Server) handleBrowserStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
@@ -452,16 +377,12 @@ func (s *Server) handleBrowserStatus(req *Request) *Response {
 	// In a full implementation, this would capture actual screenshots
 	result["screenshot_available"] = false
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result:  result,
-	}
+	return result, nil
 }
 
 // handleBrowserWaitForElement handles browser.wait_for_element RPC method
 // Waits for an element to appear on the page
-func (s *Server) handleBrowserWaitForElement(req *Request) *Response {
+func (s *Server) handleBrowserWaitForElement(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID    string `json:"job_id"`
 		Selector string `json:"selector"`
@@ -469,35 +390,23 @@ func (s *Server) handleBrowserWaitForElement(req *Request) *Response {
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	if params.Selector == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "selector is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "selector is required",
 		}
 	}
 
@@ -508,286 +417,210 @@ func (s *Server) handleBrowserWaitForElement(req *Request) *Response {
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	// Wait for element
-	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(params.Timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Second)
 	defer cancel()
 
 	err := job.skill.WaitForElement(ctx, params.Selector, time.Duration(params.Timeout)*time.Second)
 	if err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InternalError,
-				Message: "element not found: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "element not found: " + err.Error(),
 		}
 	}
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":   params.JobID,
-			"status":   "element_found",
-			"selector": params.Selector,
-			"success":  true,
-		},
-	}
+	return map[string]interface{}{
+		"job_id":   params.JobID,
+		"status":   "element_found",
+		"selector": params.Selector,
+		"success":  true,
+	}, nil
 }
 
 // handleBrowserWaitForCaptcha handles browser.wait_for_captcha RPC method
 // Signals that the agent is waiting for captcha resolution
-func (s *Server) handleBrowserWaitForCaptcha(req *Request) *Response {
+func (s *Server) handleBrowserWaitForCaptcha(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	// Emit captcha status
-	ctx := s.ctx
+	ctx = ctx
 	job.skill.WaitForCaptcha(ctx)
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":  params.JobID,
-			"status":  "awaiting_captcha",
-			"message": "Captcha detection started. Mobile app will be notified.",
-		},
-	}
+	return map[string]interface{}{
+		"job_id":  params.JobID,
+		"status":  "awaiting_captcha",
+		"message": "Captcha detection started. Mobile app will be notified.",
+	}, nil
 }
 
 // handleBrowserWaitFor2FA handles browser.wait_for_2fa RPC method
 // Signals that the agent is waiting for 2FA code
-func (s *Server) handleBrowserWaitFor2FA(req *Request) *Response {
+func (s *Server) handleBrowserWaitFor2FA(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	// Emit 2FA status
-	ctx := s.ctx
+	ctx = ctx
 	job.skill.WaitFor2FA(ctx)
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":  params.JobID,
-			"status":  "awaiting_2fa",
-			"message": "2FA detection started. Mobile app will be notified.",
-		},
-	}
+	return map[string]interface{}{
+		"job_id":  params.JobID,
+		"status":  "awaiting_2fa",
+		"message": "2FA detection started. Mobile app will be notified.",
+	}, nil
 }
 
 // handleBrowserComplete handles browser.complete RPC method
 // Marks a browser job as complete
-func (s *Server) handleBrowserComplete(req *Request) *Response {
+func (s *Server) handleBrowserComplete(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	// Mark complete
-	ctx := s.ctx
+	ctx = ctx
 	job.skill.Complete(ctx)
 	job.Status = "completed"
 	now := time.Now()
 	job.CompletedAt = &now
 	job.Session = job.skill.GetSession()
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":       params.JobID,
-			"status":       "completed",
-			"completed_at": job.CompletedAt.Format(time.RFC3339),
-			"success":      true,
-		},
-	}
+	return map[string]interface{}{
+		"job_id":       params.JobID,
+		"status":       "completed",
+		"completed_at": job.CompletedAt.Format(time.RFC3339),
+		"success":      true,
+	}, nil
 }
 
 // handleBrowserFail handles browser.fail RPC method
 // Marks a browser job as failed
-func (s *Server) handleBrowserFail(req *Request) *Response {
+func (s *Server) handleBrowserFail(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID  string `json:"job_id"`
 		Reason string `json:"reason"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
 	// Mark failed
-	ctx := s.ctx
+	ctx = ctx
 	job.skill.Fail(ctx, fmt.Errorf("%s", params.Reason))
 	job.Status = "failed"
 	job.Error = params.Reason
 	now := time.Now()
 	job.CompletedAt = &now
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":  params.JobID,
-			"status":  "failed",
-			"error":   params.Reason,
-			"success": true,
-		},
-	}
+	return map[string]interface{}{
+		"job_id":  params.JobID,
+		"status":  "failed",
+		"error":   params.Reason,
+		"success": true,
+	}, nil
 }
 
 // handleBrowserList handles browser.list RPC method
 // Lists all active browser jobs
-func (s *Server) handleBrowserList(req *Request) *Response {
+func (s *Server) handleBrowserList(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	jobs := s.browserJobs.ListJobs()
 
 	result := make([]map[string]interface{}, 0, len(jobs))
@@ -808,55 +641,39 @@ func (s *Server) handleBrowserList(req *Request) *Response {
 		result = append(result, jobInfo)
 	}
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"jobs":  result,
-			"count": len(result),
-		},
-	}
+	return map[string]interface{}{
+		"jobs":  result,
+		"count": len(result),
+	}, nil
 }
 
 // handleBrowserCancel handles browser.cancel RPC method
 // Cancels an active browser job
-func (s *Server) handleBrowserCancel(req *Request) *Response {
+func (s *Server) handleBrowserCancel(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "invalid parameters: " + err.Error(),
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "invalid parameters: " + err.Error(),
 		}
 	}
 
 	if params.JobID == "" {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job_id is required",
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job_id is required",
 		}
 	}
 
 	// Get job
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
-		return &Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &ErrorObj{
-				Code:    InvalidParams,
-				Message: "job not found: " + params.JobID,
-			},
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "job not found: " + params.JobID,
 		}
 	}
 
@@ -868,14 +685,10 @@ func (s *Server) handleBrowserCancel(req *Request) *Response {
 	now := time.Now()
 	job.CompletedAt = &now
 
-	return &Response{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"job_id":       params.JobID,
-			"status":       "cancelled",
-			"cancelled_at": job.CompletedAt.Format(time.RFC3339),
-			"success":      true,
-		},
-	}
+	return map[string]interface{}{
+		"job_id":       params.JobID,
+		"status":       "cancelled",
+		"cancelled_at": job.CompletedAt.Format(time.RFC3339),
+		"success":      true,
+	}, nil
 }

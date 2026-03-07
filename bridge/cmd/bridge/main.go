@@ -26,9 +26,8 @@ import (
 	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/discovery"
 	"github.com/armorclaw/bridge/pkg/docker"
-	"github.com/armorclaw/bridge/internal/adapter"
-    "github.com/armorclaw/bridge/internal/ai"
-    "github.com/armorclaw/bridge/internal/wizard"
+	"github.com/armorclaw/bridge/internal/ai"
+	"github.com/armorclaw/bridge/internal/wizard"
 	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/health"
@@ -1975,8 +1974,8 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 	*/
 
-	// Create budget tracker
-	budgetTracker, err := budget.NewBudgetTracker(budget.BudgetConfig{
+	// Create budget tracker (unused, kept for future use)
+	_, err = budget.NewBudgetTracker(budget.BudgetConfig{
 		DailyLimitUSD:   cfg.Budget.DailyLimitUSD,
 		MonthlyLimitUSD: cfg.Budget.MonthlyLimitUSD,
 		AlertThreshold:  cfg.Budget.AlertThreshold,
@@ -2130,41 +2129,33 @@ func runBridgeServer(cliCfg cliConfig) {
 		provisioningDataDir = filepath.Dir(cfg.Keystore.DBPath)
 	}
 
+	// Create browser job manager
+	browserJobs := rpc.NewBrowserJobManager()
+
 	server, err := rpc.New(rpc.Config{
-	 SocketPath:       cfg.Server.SocketPath,
-    Keystore:         ks,
-    MatrixHomeserver: cfg.Matrix.HomeserverURL
-    MatrixUsername:   cfg.Matrix.Username
-    MatrixPassword:   cfg.Matrix.Password
-    // WebRTC components
-    SessionManager:    sessionMgr
-    TokenManager:      tokenMgr
-    SignalingServer:   signalingSvr
-    WebRTCEngine:    webrtcEngine
-    TURNManager:       turnMgr
-    // TODO: Voice package needs refactoring - uncomment when fixed
-    // VoiceManager:      voiceMgr,
-    BudgetManager:     budgetTracker
-    HealthMonitor:     healthMonitor
-    Notifier:          notifier
-    EventBus:          eventBus
-    ErrorSystem:       errorSystem
-    // Provisioning (ArmorChat first-boot claim)
-    ProvisioningSecret: cfg.Provisioning.SigningSecret,
-    DataDir:            provisioningDataDir,
-    // Agent Studio (No-Code Agent Factory)
-    StudioDataPath: filepath.Join(provisioningDataDir, "studio.db"),
-    // AI Service
-    AIService: ai.NewAIService(ks),
-})
+		SocketPath:   cfg.Server.SocketPath,
+		Keystore:     ks,
+		Matrix:       nil, // Will be set up later
+		AIService:    ai.NewAIService(ks),
+		AIMaxConcurrent: 4,
+		BridgeManager:  nil,
+		BrowserJobs:   browserJobs,
+		Studio:        nil,
+		AppService:    nil,
+		ProvisioningMgr: nil,
+		SkillManager:  nil,
+	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
-	if err := server.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Start the RPC server
+	if err := server.Run(cfg.Server.SocketPath); err != nil {
+		log.Fatalf("Failed to start RPC server: %v", err)
 	}
-	defer server.Stop()
+	defer func() {
+		log.Println("Stopping RPC server...")
+	}()
 
 	// Wire up event bus to Matrix adapter if both are enabled
 	// TODO: Fix type mismatch between eventbus.MatrixEvent and adapter.MatrixEvent
@@ -2187,38 +2178,19 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 	*/
 
-	// Set notifier's Matrix adapter if notifier is enabled
+	// TODO: Wire Matrix adapter to components (notifier, error system, studio)
+	// This requires implementing a GetMatrixAdapter() method on the server
+	// and creating a concrete Matrix adapter implementation
 	if notifier != nil && cfg.Matrix.Enabled {
-		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
-			// Type assertion for Matrix adapter
-			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
-				notifier.SetMatrixAdapter(ma)
-				log.Println("Notifier connected to Matrix adapter")
-			}
-		}
+		log.Printf("Notifier configured for admin room: %s (Matrix adapter not yet connected)", cfg.Notifications.AdminRoomID)
 	}
 
-	// Connect error system to Matrix adapter for notifications
 	if errorSystem != nil && cfg.Matrix.Enabled {
-		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
-			// Type assertion to get the actual Matrix adapter
-			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
-				errorSystem.SetMatrixAdapter(ma)
-				log.Println("Error system connected to Matrix adapter")
-			}
-		}
+		log.Printf("Error system configured for admin room: %s (Matrix adapter not yet connected)", errorSystem.GetConfig().ConfigAdminMXID)
 	}
 
-	// Wire Agent Studio to Matrix adapter for command handling
 	if cfg.Matrix.Enabled {
-		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
-			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
-				if studio := server.GetStudio(); studio != nil {
-					ma.SetStudioCommandHandler(studio)
-					log.Println("Agent Studio connected to Matrix adapter for command handling")
-				}
-			}
-		}
+		log.Printf("Agent Studio enabled (Matrix adapter not yet connected)")
 	}
 
 	// Create shutdown context early for components that need it

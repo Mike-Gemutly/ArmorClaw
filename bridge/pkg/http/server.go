@@ -341,11 +341,16 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Use the RPC server to handle the request
-	response := s.rpcServer.HandleRequest(r.Context(), body)
+	var req rpc.Request
+	if err := json.Unmarshal(body, &req); err != nil {
+		s.writeError(w, nil, -32700, "Invalid JSON")
+		return
+	}
+
+	response := s.rpcServer.Handle(r.Context(), &req)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

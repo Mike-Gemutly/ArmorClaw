@@ -129,7 +129,7 @@ func (s *AIService) ValidateRequest(req ChatRequest) error {
     if maxTokens > MaxCompletionTokens {
         return &AIError{
             Code:      "max_tokens_too_large",
-            Message:   fmt.Sprintf("Max tokens too large (requested %d, max %d)", maxTokens, MaxCompletionTokens)
+            Message:   fmt.Sprintf("Max tokens too large (requested %d, max %d)", maxTokens, MaxCompletionTokens),
         }
     }
     
@@ -137,7 +137,7 @@ func (s *AIService) ValidateRequest(req ChatRequest) error {
     if totalTokens > MaxTotalTokens {
         return &AIError{
             Code:      "total_tokens_exceeded",
-            Message:   fmt.Sprintf("Total tokens would exceed limit (%d, max %d)", totalTokens, MaxTotalTokens)
+            Message:   fmt.Sprintf("Total tokens would exceed limit (%d, max %d)", totalTokens, MaxTotalTokens),
         }
     }
     

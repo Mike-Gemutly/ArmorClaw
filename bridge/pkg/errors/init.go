@@ -20,6 +20,10 @@ type System struct {
 	started  bool
 }
 
+func (s *System) GetConfig() Config {
+	return s.config
+}
+
 // Config configures the error handling system
 type Config struct {
 	// Store configuration

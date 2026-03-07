@@ -1,257 +1,100 @@
 package rpc
 
 import (
-	 "context"
-    "errors"
-    "fmt"
-    "log/slog"
-    "time"
+	"context"
+	"encoding/json"
+	"log/slog"
+	"time"
 
-    "github.com/armorclaw/bridge/internal/ai"
+	"github.com/armorclaw/bridge/internal/ai"
+	"github.com/google/uuid"
 )
 
-func (s *Server) handleAIChat(req *Request) *Response {
-    var params struct {
-        Messages    []ai.Message `json:"messages"`
-        Model       string       `json:"model,omitempty"`
-        Temperature float32      `json:"temperature,omitempty"`
-        TopP        float32      `json:"top_p,omitempty"`
-        MaxTokens   int          `json:"max_tokens,omitempty"`
-        Stop        []string     `json:"stop,omitempty"`
-        KeyID       string       `json:"key_id,omitempty"`
-    }
+func (s *Server) handleAIChat(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		Messages    []ai.Message `json:"messages"`
+		Model       string       `json:"model,omitempty"`
+		Temperature float32      `json:"temperature,omitempty"`
+		TopP        float32      `json:"top_p,omitempty"`
+		MaxTokens   int          `json:"max_tokens,omitempty"`
+		Stop        []string     `json:"stop,omitempty"`
+		KeyID       string       `json:"key_id,omitempty"`
+	}
 
-    if err := json.Unmarshal(req.Params, &params); err != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: ParseError, Message: err.Error()},
-        }
-    }
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{Code: ParseError, Message: err.Error()}
+	}
 
-    userID := "default"
+	userID := "default"
 
+	if s.aiService != nil && !s.aiService.CheckRateLimit(userID) {
+		return nil, &ErrorObj{Code: TooManyRequests, Message: "AI rate limit exceeded"}
+	}
 
- func (s *Server) handleAIChat(req *Request) *Response {
-    var params struct {
-        Messages    []ai.Message `json:"messages"`
-        Model       string       `json:"model,omitempty"`
-        Temperature float32      `json:"temperature,omitempty"`
-        TopP        float32      `json:"top_p,omitempty"`
-        MaxTokens   int          `json:"max_tokens,omitempty"`
-        Stop        []string     `json:"stop,omitempty"`
-        KeyID       string       `json:"key_id,omitempty"`
-    }
+	// Acquire slot with context cancellation support (prevents goroutine leak)
+	select {
+	case s.aiSemaphore <- struct{}{}:
+	case <-ctx.Done():
+		return nil, &ErrorObj{
+			Code:    RequestCancelled,
+			Message: "request cancelled",
+		}
+	}
 
-    if err := json.Unmarshal(req.Params, &params); err != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: ParseError, Message: err.Error()},
-        }
-    }
+	defer func() { <-s.aiSemaphore }()
 
-    userID := "default"
+	// Timeout after semaphore acquisition (applies only to AI call)
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
 
-    if s.aiService != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: InternalError, Message: "AI service not configured"},
-        }
-    }
-    if s.aiSemaphore != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: TooManyRequests, Message: "AI concurrency limit reached"},
-        }
-    }
+	model := params.Model
+	if model == "" && s.aiService != nil {
+		model = s.aiService.DefaultModel()
+	}
+	if model == "" {
+		model = "gpt-4o"
+	}
 
-    model := params.Model
-    if model == "" {
-        model = "gpt-4o"
-    }
+	chatReq := ai.ChatRequest{
+		Model:       model,
+		Messages:    params.Messages,
+		Temperature: params.Temperature,
+		TopP:        params.TopP,
+		MaxTokens:   params.MaxTokens,
+		Stop:        params.Stop,
+		RequestID:   uuid.New().String(),
+	}
 
-    if s.aiService != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: InvalidRequest, Message: "Messages cannot be empty"}
-        }
-    }
-    if s.aiService == nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: InvalidRequest, Message: "Messages cannot be empty"}
-        }
-    }
+	if s.aiService != nil {
+		if err := s.aiService.ValidateRequest(chatReq); err != nil {
+			return nil, &ErrorObj{Code: InvalidRequest, Message: err.Error()}
+		}
+	}
 
-    chatReq := ai.ChatRequest{
-        Model:       model,
-        Messages:    params.Messages,
-        Temperature: params.Temperature,
-        TopP:        params.TopP,
-        MaxTokens:   params.MaxTokens,
-        Stop:        params.Stop,
-        RequestID:   uuid.New().String(),
-    }
+	keyID := params.KeyID
+	if keyID == "" && s.aiService != nil {
+		keyID = s.aiService.DefaultKeyID()
+	}
+	if keyID == "" {
+		keyID = "openai-default"
+	}
 
-    if s.aiService != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: InternalError, Message: err.Error()},
-        }
-    }
+	start := time.Now()
 
-    keyID := params.KeyID
-    if keyID == "" {
-        keyID = s.aiService.DefaultKeyID()
-    }
-    if keyID == "" {
-        keyID = "openai-default"
-    }
+	resp, err := s.aiService.Chat(ctx, chatReq, keyID)
+	if err != nil {
+		if s.aiService == nil {
+			return nil, &ErrorObj{Code: InternalError, Message: err.Error()}
+		}
+		return nil, &ErrorObj{Code: ai.AIErrProviderError, Message: err.Error()}
+	}
 
-    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-    defer cancel()
+	latency := time.Since(start)
+	slog.Info("ai.chat completed",
+		"request_id", chatReq.RequestID,
+		"model", model,
+		"latency_ms", latency.Milliseconds(),
+	)
 
-    start := time.Now()
-
-
-
-    var resp *ai.ChatResponse
-    var err error
-    if s.aiService != nil {
-        resp, err = s.aiService.Chat(ctx, chatReq, keyID)
-    } else {
-        err = errors.New("AI service not configured")
-    }
-
-    latency := time.Since(start)
-    slog.Info("ai.chat completed",
-        "request_id", chatReq.RequestID,
-        "model", model,
-        "latency_ms", latency.Milliseconds(),
-    )
-
-    if err != nil {
-        if s.aiService == nil {
-            return &Response{
-                JSONRPC: "2.0",
-                ID:      req.ID,
-                Error:   &ErrorObj{Code: InternalError, Message: err.Error()},
-            }
-        }
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: ai.AIErrProviderError, Message: err.Error()},
-        }
-    }
-    return &Response{
-        JSONRPC: "2.0",
-        ID:      req.ID,
-        Result:  resp,
-    }
+	return resp, nil
 }
-    if s.aiSemaphore != nil {
-        return &Response{
-            JSONRPC: "2.0",
-            ID:      req.ID,
-            Error:   &ErrorObj{Code: TooManyRequests, Message: "AI concurrency limit reached",
-        }
-    }
-
-    model := params.Model
-    if model == "" && s.aiService != nil {
-        model = s.aiService.DefaultModel()
-    }
-    if model == "" {
-        model = s.aiService.DefaultModel()
-            if model == "" {
-                model = "gpt-4o"
-            }
-        }
-    }
-
-    ctx, cancel()
-    context.WithTimeout(context.Background(), 60*time.Second)
-    defer cancel()
-
-            start := time.Now()
-            latency := time.Since(start)
-
-            if s.aiService == nil {
-                return &Response{
-                    JSONRPC: "2.0",
-                    ID:      req.ID,
-                    Error:   &ErrorObj{Code: InternalError,
-                    Message: err.Error(),
-                }
-            }
-            }
-        }
-
-        var resp *ai.ChatResponse
-        var usage Usage  `json:"usage,omitempty"`
-    }
-            slog.Info("ai.chat completed",
-                "request_id", chatReq.RequestID,
-                "model", model,
-                "latency_ms", latency.Milliseconds(),
-                "provider", get provider(),
-                "tokens_used" get usage from token counting,
-            )
-            slog.Info("ai.chat failed",
-                "request_id", requestID,
-                "model", model,
-                "latency_ms", latency.Milliseconds(),
-                "request_id", chatReq.RequestID,
-            }
-        }
-
-        if s.aiService == nil {
-            err = errors.New("AI service not configured")
-            return &Response{
-                JSONRPC: "2.0",
-                ID:      req.ID,
-                Error: &ErrorObj{Code: InternalError,
-                Message: err.Error(),
-            }
-        }
-
-        if s.aiService != nil {
-            return &Response{
-                JSONRPC: "2.0",
-                ID:      req.ID,
-                Error: &ErrorObj{Code: InvalidRequest,
-                Message: "AI service not configured",
-            }
-        }
-
-        if s.aiService != nil {
-            return &Response{
-                JSONRPC: "2.0",
-                ID:      req.ID,
-                Result: usage,
-            }
-        }
-    }
-
-    resp := result.New usage for & `result.Usage.PromptTokens +```
-)
-
-            slog.Info("ai.chat failed",
-                "request_id", req.RequestID,
-                "model": model,
-                "latency_ms": latency.Milliseconds(),
-                "request_id": req.RequestID,
-                "provider": get provider from token counts"
-            }
-        }
-    }
-    return nil
-}
-func (s *Server) handleAIChat(req *Request) *Response {

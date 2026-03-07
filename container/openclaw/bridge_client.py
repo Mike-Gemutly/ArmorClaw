@@ -338,6 +338,60 @@ class BridgeClient:
 
         return self._send_request("attach_config", params)
 
+    def ai_chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str = "gpt-4o",
+        temperature: float = 0.7,
+        top_p: float = 1.0,
+        max_tokens: int = 1024,
+        stop: Optional[List[str]] = None,
+        key_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Send a chat request to an AI provider via the bridge.
+        API keys NEVER leave the bridge.
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            model: Model to use (default: gpt-4o)
+            temperature: Sampling temperature (default: 0.7)
+            top_p: Nucleus sampling (default: 1.0)
+            max_tokens: Maximum tokens to generate (default: 1024)
+            stop: Stop sequences (optional)
+            key_id: Key ID from keystore (optional, uses default if not provided)
+            
+        Returns:
+            Response dict with content, usage, and other fields
+            
+        Raises:
+            RuntimeError: If bridge connection fails or RPC call fails
+            
+        Example:
+            result = client.ai_chat(
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant"},
+                    {"role": "user", "content": "Hello!"}
+                ],
+                model="gpt-4o",
+                max_tokens=512
+            )
+            print(result["content"])
+        """
+        params = {
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens,
+        }
+        if stop:
+            params["stop"] = stop
+        if key_id:
+            params["key_id"] = key_id
+        
+        return self._send_request("ai.chat", params)
+
 
 # ============================================================================
 # Async Bridge Client (for async agent operations)
@@ -542,6 +596,224 @@ class AsyncBridgeClient:
             params["metadata"] = metadata
 
         return await self._send_request("attach_config", params)
+
+    async def ai_chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str = "gpt-4o",
+        temperature: float = 0.7,
+        top_p: float = 1.0,
+        max_tokens: int = 1024,
+        stop: Optional[List[str]] = None,
+        key_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Send a chat request to an AI provider via the bridge (async).
+        API keys NEVER leave the bridge.
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            model: Model to use (default: gpt-4o)
+            temperature: Sampling temperature (default: 0.7)
+            top_p: Nucleus sampling (default: 1.0)
+            max_tokens: Maximum tokens to generate (default: 1024)
+            stop: Stop sequences (optional)
+            key_id: Key ID from keystore (optional, uses default if not provided)
+            
+        Returns:
+            Response dict with content, usage, and other fields
+            
+        Raises:
+            RuntimeError: If bridge connection fails or RPC call fails
+            asyncio.TimeoutError: If request times out after 60 seconds
+            
+        Example:
+            result = await client.ai_chat(
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant"},
+                    {"role": "user", "content": "Hello!"}
+                ],
+                model="gpt-4o",
+                max_tokens=512
+            )
+            print(result["content"])
+        """
+        params = {
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens,
+        }
+        if stop:
+            params["stop"] = stop
+        if key_id:
+            params["key_id"] = key_id
+        
+        return await asyncio.wait_for(
+            self._send_request("ai.chat", params),
+            timeout=60
+        )
+
+    # ========================================================================
+    # Async Skills Methods
+    # ========================================================================
+
+    async def skills_execute(
+        self,
+        skill_name: str,
+        params: Optional[Dict[str, Any]] = None
+    ) -> Dict:
+        """
+        Execute a skill via the bridge with PETG security validation.
+        
+        Args:
+            skill_name: Name of the skill to execute (e.g., "weather.get", "github.repo.info")
+            params: Skill parameters (optional)
+            
+        Returns:
+            Skill execution result with keys: success, output, error, type, timestamp
+            
+        Raises:
+            RuntimeError: If bridge connection fails or skill execution fails
+        """
+        request_params = {
+            "skill_name": skill_name
+        }
+        if params:
+            request_params["params"] = params
+            
+        return await self._send_request("skills.execute", request_params)
+
+    async def skills_list(self) -> Dict:
+        """
+        List all available skills.
+        
+        Returns:
+            Skills list with keys: skills, count
+            
+        Raises:
+            RuntimeError: If bridge connection fails
+        """
+        return await self._send_request("skills.list")
+
+    async def skills_get_schema(self, skill_name: str) -> Dict:
+        """
+        Get the OpenAI-compatible schema for a skill.
+        
+        Args:
+            skill_name: Name of the skill to get schema for
+            
+        Returns:
+            Schema with keys: skill_name, schema
+            
+        Raises:
+            RuntimeError: If bridge connection fails or skill not found
+        """
+        params = {"skill_name": skill_name}
+        return await self._send_request("skills.get_schema", params)
+
+    async def skills_allow(self, skill_name: str) -> Dict:
+        """
+        Allow a skill by policy.
+        
+        Args:
+            skill_name: Name of the skill to allow
+            
+        Returns:
+            Allow result with keys: skill_name, status, message
+            
+        Raises:
+            RuntimeError: If bridge connection fails
+        """
+        params = {"skill_name": skill_name}
+        return await self._send_request("skills.allow", params)
+
+    async def skills_block(self, skill_name: str) -> Dict:
+        """
+        Block a skill by policy.
+        
+        Args:
+            skill_name: Name of the skill to block
+            
+        Returns:
+            Block result with keys: skill_name, status, message
+            
+        Raises:
+            RuntimeError: If bridge connection fails
+        """
+        params = {"skill_name": skill_name}
+        return await self._send_request("skills.block", params)
+
+    async def skills_allowlist_add(self, value_type: str, value: str) -> Dict:
+        """
+        Add an IP or CIDR to the allowlist (admin override).
+        
+        Args:
+            value_type: Type of value ("ip" or "cidr")
+            value: IP address or CIDR string
+            
+        Returns:
+            Add result with keys: type, value, status, message
+            
+        Raises:
+            RuntimeError: If bridge connection fails
+        """
+        params = {"type": value_type, "value": value}
+        return await self._send_request("skills.allowlist_add", params)
+
+    async def skills_allowlist_remove(self, value_type: str, value: str) -> Dict:
+        """
+        Remove an IP or CIDR from the allowlist.
+        
+        Args:
+            value_type: Type of value ("ip" or "cidr")
+            value: IP address or CIDR string
+            
+        Returns:
+            Remove result with keys: type, value, status, message
+            
+        Raises:
+            RuntimeError: If bridge connection fails
+        """
+        params = {"type": value_type, "value": value}
+        return await self._send_request("skills.allowlist_remove", params)
+
+    async def skills_allowlist_list(self) -> Dict:
+        """
+        Get the current allowlist.
+        
+        Returns:
+            Allowlist with keys: ips, cidrs, counts
+            
+        Raises:
+            RuntimeError: If bridge connection fails
+        """
+        return await self._send_request("skills.allowlist_list")
+
+    # ========================================================================
+    # Sync Skills Methods (for sync compatibility)
+    # ========================================================================
+
+    def skills_execute_sync(
+        self,
+        skill_name: str,
+        params: Optional[Dict[str, Any]] = None
+    ) -> Dict:
+        """
+        Execute a skill via the bridge (sync version).
+        """
+        request_params = {
+            "skill_name": skill_name
+        }
+        if params:
+            request_params["params"] = params
+            
+        return self._send_request("skills.execute", request_params)
+
+    def skills_list_sync(self) -> Dict:
+        """List all available skills (sync version)."""
+        return self._send_request("skills.list")
 
 
 # ============================================================================
