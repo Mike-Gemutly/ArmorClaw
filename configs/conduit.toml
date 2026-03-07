@@ -10,8 +10,13 @@ port = 6167
 
 max_request_size = 20000000
 
-allow_registration = true
+# Security: Registration disabled by default for production
+# Use registration_shared_secret for admin bootstrap
+allow_registration = false
 allow_federation = true
 allow_check_for_updates = true
 
 trusted_servers = ["matrix.org"]
+
+# registration_shared_secret will be injected at runtime during bootstrap
+# Format: registration_shared_secret = "<64-char-hex-secret>"

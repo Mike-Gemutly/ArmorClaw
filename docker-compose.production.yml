@@ -1,0 +1,74 @@
+# ArmorClaw Production Docker Compose
+# Production-grade deployment with shared-secret bootstrap
+version: '3.8'
+
+services:
+  # Conduit Matrix Homeserver (with shared secret bootstrap)
+  matrix:
+    image: mikegemut/conduit:latest
+    container_name: armorclaw-conduit
+    restart: unless-stopped
+    user: "10000:10000"
+    volumes:
+      - ./configs/conduit.toml:/etc/armorclaw/conduit.toml:ro
+      - conduit-data:/var/lib/conduit
+    ports:
+      - "6167:6167"
+    environment:
+      - CONDUIT_SERVER_NAME=${ARMORCLAW_SERVER_NAME:-localhost}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6167/_matrix/client/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ArmorClaw Bridge (orchestrator)
+  bridge:
+    image: mikegemut/armorclaw:latest
+    container_name: armorclaw-bridge
+    restart: unless-stopped
+    depends_on:
+      matrix:
+        condition: service_healthy
+    volumes:
+      - ./configs:/etc/armorclaw:ro
+      - bridge-data:/var/lib/armorclaw
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8443:8443"
+    environment:
+      - ARMORCLAW_SERVER_NAME=${ARMORCLAW_SERVER_NAME:-localhost}
+      - ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY}
+      - ARMORCLAW_ADMIN_PASSWORD=${ARMORCLAW_ADMIN_PASSWORD}
+      - ARMORCLAW_MATRIX_HOMESERVER_URL=http://matrix:6167
+    healthcheck:
+      test: ["CMD", "socat", "-t", "1", "UNIX-CONNECT:/run/armorclaw/bridge.sock", "-"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Optional: Sygnal Push Gateway
+  sygnal:
+    image: vectorim/sygnal:latest
+    container_name: armorclaw-sygnal
+    restart: unless-stopped
+    depends_on:
+      - matrix
+    volumes:
+      - ./configs/sygnal.yaml:/etc/sygnal/sygnal.yaml:ro
+    ports:
+      - "5000:5000"
+    environment:
+      - SYGNAL_DB=/data/sygnal.db
+
+volumes:
+  conduit-data:
+    driver: local
+  bridge-data:
+    driver: local
+
+networks:
+  default:
+    name: armorclaw-network

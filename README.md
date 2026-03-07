@@ -196,6 +196,28 @@ armorclaw-bridge add-key \
   --token your-api-key
 ```
 
+### Dynamic Provider Discovery (Catwalk)
+
+ArmorClaw integrates with [Catwalk](https://github.com/charmbracelet/catwalk) for dynamic provider and model discovery:
+
+- **Quickstart** automatically discovers providers from the local Catwalk registry
+- **Runtime switching** via Matrix commands — no restart needed
+- **Fallback** to hardcoded list if Catwalk unavailable
+
+**Matrix Commands:**
+```
+/ai              — Show help
+/ai providers    — List available providers
+/ai models <p>  — List models for a provider
+/ai switch <p> <m> — Switch provider and model
+/ai status      — Show current configuration
+```
+
+Example:
+```
+/ai switch openai gpt-4o
+```
+
 ---
 
 ## System Requirements

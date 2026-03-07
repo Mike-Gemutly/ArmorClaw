@@ -1,12 +1,44 @@
 # ArmorClaw Progress Log
 
 > This file tracks completed milestones and their delivery dates.
-> **Last Updated:** 2026-02-23
-> **Current Phase:** Phase 9 Complete - Production Installer v4 (v9.0.0)
+> **Last Updated:** 2026-03-06
+> **Current Phase:** Phase 10 Complete - Catwalk AI Provider Discovery (v4.3.1)
 
 ---
 
 ## Milestone Tracking
+
+### ✅ Milestone 21: Catwalk AI Provider Discovery (Complete 2026-03-06)
+**Status:** COMPLETE
+**Duration:** 1 day
+**Deliverables:**
+- Catwalk HTTP client for provider/model discovery
+- Dynamic provider list in quickstart wizard (falls back to hardcoded if Catwalk unavailable)
+- Runtime AI switching via Matrix commands (`/ai providers`, `/ai models`, `/ai switch`)
+- Catwalk binary included in bridge Docker build
+
+**Artifacts:**
+- `bridge/internal/wizard/catwalk.go` - Catwalk client
+- `bridge/internal/wizard/catwalk_test.go` - Unit tests (9 passing)
+- `bridge/internal/ai/runtime.go` - AI runtime with provider switching
+- `bridge/internal/ai/runtime_test.go` - Unit tests (5 passing)
+- `bridge/pkg/matrixcmd/handler.go` - Added `/ai` command handler
+- `bridge/pkg/matrixcmd/handler_ai_test.go` - Unit tests (6 passing)
+- `bridge/Dockerfile` - Downloads Catwalk v0.28.3 at build time
+- `container/openclaw-src/src/agents/ai-runtime.ts` - TypeScript runtime
+- `container/openclaw-src/src/agents/catwalk-adapter.ts` - Catwalk adapter
+- `container/openclaw-src/src/auto-reply/commands-registry.data.ts` - Added `/ai` command
+
+**Matrix Commands:**
+```
+/ai              — Show help
+/ai providers    — List available providers
+/ai models <p>  — List models for a provider
+/ai switch <p> <m> — Switch provider and model
+/ai status      — Show current configuration
+```
+
+---
 
 ### ✅ Milestone 1: Project Design (Complete 2026-02-05)
 **Status:** COMPLETE
