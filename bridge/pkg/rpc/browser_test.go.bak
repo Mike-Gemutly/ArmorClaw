@@ -108,7 +108,6 @@ func TestBrowserJobManager_CleanupOldJobs(t *testing.T) {
 // TestHandleBrowserNavigate tests browser.navigate RPC
 func TestHandleBrowserNavigate(t *testing.T) {
 	s := &Server{
-		ctx:         context.Background(),
 		browserJobs: NewBrowserJobManager(),
 	}
 
@@ -125,22 +124,22 @@ func TestHandleBrowserNavigate(t *testing.T) {
 		Params:  paramsJSON,
 	}
 
-	resp := s.handleBrowserNavigate(req)
+	result, err := s.handleBrowserNavigate(context.Background(), req)
 
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err.Message)
 	}
 
-	result, ok := resp.Result.(map[string]interface{})
+	respData, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatal("expected result to be a map")
 	}
 
-	if result["status"] != "running" {
-		t.Errorf("expected status running, got %v", result["status"])
+	if respData["status"] != "running" {
+		t.Errorf("expected status running, got %v", respData["status"])
 	}
-	if result["url"] != "https://example.com" {
-		t.Errorf("expected url, got %v", result["url"])
+	if respData["url"] != "https://example.com" {
+		t.Errorf("expected url, got %v", respData["url"])
 	}
 	if result["job_id"] == "" {
 		t.Error("expected job_id to be set")
