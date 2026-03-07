@@ -38,7 +38,14 @@ func NewCatwalkClient(baseURL string) *CatwalkClient {
 	return &CatwalkClient{
 		baseURL: baseURL,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:          10,
+				IdleConnTimeout:       30 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
 		},
 	}
 }

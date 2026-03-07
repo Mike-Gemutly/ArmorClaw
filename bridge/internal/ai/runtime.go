@@ -151,7 +151,7 @@ func (r *AIRuntime) SwitchProvider(provider, model string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile("/run/armorclaw/ai-config.json", data, 0644); err != nil {
+	if err := os.WriteFile("/run/armorclaw/ai-config.json", data, 0600); err != nil {
 		return fmt.Errorf("failed to write ai config: %w", err)
 	}
 
