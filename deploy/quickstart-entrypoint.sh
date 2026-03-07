@@ -34,6 +34,33 @@ log_warn() {
     echo -e "${YELLOW}[QuickStart] WARNING:${NC} $1"
 }
 
+# CI Environment Detection
+# GitHub Actions and other CI runners don't have Docker socket access
+# ARMORCLAW_SKIP_DOCKER=1 can be set to skip Docker-dependent steps
+if [ "${ARMORCLAW_SKIP_DOCKER:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ] || [ "${CI:-false}" = "true" ]; then
+    if [ ! -S /var/run/docker.sock ]; then
+        log_warn "CI environment detected without Docker socket access"
+        log "Running in bridge-only mode (no Docker orchestration)"
+        
+        # Create minimal config for bridge-only mode
+        mkdir -p "$CONFIG_DIR" "$DATA_DIR"
+        
+        # Copy config if available
+        if [ -f "/opt/armorclaw/configs/config.toml" ] && [ ! -f "$CONFIG_DIR/config.toml" ]; then
+            cp /opt/armorclaw/configs/config.toml "$CONFIG_DIR/config.toml"
+        fi
+        
+        # Mark as bootstrapped
+        touch "$INIT_FLAG"
+        
+        log_success "CI bootstrap complete - bridge-only mode ready"
+        log "To run full quickstart, use a VPS with Docker socket access"
+        
+        # Exit successfully - CI can proceed with other tests
+        exit 0
+    fi
+fi
+
 # Check if already bootstrapped
 if [ -f "$INIT_FLAG" ]; then
     log "Configuration already bootstrapped, starting services..."
