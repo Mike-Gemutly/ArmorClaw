@@ -140,7 +140,7 @@ docker run -d \
     -v "$CONFIG_DIR:/etc/armorclaw:ro" \
     -v /var/lib/conduit:/var/lib/conduit \
     -p 6167:6167 \
-    ghcr.io/matrix-conduit/matrix-conduit:latest
+    matrixconduit/matrix-conduit:latest
 
 # Wait for Conduit to be ready
 log "Waiting for Conduit to start..."
