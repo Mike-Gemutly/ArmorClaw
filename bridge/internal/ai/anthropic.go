@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -67,60 +66,63 @@ type contentBlock struct {
 }
 
 func (c *AnthropicClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	if req.RequestID == "" {
-		req.RequestID = uuid.New().String()[:8]
-	}
-	
-	start := time.Now()
-	
-	anthropicReq, err := c.convertRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	
-	body, err := json.Marshal(anthropicReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-	
-	result, err := executeWithRetry(ctx, DefaultRetryConfig, func() (*http.Response, []byte, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/messages", bytes.NewReader(body))
-		if err != nil {
-			return nil, nil, err
-		}
-		
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("x-api-key", c.apiKey)
-		httpReq.Header.Set("anthropic-version", "2023-06-01")
-		
-		resp, err := c.httpClient.Do(httpReq)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer resp.Body.Close()
-		
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, nil, err
-		}
-		
-		return resp, respBody, nil
-	})
-	
-	if err != nil {
-		c.logger.Error("AI request failed", "request_id", req.RequestID, "model", req.Model, "error", err)
-		return nil, err
-	}
-	
-	latency := time.Since(start)
-	c.logger.Info("AI request completed",
-		"provider", "anthropic",
-		"model", req.Model,
-		"request_id", req.RequestID,
-		"latency_ms", latency.Milliseconds(),
-	)
-	
-	return result, nil
+  if req.RequestID == "" {
+    req.RequestID = uuid.New().String()[:8]
+  }
+  
+  anthropicReq, err := c.convertRequest(req)
+  if err != nil {
+    return nil, err
+  }
+  
+  body, err := json.Marshal(anthropicReq)
+  if err != nil {
+    return nil, fmt.Errorf("failed to marshal request: %w", err)
+  }
+  
+  httpResp, err := executeWithRetry(ctx, DefaultRetryConfig, func() (*http.Response, []byte, error) {
+    httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/messages", bytes.NewReader(body))
+    if err != nil {
+      return nil, nil, err
+    }
+    
+    httpReq.Header.Set("Content-Type", "application/json")
+    httpReq.Header.Set("x-api-key", c.apiKey)
+    httpReq.Header.Set("anthropic-version", "2023-06-01")
+    
+    resp, err := c.httpClient.Do(httpReq)
+    if err != nil {
+      return nil, nil, err
+    }
+    defer resp.Body.Close()
+    
+    bodyBytes, err := io.ReadAll(resp.Body)
+    if err != nil {
+      return nil, nil, err
+    }
+    
+    return resp, bodyBytes, nil
+  })
+  
+  if err != nil {
+    c.logger.Error("AI request failed", "request_id", req.RequestID, "model", req.Model, "error", err)
+    return nil, err
+  }
+  
+  // Parse HTTP response into ChatResponse
+  var anthropicResp anthropicResponse
+  if err := json.Unmarshal(httpResp.Body, &anthropicResp); err != nil {
+    c.logger.Error("Failed to parse Anthropic response", "error", err)
+    return nil, fmt.Errorf("failed to parse response: %w", err)
+  }
+  
+  response, err := c.parseResponse(anthropicResp)
+  if err != nil {
+    c.logger.Error("Failed to convert Anthropic response", "error", err)
+    return nil, fmt.Errorf("failed to convert response: %w", err)
+  }
+  
+  return response, nil
 }
 
 func (c *AnthropicClient) convertRequest(req ChatRequest) (*anthropicRequest, error) {

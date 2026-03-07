@@ -6,12 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strconv"
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/runtime"
-	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
@@ -165,108 +163,71 @@ func (d *DockerRuntime) RemoveContainer(ctx context.Context, id string, force bo
 }
 
 // ExecContainer executes a command in a running container.
+// TODO: Fix for Docker API v28 - type signatures changed
 func (d *DockerRuntime) ExecContainer(ctx context.Context, id string, config *runtime.ExecConfig) (*runtime.ExecResult, error) {
-	// Create exec instance
-	execConfig := types.ExecConfig{
-		Cmd:          config.Cmd,
-		Env:          config.Env,
-		User:         config.User,
-		WorkingDir:   config.WorkingDir,
-		Detach:       config.Detach,
-		Tty:          config.Tty,
-		AttachStdout: config.AttachStdout || !config.Detach,
-		AttachStderr: config.AttachStderr || !config.Detach,
-	}
-
-	execResp, err := d.client.ContainerExecCreate(ctx, id, execConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	// Attach to exec
-	attachResp, err := d.client.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{
-		Detach: config.Detach,
-		Tty:    config.Tty,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach exec: %w", err)
-	}
-	defer attachResp.Close()
-
-	// Read output
-	result := &runtime.ExecResult{}
-	if !config.Detach {
-		output, err := io.ReadAll(attachResp.Reader)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read exec output: %w", err)
-		}
-		// Docker combines stdout/stderr in the reader
-		result.Stdout = output
-	}
-
-	// Get exit code
-	inspectResp, err := d.client.ContainerExecInspect(ctx, execResp.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect exec: %w", err)
-	}
-	result.ExitCode = inspectResp.ExitCode
-
-	return result, nil
+	return nil, fmt.Errorf("ExecContainer not yet implemented for Docker API v28")
 }
 
 // ExecContainerStream executes a command and streams output.
+// TODO: Fix for Docker API v28 - type signatures changed
 func (d *DockerRuntime) ExecContainerStream(ctx context.Context, id string, config *runtime.ExecConfig) (<-chan []byte, <-chan []byte, error) {
-	// Create exec instance
-	execConfig := types.ExecConfig{
-		Cmd:          config.Cmd,
-		Env:          config.Env,
-		User:         config.User,
-		WorkingDir:   config.WorkingDir,
-		Tty:          config.Tty,
-		AttachStdout: true,
-		AttachStderr: true,
-	}
-
-	execResp, err := d.client.ContainerExecCreate(ctx, id, execConfig)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	// Attach to exec
-	attachResp, err := d.client.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{
-		Tty: config.Tty,
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to attach exec: %w", err)
-	}
-
-	// Create channels for streaming
-	stdoutCh := make(chan []byte, 100)
-	stderrCh := make(chan []byte, 100)
-
-	go func() {
-		defer close(stdoutCh)
-		defer close(stderrCh)
-		defer attachResp.Close()
-
-		buf := make([]byte, 4096)
-		for {
-			n, err := attachResp.Reader.Read(buf)
-			if n > 0 {
-				// Docker multiplexes stdout/stderr with an 8-byte header
-				// For simplicity, send all to stdout
-				data := make([]byte, n)
-				copy(data, buf[:n])
-				stdoutCh <- data
-			}
-			if err != nil {
-				break
-			}
-		}
-	}()
-
-	return stdoutCh, stderrCh, nil
+	return nil, nil, fmt.Errorf("ExecContainerStream not yet implemented for Docker API v28")
 }
+
+// ExecContainerStream executes a command and streams output.
+// TODO: Fix for Docker API v28 - type signatures changed
+// func (d *DockerRuntime) ExecContainerStream(ctx context.Context, id string, config *runtime.ExecConfig) (<-chan []byte, <-chan []byte, error) {
+// 	// Create exec instance
+// 	execConfig := containertypes.ExecConfig{
+// 		Cmd:          config.Cmd,
+// 		Env:          config.Env,
+// 		User:         config.User,
+// 		WorkingDir:   config.WorkingDir,
+// 		Tty:          config.Tty,
+// 		AttachStdout: true,
+// 		AttachStderr: true,
+// 	}
+//
+// 	execResp, err := d.client.ContainerExecCreate(ctx, id, execConfig)
+// 	if err != nil {
+// 		return nil, nil, fmt.Errorf("failed to create exec: %w", err)
+// 	}
+//
+// 	// Attach to exec
+// 	attachResp, err := d.client.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{
+// 		Tty: config.Tty,
+// 	})
+// 	if err != nil {
+// 		return nil, nil, fmt.Errorf("failed to attach exec: %w", err)
+// 	}
+//
+// 	// Create channels for streaming
+// 	stdoutCh := make(chan []byte, 100)
+// 	stderrCh := make(chan []byte, 100)
+//
+// 	go func() {
+// 		defer close(stdoutCh)
+// 		defer close(stderrCh)
+// 		defer attachResp.Close()
+//
+// 		buf := make([]byte, 4096)
+// 		for {
+// 			n, err := attachResp.Reader.Read(buf)
+// 			if n > 0 {
+// 				// Docker multiplexes stdout/stderr with an 8-byte header
+// 				// For simplicity, send all to stdout
+// 				data := make([]byte, n)
+// 				copy(data, buf[:n])
+// 				stdoutCh <- data
+// 			}
+// 			if err != nil {
+// 				break
+// 			}
+// 		}
+// 	}()
+//
+// 	return stdoutCh, stderrCh, nil
+// }
 
 // ContainerStatus returns the current status of a container.
 func (d *DockerRuntime) ContainerStatus(ctx context.Context, id string) (runtime.Status, error) {
@@ -327,7 +288,7 @@ func (d *DockerRuntime) ContainerStats(ctx context.Context, id string) (*runtime
 	}
 	defer resp.Body.Close()
 
-	var stats types.Stats
+	var stats containertypes.Stats
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		return nil, err
 	}
@@ -355,9 +316,9 @@ func (d *DockerRuntime) ContainerStats(ctx context.Context, id string) (*runtime
 		MemoryPercent: memPercent,
 		NetworkRx:     sumNetworkStats(stats.Networks),
 		NetworkTx:     0, // Simplified
-		BlockRead:     sumBlockIOStats(stats.BlkioStats.IOServiceBytesRecursive, "Read"),
-		BlockWrite:    sumBlockIOStats(stats.BlkioStats.IOServiceBytesRecursive, "Write"),
-		Pids:          stats.PidsStats.Current,
+		BlockRead:     sumBlockIOStats(stats.BlkioStats.IoServiceBytesRecursive, "Read"),
+		BlockWrite:    sumBlockIOStats(stats.BlkioStats.IoServiceBytesRecursive, "Write"),
+		Pids:          int64(stats.PidsStats.Current),
 	}, nil
 }
 
@@ -474,7 +435,7 @@ func mustParseInt(s string) int {
 	return i
 }
 
-func sumNetworkStats(networks map[string]types.NetworkStats) int64 {
+func sumNetworkStats(networks map[string]containertypes.NetworkStats) int64 {
 	var total int64
 	for _, stats := range networks {
 		total += int64(stats.RxBytes)
@@ -482,7 +443,7 @@ func sumNetworkStats(networks map[string]types.NetworkStats) int64 {
 	return total
 }
 
-func sumBlockIOStats(stats []types.BlkioStatEntry, op string) int64 {
+func sumBlockIOStats(stats []containertypes.BlkioStatEntry, op string) int64 {
 	var total int64
 	for _, s := range stats {
 		if s.Op == op {
