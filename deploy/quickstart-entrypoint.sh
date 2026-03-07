@@ -2,8 +2,6 @@
 # ArmorClaw Quick Start Entrypoint
 # Production-grade bootstrap with shared-secret admin creation
 
-set -e
-
 # Paths
 CONFIG_DIR="/etc/armorclaw"
 DATA_DIR="/var/lib/armorclaw"
@@ -34,32 +32,45 @@ log_warn() {
     echo -e "${YELLOW}[QuickStart] WARNING:${NC} $1"
 }
 
-# CI Environment Detection
-# GitHub Actions and other CI runners don't have Docker socket access
-# ARMORCLAW_SKIP_DOCKER=1 can be set to skip Docker-dependent steps
-if [ "${ARMORCLAW_SKIP_DOCKER:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ] || [ "${CI:-false}" = "true" ]; then
-    if [ ! -S /var/run/docker.sock ]; then
-        log_warn "CI environment detected without Docker socket access"
-        log "Running in bridge-only mode (no Docker orchestration)"
-        
-        # Create minimal config for bridge-only mode
-        mkdir -p "$CONFIG_DIR" "$DATA_DIR"
-        
-        # Copy config if available
-        if [ -f "/opt/armorclaw/configs/config.toml" ] && [ ! -f "$CONFIG_DIR/config.toml" ]; then
-            cp /opt/armorclaw/configs/config.toml "$CONFIG_DIR/config.toml"
-        fi
-        
-        # Mark as bootstrapped
-        touch "$INIT_FLAG"
-        
-        log_success "CI bootstrap complete - bridge-only mode ready"
-        log "To run full quickstart, use a VPS with Docker socket access"
-        
-        # Exit successfully - CI can proceed with other tests
-        exit 0
+# CI/Docker-less Environment Detection
+# Check if Docker socket is available BEFORE set -e is applied
+if [ ! -S /var/run/docker.sock ]; then
+    log_warn "Docker socket not available at /var/run/docker.sock"
+    
+    # Determine if this is a CI environment or just missing Docker
+    if [ "${GITHUB_ACTIONS:-false}" = "true" ] || [ "${CI:-false}" = "true" ] || [ "${ARMORCLAW_SKIP_DOCKER:-false}" = "true" ]; then
+        log "CI environment detected - running in bridge-only mode"
+    else
+        log "Docker not available - running in bridge-only mode"
+        log "For full quickstart, ensure Docker is running and socket is mounted"
     fi
+    
+    # Create minimal config for bridge-only mode
+    mkdir -p "$CONFIG_DIR" "$DATA_DIR"
+    
+    # Copy bridge config if available
+    if [ -f "/opt/armorclaw/configs/config.toml" ] && [ ! -f "$CONFIG_DIR/config.toml" ]; then
+        cp /opt/armorclaw/configs/config.toml "$CONFIG_DIR/config.toml"
+        log "Copied bridge config template"
+    fi
+    
+    # Create minimal conduit config
+    if [ -f "/opt/armorclaw/configs/conduit.toml" ] && [ ! -f "$CONDUIT_CONFIG" ]; then
+        cp /opt/armorclaw/configs/conduit.toml "$CONDUIT_CONFIG"
+        log "Copied Conduit config template"
+    fi
+    
+    # Mark as bootstrapped
+    touch "$INIT_FLAG"
+    
+    log_success "Bootstrap complete - bridge-only mode ready"
+    log "To run full quickstart with Conduit, use a host with Docker access"
+    
+    # Exit successfully - allow CI/other tests to proceed
+    exit 0
 fi
+
+set -e
 
 # Check if already bootstrapped
 if [ -f "$INIT_FLAG" ]; then
