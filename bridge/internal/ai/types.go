@@ -70,10 +70,23 @@ type ChatChunk struct {
 }
 
 const (
-	MaxMessages     = 100
-	MaxPromptSize   = 32 * 1024 // ~8k tokens
-	MaxTokens       = 4096
-	MaxConcurrent   = 10
-	RatePerMinute   = 30
-	GlobalRateLimit = 120
+	MaxMessages        = 100
+	MaxPromptSize      = 32 * 1024 // ~8k tokens
+	MaxTokens          = 4096
+	MaxConcurrent      = 10
+	RatePerMinute      = 30
+	GlobalRateLimit    = 120
+	MaxPromptTokens    = 8000
+	MaxCompletionTokens = 4096
+	MaxTotalTokens      = 12000
+	UserBurstCapacity   = 60
+	GlobalBurstCapacity = 200
+	CharsPerToken = 4 // Approximate token estimation (~4 characters per token)
+)
+
+const (
+	AIErrPromptTooLarge    = -10001
+	AIErrMaxTokensExceeded = -10002
+	AIErrRateLimitExceeded = -10003
+	AIErrProviderError     = -10004
 )

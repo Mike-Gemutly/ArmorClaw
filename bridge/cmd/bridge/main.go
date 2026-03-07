@@ -27,7 +27,8 @@ import (
 	"github.com/armorclaw/bridge/pkg/discovery"
 	"github.com/armorclaw/bridge/pkg/docker"
 	"github.com/armorclaw/bridge/internal/adapter"
-	"github.com/armorclaw/bridge/internal/wizard"
+    "github.com/armorclaw/bridge/internal/ai"
+    "github.com/armorclaw/bridge/internal/wizard"
 	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/health"
@@ -2130,30 +2131,32 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 
 	server, err := rpc.New(rpc.Config{
-		SocketPath:       cfg.Server.SocketPath,
-		Keystore:         ks,
-		MatrixHomeserver: cfg.Matrix.HomeserverURL,
-		MatrixUsername:   cfg.Matrix.Username,
-		MatrixPassword:   cfg.Matrix.Password,
-		// WebRTC components
-		SessionManager:    sessionMgr,
-		TokenManager:      tokenMgr,
-		SignalingServer:   signalingSvr, // Now integrated
-		WebRTCEngine:      webrtcEngine,
-		TURNManager:       turnMgr,
-		// TODO: Voice package needs refactoring - uncomment when fixed
-		// VoiceManager:      voiceMgr,
-		BudgetManager:     budgetTracker,
-		HealthMonitor:     healthMonitor, // Health monitoring
-		Notifier:          notifier, // Notifications
-		EventBus:          eventBus, // Event push mechanism
-		ErrorSystem:       errorSystem, // Error handling system
-		// Provisioning (ArmorChat first-boot claim)
-		ProvisioningSecret: cfg.Provisioning.SigningSecret,
-		DataDir:            provisioningDataDir,
-		// Agent Studio (No-Code Agent Factory)
-		StudioDataPath: filepath.Join(provisioningDataDir, "studio.db"),
-	})
+	 SocketPath:       cfg.Server.SocketPath,
+    Keystore:         ks,
+    MatrixHomeserver: cfg.Matrix.HomeserverURL
+    MatrixUsername:   cfg.Matrix.Username
+    MatrixPassword:   cfg.Matrix.Password
+    // WebRTC components
+    SessionManager:    sessionMgr
+    TokenManager:      tokenMgr
+    SignalingServer:   signalingSvr
+    WebRTCEngine:    webrtcEngine
+    TURNManager:       turnMgr
+    // TODO: Voice package needs refactoring - uncomment when fixed
+    // VoiceManager:      voiceMgr,
+    BudgetManager:     budgetTracker
+    HealthMonitor:     healthMonitor
+    Notifier:          notifier
+    EventBus:          eventBus
+    ErrorSystem:       errorSystem
+    // Provisioning (ArmorChat first-boot claim)
+    ProvisioningSecret: cfg.Provisioning.SigningSecret,
+    DataDir:            provisioningDataDir,
+    // Agent Studio (No-Code Agent Factory)
+    StudioDataPath: filepath.Join(provisioningDataDir, "studio.db"),
+    // AI Service
+    AIService: ai.NewAIService(ks),
+})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

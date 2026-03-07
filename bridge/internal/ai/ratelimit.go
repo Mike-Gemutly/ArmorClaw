@@ -47,26 +47,26 @@ type RateLimiter struct {
 	userBuckets   map[string]*tokenBucket
 	globalBucket  *tokenBucket
 	mu            sync.RWMutex
-	userMaxTokens float64
+	userCapacity  float64
 	userRefill    float64
 }
 
-func NewRateLimiter(userMaxTokens, globalMaxTokens, userRefill, globalRefill float64) *RateLimiter {
+func NewRateLimiter(userCapacity, globalCapacity, userRefillRate, globalRefillRate float64) *RateLimiter {
 	return &RateLimiter{
 		userBuckets:   make(map[string]*tokenBucket),
-		globalBucket:  newTokenBucket(globalMaxTokens, globalRefill),
-		userMaxTokens: userMaxTokens,
-		userRefill:    userRefill,
+		globalBucket:  newTokenBucket(globalCapacity, globalRefillRate),
+		userCapacity:  userCapacity,
+		userRefill:    userRefillRate,
 	}
 }
 
 func DefaultRateLimiter() *RateLimiter {
-	userMax := float64(RatePerMinute)
-	globalMax := float64(GlobalRateLimit)
-	userRefill := float64(RatePerMinute) / 60.0
-	globalRefill := float64(GlobalRateLimit) / 60.0
+	userCapacity := float64(UserBurstCapacity)
+	globalCapacity := float64(GlobalBurstCapacity)
+	userRefillRate := float64(RatePerMinute) / 60.0
+	globalRefillRate := float64(GlobalRateLimit) / 60.0
 	
-	return NewRateLimiter(userMax, globalMax, userRefill, globalRefill)
+	return NewRateLimiter(userCapacity, globalCapacity, userRefillRate, globalRefillRate)
 }
 
 func (rl *RateLimiter) Allow(userID string) bool {
@@ -79,7 +79,7 @@ func (rl *RateLimiter) Allow(userID string) bool {
 	
 	bucket, ok := rl.userBuckets[userID]
 	if !ok {
-		bucket = newTokenBucket(rl.userMaxTokens, rl.userRefill)
+		bucket = newTokenBucket(rl.userCapacity, rl.userRefill)
 		rl.userBuckets[userID] = bucket
 	}
 	
