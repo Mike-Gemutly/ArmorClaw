@@ -1,6 +1,6 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.3.0-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Version](https://img.shields.io/badge/version-v4.3.1-blue)](https://github.com/Gemutly/ArmorClaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
@@ -23,8 +23,22 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/d
 
 ```bash
 export ARMORCLAW_API_KEY=sk-your-key
+export ARMORCLAW_ADMIN_USERNAME=admin  # Optional: custom admin username
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
+
+### Production-Grade Bootstrap
+
+ArmorClaw v4.3.1+ includes **zero-touch admin creation** with production-grade security:
+
+- **No manual registration** - Admin user created automatically via shared-secret API
+- **No open registration window** - `allow_registration = false` at all times
+- **Randomized usernames** - Generates `armor-admin-xxxxxxxx` by default (negligible collision risk)
+- **One-time password display** - Password shown once, never persisted to disk
+- **Conflict detection** - Automatically retries with alternative username if conflict detected
+- **Input validation** - Environment variables sanitized to prevent injection attacks
+
+See [Production Deployment Guide](docs/guides/production-grade-deployment.md) for details.
 
 ### What You'll See
 
