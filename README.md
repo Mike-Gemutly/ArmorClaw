@@ -1,11 +1,13 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.3.1-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Version](https://img.shields.io/badge/version-v4.4.0-blue)](https://github.com/Gemutly/ArmorClaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
 
 ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, and manage tasks—while you approve sensitive actions via your phone.
+
+**🛡️ v4.4.0 Highlights:** Production-grade hardened installer with Docker daemon readiness checks, parallel install prevention, persistent logging, and comprehensive test suite.
 
 ---
 
@@ -16,6 +18,8 @@ ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
+
+**v4.4.0+ notes:** Production-grade hardened installer with 19 security improvements (see [Testing](#testing) for details).
 
 ### Bridge + Matrix
 
@@ -36,8 +40,37 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 ```bash
 export ARMORCLAW_API_KEY=sk-your-key
 export ARMORCLAW_ADMIN_USERNAME=admin  # Optional: custom admin username
+export CONDUIT_VERSION=v1.0.0          # Optional: specify Conduit version
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh -o /tmp/install.sh
 sudo bash /tmp/install.sh
+```
+
+**v4.4.0+ Installer Features:**
+
+The production-grade installer (install.sh) now includes:
+
+- **🛡️ Lockfile Protection** - Prevents parallel installs via flock
+- **⏳ Docker Daemon Readiness** - Dual-check (info + ps) with 20-second timeout
+- **📝 Persistent Logging** - Logs to /var/log/armorclaw/install.log (fallback to /tmp)
+- **🚀 Docker Compose Detection** - Supports both `docker compose` and `docker-compose`
+- **📦 Environment Passthrough** - All vars passed to setup scripts
+- **🖼️ Conduit Image Control** - Via CONDUIT_VERSION environment variable
+- **✅ Comprehensive Tests** - 8 integration tests covering all features
+
+**Environment Variables:**
+```bash
+ARMORCLAW_API_KEY         # AI provider API key (required)
+ARMORCLAW_ADMIN_USERNAME  # Custom admin username (optional)
+ARMORCLAW_ADMIN_PASSWORD  # Custom admin password (optional)
+CONDUIT_VERSION           # Conduit version (default: latest)
+CONDUIT_IMAGE             # Custom image (default: matrixconduit/matrix-conduit:latest)
+DOCKER_COMPOSE           # Docker Compose command (auto-detected)
+INSTALL_MODE              # quick | matrix (default: quick)
+```
+
+Run tests:
+```bash
+bash tests/integration/test-installer-hardening.sh
 ```
 
 ### Production-Grade Bootstrap
@@ -176,6 +209,49 @@ Agent sees:     (nothing - it's blind)
 ```
 
 This is why ArmorClaw is safe for sensitive tasks.
+
+---
+
+## Production-Grade Installer (v4.4.0)
+
+ArmorClaw v4.4.0+ includes a hardened installer with production-grade reliability:
+
+### Security Features
+
+| Feature | Implementation |
+|---------|----------------|
+| **Lockfile** | Uses `flock` to prevent parallel installs |
+| **Docker Readiness** | Dual-check (docker info + docker ps) with 20s timeout |
+| **Persistent Logs** | `/var/log/armorclaw/install.log` with fallback |
+| **Compose Detection** | Auto-detects `docker compose` vs `docker-compose` |
+| **Env Passthrough** | All vars exported to sub-scripts |
+| **Version Control** | `CONDUIT_VERSION` environment variable |
+
+### Idempotent & Safe
+
+- **Safe to re-run** - Detects existing containers, never duplicates
+- **Migration support** - Migrates from old `/var/lib/matrix-conduit` paths
+- **Graceful failures** - Clear error messages, logs to stderr
+- **Self-contained** - Fallbacks prevent installation failures
+
+### Test Coverage
+
+Comprehensive test suite with 8 tests:
+- Lockfile functionality
+- Docker wait loop
+- Environment variable passthrough
+- Docker Compose detection
+- CONDUIT_IMAGE fallback
+- Syntax validation
+- Wait function existence
+- Variable ordering
+
+**All tests passing:** ✅
+
+Run tests:
+```bash
+bash tests/integration/test-installer-hardening.sh
+```
 
 ---
 
@@ -472,6 +548,55 @@ curl http://localhost:6167/_matrix/client/versions
 
 ---
 
+## Testing
+
+### Installer Test Suite (v4.4.0+)
+
+Run the comprehensive test suite to verify installer hardening:
+
+```bash
+bash tests/integration/test-installer-hardening.sh
+```
+
+**Tests cover:**
+- Lockfile functionality
+- Docker daemon readiness
+- Environment variable passthrough
+- Docker Compose detection
+- CONDUIT_IMAGE fallback
+- Syntax validation
+- Wait function existence
+
+**Example output:**
+```
+==========================================
+Running Installer Test Suite
+==========================================
+[TEST] Test 1: Lockfile functionality
+[TEST] Docker wait loop
+[TEST] Environment variable passthrough
+[TEST] Docker Compose detection
+[TEST] CONDUIT_IMAGE fallback
+[TEST] Syntax validation
+[TEST] wait_for_docker function
+[TEST] Variable ordering
+==========================================
+All tests passed!
+```
+
+### Integration Tests
+
+For CI/CD pipelines, run:
+```bash
+# Quick check
+bash -n deploy/install.sh deploy/setup-matrix.sh deploy/quickstart-entrypoint.sh deploy/deploy-infra.sh
+
+# Full test suite
+bash tests/integration/test-installer-hardening.sh
+```
+
+---
+
 ## Build from Source
 
 ### Quickstart Image (All-in-One)
@@ -571,6 +696,7 @@ The Bridge provisions the agent and invites you to its dedicated room.
 * **RPC API:** [docs/reference/rpc-api.md](docs/reference/rpc-api.md)
 * **Troubleshooting:** [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md)
 * **Full Index:** [docs/index.md](docs/index.md)
+* **Tests:** [tests/integration/](tests/integration/) (v4.4.0+)
 
 ---
 
