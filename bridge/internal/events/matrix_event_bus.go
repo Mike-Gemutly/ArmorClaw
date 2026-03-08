@@ -31,6 +31,8 @@ type MatrixEventBus struct {
 
 	// reusable batch buffer (micro-optimization)
 	batch []MatrixEvent
+
+	subscribers []chan MatrixEvent
 }
 
 func NewMatrixEventBus(size int) *MatrixEventBus {
@@ -69,6 +71,15 @@ func (b *MatrixEventBus) Publish(e MatrixEvent) uint64 {
 	}
 
 	b.cond.Broadcast()
+
+	// Notify live subscribers
+	for _, sub := range b.subscribers {
+		select {
+		case sub <- e:
+		default:
+			// Subscriber slow, skip to avoid blocking the ring buffer
+		}
+	}
 
 	slog.Debug("matrix event published",
 		"seq", e.Seq,
@@ -142,6 +153,15 @@ func (b *MatrixEventBus) WaitForEvents(cursor uint64) ([]MatrixEvent, uint64, bo
 
 		b.cond.Wait()
 	}
+}
+
+func (b *MatrixEventBus) Subscribe() chan MatrixEvent {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	ch := make(chan MatrixEvent, 100)
+	b.subscribers = append(b.subscribers, ch)
+	return ch
 }
 
 func (b *MatrixEventBus) Status() map[string]interface{} {

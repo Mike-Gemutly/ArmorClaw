@@ -39,7 +39,6 @@ import (
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/armorclaw/bridge/pkg/setup"
-	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/turn"
 
 	"github.com/armorclaw/bridge/internal/skills"
@@ -2126,6 +2125,77 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Budget alerts will be sent to Matrix")
 	}
 
+	// Create shutdown context early for components that need it
+	shutdownCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize high-throughput event bus for Matrix event streaming
+	var matrixBus *events.MatrixEventBus
+	var matrixAdapter *adapter.MatrixAdapter
+
+	if cfg.Matrix.Enabled && cfg.Matrix.HomeserverURL != "" {
+		log.Println("Initializing high-throughput Matrix event bus...")
+
+		// Use default buffer size of 1024
+		bufferSize := 1024
+
+		matrixBus = events.NewMatrixEventBus(bufferSize)
+		log.Printf("Matrix event bus initialized with buffer size: %d", bufferSize)
+
+		// Create basic MatrixAdapter
+		var err error
+		matrixAdapter, err = adapter.New(adapter.Config{
+			HomeserverURL: cfg.Matrix.HomeserverURL,
+			DeviceID:      "armorclaw-bridge",
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to create matrix adapter: %v", err)
+			matrixAdapter = nil
+		} else {
+			// Set the event bus
+			matrixAdapter.SetEventBus(matrixBus)
+
+			// Initialize the Matrix adapter
+			if err := matrixAdapter.Login(cfg.Matrix.Username, cfg.Matrix.Password); err != nil {
+				log.Printf("Warning: Matrix login failed (will use anonymous mode): %v", err)
+			}
+
+			log.Printf("Matrix adapter initialized: %s", matrixAdapter.GetUserID())
+		}
+	}
+
+	// P1: Bridge MatrixEventBus -> pkg/eventbus
+	if matrixBus != nil && eventBus != nil {
+		log.Println("Starting Matrix event bridge...")
+		go func(ctx context.Context) {
+			sub := matrixBus.Subscribe()
+			for {
+				select {
+				case ev, ok := <-sub:
+					if !ok {
+						return
+					}
+
+					// Forward to global event bus (non-blocking)
+					content, _ := ev.Content.(map[string]interface{})
+
+					mEv := &eventbus.MatrixEvent{
+						Type:    ev.Type,
+						RoomID:  ev.RoomID,
+						Sender:  ev.Sender,
+						Content: content,
+						EventID: ev.ID,
+					}
+
+					go eventBus.Publish(mEv)
+
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(shutdownCtx)
+	}
+
 	// Initialize RPC server
 	log.Printf("Starting JSON-RPC server on %s", cfg.Server.SocketPath)
 	// Compute data dir for provisioning role persistence
@@ -2170,7 +2240,7 @@ func runBridgeServer(cliCfg cliConfig) {
 	server, err := rpc.New(rpc.Config{
 		SocketPath:      cfg.Server.SocketPath,
 		Keystore:        ks,
-		Matrix:          nil, // Will be set up later
+		Matrix:          matrixAdapter,
 		AIService:       ai.NewAIService(ks),
 		AIMaxConcurrent: 4,
 		BridgeManager:   nil,
@@ -2192,45 +2262,20 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Stopping RPC server...")
 	}()
 
-	// Wire up event bus to Matrix adapter if both are enabled
-	// TODO: Fix type mismatch between eventbus.MatrixEvent and adapter.MatrixEvent
-	/*
-		if eventBus != nil && cfg.Matrix.Enabled {
-			log.Println("Wiring Matrix adapter to event bus...")
-			// Get the Matrix adapter from the server and set up event publishing
-			// The RPC server should provide access to the Matrix adapter
-			if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
-				// Type assertion to get the actual Matrix adapter
-				if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
-					ma.SetEventPublisher(eventBus)
-					log.Println("Matrix events will be published to event bus in real-time")
-				} else {
-					log.Println("Warning: Matrix adapter type assertion failed")
-				}
-			} else {
-				log.Println("Warning: Matrix adapter not available for event bus integration")
-			}
+	// Wire Matrix adapter to components
+	if matrixAdapter != nil {
+		if notifier != nil {
+			log.Println("Wiring Matrix adapter to notifier...")
+			notifier.SetMatrixAdapter(matrixAdapter)
 		}
-	*/
 
-	// TODO: Wire Matrix adapter to components (notifier, error system, studio)
-	// This requires implementing a GetMatrixAdapter() method on the server
-	// and creating a concrete Matrix adapter implementation
-	if notifier != nil && cfg.Matrix.Enabled {
-		log.Printf("Notifier configured for admin room: %s (Matrix adapter not yet connected)", cfg.Notifications.AdminRoomID)
-	}
-
-	if errorSystem != nil && cfg.Matrix.Enabled {
-		log.Printf("Error system configured for admin room: %s (Matrix adapter not yet connected)", errorSystem.GetConfig().ConfigAdminMXID)
-	}
-
-	if cfg.Matrix.Enabled {
-		log.Printf("Agent Studio enabled (Matrix adapter not yet connected)")
+		if errorSystem != nil {
+			log.Println("Wiring Matrix adapter to error system...")
+			errorSystem.SetMatrixAdapter(matrixAdapter)
+		}
 	}
 
 	// Create shutdown context early for components that need it
-	shutdownCtx, cancel := context.WithCancel(context.Background())
-
 	// Initialize mDNS discovery server
 	var discoveryServer *discovery.Server
 	if cfg.Discovery.Enabled {
