@@ -209,10 +209,16 @@ install_bridge() {
     # Build bridge
     print_info "Building bridge from source..."
 
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
+    local build_dir="/tmp/armorclaw-src"
+    rm -rf "$build_dir"
+    mkdir -p "$build_dir"
 
-    cd "$project_root/bridge"
+    if ! git clone --depth 1 https://github.com/Gemutly/ArmorClaw "$build_dir" 2>/dev/null; then
+        fail "Failed to clone source"
+    fi
+
+    cd "$build_dir/bridge" || fail "Bridge source missing"
+
     if go build -o armorclaw-bridge ./cmd/bridge; then
         print_done "Bridge built successfully"
     else
@@ -226,7 +232,6 @@ install_bridge() {
     ln -sf "$INSTALL_DIR/armorclaw-bridge" /usr/local/bin/armorclaw-bridge
 
     print_success "Bridge installed to $INSTALL_DIR/armorclaw-bridge"
-    cd "$project_root"
 }
 
 #=============================================================================
