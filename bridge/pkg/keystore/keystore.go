@@ -13,8 +13,8 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha512"
-	"encoding/base64"
 	"database/sql"
+	"encoding/base64"
 
 	"encoding/hex"
 	"encoding/json"
@@ -43,10 +43,10 @@ const (
 	keyLength        = 32
 
 	// SQLCipher parameters
-	cipherPageSize      = 4096
-	cipherKdfIter       = 256000
-	cipherHmacAlg       = "HMAC_SHA512"
-	cipherKdfAlgorithm  = "PBKDF2_HMAC_SHA512"
+	cipherPageSize     = 4096
+	cipherKdfIter      = 256000
+	cipherHmacAlg      = "HMAC_SHA512"
+	cipherKdfAlgorithm = "PBKDF2_HMAC_SHA512"
 )
 
 var (
@@ -72,8 +72,8 @@ const (
 type Credential struct {
 	ID          string   `json:"id"`
 	Provider    Provider `json:"provider"`
-	Token       string   `json:"token"`                 // Encrypted
-	BaseURL     string   `json:"base_url,omitempty"`    // Custom API base URL for OpenAI-compatible providers
+	Token       string   `json:"token"`              // Encrypted
+	BaseURL     string   `json:"base_url,omitempty"` // Custom API base URL for OpenAI-compatible providers
 	DisplayName string   `json:"display_name"`
 	CreatedAt   int64    `json:"created_at"`
 	ExpiresAt   int64    `json:"expires_at,omitempty"` // Unix timestamp
@@ -111,11 +111,7 @@ type Config struct {
 // New creates a new Keystore instance
 func New(cfg Config) (*Keystore, error) {
 	if cfg.DBPath == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
-		}
-		cfg.DBPath = filepath.Join(homeDir, ".armorclaw", "keystore.db")
+		cfg.DBPath = "/var/lib/armorclaw/keystore.db"
 	}
 
 	// Ensure directory exists
@@ -848,10 +844,10 @@ func (ks *Keystore) loadOrGenerateSaltWithValidation() error {
 // P1-HIGH-1: MatrixRefreshToken stores encrypted Matrix refresh tokens
 // Matrix refresh tokens enable long-lived sessions without requiring re-login
 type MatrixRefreshToken struct {
-	ID          string   // Unique identifier (e.g., "matrix-refresh-token")
-	Token        string   // Encrypted refresh token
+	ID            string // Unique identifier (e.g., "matrix-refresh-token")
+	Token         string // Encrypted refresh token
 	HomeserverURL string // The homeserver this token is for
-	UserID       string // The Matrix user ID
+	UserID        string // The Matrix user ID
 	CreatedAt     int64  // Unix timestamp when token was created
 }
 
@@ -1287,4 +1283,3 @@ func (ks *Keystore) SetDefaultProfile(id string) error {
 	_, err = ks.db.Exec("UPDATE user_profiles SET is_default = 1 WHERE id = ?", id)
 	return err
 }
-

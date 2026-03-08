@@ -765,8 +765,6 @@ type ErrorSystemConfig struct {
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
-	homeDir, _ := os.UserHomeDir()
-
 	return &Config{
 		Server: ServerConfig{
 			SocketPath: filepath.Join(os.TempDir(), "armorclaw", "bridge.sock"),
@@ -774,7 +772,7 @@ func DefaultConfig() *Config {
 			Daemonize:  false,
 		},
 		Keystore: KeystoreConfig{
-			DBPath:    filepath.Join(homeDir, ".armorclaw", "keystore.db"),
+			DBPath:    "/var/lib/armorclaw/keystore.db",
 			MasterKey: "",
 			Providers: []ProviderConfig{},
 		},
@@ -904,7 +902,7 @@ func DefaultConfig() *Config {
 			Enabled:         true,
 			StoreEnabled:    true,
 			NotifyEnabled:   true,
-			StorePath:       filepath.Join(homeDir, ".armorclaw", "errors.db"),
+			StorePath:       "/var/lib/armorclaw/errors.db",
 			RetentionDays:   30,
 			RateLimitWindow: "5m",
 			RetentionPeriod: "24h",
