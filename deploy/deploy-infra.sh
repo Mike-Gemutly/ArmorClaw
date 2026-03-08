@@ -388,11 +388,64 @@ EOF
 
     chown -R conduit:conduit /opt/matrix-conduit/docker
 
+    # ============================================
+    # Robust Conduit Detection (Idempotent)
+    # ============================================
+
+    CONDUIT_CONTAINER=""
+    CONDUIT_PORT="6167"
+    USE_EXISTING_CONDUIT=false
+
+    if ! docker info >/dev/null 2>&1; then
+        log_error "Docker daemon not running"
+        exit 1
+    fi
+
+    if ! docker ps >/dev/null 2>&1; then
+        log_error "Docker not accessible for current user"
+        exit 1
+    fi
+
+    # First: detect container created from Conduit image
+    CONDUIT_CONTAINER=$(docker ps -a \
+        --filter "ancestor=matrixconduit/matrix-conduit" \
+        --format "{{.Names}}" | head -n1)
+
+    # Fallback: detect container exposing port 6167
+    if [ -z "$CONDUIT_CONTAINER" ]; then
+        while read -r NAME PORTS; do
+            if echo "$PORTS" | grep -E "[:.]${CONDUIT_PORT}->" >/dev/null 2>&1; then
+                IMAGE=$(docker inspect --format '{{.Config.Image}}' "$NAME" 2>/dev/null)
+                if [ -n "$IMAGE" ] && echo "$IMAGE" | grep -qi "matrix-conduit"; then
+                    CONDUIT_CONTAINER="$NAME"
+                    break
+                fi
+            fi
+        done < <(docker ps --format "{{.Names}} {{.Ports}}")
+    fi
+
+    if [ -n "$CONDUIT_CONTAINER" ]; then
+        log_info "Existing Conduit: $CONDUIT_CONTAINER"
+        USE_EXISTING_CONDUIT=true
+        if ! docker ps --format '{{.Names}}' | grep -q "^${CONDUIT_CONTAINER}$"; then
+            log_info "Starting existing Conduit container"
+            docker start "$CONDUIT_CONTAINER" || {
+                log_error "Failed to start existing Conduit"
+                exit 1
+            }
+        fi
+    fi
+
+    if [ "$USE_EXISTING_CONDUIT" = true ]; then
+        log_info "Using existing Conduit container, skipping compose deployment"
+    else
+
     # Start the service
     cd /opt/matrix-conduit/docker
     docker compose up -d
 
     log_success "Conduit Docker service started"
+    fi
 }
 
 # =============================================================================

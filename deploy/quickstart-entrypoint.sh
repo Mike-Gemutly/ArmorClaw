@@ -138,58 +138,66 @@ SERVER_NAME="$ARMORCLAW_SERVER_NAME"
 log "Server name: $SERVER_NAME"
 
 # ============================================
-# Smart Conduit Container Management (Idempotent)
+# Robust Conduit Detection (Idempotent)
+# Detects any Conduit container by image or port
 # ============================================
 
-CONTAINER="armorclaw-conduit"
-IMAGE="matrixconduit/matrix-conduit:latest"
-PORT="6167"
+CONDUIT_CONTAINER=""
+CONDUIT_PORT="6167"
+USE_EXISTING_CONDUIT=false
 
-existing_container() {
-    docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"
-}
+if ! docker info >/dev/null 2>&1; then
+    log "Docker daemon not running"
+    exit 1
+fi
 
-running_container() {
-    docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"
-}
+if ! docker ps >/dev/null 2>&1; then
+    log "Docker not accessible for current user"
+    exit 1
+fi
 
-log "Starting Conduit..."
+# First: detect container created from Conduit image
+CONDUIT_CONTAINER=$(docker ps -a \
+    --filter "ancestor=matrixconduit/matrix-conduit" \
+    --format "{{.Names}}" | head -n1)
 
-if existing_container; then
-    log "Conduit container already exists"
+# Fallback: detect container exposing port 6167
+if [ -z "$CONDUIT_CONTAINER" ]; then
+    while read -r NAME PORTS; do
+        if echo "$PORTS" | grep -E "[:.]${CONDUIT_PORT}->" >/dev/null 2>&1; then
+            IMAGE=$(docker inspect --format '{{.Config.Image}}' "$NAME" 2>/dev/null)
+            if [ -n "$IMAGE" ] && echo "$IMAGE" | grep -qi "matrix-conduit"; then
+                CONDUIT_CONTAINER="$NAME"
+                break
+            fi
+        fi
+    done < <(docker ps --format "{{.Names}} {{.Ports}}")
+fi
 
-    current_image=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || echo "")
-
-    if [ "$current_image" != "$IMAGE" ]; then
-        log "Conduit image changed ($current_image → $IMAGE), recreating container"
-
-        docker rm -f "$CONTAINER" || {
-            log "Failed to remove existing container"
+if [ -n "$CONDUIT_CONTAINER" ]; then
+    log "Existing Conduit: $CONDUIT_CONTAINER"
+    USE_EXISTING_CONDUIT=true
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONDUIT_CONTAINER}$"; then
+        log "Starting existing Conduit container"
+        docker start "$CONDUIT_CONTAINER" || {
+            log "Failed to start existing Conduit"
             exit 1
         }
-
-    else
-        if running_container; then
-            log "Conduit already running"
-            exit 0
-        else
-            log "Starting existing Conduit container"
-            docker start "$CONTAINER"
-            exit 0
-        fi
     fi
 fi
 
-log "Creating Conduit container"
-
-docker run -d \
-    --name "$CONTAINER" \
-    --restart unless-stopped \
-    --user 10000:10000 \
-    -v "$CONFIG_DIR:/etc/armorclaw:ro" \
-    -v /var/lib/conduit:/var/lib/conduit \
-    -p "${PORT}:6167" \
-    "$IMAGE"
+# Create container if not found
+if [ "$USE_EXISTING_CONDUIT" = false ]; then
+    log "Creating Conduit container"
+    docker run -d \
+        --name armorclaw-conduit \
+        --restart unless-stopped \
+        --user 10000:10000 \
+        -v "$CONFIG_DIR:/etc/armorclaw:ro" \
+        -v /var/lib/conduit:/var/lib/conduit \
+        -p 6167:6167 \
+        matrixconduit/matrix-conduit:latest
+fi
 
 # Wait for Conduit to be ready
 log "Waiting for Conduit to start..."

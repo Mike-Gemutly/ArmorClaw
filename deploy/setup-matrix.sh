@@ -197,7 +197,6 @@ configure_existing_server() {
 # Smart Conduit Detection (quickstart → matrix)
 # ============================================
 
-CONTAINER="armorclaw-conduit"
 PORT="6167"
 CONDUIT_DATA_DIR="/var/lib/conduit"
 
@@ -216,34 +215,53 @@ if [ -d /var/lib/matrix-conduit ] && [ ! -d /var/lib/conduit ]; then
     print_success "Migration complete"
 fi
 
+# ============================================
+# Robust Conduit Detection (Idempotent)
+# Detects any Conduit container by image or port
+# ============================================
+
+CONDUIT_CONTAINER=""
+CONDUIT_PORT="6167"
 USE_EXISTING_CONDUIT=false
 
-container_exists() {
-    docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"
-}
-
-container_running() {
-    docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"
-}
-
-port_in_use() {
-    if command -v ss >/dev/null 2>&1; then
-        ss -ltn | awk '{print $4}' | grep -q ":${PORT}$"
-    else
-        netstat -tln 2>/dev/null | grep -q ":${PORT} "
-    fi
-}
-
-if container_exists; then
-    print_info "Existing quickstart Conduit detected"
-    if ! container_running; then
-        print_info "Starting existing Conduit container"
-        docker start "$CONTAINER"
-    fi
-    USE_EXISTING_CONDUIT=true
-elif port_in_use; then
-    print_error "Port ${PORT} in use by another service"
+if ! docker info >/dev/null 2>&1; then
+    print_error "Docker daemon not running"
     exit 1
+fi
+
+if ! docker ps >/dev/null 2>&1; then
+    print_error "Docker not accessible for current user"
+    exit 1
+fi
+
+# First: detect container created from Conduit image
+CONDUIT_CONTAINER=$(docker ps -a \
+    --filter "ancestor=matrixconduit/matrix-conduit" \
+    --format "{{.Names}}" | head -n1)
+
+# Fallback: detect container exposing port 6167
+if [ -z "$CONDUIT_CONTAINER" ]; then
+    while read -r NAME PORTS; do
+        if echo "$PORTS" | grep -E "[:.]${CONDUIT_PORT}->" >/dev/null 2>&1; then
+            IMAGE=$(docker inspect --format '{{.Config.Image}}' "$NAME" 2>/dev/null)
+            if [ -n "$IMAGE" ] && echo "$IMAGE" | grep -qi "matrix-conduit"; then
+                CONDUIT_CONTAINER="$NAME"
+                break
+            fi
+        fi
+    done < <(docker ps --format "{{.Names}} {{.Ports}}")
+fi
+
+if [ -n "$CONDUIT_CONTAINER" ]; then
+    print_info "Existing Conduit: $CONDUIT_CONTAINER"
+    USE_EXISTING_CONDUIT=true
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONDUIT_CONTAINER}$"; then
+        print_info "Starting existing Conduit container"
+        docker start "$CONDUIT_CONTAINER" || {
+            print_error "Failed to start existing Conduit"
+            exit 1
+        }
+    fi
 fi
 
 deploy_local_conduit() {
