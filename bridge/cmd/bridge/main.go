@@ -36,9 +36,13 @@ import (
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/notification"
+	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/armorclaw/bridge/pkg/setup"
+	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/turn"
+
+	"github.com/armorclaw/bridge/internal/skills"
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/webrtc"
@@ -2134,6 +2138,35 @@ func runBridgeServer(cliCfg cliConfig) {
 	// Create browser job manager
 	browserJobs := rpc.NewBrowserJobManager()
 
+	// P0: Initialize services for RPC wiring
+	// Create SkillExecutor
+	skillMgr := skills.NewSkillExecutor()
+	log.Println("Skill executor initialized")
+
+	// Create Provisioning manager (requires signing secret)
+	var provisioningMgr *provisioning.Manager
+	signingSecret := cfg.Provisioning.SigningSecret
+	if signingSecret == "" {
+		signingSecret = fmt.Sprintf("armorclaw-%d", time.Now().UnixNano())
+		log.Println("Warning: Using auto-generated provisioning signing secret (not recommended for production)")
+	}
+	provisioningMgr, err = provisioning.NewManager(&provisioning.ManagerConfig{
+		SigningSecret:        signingSecret,
+		DefaultExpirySeconds: cfg.Provisioning.DefaultExpirySeconds,
+		MaxExpirySeconds:     cfg.Provisioning.MaxExpirySeconds,
+		DataDir:              provisioningDataDir,
+	})
+	if err != nil {
+		log.Printf("Warning: Failed to initialize provisioning manager: %v", err)
+		provisioningMgr = nil
+	} else {
+		log.Println("Provisioning manager initialized")
+	}
+
+	// Log RPC dependency status
+	log.Printf("RPC dependencies: studio=disabled, provisioning=%v, skills=%v",
+		provisioningMgr != nil, skillMgr != nil)
+
 	server, err := rpc.New(rpc.Config{
 		SocketPath:      cfg.Server.SocketPath,
 		Keystore:        ks,
@@ -2142,10 +2175,10 @@ func runBridgeServer(cliCfg cliConfig) {
 		AIMaxConcurrent: 4,
 		BridgeManager:   nil,
 		BrowserJobs:     browserJobs,
-		Studio:          nil,
+		Studio:          nil, // Studio requires Docker adapter - deferred
 		AppService:      nil,
-		ProvisioningMgr: nil,
-		SkillManager:    nil,
+		ProvisioningMgr: provisioningMgr,
+		SkillManager:    skillMgr,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
