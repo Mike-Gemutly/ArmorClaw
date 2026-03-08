@@ -209,6 +209,13 @@ fi
 
 mkdir -p "$CONDUIT_DATA_DIR"
 
+# Migration: Handle older installs that used /var/lib/matrix-conduit
+if [ -d /var/lib/matrix-conduit ] && [ ! -d /var/lib/conduit ]; then
+    print_info "Migrating existing Matrix data from /var/lib/matrix-conduit"
+    mv /var/lib/matrix-conduit /var/lib/conduit
+    print_success "Migration complete"
+fi
+
 USE_EXISTING_CONDUIT=false
 
 container_exists() {

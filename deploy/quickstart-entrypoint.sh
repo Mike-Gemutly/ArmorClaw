@@ -94,6 +94,13 @@ fi
 # Ensure required directories exist
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 
+# Migration: Handle older installs that used /var/lib/matrix-conduit
+if [ -d /var/lib/matrix-conduit ] && [ ! -d /var/lib/conduit ]; then
+    log "Migrating existing Matrix data from /var/lib/matrix-conduit"
+    mv /var/lib/matrix-conduit /var/lib/conduit
+    log_success "Migration complete"
+fi
+
 # Copy Conduit config from template if not exists
 TEMPLATE_CONFIG="/opt/armorclaw/configs/conduit.toml"
 if [ ! -f "$CONDUIT_CONFIG" ]; then

@@ -27,6 +27,13 @@ MATRIX_DATA_DIR="/var/lib/conduit"
 mkdir -p "$MATRIX_DATA_DIR"
 chmod 750 "$MATRIX_DATA_DIR"
 
+# Migration: Handle older installs that used /var/lib/matrix-conduit
+if [ -d /var/lib/matrix-conduit ] && [ ! -d /var/lib/conduit ]; then
+    log_info "Migrating existing Matrix data from /var/lib/matrix-conduit"
+    mv /var/lib/matrix-conduit /var/lib/conduit
+    log_success "Migration complete"
+fi
+
 NGINX_CONF_DIR="/etc/nginx/sites-available"
 NGINX_ENABLED_DIR="/etc/nginx/sites-enabled"
 
