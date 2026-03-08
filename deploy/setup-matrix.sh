@@ -25,6 +25,13 @@ DATA_DIR="/var/lib/armorclaw"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 BRIDGE_SOCK="/run/armorclaw/bridge.sock"
 
+# Docker Compose fallback
+DOCKER_COMPOSE="${DOCKER_COMPOSE:-docker compose}"
+
+# Conduit image
+CONDUIT_VERSION="${CONDUIT_VERSION:-latest}"
+CONDUIT_IMAGE="${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:$CONDUIT_VERSION}"
+
 # Command line args
 AUTO_ENABLE=false
 DOMAIN=""
@@ -206,6 +213,16 @@ if ! docker info >/dev/null 2>&1; then
     exit 1
 fi
 
+# Wait for Docker to be ready
+print_info "Waiting for Docker daemon..."
+for ((i=1;i<=10;i++)); do
+    if docker info >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+        print_success "Docker daemon ready"
+        break
+    fi
+    sleep 2
+done
+
 mkdir -p "$CONDUIT_DATA_DIR"
 
 # Migration: Handle older installs that used /var/lib/matrix-conduit
@@ -290,12 +307,12 @@ deploy_local_conduit() {
 
         if prompt_yes_no "Start Matrix stack now?" "y"; then
             cd "$compose_dir/.."
-            
+
             if [ "$USE_EXISTING_CONDUIT" = true ]; then
                 print_info "Reusing existing Conduit, starting other services"
-                docker compose -f "$compose_dir/docker-compose.matrix.yml" up -d postgres synapse nginx certbot coturn
+                "$DOCKER_COMPOSE" -f "$compose_dir/docker-compose.matrix.yml" up -d postgres synapse nginx certbot coturn || fail "Failed to start Matrix containers"
             else
-                docker compose -f "$compose_dir/docker-compose.matrix.yml" up -d
+                "$DOCKER_COMPOSE" -f "$compose_dir/docker-compose.matrix.yml" up -d || fail "Failed to start Matrix containers"
             fi
             print_success "Matrix stack started"
 

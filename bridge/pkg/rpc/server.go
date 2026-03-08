@@ -120,7 +120,7 @@ type Server struct {
 	aiSemaphore     chan struct{}
 	aiMaxConcurrent int
 	bridgeMgr       BridgeManager
-	browserJobs     BrowserJobManager
+	browserJobs     *BrowserJobManager
 	studio          StudioService
 	appService      AppService
 	provisioningMgr ProvisioningManager
@@ -156,7 +156,7 @@ func New(cfg Config) (*Server, error) {
 		aiMaxConcurrent: cfg.AIMaxConcurrent,
 		aiSemaphore:     make(chan struct{}, cfg.AIMaxConcurrent),
 		bridgeMgr:       cfg.BridgeManager,
-		browserJobs:     *cfg.BrowserJobs,
+		browserJobs:     cfg.BrowserJobs,
 		studio:          cfg.Studio,
 		appService:      cfg.AppService,
 		provisioningMgr: cfg.ProvisioningMgr,

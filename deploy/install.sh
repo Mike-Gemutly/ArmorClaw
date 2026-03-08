@@ -21,6 +21,39 @@
 set -euo pipefail
 
 ########################################
+# Prerequisite Checks
+########################################
+
+command -v flock >/dev/null 2>&1 || {
+    echo "[armorclaw-install] ERROR: flock not installed"
+    exit 1
+}
+
+command -v docker >/dev/null 2>&1 || {
+    echo "[armorclaw-install] ERROR: Docker CLI not installed"
+    exit 1
+}
+
+command -v tee >/dev/null 2>&1 || {
+    echo "[armorclaw-install] ERROR: tee not installed"
+    exit 1
+}
+
+########################################
+# Docker Compose Detection
+########################################
+
+if docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    echo "[armorclaw-install] ERROR: Docker Compose not installed" >&2
+    exit 1
+fi
+export DOCKER_COMPOSE
+
+########################################
 # Configuration
 ########################################
 
@@ -29,6 +62,41 @@ VERSION="${VERSION:-main}"
 INSTALL_MODE="${INSTALL_MODE:-quick}"
 
 BASE_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/deploy"
+
+LOG_DIR="/var/log/armorclaw"
+LOG_FILE="${LOG_DIR}/install.log"
+LOCKFILE="/tmp/armorclaw-install.lock"
+
+CONDUIT_VERSION="${CONDUIT_VERSION:-latest}"
+CONDUIT_IMAGE="${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:$CONDUIT_VERSION}"
+INSTALLER_VERSION="2.0"
+
+exec 200>"$LOCKFILE"
+flock -n 200 || {
+  echo "[armorclaw-install] ERROR: installer already running" >&2
+  exit 1
+}
+trap 'flock -u 200 2>/dev/null || true; rm -f "$LOCKFILE"' EXIT
+
+mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp/armorclaw"
+LOG_FILE="${LOG_DIR}/install.log"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+log() {
+  echo "[armorclaw-install] $*"
+}
+
+fail() {
+  echo "[armorclaw-install] ERROR: $*" >&2
+  exit 1
+}
+
+log "ArmorClaw installer started"
+log "Version: $INSTALLER_VERSION"
+log "Log file: $LOG_FILE"
+log "Detected Docker: $(docker --version || echo unavailable)"
+log "Conduit image: $CONDUIT_IMAGE"
 
 ########################################
 # Helpers
@@ -140,6 +208,7 @@ ensure_docker() {
     $SUDO systemctl enable docker || true
     $SUDO systemctl start docker || true
     log "Docker installed successfully"
+    wait_for_docker
   else
     fail "Docker is required. Install Docker manually and try again."
   fi
@@ -148,6 +217,18 @@ ensure_docker() {
 ########################################
 # Temp Workspace
 ########################################
+
+wait_for_docker() {
+  log "Waiting for Docker daemon..."
+  for ((i=1;i<=10;i++)); do
+    if docker info >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+      log "Docker daemon ready"
+      return 0
+    fi
+    sleep 2
+  done
+  fail "Docker failed to start within 20 seconds"
+}
 
 create_workspace() {
   WORK_DIR=$(mktemp -d)
@@ -182,16 +263,19 @@ download_script() {
 ########################################
 
 run_setup() {
+  export ARMORCLAW_API_KEY ARMORCLAW_ADMIN_USERNAME ARMORCLAW_ADMIN_PASSWORD
+  export DOCKER_COMPOSE CONDUIT_VERSION CONDUIT_IMAGE
+
   case "$INSTALL_MODE" in
     quick)
       download_script setup-quick.sh
       log "Running quickstart setup (bridge only)"
-      "$WORK_DIR/setup-quick.sh"
+      exec bash "$WORK_DIR/setup-quick.sh"
       ;;
     matrix)
       download_script setup-matrix.sh
       log "Running Matrix setup (bridge + Conduit)"
-      "$WORK_DIR/setup-matrix.sh"
+      exec bash "$WORK_DIR/setup-matrix.sh"
       ;;
     *)
       fail "Unknown INSTALL_MODE: $INSTALL_MODE. Use 'quick' or 'matrix'"

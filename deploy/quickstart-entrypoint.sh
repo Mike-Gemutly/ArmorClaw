@@ -9,6 +9,13 @@ BOOTSTRAP_SCRIPT="/opt/armorclaw/bootstrap-admin"
 INIT_FLAG="$DATA_DIR/.bootstrapped"
 CONDUIT_CONFIG="$CONFIG_DIR/conduit.toml"
 
+# Docker Compose fallback
+DOCKER_COMPOSE="${DOCKER_COMPOSE:-docker compose}"
+
+# Conduit image
+CONDUIT_VERSION="${CONDUIT_VERSION:-latest}"
+CONDUIT_IMAGE="${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:$CONDUIT_VERSION}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'

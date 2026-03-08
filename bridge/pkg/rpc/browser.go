@@ -14,16 +14,16 @@ import (
 
 // BrowserJob represents an active browser automation job
 type BrowserJob struct {
-	ID           string
-	AgentID      string
-	URL          string
-	Status       string // "running", "completed", "failed"
-	CreatedAt    time.Time
-	CompletedAt  *time.Time
-	Error        string
-	Session      *browser.BrowserSession
-	skill        *browser.BrowserSkill
-	cancelFunc   context.CancelFunc
+	ID          string
+	AgentID     string
+	URL         string
+	Status      string // "running", "completed", "failed"
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+	Error       string
+	Session     *browser.BrowserSession
+	skill       *browser.BrowserSkill
+	cancelFunc  context.CancelFunc
 }
 
 // BrowserJobManager manages active browser jobs
@@ -177,11 +177,11 @@ func (s *Server) handleBrowserNavigate(ctx context.Context, req *Request) (inter
 	}()
 
 	return map[string]interface{}{
-		"job_id":    jobID,
-		"status":    "running",
-		"url":       params.URL,
-		"agent_id":  params.AgentID,
-		"message":   "Navigation started. Use browser.status to poll for completion.",
+		"job_id":     jobID,
+		"status":     "running",
+		"url":        params.URL,
+		"agent_id":   params.AgentID,
+		"message":    "Navigation started. Use browser.status to poll for completion.",
 		"created_at": job.CreatedAt.Format(time.RFC3339),
 	}, nil
 }
@@ -474,7 +474,7 @@ func (s *Server) handleBrowserWaitForCaptcha(ctx context.Context, req *Request) 
 	}
 
 	// Emit captcha status
-	ctx = ctx
+	_ = ctx
 	job.skill.WaitForCaptcha(ctx)
 
 	return map[string]interface{}{
@@ -515,7 +515,7 @@ func (s *Server) handleBrowserWaitFor2FA(ctx context.Context, req *Request) (int
 	}
 
 	// Emit 2FA status
-	ctx = ctx
+	_ = ctx
 	job.skill.WaitFor2FA(ctx)
 
 	return map[string]interface{}{
@@ -556,7 +556,7 @@ func (s *Server) handleBrowserComplete(ctx context.Context, req *Request) (inter
 	}
 
 	// Mark complete
-	ctx = ctx
+	_ = ctx
 	job.skill.Complete(ctx)
 	job.Status = "completed"
 	now := time.Now()
@@ -603,7 +603,7 @@ func (s *Server) handleBrowserFail(ctx context.Context, req *Request) (interface
 	}
 
 	// Mark failed
-	ctx = ctx
+	_ = ctx
 	job.skill.Fail(ctx, fmt.Errorf("%s", params.Reason))
 	job.Status = "failed"
 	job.Error = params.Reason
