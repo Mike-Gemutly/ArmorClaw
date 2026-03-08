@@ -5831,3 +5831,43 @@ Renamed conflicting flags to be command-specific:
 **Current Milestone:** ✅ CRITICAL BRIDGE STARTUP FIX COMPLETE
 **Version:** v8.2.0
 **Next Milestone:** Production Deployment & End-to-End Testing
+## 2026-03-08 - Phase 6: Hardened Installer
+
+### Completed
+- **Installer Hardening** - Added docker daemon readiness checks with dual-check (info + ps), installer lockfile with EXIT trap cleanup, persistent logging with /var/log/armorclaw/install.log fallback to /tmp
+- **Environment Passthrough** - DOCKER_COMPOSE, CONDUIT_VERSION, CONDUIT_IMAGE exported to all setup scripts
+- **Docker Compose Detection** - Detects both 'docker compose' and 'docker-compose', uses quoted "$DOCKER_COMPOSE" with || fail
+- **Conduit Image Unification** - CONDUIT_IMAGE fallback in all installers, consistent version control
+- **Data Directory Fix** - Fixed database_path = "/var/lib/conduit" in deploy-infra.sh (was /var/lib/matrix-conduit)
+- **Test Coverage** - Created comprehensive test suite with 8 tests covering all hardening features
+
+### Key Features
+- No race conditions (lockfile prevents parallel installs)
+- Safe re-runs (idempotent design with container reuse)
+- Docker-startup resilient (waits for daemon to be fully ready)
+- Portable (works with both docker compose and docker-compose)
+- Debuggable (persistent logs for troubleshooting)
+- Consistent (single homeserver, single data directory)
+
+### Tests
+- `tests/integration/test-installer-hardening.sh` - 8 tests covering:
+  - Lockfile functionality (skip if flock not available)
+  - Docker wait loop (dual-check with info + ps)
+  - Environment variable passthrough
+  - Docker Compose detection
+  - CONDUIT_IMAGE fallback
+  - Syntax validation of all installers
+  - wait_for_docker function existence
+  - Variable ordering
+
+### Artifacts
+- `deploy/install.sh` - 10 changes (lockfile, logging, wait, env passthrough, CONDUIT_IMAGE)
+- `deploy/setup-matrix.sh` - 3 changes (wait, DOCKER_COMPOSE, CONDUIT_IMAGE)
+- `deploy/quickstart-entrypoint.sh` - 2 changes (wait, CONDUIT_IMAGE)
+- `deploy/deploy-infra.sh` - 4 changes (wait, DOCKER_COMPOSE, CONDUIT_IMAGE, database_path fix)
+- `tests/integration/test-installer-hardening.sh` - Comprehensive test suite
+
+### Next
+- Run test suite in CI/CD
+- Add integration test with actual Docker (when available)
+- Document installer features in setup guide
