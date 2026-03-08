@@ -769,8 +769,8 @@ func DefaultConfig() *Config {
 
 	return &Config{
 		Server: ServerConfig{
-			SocketPath: "/run/armorclaw/bridge.sock",
-			PidFile:    "/run/armorclaw/bridge.pid",
+			SocketPath: filepath.Join(os.TempDir(), "armorclaw", "bridge.sock"),
+			PidFile:    filepath.Join(os.TempDir(), "armorclaw", "bridge.pid"),
 			Daemonize:  false,
 		},
 		Keystore: KeystoreConfig{

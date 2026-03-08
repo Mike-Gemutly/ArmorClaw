@@ -1,8 +1,8 @@
 # ArmorClaw Quickstart Review
 
 > **Purpose:** Complete guide to the Docker quickstart process and post-deployment steps
-> **Version:** 0.4.3
-> **Last Updated:** 2026-03-05
+> **Version:** 0.5.0
+> **Last Updated:** 2026-03-07
 > **Status:** Active Reference
 
 ---
@@ -90,6 +90,50 @@ The ArmorClaw Docker quickstart image (`mikegemut/armorclaw:latest`) provides a 
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Matrix Event Bus Improvements (v0.5.0)
+
+The bridge now uses a high-throughput event bus with zero-allocation receive path and proper context cancellation support.
+
+### Bug Fixes Applied
+
+| Bug | Severity | Fix |
+|-----|----------|-----|
+| Goroutine leak in WaitForEvents | Critical | Replaced blocking wait with ticker-based polling (25ms intervals) |
+| RPC handler timeout ignored | High | Wrapped context with client-specified timeout |
+| Polling handler logic broken | Medium | Simplified to single-level timeout with nil guard |
+| Status panic on empty buffer | Low | Added empty buffer guard with consistent sequence semantics |
+
+### Architecture
+
+```
+Matrix Homeserver → MatrixAdapter → MatrixEventBus → RPC matrix.receive → Agent
+```
+
+### Key Features
+
+- **Zero-allocation receive path**: Uses pre-allocated batch buffers
+- **Instant wake-up**: Events delivered within 25ms, not polling storms
+- **Slow consumer detection**: Cursor guard prevents message loss
+- **Context cancellation**: Proper timeout handling prevents indefinite blocking
+
+### RPC Methods
+
+| Method | Description |
+|--------|-------------|
+| `matrix.status` | Returns connection health and user info |
+| `matrix.login` | Dynamic login through bridge |
+| `matrix.send` | Message sending via adapter |
+| `matrix.receive` | Long-polling with cursor + timeout |
+
+### Container Agent Updates
+
+- Agent now tracks event cursor
+- Uses long-polling (25ms) instead of aggressive polling
+- Handles cursor reset gracefully
+- Reduced CPU and network overhead
 
 ---
 
@@ -1358,6 +1402,7 @@ services:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 0.5.0 | 2026-03-07 | **Matrix event bus stability**: Fixed goroutine leak, proper timeout handling, zero-allocation receive path, slow consumer detection |
 | 0.4.2 | 2026-03-05 | **Install script fixes**: Host-side IP detection, env var pass-through, corrected wizard flow docs |
 | 0.4.1 | 2026-02-28 | Browser Service (TypeScript/Playwright), Browser Client, Queue Processor |
 | 0.4.0 | 2026-02-28 | Agent Studio, Browser Skill API, MCP Approval Workflow |

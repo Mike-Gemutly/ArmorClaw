@@ -1729,12 +1729,12 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 	log.Println("Docker is available")
 
-	// Ensure base runtime directory exists
+	// Ensure base runtime directory exists (cross-platform safe)
 	runtimeDir := filepath.Dir(cfg.Server.SocketPath)
-	if runtimeDir == "" {
-		runtimeDir = "/run/armorclaw"
+	if runtimeDir == "" || runtimeDir == "." {
+		runtimeDir = filepath.Join(os.TempDir(), "armorclaw")
 	}
-	if err := os.MkdirAll(runtimeDir, 0750); err != nil {
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
 		log.Fatalf("Failed to create runtime directory %s: %v", runtimeDir, err)
 	}
 	log.Printf("Runtime directory ready: %s", runtimeDir)

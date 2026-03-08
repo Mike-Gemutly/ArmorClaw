@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -595,29 +596,43 @@ func (s *Server) GetMatrixAdapter() MatrixAdapter {
 }
 
 func (s *Server) Run(socketPath string) error {
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
-		return fmt.Errorf("failed to create socket directory: %w", err)
-	}
+	var listener net.Listener
+	var err error
 
-	// Remove existing socket file if present
-	if _, err := os.Stat(socketPath); err == nil {
-		if err := os.Remove(socketPath); err != nil {
-			return fmt.Errorf("failed to remove existing socket file: %w", err)
+	if runtime.GOOS == "windows" {
+		// Use TCP fallback on Windows
+		addr := "127.0.0.1:6168"
+		listener, err = net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("failed to create TCP listener on %s: %w", addr, err)
+		}
+		slog.Info("RPC transport: tcp (windows fallback)", "address", addr)
+	} else {
+		// Ensure directory exists
+		if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+			return fmt.Errorf("failed to create socket directory: %w", err)
+		}
+
+		// Remove existing socket file if present (cleanup stale socket)
+		if _, err := os.Stat(socketPath); err == nil {
+			if err := os.Remove(socketPath); err != nil {
+				return fmt.Errorf("failed to remove existing socket file: %w", err)
+			}
+		}
+
+		// Create Unix domain socket
+		listener, err = net.Listen("unix", socketPath)
+		if err != nil {
+			return fmt.Errorf("failed to create Unix socket: %w", err)
+		}
+		slog.Info("RPC transport: unix socket", "path", socketPath)
+
+		// Set appropriate permissions (mode 660)
+		if err := os.Chmod(socketPath, 0660); err != nil {
+			slog.Warn("failed to set socket permissions", "error", err)
 		}
 	}
-
-	// Create Unix domain socket
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("failed to create Unix socket: %w", err)
-	}
 	defer listener.Close()
-
-	// Set appropriate permissions (mode 660)
-	if err := os.Chmod(socketPath, 0660); err != nil {
-		slog.Warn("failed to set socket permissions", "error", err)
-	}
 
 	// Create channel to signal shutdown
 	shutdown := make(chan struct{})
