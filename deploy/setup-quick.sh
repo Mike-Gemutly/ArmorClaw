@@ -77,6 +77,19 @@ print_done() {
     echo -e "  ${GREEN}✓${NC} $1"
 }
 
+show_spinner() {
+    local pid=$1
+    local message="$2"
+    local spin='-\|/'
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i+1) % 4 ))
+        printf "\r  ${YELLOW}⏳${NC} $message... ${spin:$i:1}"
+        sleep .2
+    done
+    printf "\r"
+}
+
 fail() {
     print_error "$1"
     exit 1
@@ -213,14 +226,20 @@ install_bridge() {
     rm -rf "$build_dir"
     mkdir -p "$build_dir"
 
-    if ! git clone --depth 1 https://github.com/Gemutly/ArmorClaw "$build_dir" &>/dev/null; then
+    git clone --depth 1 https://github.com/Gemutly/ArmorClaw "$build_dir" &>/dev/null &
+    show_spinner $! "Fetching source"
+    wait $!
+    if [[ $? -ne 0 ]]; then
         fail "Failed to clone source"
     fi
 
     cd "$build_dir/bridge" || fail "Bridge source missing"
 
     # Build with CGO enabled for SQLCipher
-    if CGO_ENABLED=1 go build -o armorclaw-bridge ./cmd/bridge; then
+    CGO_ENABLED=1 go build -o armorclaw-bridge ./cmd/bridge >/dev/null 2>&1 &
+    show_spinner $! "Building bridge"
+
+    if [[ -f "armorclaw-bridge" ]]; then
         print_done "Bridge built successfully"
     else
         fail "Bridge build failed"

@@ -70,6 +70,23 @@ print_info() {
     echo -e "  ${CYAN}ℹ${NC} $1"
 }
 
+print_done() {
+    echo -e "  ${GREEN}✓${NC} $1"
+}
+
+show_spinner() {
+    local pid=$1
+    local message="$2"
+    local spin='-\|/'
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i+1) % 4 ))
+        printf "\r  ${YELLOW}⏳${NC} $message... ${spin:$i:1}"
+        sleep .2
+    done
+    printf "\r"
+}
+
 fail() {
     print_error "$1"
     exit 1
@@ -310,23 +327,33 @@ deploy_local_conduit() {
 
             if [ "$USE_EXISTING_CONDUIT" = true ]; then
                 print_info "Reusing existing Conduit, starting other services"
-                "$DOCKER_COMPOSE" -f "$compose_dir/docker-compose.matrix.yml" up -d postgres synapse nginx certbot coturn || fail "Failed to start Matrix containers"
+                "$DOCKER_COMPOSE" -f "$compose_dir/docker-compose.matrix.yml" up -d postgres synapse nginx certbot coturn >/dev/null 2>&1 &
             else
-                "$DOCKER_COMPOSE" -f "$compose_dir/docker-compose.matrix.yml" up -d || fail "Failed to start Matrix containers"
+                "$DOCKER_COMPOSE" -f "$compose_dir/docker-compose.matrix.yml" up -d >/dev/null 2>&1 &
             fi
+            show_spinner $! "Starting Matrix stack"
+            wait $!
+            
             print_success "Matrix stack started"
 
             # Wait for server to be ready
-            print_info "Waiting for Matrix server..."
-            sleep 5
-
-            for i in {1..30}; do
-                if curl -sf http://localhost:6167/_matrix/client/versions &>/dev/null; then
-                    print_success "Matrix server is ready"
-                    break
-                fi
-                sleep 1
-            done
+            (
+                for i in {1..30}; do
+                    if curl -sf http://localhost:6167/_matrix/client/versions &>/dev/null; then
+                        exit 0
+                    fi
+                    sleep 1
+                done
+                exit 1
+            ) &
+            show_spinner $! "Waiting for Matrix server"
+            wait $!
+            
+            if [[ $? -eq 0 ]]; then
+                print_success "Matrix server is ready"
+            else
+                print_warning "Matrix server timed out starting"
+            fi
         fi
     else
         print_warning "Matrix deployment files not found at $compose_dir"

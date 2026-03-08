@@ -67,6 +67,19 @@ print_done() {
     echo -e "  ${GREEN}✓${NC} $1"
 }
 
+show_spinner() {
+    local pid=$1
+    local message="$2"
+    local spin='-\|/'
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i+1) % 4 ))
+        printf "\r  ${YELLOW}⏳${NC} $message... ${spin:$i:1}"
+        sleep .2
+    done
+    printf "\r"
+}
+
 log() {
   print_info "$*"
 }
@@ -216,9 +229,12 @@ ensure_docker() {
   fi
 
   if [[ "$ans" =~ ^[Yy]$ ]]; then
-    curl -fsSL https://get.docker.com | sh
-    $SUDO systemctl enable docker || true
-    $SUDO systemctl start docker || true
+    curl -fsSL https://get.docker.com | sh >/var/log/armorclaw-docker-install.log 2>&1 &
+    show_spinner $! "Installing Docker"
+    wait $!
+    
+    $SUDO systemctl enable docker >/dev/null 2>&1 || true
+    $SUDO systemctl start docker >/dev/null 2>&1 || true
     print_success "Docker installed successfully"
     wait_for_docker
   else
@@ -263,9 +279,13 @@ download_script() {
   local url="${BASE_URL}/${file}"
   local dest="${WORK_DIR}/${file}"
 
-  print_info "Downloading ${file}..."
+  curl -fsSL "$url" -o "$dest" >/dev/null 2>&1 &
+  show_spinner $! "Downloading ${file}"
+  wait $!
 
-  curl -fsSL "$url" -o "$dest" || fail "Failed downloading ${file}"
+  if [[ $? -ne 0 ]]; then
+      fail "Failed downloading ${file}"
+  fi
 
   chmod +x "$dest"
 }
