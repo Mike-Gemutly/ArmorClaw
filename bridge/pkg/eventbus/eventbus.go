@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/eventlog"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/websocket"
 	"log/slog"
@@ -22,6 +23,7 @@ type EventBus struct {
 	cancel          context.CancelFunc
 	websocketServer *websocket.Server
 	securityLog     *logger.SecurityLogger
+	log             *eventlog.Log
 }
 
 // Subscriber represents a client subscribed to receive events
@@ -29,7 +31,7 @@ type Subscriber struct {
 	ID            string
 	Filter        EventFilter
 	EventChannel  chan *MatrixEventWrapper
-	SubscribeTime  time.Time
+	SubscribeTime time.Time
 	LastActivity  time.Time
 	closed        bool // Track if channel is already closed
 	mu            sync.RWMutex
@@ -47,8 +49,8 @@ type EventFilter struct {
 // MatrixEventWrapper wraps a Matrix event for delivery
 type MatrixEventWrapper struct {
 	Event    *MatrixEvent `json:"event"`
-	Received time.Time   `json:"received"`
-	Sequence int64      `json:"sequence"`
+	Received time.Time    `json:"received"`
+	Sequence int64        `json:"sequence"`
 }
 
 // MatrixEvent represents a Matrix event (simplified)
@@ -65,8 +67,13 @@ type Config struct {
 	WebSocketEnabled  bool          // Enable WebSocket server
 	WebSocketAddr     string        // WebSocket listen address
 	WebSocketPath     string        // WebSocket path
-	MaxSubscribers     int           // Maximum concurrent subscribers
-	InactivityTimeout  time.Duration // Disconnect inactive subscribers
+	MaxSubscribers    int           // Maximum concurrent subscribers
+	InactivityTimeout time.Duration // Disconnect inactive subscribers
+
+	// Durable log configuration
+	EnableLog      bool
+	LogDir         string
+	MaxLogFileSize int64
 }
 
 // DefaultConfig returns default event bus configuration
@@ -75,8 +82,10 @@ func DefaultConfig() Config {
 		WebSocketEnabled:  false,
 		WebSocketAddr:     "0.0.0.0:8444",
 		WebSocketPath:     "/events",
-		MaxSubscribers:     100,
-		InactivityTimeout:  30 * time.Minute,
+		MaxSubscribers:    100,
+		InactivityTimeout: 30 * time.Minute,
+		EnableLog:         false,
+		LogDir:            "/var/lib/armorclaw/events",
 	}
 }
 
@@ -91,16 +100,31 @@ func NewEventBus(config Config) *EventBus {
 		securityLog: logger.NewSecurityLogger(logger.Global().WithComponent("eventbus")),
 	}
 
+	// Initialize durable log if enabled
+	if config.EnableLog {
+		logCfg := eventlog.Config{
+			Dir:            config.LogDir,
+			MaxSegmentSize: config.MaxLogFileSize,
+		}
+		l, err := eventlog.New(logCfg)
+		if err != nil {
+			slog.Error("failed to initialize durable event log", "error", err)
+		} else {
+			bus.log = l
+			slog.Info("durable event log initialized", "dir", config.LogDir)
+		}
+	}
+
 	// Initialize WebSocket server if enabled
 	if config.WebSocketEnabled {
 		wsConfig := websocket.Config{
-			Addr:                config.WebSocketAddr,
-			Path:                config.WebSocketPath,
-			MaxConnections:     config.MaxSubscribers,
-			InactivityTimeout:   config.InactivityTimeout,
-			MessageHandler:      bus.handleWebSocketMessage,
-			ConnectHandler:      bus.handleWebSocketConnect,
-			DisconnectHandler:   bus.handleWebSocketDisconnect,
+			Addr:              config.WebSocketAddr,
+			Path:              config.WebSocketPath,
+			MaxConnections:    config.MaxSubscribers,
+			InactivityTimeout: config.InactivityTimeout,
+			MessageHandler:    bus.handleWebSocketMessage,
+			ConnectHandler:    bus.handleWebSocketConnect,
+			DisconnectHandler: bus.handleWebSocketDisconnect,
 		}
 
 		wsServer := websocket.NewServer(wsConfig)
@@ -137,6 +161,10 @@ func (b *EventBus) Start() error {
 // Stop stops the event bus
 func (b *EventBus) Stop() {
 	b.cancel()
+
+	if b.log != nil {
+		b.log.Close()
+	}
 
 	if b.websocketServer != nil {
 		b.websocketServer.Stop()
@@ -208,6 +236,11 @@ func (b *EventBus) Publish(event *MatrixEvent) error {
 		slog.Int("subscribers_notified", publishedCount),
 		slog.Int("subscribers_dropped", droppedCount))
 
+	// Append to durable log if enabled
+	if b.log != nil {
+		b.log.Append(event.Type, event)
+	}
+
 	return nil
 }
 
@@ -218,13 +251,13 @@ func (b *EventBus) Subscribe(filter EventFilter) (*Subscriber, error) {
 	ctx, cancel := context.WithCancel(b.ctx)
 
 	sub := &Subscriber{
-		ID:           subID,
-		Filter:       filter,
-		EventChannel: make(chan *MatrixEventWrapper, 100),
+		ID:            subID,
+		Filter:        filter,
+		EventChannel:  make(chan *MatrixEventWrapper, 100),
 		SubscribeTime: time.Now(),
 		LastActivity:  time.Now(),
-		ctx:          ctx,
-		cancel:       cancel,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	b.mu.Lock()
@@ -330,7 +363,7 @@ func (b *EventBus) handleWebSocketMessage(connID string, message []byte) error {
 		case "subscribe":
 			// Extract filter parameters
 			filter := EventFilter{
-				RoomID:   toString(msg["room_id"]),
+				RoomID:    toString(msg["room_id"]),
 				SenderID:  toString(msg["sender_id"]),
 				EventType: toStringSlice(msg["event_types"]),
 			}
@@ -384,10 +417,10 @@ func (b *EventBus) sendToSubscriber(connID string, sub *Subscriber) {
 
 			// Send event to WebSocket
 			message := map[string]interface{}{
-				"type":        "event",
-				"event":       wrapper.Event,
-				"received":    wrapper.Received,
-				"sequence":    wrapper.Sequence,
+				"type":     "event",
+				"event":    wrapper.Event,
+				"received": wrapper.Received,
+				"sequence": wrapper.Sequence,
 			}
 
 			data, err := json.Marshal(message)
@@ -524,6 +557,11 @@ func (b *EventBus) PublishBridgeEvent(event BridgeEvent) error {
 	b.securityLog.LogSecurityEvent("bridge_event_published",
 		slog.String("event_type", eventType),
 		slog.Bool("websocket_enabled", b.websocketServer != nil))
+
+	// Append to durable log if enabled
+	if b.log != nil {
+		b.log.Append(eventType, event)
+	}
 
 	return nil
 }

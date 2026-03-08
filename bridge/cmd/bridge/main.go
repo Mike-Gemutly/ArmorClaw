@@ -2058,12 +2058,20 @@ func runBridgeServer(cliCfg cliConfig) {
 			}
 		}
 
+		logDir := cfg.EventBus.DurableLogDir
+		if logDir == "" {
+			logDir = filepath.Join(filepath.Dir(cfg.Keystore.DBPath), "events")
+		}
+
 		eventBusConfig := eventbus.Config{
 			WebSocketEnabled:  cfg.EventBus.WebSocketEnabled,
 			WebSocketAddr:     cfg.EventBus.WebSocketAddr,
 			WebSocketPath:     cfg.EventBus.WebSocketPath,
 			MaxSubscribers:    cfg.EventBus.MaxSubscribers,
 			InactivityTimeout: inactivityTimeout,
+			EnableLog:         cfg.EventBus.EnableDurableLog,
+			LogDir:            logDir,
+			MaxLogFileSize:    cfg.EventBus.MaxLogFileSize,
 		}
 
 		eventBus = eventbus.NewEventBus(eventBusConfig)

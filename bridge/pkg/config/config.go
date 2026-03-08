@@ -453,6 +453,15 @@ type EventBusConfig struct {
 
 	// InactivityTimeout is the timeout for inactive subscribers
 	InactivityTimeout string `toml:"inactivity_timeout" env:"ARMORCLAW_EVENTBUS_INACTIVITY_TIMEOUT"`
+
+	// EnableDurableLog enables the append-only event log
+	EnableDurableLog bool `toml:"enable_durable_log" env:"ARMORCLAW_EVENTBUS_DURABLE_LOG_ENABLED"`
+
+	// DurableLogDir is the directory where event log segments are stored
+	DurableLogDir string `toml:"durable_log_dir" env:"ARMORCLAW_EVENTBUS_DURABLE_LOG_DIR"`
+
+	// MaxLogFileSize is the maximum size of a single log segment
+	MaxLogFileSize int64 `toml:"max_log_file_size" env:"ARMORCLAW_EVENTBUS_MAX_LOG_FILE_SIZE"`
 }
 
 // DiscoveryConfig holds mDNS/Bonjour discovery configuration
