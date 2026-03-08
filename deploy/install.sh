@@ -270,12 +270,12 @@ run_setup() {
     quick)
       download_script setup-quick.sh
       log "Running quickstart setup (bridge only)"
-      exec bash "$WORK_DIR/setup-quick.sh"
+      exec bash "$WORK_DIR/setup-quick.sh" "$@"
       ;;
     matrix)
       download_script setup-matrix.sh
       log "Running Matrix setup (bridge + Conduit)"
-      exec bash "$WORK_DIR/setup-matrix.sh"
+      exec bash "$WORK_DIR/setup-matrix.sh" "$@"
       ;;
     *)
       fail "Unknown INSTALL_MODE: $INSTALL_MODE. Use 'quick' or 'matrix'"

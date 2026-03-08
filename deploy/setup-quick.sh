@@ -27,7 +27,7 @@ INSTALL_DIR="/opt/armorclaw"
 
 # Non-interactive mode
 NON_INTERACTIVE=false
-if [[ "$1" == "--non-interactive" || "$1" == "-y" ]]; then
+if [[ "${1:-}" == "--non-interactive" || "${1:-}" == "-y" ]]; then
     NON_INTERACTIVE=true
 fi
 
