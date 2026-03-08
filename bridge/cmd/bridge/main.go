@@ -22,12 +22,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/armorclaw/bridge/internal/adapter"
+	"github.com/armorclaw/bridge/internal/ai"
+	"github.com/armorclaw/bridge/internal/events"
+	"github.com/armorclaw/bridge/internal/wizard"
 	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/discovery"
 	"github.com/armorclaw/bridge/pkg/docker"
-	"github.com/armorclaw/bridge/internal/ai"
-	"github.com/armorclaw/bridge/internal/wizard"
 	"github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/health"
@@ -85,10 +87,10 @@ type cliConfig struct {
 	qrHost string
 	qrPort int
 	// Agent command flags
-	agentType        string
-	agentName        string
-	agentRoom        string
-	agentKey         string
+	agentType         string
+	agentName         string
+	agentRoom         string
+	agentKey          string
 	agentCapabilities string
 }
 
@@ -1422,13 +1424,13 @@ func runGenerateQRCommand(cliCfg cliConfig) {
 
 	// Create the config JSON
 	configData := map[string]interface{}{
-		"version":          1,
+		"version":           1,
 		"matrix_homeserver": matrixHS,
-		"rpc_url":          fmt.Sprintf("%s://%s:%d/api", protocol, hostname, port),
-		"ws_url":           fmt.Sprintf("%s://%s:%d/ws", map[bool]string{true: "wss", false: "ws"}[cfg.Discovery.TLS], hostname, port),
-		"push_gateway":     strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify",
-		"server_name":      hostname,
-		"expires_at":       time.Now().Add(24 * time.Hour).Unix(),
+		"rpc_url":           fmt.Sprintf("%s://%s:%d/api", protocol, hostname, port),
+		"ws_url":            fmt.Sprintf("%s://%s:%d/ws", map[bool]string{true: "wss", false: "ws"}[cfg.Discovery.TLS], hostname, port),
+		"push_gateway":      strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify",
+		"server_name":       hostname,
+		"expires_at":        time.Now().Add(24 * time.Hour).Unix(),
 	}
 
 	// Convert to JSON
@@ -1588,11 +1590,11 @@ func runStartAgentCommand(cliCfg cliConfig) {
 		Jsonrpc string `json:"jsonrpc"`
 		ID      int    `json:"id"`
 		Result  *struct {
-			AgentID     string   `json:"agent_id"`
-			Name        string   `json:"name"`
-			Type        string   `json:"type"`
-			Status      string   `json:"status"`
-			RoomID      string   `json:"room_id"`
+			AgentID      string   `json:"agent_id"`
+			Name         string   `json:"name"`
+			Type         string   `json:"type"`
+			Status       string   `json:"status"`
+			RoomID       string   `json:"room_id"`
 			Capabilities []string `json:"capabilities"`
 		} `json:"result"`
 		Error *struct {
@@ -1714,7 +1716,7 @@ func runBridgeServer(cliCfg cliConfig) {
 	// Check Docker availability before initializing services
 	log.Println("Checking Docker availability...")
 	if !docker.IsAvailable() {
-		log.Fatalf("Docker is not available or not running. "+
+		log.Fatalf("Docker is not available or not running. " +
 			"Please start Docker and ensure the daemon is accessible.")
 	}
 	log.Println("Docker is available")
@@ -1859,119 +1861,119 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	/*
-	// Create voice manager
-	voiceConfig := voice.DefaultConfig()
+		// Create voice manager
+		voiceConfig := voice.DefaultConfig()
 
-	// Helper function to parse duration strings
-	parseDuration := func(s string) time.Duration {
-		if s == "" {
-			return 0
+		// Helper function to parse duration strings
+		parseDuration := func(s string) time.Duration {
+			if s == "" {
+				return 0
+			}
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				log.Printf("Warning: Invalid duration '%s': %v", s, err)
+				return 0
+			}
+			return d
 		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			log.Printf("Warning: Invalid duration '%s': %v", s, err)
-			return 0
-		}
-		return d
-	}
 
-	// Helper function to convert string slice to bool map
-	stringSliceToBoolMap := func(slice []string) map[string]bool {
-		result := make(map[string]bool)
-		for _, s := range slice {
-			result[s] = true
+		// Helper function to convert string slice to bool map
+		stringSliceToBoolMap := func(slice []string) map[string]bool {
+			result := make(map[string]bool)
+			for _, s := range slice {
+				result[s] = true
+			}
+			return result
 		}
-		return result
-	}
 
-	// Override with config file values if present
+		// Override with config file values if present
 
-	// General settings
-	if cfg.Voice.DefaultLifetime != "" {
-		if d := parseDuration(cfg.Voice.DefaultLifetime); d > 0 {
-			voiceConfig.DefaultLifetime = d
+		// General settings
+		if cfg.Voice.DefaultLifetime != "" {
+			if d := parseDuration(cfg.Voice.DefaultLifetime); d > 0 {
+				voiceConfig.DefaultLifetime = d
+			}
 		}
-	}
-	if cfg.Voice.MaxLifetime != "" {
-		if d := parseDuration(cfg.Voice.MaxLifetime); d > 0 {
-			voiceConfig.MaxLifetime = d
+		if cfg.Voice.MaxLifetime != "" {
+			if d := parseDuration(cfg.Voice.MaxLifetime); d > 0 {
+				voiceConfig.MaxLifetime = d
+			}
 		}
-	}
-	voiceConfig.AutoAnswer = cfg.Voice.AutoAnswer
-	voiceConfig.RequireMembership = cfg.Voice.RequireMembership
-	voiceConfig.AllowedRooms = stringSliceToBoolMap(cfg.Voice.AllowedRooms)
-	voiceConfig.BlockedRooms = stringSliceToBoolMap(cfg.Voice.BlockedRooms)
+		voiceConfig.AutoAnswer = cfg.Voice.AutoAnswer
+		voiceConfig.RequireMembership = cfg.Voice.RequireMembership
+		voiceConfig.AllowedRooms = stringSliceToBoolMap(cfg.Voice.AllowedRooms)
+		voiceConfig.BlockedRooms = stringSliceToBoolMap(cfg.Voice.BlockedRooms)
 
-	// Security settings
-	voiceConfig.MaxConcurrentCalls = cfg.Voice.Security.MaxConcurrentCalls
-	if cfg.Voice.Security.MaxCallDuration != "" {
-		if d := parseDuration(cfg.Voice.Security.MaxCallDuration); d > 0 {
-			voiceConfig.SecurityPolicy.MaxCallDuration = d
+		// Security settings
+		voiceConfig.MaxConcurrentCalls = cfg.Voice.Security.MaxConcurrentCalls
+		if cfg.Voice.Security.MaxCallDuration != "" {
+			if d := parseDuration(cfg.Voice.Security.MaxCallDuration); d > 0 {
+				voiceConfig.SecurityPolicy.MaxCallDuration = d
+			}
 		}
-	}
-	voiceConfig.SecurityPolicy.RateLimitCalls = cfg.Voice.Security.RateLimitCalls
-	if cfg.Voice.Security.RateLimitWindow != "" {
-		if d := parseDuration(cfg.Voice.Security.RateLimitWindow); d > 0 {
-			voiceConfig.SecurityPolicy.RateLimitWindow = d
+		voiceConfig.SecurityPolicy.RateLimitCalls = cfg.Voice.Security.RateLimitCalls
+		if cfg.Voice.Security.RateLimitWindow != "" {
+			if d := parseDuration(cfg.Voice.Security.RateLimitWindow); d > 0 {
+				voiceConfig.SecurityPolicy.RateLimitWindow = d
+			}
 		}
-	}
-	voiceConfig.SecurityPolicy.RequireE2EE = cfg.Voice.Security.RequireE2EE
-	voiceConfig.SecurityPolicy.RequireSignalingTLS = cfg.Voice.Security.RequireSignalingTLS
+		voiceConfig.SecurityPolicy.RequireE2EE = cfg.Voice.Security.RequireE2EE
+		voiceConfig.SecurityPolicy.RequireSignalingTLS = cfg.Voice.Security.RequireSignalingTLS
 
-	// Budget settings
-	voiceConfig.DefaultTokenLimit = cfg.Voice.Budget.DefaultTokenLimit
-	if cfg.Voice.Budget.DefaultDurationLimit != "" {
-		if d := parseDuration(cfg.Voice.Budget.DefaultDurationLimit); d > 0 {
-			voiceConfig.DefaultDurationLimit = d
+		// Budget settings
+		voiceConfig.DefaultTokenLimit = cfg.Voice.Budget.DefaultTokenLimit
+		if cfg.Voice.Budget.DefaultDurationLimit != "" {
+			if d := parseDuration(cfg.Voice.Budget.DefaultDurationLimit); d > 0 {
+				voiceConfig.DefaultDurationLimit = d
+			}
 		}
-	}
-	voiceConfig.WarningThreshold = cfg.Voice.Budget.WarningThreshold
-	voiceConfig.HardStop = cfg.Voice.Budget.HardStop
+		voiceConfig.WarningThreshold = cfg.Voice.Budget.WarningThreshold
+		voiceConfig.HardStop = cfg.Voice.Budget.HardStop
 
-	// TTL settings
-	if cfg.Voice.TTL.DefaultTTL != "" {
-		if d := parseDuration(cfg.Voice.TTL.DefaultTTL); d > 0 {
-			voiceConfig.TTLConfig.DefaultTTL = d
+		// TTL settings
+		if cfg.Voice.TTL.DefaultTTL != "" {
+			if d := parseDuration(cfg.Voice.TTL.DefaultTTL); d > 0 {
+				voiceConfig.TTLConfig.DefaultTTL = d
+			}
 		}
-	}
-	if cfg.Voice.TTL.MaxTTL != "" {
-		if d := parseDuration(cfg.Voice.TTL.MaxTTL); d > 0 {
-			voiceConfig.TTLConfig.MaxTTL = d
+		if cfg.Voice.TTL.MaxTTL != "" {
+			if d := parseDuration(cfg.Voice.TTL.MaxTTL); d > 0 {
+				voiceConfig.TTLConfig.MaxTTL = d
+			}
 		}
-	}
-	if cfg.Voice.TTL.EnforcementInterval != "" {
-		if d := parseDuration(cfg.Voice.TTL.EnforcementInterval); d > 0 {
-			voiceConfig.TTLConfig.EnforcementInterval = d
+		if cfg.Voice.TTL.EnforcementInterval != "" {
+			if d := parseDuration(cfg.Voice.TTL.EnforcementInterval); d > 0 {
+				voiceConfig.TTLConfig.EnforcementInterval = d
+			}
 		}
-	}
-	if cfg.Voice.TTL.WarningThreshold > 0 {
-		voiceConfig.TTLConfig.WarningThreshold = cfg.Voice.TTL.WarningThreshold
-	}
-	voiceConfig.TTLConfig.HardStop = cfg.Voice.TTL.HardStop
+		if cfg.Voice.TTL.WarningThreshold > 0 {
+			voiceConfig.TTLConfig.WarningThreshold = cfg.Voice.TTL.WarningThreshold
+		}
+		voiceConfig.TTLConfig.HardStop = cfg.Voice.TTL.HardStop
 
-	// Update budget config in voiceConfig
-	voiceConfig.BudgetConfig.DefaultTokenLimit = cfg.Voice.Budget.DefaultTokenLimit
-	if cfg.Voice.Budget.DefaultDurationLimit != "" {
-		if d := parseDuration(cfg.Voice.Budget.DefaultDurationLimit); d > 0 {
-			voiceConfig.BudgetConfig.DefaultDurationLimit = d
+		// Update budget config in voiceConfig
+		voiceConfig.BudgetConfig.DefaultTokenLimit = cfg.Voice.Budget.DefaultTokenLimit
+		if cfg.Voice.Budget.DefaultDurationLimit != "" {
+			if d := parseDuration(cfg.Voice.Budget.DefaultDurationLimit); d > 0 {
+				voiceConfig.BudgetConfig.DefaultDurationLimit = d
+			}
 		}
-	}
-	voiceConfig.BudgetConfig.WarningThreshold = cfg.Voice.Budget.WarningThreshold
-	voiceConfig.BudgetConfig.HardStop = cfg.Voice.Budget.HardStop
+		voiceConfig.BudgetConfig.WarningThreshold = cfg.Voice.Budget.WarningThreshold
+		voiceConfig.BudgetConfig.HardStop = cfg.Voice.Budget.HardStop
 
-	voiceMgr := voice.NewManager(
-		sessionMgr,
-		tokenMgr,
-		webrtcEngine,
-		turnMgr,
-		voiceConfig,
-	)
+		voiceMgr := voice.NewManager(
+			sessionMgr,
+			tokenMgr,
+			webrtcEngine,
+			turnMgr,
+			voiceConfig,
+		)
 
-	// Start voice manager
-	if err := voiceMgr.Start(); err != nil {
-		log.Printf("Warning: Failed to start voice manager: %v", err)
-		log.Println("Voice calls will not be available")
-	}
+		// Start voice manager
+		if err := voiceMgr.Start(); err != nil {
+			log.Printf("Warning: Failed to start voice manager: %v", err)
+			log.Println("Voice calls will not be available")
+		}
 	*/
 
 	// Create budget tracker (unused, kept for future use)
@@ -2133,17 +2135,17 @@ func runBridgeServer(cliCfg cliConfig) {
 	browserJobs := rpc.NewBrowserJobManager()
 
 	server, err := rpc.New(rpc.Config{
-		SocketPath:   cfg.Server.SocketPath,
-		Keystore:     ks,
-		Matrix:       nil, // Will be set up later
-		AIService:    ai.NewAIService(ks),
+		SocketPath:      cfg.Server.SocketPath,
+		Keystore:        ks,
+		Matrix:          nil, // Will be set up later
+		AIService:       ai.NewAIService(ks),
 		AIMaxConcurrent: 4,
-		BridgeManager:  nil,
-		BrowserJobs:   browserJobs,
-		Studio:        nil,
-		AppService:    nil,
+		BridgeManager:   nil,
+		BrowserJobs:     browserJobs,
+		Studio:          nil,
+		AppService:      nil,
 		ProvisioningMgr: nil,
-		SkillManager:  nil,
+		SkillManager:    nil,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -2160,22 +2162,22 @@ func runBridgeServer(cliCfg cliConfig) {
 	// Wire up event bus to Matrix adapter if both are enabled
 	// TODO: Fix type mismatch between eventbus.MatrixEvent and adapter.MatrixEvent
 	/*
-	if eventBus != nil && cfg.Matrix.Enabled {
-		log.Println("Wiring Matrix adapter to event bus...")
-		// Get the Matrix adapter from the server and set up event publishing
-		// The RPC server should provide access to the Matrix adapter
-		if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
-			// Type assertion to get the actual Matrix adapter
-			if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
-				ma.SetEventPublisher(eventBus)
-				log.Println("Matrix events will be published to event bus in real-time")
+		if eventBus != nil && cfg.Matrix.Enabled {
+			log.Println("Wiring Matrix adapter to event bus...")
+			// Get the Matrix adapter from the server and set up event publishing
+			// The RPC server should provide access to the Matrix adapter
+			if matrixAdapter := server.GetMatrixAdapter(); matrixAdapter != nil {
+				// Type assertion to get the actual Matrix adapter
+				if ma, ok := matrixAdapter.(*adapter.MatrixAdapter); ok {
+					ma.SetEventPublisher(eventBus)
+					log.Println("Matrix events will be published to event bus in real-time")
+				} else {
+					log.Println("Warning: Matrix adapter type assertion failed")
+				}
 			} else {
-				log.Println("Warning: Matrix adapter type assertion failed")
+				log.Println("Warning: Matrix adapter not available for event bus integration")
 			}
-		} else {
-			log.Println("Warning: Matrix adapter not available for event bus integration")
 		}
-	}
 	*/
 
 	// TODO: Wire Matrix adapter to components (notifier, error system, studio)

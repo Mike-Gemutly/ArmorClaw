@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/pkg/budget"
 	"github.com/armorclaw/bridge/pkg/keystore"
-	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/pkg/rpc"
 )
 
@@ -175,6 +175,9 @@ type MatrixConfig struct {
 	// AutoRooms are rooms to automatically join on login
 	AutoRooms []string `toml:"auto_rooms"`
 
+	// EventBufferSize is the size of the high-throughput event bus ring buffer
+	EventBufferSize int `toml:"event_buffer_size" env:"ARMORCLAW_MATRIX_EVENT_BUFFER_SIZE"`
+
 	// Retry configuration
 	Retry RetryConfig `toml:"retry"`
 
@@ -248,7 +251,7 @@ type WebRTCConfig struct {
 	SignalingAddr    string `toml:"signaling_addr" env:"ARMORCLAW_SIGNALING_ADDR"`
 	SignalingPath    string `toml:"signaling_path" env:"ARMORCLAW_SIGNALING_PATH"`
 	SignalingTLSCert string `toml:"signaling_tls_cert" env:"ARMORCLAW_SIGNALING_TLS_CERT"`
-	SignalingTLSKey string `toml:"signaling_tls_key" env:"ARMORCLAW_SIGNALING_TLS_KEY"`
+	SignalingTLSKey  string `toml:"signaling_tls_key" env:"ARMORCLAW_SIGNALING_TLS_KEY"`
 }
 
 // ICEServerConfig represents an ICE server configuration
@@ -767,16 +770,16 @@ func DefaultConfig() *Config {
 			Providers: []ProviderConfig{},
 		},
 		Matrix: MatrixConfig{
-			Enabled:      false,
+			Enabled:       false,
 			HomeserverURL: "",
-			Username:     "",
-			Password:     "",
-			DeviceID:     "armorclaw-bridge",
-			SyncInterval: 5,
-			AutoRooms:    []string{},
+			Username:      "",
+			Password:      "",
+			DeviceID:      "armorclaw-bridge",
+			SyncInterval:  5,
+			AutoRooms:     []string{},
 			Retry: RetryConfig{
-				MaxRetries:       3,
-				RetryDelay:       5,
+				MaxRetries:        3,
+				RetryDelay:        5,
 				BackoffMultiplier: 2.0,
 			},
 			ZeroTrust: ZeroTrustConfig{
@@ -786,15 +789,15 @@ func DefaultConfig() *Config {
 			},
 		},
 		Budget: BudgetConfig{
-			DailyLimitUSD:   5.00,  // $5/day default
+			DailyLimitUSD:   5.00,   // $5/day default
 			MonthlyLimitUSD: 100.00, // $100/month default
-			AlertThreshold:  80.0,  // Warn at 80%
+			AlertThreshold:  80.0,   // Warn at 80%
 			HardStop:        true,   // Prevent overages by default
 			ProviderCosts:   make(map[string]float64),
 		},
 		WebRTC: WebRTCConfig{
-			DefaultLifetime: "30m",
-			MaxLifetime:     "2h",
+			DefaultLifetime:  "30m",
+			MaxLifetime:      "2h",
 			TURNSharedSecret: "",
 			TURNServerURL:    "",
 			ICEServers: []ICEServerConfig{
@@ -803,9 +806,9 @@ func DefaultConfig() *Config {
 				},
 			},
 			AudioCodec: AudioCodecConfig{
-				SampleRate: 48000,
-				Channels:   1,
-				Bitrate:    64000,
+				SampleRate:  48000,
+				Channels:    1,
+				Bitrate:     64000,
 				PayloadType: 111,
 			},
 			// Signaling server configuration
@@ -813,18 +816,18 @@ func DefaultConfig() *Config {
 			SignalingAddr:    "0.0.0.0:8443",
 			SignalingPath:    "/webrtc",
 			SignalingTLSCert: "",
-			SignalingTLSKey: "",
+			SignalingTLSKey:  "",
 		},
 		Voice: VoiceConfig{
-			DefaultLifetime:      "30m",
-			MaxLifetime:          "2h",
-			AutoAnswer:           false,
-			RequireMembership:    true,
-			AllowedRooms:         []string{},
-			BlockedRooms:         []string{},
+			DefaultLifetime:   "30m",
+			MaxLifetime:       "2h",
+			AutoAnswer:        false,
+			RequireMembership: true,
+			AllowedRooms:      []string{},
+			BlockedRooms:      []string{},
 			Security: VoiceSecurityConfig{
 				MaxConcurrentCalls:  10,
-				MaxCallDuration:    "1h",
+				MaxCallDuration:     "1h",
 				RateLimitCalls:      10,
 				RateLimitWindow:     "1h",
 				RequireE2EE:         true,
@@ -833,15 +836,15 @@ func DefaultConfig() *Config {
 			Budget: VoiceBudgetConfig{
 				DefaultTokenLimit:    100000,
 				DefaultDurationLimit: "30m",
-				WarningThreshold:    0.8,
+				WarningThreshold:     0.8,
 				HardStop:             true,
 			},
 			TTL: VoiceTTLConfig{
-				DefaultTTL:           "10m",
-				MaxTTL:               "1h",
-				EnforcementInterval:  "30s",
-				WarningThreshold:     0.9,
-				HardStop:              true,
+				DefaultTTL:          "10m",
+				MaxTTL:              "1h",
+				EnforcementInterval: "30s",
+				WarningThreshold:    0.9,
+				HardStop:            true,
 			},
 		},
 		Notifications: NotificationsConfig{
@@ -850,11 +853,11 @@ func DefaultConfig() *Config {
 			AlertThreshold: 0.8,
 		},
 		Browser: BrowserConfig{
-			Enabled:     false,
-			ServiceURL:  "http://localhost:3000",
-			Timeout:     120, // 2 minutes
-			MaxRetries:  3,
-			RetryDelay:  5,
+			Enabled:    false,
+			ServiceURL: "http://localhost:3000",
+			Timeout:    120, // 2 minutes
+			MaxRetries: 3,
+			RetryDelay: 5,
 			Stealth: BrowserStealthConfig{
 				Enabled:         true,
 				FingerprintSeed: "armorclaw-default",
@@ -864,10 +867,10 @@ func DefaultConfig() *Config {
 				CanvasNoise:     true,
 			},
 			Queue: BrowserQueueConfig{
-				MaxWorkers:      3,
-				MaxQueueSize:    100,
-				JobTimeout:      300, // 5 minutes
-				PriorityLevels:  3,
+				MaxWorkers:     3,
+				MaxQueueSize:   100,
+				JobTimeout:     300, // 5 minutes
+				PriorityLevels: 3,
 			},
 		},
 		EventBus: EventBusConfig{
@@ -901,11 +904,11 @@ func DefaultConfig() *Config {
 			AdminRoomID:     "",
 		},
 		Provisioning: ProvisioningConfig{
-			SigningSecret:        "",    // Generated during container-setup.sh
+			SigningSecret:        "", // Generated during container-setup.sh
 			DefaultExpirySeconds: 60,
 			MaxExpirySeconds:     300,
 			OneTimeUse:           true,
-			DataDir:              "",    // Set by container-setup.sh for persistence
+			DataDir:              "", // Set by container-setup.sh for persistence
 		},
 		Compliance: ComplianceConfig{
 			Enabled:            false, // Disabled by default for performance
@@ -1074,11 +1077,11 @@ func (c *Config) ToKeystoreConfig() keystore.Config {
 // ToMatrixConfig converts the Config to adapter.Config
 func (c *Config) ToMatrixConfig() adapter.Config {
 	return adapter.Config{
-		HomeserverURL:  c.Matrix.HomeserverURL,
-		DeviceID:       c.Matrix.DeviceID,
-		TokenFile:      filepath.Join(filepath.Dir(c.Keystore.DBPath), "matrix_token.json"),
-		TrustedSenders: c.Matrix.ZeroTrust.TrustedSenders,
-		TrustedRooms:   c.Matrix.ZeroTrust.TrustedRooms,
+		HomeserverURL:   c.Matrix.HomeserverURL,
+		DeviceID:        c.Matrix.DeviceID,
+		TokenFile:       filepath.Join(filepath.Dir(c.Keystore.DBPath), "matrix_token.json"),
+		TrustedSenders:  c.Matrix.ZeroTrust.TrustedSenders,
+		TrustedRooms:    c.Matrix.ZeroTrust.TrustedRooms,
 		RejectUntrusted: c.Matrix.ZeroTrust.RejectUntrusted,
 	}
 }

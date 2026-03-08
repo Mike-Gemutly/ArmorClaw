@@ -130,17 +130,59 @@ fi
 SERVER_NAME="$ARMORCLAW_SERVER_NAME"
 log "Server name: $SERVER_NAME"
 
-# Start Conduit in background
+# ============================================
+# Smart Conduit Container Management (Idempotent)
+# ============================================
+
+CONTAINER="armorclaw-conduit"
+IMAGE="matrixconduit/matrix-conduit:latest"
+PORT="6167"
+
+existing_container() {
+    docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"
+}
+
+running_container() {
+    docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"
+}
+
 log "Starting Conduit..."
-# Run Conduit as non-root user (UID 10000 is standard for Conduit)
+
+if existing_container; then
+    log "Conduit container already exists"
+
+    current_image=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || echo "")
+
+    if [ "$current_image" != "$IMAGE" ]; then
+        log "Conduit image changed ($current_image → $IMAGE), recreating container"
+
+        docker rm -f "$CONTAINER" || {
+            log "Failed to remove existing container"
+            exit 1
+        }
+
+    else
+        if running_container; then
+            log "Conduit already running"
+            exit 0
+        else
+            log "Starting existing Conduit container"
+            docker start "$CONTAINER"
+            exit 0
+        fi
+    fi
+fi
+
+log "Creating Conduit container"
+
 docker run -d \
-    --name armorclaw-conduit \
+    --name "$CONTAINER" \
     --restart unless-stopped \
     --user 10000:10000 \
     -v "$CONFIG_DIR:/etc/armorclaw:ro" \
     -v /var/lib/conduit:/var/lib/conduit \
-    -p 6167:6167 \
-    matrixconduit/matrix-conduit:latest
+    -p "${PORT}:6167" \
+    "$IMAGE"
 
 # Wait for Conduit to be ready
 log "Waiting for Conduit to start..."

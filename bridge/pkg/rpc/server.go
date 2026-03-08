@@ -9,51 +9,55 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
+	"time"
 
+	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/internal/ai"
+	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/internal/skills"
 	"github.com/armorclaw/bridge/pkg/appservice"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/studio"
 )
 
-	const (
-		JSONRPCVersion   = "2.0"
-		BridgeVersion    = "4.6.0"
-		ParseError       = -32700
-		InvalidRequest   = -32600
-		MethodNotFound   = -32601
-		InvalidParams    = -32602
-		InternalError    = -32603
-		TooManyRequests   = -32001
-		RequestCancelled  = -32002
-	)
+const (
+	JSONRPCVersion   = "2.0"
+	BridgeVersion    = "4.6.0"
+	ParseError       = -32700
+	InvalidRequest   = -32600
+	MethodNotFound   = -32601
+	InvalidParams    = -32602
+	InternalError    = -32603
+	TooManyRequests  = -32001
+	RequestCancelled = -32002
+)
 
-	type BridgeManager interface {
-		Start() error
-		Stop() error
-		RegisterAdapter(platform appservice.Platform, adapter interface{}) error
-		BridgeChannel(matrixRoomID string, platform appservice.Platform, channelID string) error
-		UnbridgeChannel(platform appservice.Platform, channelID string) error
-		GetBridgedChannels() []*appservice.BridgedChannel
-		GetStats() map[string]interface{}
-	}
+type BridgeManager interface {
+	Start() error
+	Stop() error
+	RegisterAdapter(platform appservice.Platform, adapter interface{}) error
+	BridgeChannel(matrixRoomID string, platform appservice.Platform, channelID string) error
+	UnbridgeChannel(platform appservice.Platform, channelID string) error
+	GetBridgedChannels() []*appservice.BridgedChannel
+	GetStats() map[string]interface{}
+}
 
-	type StudioService interface {
-		HandleRPCMethod(method string, params json.RawMessage) *studio.RPCResponse
-	}
+type StudioService interface {
+	HandleRPCMethod(method string, params json.RawMessage) *studio.RPCResponse
+}
 
-	type ProvisioningManager interface {
-		GetUserRole(userID string) provisioning.AdminRole
-	}
+type ProvisioningManager interface {
+	GetUserRole(userID string) provisioning.AdminRole
+}
 
-	type AppService interface {
-		GetStats() map[string]interface{}
-	}
+type AppService interface {
+	GetStats() map[string]interface{}
+}
 
-	type SkillManager interface {
-		ExecuteSkill(ctx context.Context, skillName string, params map[string]interface{}) (*skills.SkillResult, error)
+type SkillManager interface {
+	ExecuteSkill(ctx context.Context, skillName string, params map[string]interface{}) (*skills.SkillResult, error)
 	ListEnabled() []*skills.Skill
 	GetSkill(skillName string) (*skills.Skill, bool)
 	AllowSkill(skillName string) error
@@ -66,7 +70,7 @@ import (
 
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}    `json:"id,omitempty"`
+	ID      interface{}     `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -84,40 +88,55 @@ type ErrorObj struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-type Keystore interface {}
+type Keystore interface{}
 type MatrixAdapter interface {
-	SendEvent(roomID string, eventType string, content interface{}) error
+	SendMessage(roomID, message, msgType string) (string, error)
+	SendEvent(roomID, eventType string, content []byte) error
+	Login(username, password string) error
+	GetUserID() string
+	IsLoggedIn() bool
+	GetHomeserver() string
+}
+
+type MatrixHealthResult struct {
+	Enabled    bool   `json:"enabled"`
+	Connected  bool   `json:"connected"`
+	LoggedIn   bool   `json:"logged_in"`
+	Homeserver string `json:"homeserver"`
+	UserID     string `json:"user_id,omitempty"`
+	LastSync   string `json:"last_sync,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type HandlerFunc func(ctx context.Context, req *Request) (interface{}, *ErrorObj)
 
 type Server struct {
-	keystore  Keystore
-	matrix    MatrixAdapter
-	aiService *ai.AIService
-	aiSemaphore chan struct{}
+	keystore        Keystore
+	matrix          MatrixAdapter
+	aiService       *ai.AIService
+	aiSemaphore     chan struct{}
 	aiMaxConcurrent int
-	bridgeMgr    BridgeManager
-	browserJobs  BrowserJobManager
-	studio       StudioService
-	appService   AppService
+	bridgeMgr       BridgeManager
+	browserJobs     BrowserJobManager
+	studio          StudioService
+	appService      AppService
 	provisioningMgr ProvisioningManager
-	skillMgr     SkillManager
-	handlers    map[string]HandlerFunc
+	skillMgr        SkillManager
+	handlers        map[string]HandlerFunc
 }
 
 type Config struct {
-	SocketPath       string
-	Keystore         Keystore
-	Matrix           MatrixAdapter
-	AIService        *ai.AIService
-	AIMaxConcurrent  int
-	BridgeManager    BridgeManager
-	BrowserJobs      *BrowserJobManager
-	Studio           StudioService
-	AppService       AppService
-	ProvisioningMgr  ProvisioningManager
-	SkillManager     SkillManager
+	SocketPath      string
+	Keystore        Keystore
+	Matrix          MatrixAdapter
+	AIService       *ai.AIService
+	AIMaxConcurrent int
+	BridgeManager   BridgeManager
+	BrowserJobs     *BrowserJobManager
+	Studio          StudioService
+	AppService      AppService
+	ProvisioningMgr ProvisioningManager
+	SkillManager    SkillManager
 }
 
 func New(cfg Config) (*Server, error) {
@@ -126,20 +145,20 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		keystore: cfg.Keystore,
-		matrix: cfg.Matrix,
-		aiService: cfg.AIService,
+		keystore:        cfg.Keystore,
+		matrix:          cfg.Matrix,
+		aiService:       cfg.AIService,
 		aiMaxConcurrent: cfg.AIMaxConcurrent,
-		aiSemaphore: make(chan struct{}, cfg.AIMaxConcurrent),
-		bridgeMgr: cfg.BridgeManager,
-		browserJobs: *cfg.BrowserJobs,
-		studio: cfg.Studio,
-		appService: cfg.AppService,
+		aiSemaphore:     make(chan struct{}, cfg.AIMaxConcurrent),
+		bridgeMgr:       cfg.BridgeManager,
+		browserJobs:     *cfg.BrowserJobs,
+		studio:          cfg.Studio,
+		appService:      cfg.AppService,
 		provisioningMgr: cfg.ProvisioningMgr,
-		skillMgr: cfg.SkillManager,
-		handlers: make(map[string]HandlerFunc, 32),
+		skillMgr:        cfg.SkillManager,
+		handlers:        make(map[string]HandlerFunc, 32),
 	}
-	
+
 	s.registerHandlers()
 	return s, nil
 }
@@ -201,72 +220,293 @@ func (s *Server) Handle(ctx context.Context, req *Request) (resp *Response) {
 	if rpcErr != nil {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			ID: req.ID,
-			Error: rpcErr,
+			ID:      req.ID,
+			Error:   rpcErr,
 		}
 	}
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
-		ID: req.ID,
-		Result: result,
+		ID:      req.ID,
+		Result:  result,
 	}
 }
 
 func errorResponse(id interface{}, code int, msg string) *Response {
 	return &Response{
 		JSONRPC: JSONRPCVersion,
-		ID: id,
-		Error: &ErrorObj{Code: code, Message: msg},
+		ID:      id,
+		Error:   &ErrorObj{Code: code, Message: msg},
+	}
+}
+
+// Matrix Handlers
+
+func (s *Server) handleMatrixStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	matrix, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrix == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "matrix adapter not configured",
+		}
+	}
+
+	result := MatrixHealthResult{
+		Enabled:    true,
+		Connected:  true,
+		LoggedIn:   matrix.IsLoggedIn(),
+		Homeserver: matrix.GetHomeserver(),
+		UserID:     matrix.GetUserID(),
+	}
+
+	if !matrix.IsLoggedIn() {
+		result.Error = "not logged in"
+	}
+
+	return result, nil
+}
+
+func (s *Server) handleMatrixLogin(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Errorf("invalid parameters: %w", err).Error(),
+		}
+	}
+
+	matrix, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrix == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "matrix adapter not configured",
+		}
+	}
+
+	if err := matrix.Login(params.Username, params.Password); err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Errorf("login failed: %w", err).Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"user_id": matrix.GetUserID(),
+	}, nil
+}
+
+func (s *Server) handleMatrixSend(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		RoomID  string `json:"room_id"`
+		Message string `json:"message"`
+		MsgType string `json:"msgtype"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Errorf("invalid parameters: %w", err).Error(),
+		}
+	}
+
+	matrix, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrix == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "matrix adapter not configured",
+		}
+	}
+
+	eventID, err := matrix.SendMessage(params.RoomID, params.Message, params.MsgType)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Errorf("send failed: %w", err).Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"event_id": eventID,
+		"room_id":  params.RoomID,
+	}, nil
+}
+
+func (s *Server) handleMatrixReceive(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		Cursor    string `json:"cursor"`
+		TimeoutMs int    `json:"timeout_ms"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Errorf("invalid parameters: %w", err).Error(),
+		}
+	}
+
+	if params.TimeoutMs <= 0 {
+		params.TimeoutMs = 30000
+	}
+
+	matrix, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrix == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "matrix adapter not configured",
+		}
+	}
+
+	// If event bus is configured, use it for streaming
+	if matrix.GetEventBus() != nil {
+		return s.handleMatrixReceiveWithEventBus(ctx, req, &params, matrix)
+	}
+
+	// Fallback to polling old event queue
+	return s.handleMatrixReceivePolling(ctx, req, &params, matrix)
+}
+
+func (s *Server) handleMatrixReceiveWithEventBus(ctx context.Context, req *Request, params *struct {
+	Cursor    string `json:"cursor"`
+	TimeoutMs int    `json:"timeout_ms"`
+}, matrix *adapter.MatrixAdapter) (interface{}, *ErrorObj) {
+	cursor, err := strconv.ParseUint(params.Cursor, 10, 64)
+	if err != nil {
+		cursor = 0
+	}
+
+	eventBus := matrix.GetEventBus()
+	if eventBus == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "event bus not configured",
+		}
+	}
+
+	// Use long-polling with timeout
+	type receiveResult struct {
+		events []events.MatrixEvent
+		cursor uint64
+		reset  bool
+	}
+	resCh := make(chan receiveResult, 1)
+
+	go func() {
+		evs, next, rst := eventBus.WaitForEvents(cursor)
+		resCh <- receiveResult{evs, next, rst}
+	}()
+
+	timeout := time.Duration(params.TimeoutMs) * time.Millisecond
+	select {
+	case <-ctx.Done():
+		return nil, &ErrorObj{
+			Code:    RequestCancelled,
+			Message: ctx.Err().Error(),
+		}
+	case r := <-resCh:
+		return map[string]interface{}{
+			"events":       r.events,
+			"cursor":       strconv.FormatUint(r.cursor, 10),
+			"count":        len(r.events),
+			"cursor_reset": r.reset,
+		}, nil
+	case <-time.After(timeout):
+		// Return empty result on timeout
+		return map[string]interface{}{
+			"events": []events.MatrixEvent{},
+			"cursor": strconv.FormatUint(cursor, 10),
+			"count":  0,
+		}, nil
+	}
+}
+
+func (s *Server) handleMatrixReceivePolling(ctx context.Context, req *Request, params *struct {
+	Cursor    string `json:"cursor"`
+	TimeoutMs int    `json:"timeout_ms"`
+}, matrix *adapter.MatrixAdapter) (interface{}, *ErrorObj) {
+	timeout := time.Duration(params.TimeoutMs) * time.Millisecond
+	select {
+	case <-ctx.Done():
+		return nil, &ErrorObj{
+			Code:    RequestCancelled,
+			Message: ctx.Err().Error(),
+		}
+	case <-time.After(timeout):
+		// Poll the event queue (backward compatibility)
+		events := make([]*adapter.MatrixEvent, 0, 10)
+		timeoutChan := time.After(timeout)
+
+		// Try to get events
+		select {
+		case e, ok := <-matrix.ReceiveEvents():
+			if ok {
+				events = append(events, e)
+			}
+		case <-timeoutChan:
+			// Timed out
+		}
+
+		return map[string]interface{}{
+			"events": events,
+			"count":  len(events),
+		}, nil
 	}
 }
 
 func (s *Server) registerHandlers() {
 	h := map[string]HandlerFunc{
-		"ai.chat": s.handleAIChat,
-		"browser.navigate": s.handleBrowserNavigate,
-		"browser.fill": s.handleBrowserFill,
-		"browser.click": s.handleBrowserClick,
-		"browser.status": s.handleBrowserStatus,
+		"ai.chat":                  s.handleAIChat,
+		"browser.navigate":         s.handleBrowserNavigate,
+		"browser.fill":             s.handleBrowserFill,
+		"browser.click":            s.handleBrowserClick,
+		"browser.status":           s.handleBrowserStatus,
 		"browser.wait_for_element": s.handleBrowserWaitForElement,
 		"browser.wait_for_captcha": s.handleBrowserWaitForCaptcha,
-		"browser.wait_for_2fa": s.handleBrowserWaitFor2FA,
-		"browser.complete": s.handleBrowserComplete,
-		"browser.fail": s.handleBrowserFail,
-		"browser.list": s.handleBrowserList,
-		"browser.cancel": s.handleBrowserCancel,
-		"bridge.start": s.handleBridgeStart,
-		"bridge.stop": s.handleBridgeStop,
-		"bridge.status": s.handleBridgeStatus,
-		"bridge.channel": s.handleBridgeChannel,
-		"bridge.unchannel": s.handleUnbridgeChannel,
-		"bridge.list": s.handleListBridgedChannels,
-		"bridge.ghost_list": s.handleGhostUserList,
+		"browser.wait_for_2fa":     s.handleBrowserWaitFor2FA,
+		"browser.complete":         s.handleBrowserComplete,
+		"browser.fail":             s.handleBrowserFail,
+		"browser.list":             s.handleBrowserList,
+		"browser.cancel":           s.handleBrowserCancel,
+		"bridge.start":             s.handleBridgeStart,
+		"bridge.stop":              s.handleBridgeStop,
+		"bridge.status":            s.handleBridgeStatus,
+		"bridge.channel":           s.handleBridgeChannel,
+		"bridge.unchannel":         s.handleUnbridgeChannel,
+		"bridge.list":              s.handleListBridgedChannels,
+		"bridge.ghost_list":        s.handleGhostUserList,
 		"bridge.appservice_status": s.handleAppServiceStatus,
-		"pii.request": s.handlePIIRequest,
-		"pii.approve": s.handlePIIApprove,
-		"pii.deny": s.handlePIIDeny,
-		"pii.status": s.handlePIIStatus,
-		"pii.list_pending": s.handlePIIListPending,
-		"pii.stats": s.handlePIIStats,
-		"pii.cancel": s.handlePIICancel,
-		"pii.fulfill": s.handlePIIFulfill,
-		"pii.wait_for_approval": s.handlePIIWaitForApproval,
-		"studio.deploy": s.handleStudio,
-		"skills.execute": s.handleSkillsExecute,
-		"skills.list": s.handleSkillsList,
-		"skills.get_schema": s.handleSkillsGetSchema,
-		"skills.allow": s.handleSkillsAllow,
-		"skills.block": s.handleSkillsBlock,
-		"skills.allowlist_add": s.handleSkillsAllowlistAdd,
-		"skills.allowlist_remove": s.handleSkillsAllowlistRemove,
-		"skills.allowlist_list": s.handleSkillsAllowlistList,
-		"skills.web_search": s.handleSkillsWebSearch,
-		"skills.web_extract": s.handleSkillsWebExtract,
-		"skills.email_send": s.handleSkillsEmailSend,
-		"skills.slack_message": s.handleSkillsSlackMessage,
-		"skills.file_read": s.handleSkillsFileRead,
-		"skills.data_analyze": s.handleSkillsDataAnalyze,
+		"pii.request":              s.handlePIIRequest,
+		"pii.approve":              s.handlePIIApprove,
+		"pii.deny":                 s.handlePIIDeny,
+		"pii.status":               s.handlePIIStatus,
+		"pii.list_pending":         s.handlePIIListPending,
+		"pii.stats":                s.handlePIIStats,
+		"pii.cancel":               s.handlePIICancel,
+		"pii.fulfill":              s.handlePIIFulfill,
+		"pii.wait_for_approval":    s.handlePIIWaitForApproval,
+		"studio.deploy":            s.handleStudio,
+		"skills.execute":           s.handleSkillsExecute,
+		"skills.list":              s.handleSkillsList,
+		"skills.get_schema":        s.handleSkillsGetSchema,
+		"skills.allow":             s.handleSkillsAllow,
+		"skills.block":             s.handleSkillsBlock,
+		"skills.allowlist_add":     s.handleSkillsAllowlistAdd,
+		"skills.allowlist_remove":  s.handleSkillsAllowlistRemove,
+		"skills.allowlist_list":    s.handleSkillsAllowlistList,
+		"skills.web_search":        s.handleSkillsWebSearch,
+		"skills.web_extract":       s.handleSkillsWebExtract,
+		"skills.email_send":        s.handleSkillsEmailSend,
+		"skills.slack_message":     s.handleSkillsSlackMessage,
+		"skills.file_read":         s.handleSkillsFileRead,
+		"skills.data_analyze":      s.handleSkillsDataAnalyze,
+		"matrix.status":            s.handleMatrixStatus,
+		"matrix.login":             s.handleMatrixLogin,
+		"matrix.send":              s.handleMatrixSend,
+		"matrix.receive":           s.handleMatrixReceive,
 	}
 	s.handlers = h
 }
@@ -351,4 +591,3 @@ func (s *Server) handleConnection(conn net.Conn) {
 		slog.Warn("rpc_write_error", "error", err)
 	}
 }
-

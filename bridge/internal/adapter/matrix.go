@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/pkg/audit"
 	errsys "github.com/armorclaw/bridge/pkg/errors"
 	"github.com/armorclaw/bridge/pkg/logger"
@@ -30,10 +31,10 @@ type EventPublisher interface {
 
 // MatrixAdapter implements Matrix client protocol
 type MatrixAdapter struct {
-	homeserverURL   string
+	homeserverURL    string
 	userID           string
-	accessToken     string
-	refreshToken     string           // P1-HIGH-1: Refresh token for long-lived sessions
+	accessToken      string
+	refreshToken     string // P1-HIGH-1: Refresh token for long-lived sessions
 	deviceID         string
 	syncToken        string
 	trustedSenders   []string
@@ -42,18 +43,20 @@ type MatrixAdapter struct {
 	httpClient       *http.Client
 	eventQueue       chan *MatrixEvent
 	mu               sync.RWMutex
+	tokenMutex       sync.Mutex // Prevents race conditions during token refresh
 	ctx              context.Context
 	cancel           context.CancelFunc
 	piiScrubber      *pii.Scrubber
-	eventPublisher   EventPublisher // Event bus for real-time event publishing
-	lastExpiryCheck  time.Time          // P1-HIGH-1: Track last token expiry check
-	commandHandler   *CommandHandler    // Command handler for admin operations
-	studioCmdHandler StudioCommandHandler // Studio command handler for Agent Factory
-	trustVerifier    *TrustVerifier     // Zero-trust verification
+	eventPublisher   EventPublisher          // Event bus for real-time event publishing
+	lastExpiryCheck  time.Time               // P1-HIGH-1: Track last token expiry check
+	commandHandler   *CommandHandler         // Command handler for admin operations
+	studioCmdHandler StudioCommandHandler    // Studio command handler for Agent Factory
+	trustVerifier    *TrustVerifier          // Zero-trust verification
 	auditLog         *audit.TamperEvidentLog // Audit logging
-	minTrustLevel    trust.TrustScore   // Minimum trust level required
-	syncFilterID     string              // Server-side sync filter ID for performance
-	syncMetrics      SyncMetrics         // Sync performance metrics
+	minTrustLevel    trust.TrustScore        // Minimum trust level required
+	syncFilterID     string                  // Server-side sync filter ID for performance
+	syncMetrics      SyncMetrics             // Sync performance metrics
+	eventBus         *events.MatrixEventBus  // High-throughput event bus for agent streaming
 }
 
 // StudioCommandHandler handles Agent Studio commands via Matrix
@@ -63,11 +66,11 @@ type StudioCommandHandler interface {
 
 // SyncMetrics tracks sync performance for monitoring
 type SyncMetrics struct {
-	mu                  sync.Mutex
-	LastSyncDurationMs  int64 `json:"last_sync_duration_ms"`
-	EventsProcessed     int64 `json:"events_processed"`
-	RoomsActive         int   `json:"rooms_active"`
-	TotalSyncs          int64 `json:"total_syncs"`
+	mu                 sync.Mutex
+	LastSyncDurationMs int64 `json:"last_sync_duration_ms"`
+	EventsProcessed    int64 `json:"events_processed"`
+	RoomsActive        int   `json:"rooms_active"`
+	TotalSyncs         int64 `json:"total_syncs"`
 }
 
 // bridgeSyncFilter is the default sync filter for the bridge.
@@ -149,13 +152,13 @@ type Config struct {
 	TokenFile     string
 
 	// Zero-trust configuration
-	TrustedSenders []string // Allowed Matrix user IDs (@user:domain.com, *@trusted.domain, *:domain)
-	TrustedRooms   []string // Allowed room IDs (!roomid:domain.com)
-	RejectUntrusted bool   // If true, return error to sender; if false, drop silently
+	TrustedSenders  []string // Allowed Matrix user IDs (@user:domain.com, *@trusted.domain, *:domain)
+	TrustedRooms    []string // Allowed room IDs (!roomid:domain.com)
+	RejectUntrusted bool     // If true, return error to sender; if false, drop silently
 	RefreshToken    string   // P1-HIGH-1: Encrypted refresh token from login
 
 	// Trust verification settings
-	MinTrustLevel   trust.TrustScore // Minimum trust level required for message processing
+	MinTrustLevel trust.TrustScore // Minimum trust level required for message processing
 }
 
 // New creates a new Matrix adapter
@@ -174,7 +177,7 @@ func New(cfg Config) (*MatrixAdapter, error) {
 		trustedSenders:  cfg.TrustedSenders,
 		trustedRooms:    cfg.TrustedRooms,
 		rejectUntrusted: cfg.RejectUntrusted,
-		refreshToken:    cfg.RefreshToken,    // P1-HIGH-1: Initialize refresh token
+		refreshToken:    cfg.RefreshToken, // P1-HIGH-1: Initialize refresh token
 		minTrustLevel:   minTrustLevel,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -191,9 +194,9 @@ func (m *MatrixAdapter) Login(username, password string) error {
 	matrixTracker.Event("login", map[string]any{"user": username})
 
 	payload := map[string]interface{}{
-		"type":     "m.login.password",
-		"user":     username,
-		"password": password,
+		"type":      "m.login.password",
+		"user":      username,
+		"password":  password,
 		"device_id": m.deviceID,
 	}
 
@@ -251,8 +254,8 @@ func (m *MatrixAdapter) Login(username, password string) error {
 
 	var result struct {
 		AccessToken  string `json:"access_token"`
-		DeviceID    string `json:"device_id"`
-		UserID      string `json:"user_id"`
+		DeviceID     string `json:"device_id"`
+		UserID       string `json:"user_id"`
 		RefreshToken string `json:"refresh_token"` // P1-HIGH-1: Capture refresh token
 	}
 
@@ -695,10 +698,21 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 					// Queue full, drop event
 				}
 
-				// Publish to event bus if configured (real-time push)
+				// Publish to high-throughput event bus if configured
 				m.mu.RLock()
+				bus := m.eventBus
 				publisher := m.eventPublisher
 				m.mu.RUnlock()
+
+				if bus != nil {
+					bus.Publish(events.MatrixEvent{
+						ID:      event.EventID,
+						RoomID:  roomID,
+						Sender:  event.Sender,
+						Type:    event.Type,
+						Content: event.Content,
+					})
+				}
 
 				if publisher != nil {
 					// Publish event asynchronously to avoid blocking sync
@@ -1023,9 +1037,9 @@ func (m *MatrixAdapter) GetRoomMembers(ctx context.Context, roomID string) ([]er
 	for _, event := range membersResp.Chunk {
 		if event.Content.Membership == "join" {
 			members = append(members, errsys.RoomMember{
-				UserID:      event.StateKey,
-				PowerLevel:  0, // Default power level, would need separate state event for actual value
-				Display:     event.Content.Displayname,
+				UserID:     event.StateKey,
+				PowerLevel: 0, // Default power level, would need separate state event for actual value
+				Display:    event.Content.Displayname,
 			})
 		}
 	}
@@ -1290,6 +1304,10 @@ func (m *MatrixAdapter) isTokenExpired() bool {
 func (m *MatrixAdapter) RefreshAccessToken() error {
 	matrixTracker.Event("refresh_token", nil)
 
+	// P1-HIGH-1: Acquire token mutex to prevent concurrent refreshes
+	m.tokenMutex.Lock()
+	defer m.tokenMutex.Unlock()
+
 	m.mu.RLock()
 	refreshToken := m.refreshToken
 	m.mu.RUnlock()
@@ -1363,7 +1381,7 @@ func (m *MatrixAdapter) RefreshAccessToken() error {
 	var result struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"` // May be rotated
-		ExpiresIn    int64  `json:"expires_in_ms"`    // Token lifetime in milliseconds
+		ExpiresIn    int64  `json:"expires_in_ms"` // Token lifetime in milliseconds
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -1450,6 +1468,14 @@ func (m *MatrixAdapter) SetStudioCommandHandler(h StudioCommandHandler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.studioCmdHandler = h
+}
+
+// SetEventBus sets the high-throughput event bus for agent streaming
+// This replaces the old polling-based event queue
+func (m *MatrixAdapter) SetEventBus(bus *events.MatrixEventBus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventBus = bus
 }
 
 // ============================================================================
@@ -1756,6 +1782,30 @@ func (m *MatrixAdapter) SendReadReceipt(ctx context.Context, roomID, eventID, re
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("read receipt failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
-
 	return nil
+}
+
+// ============================================================================
+// RPC Interface Methods
+// ============================================================================
+
+// IsLoggedIn returns true if the adapter has a valid access token
+func (m *MatrixAdapter) IsLoggedIn() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.accessToken != ""
+}
+
+// GetHomeserver returns the homeserver URL
+func (m *MatrixAdapter) GetHomeserver() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.homeserverURL
+}
+
+// GetEventBus returns the event bus if configured
+func (m *MatrixAdapter) GetEventBus() *events.MatrixEventBus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.eventBus
 }
