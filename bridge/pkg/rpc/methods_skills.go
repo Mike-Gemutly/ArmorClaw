@@ -363,3 +363,183 @@ func (s *Server) handleSkillsAllowlistList(ctx context.Context, req *Request) (i
 		},
 	}, nil
 }
+
+// handleSkillsWebSearch executes a web search skill
+func (s *Server) handleSkillsWebSearch(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.skillMgr == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Skill manager not configured",
+		}
+	}
+
+	// Parse parameters
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Sprintf("Invalid parameters: %s", err.Error()),
+		}
+	}
+
+	// Execute web search skill
+	result, err := s.skillMgr.ExecuteSkill(ctx, "web.search", params)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Sprintf("Web search failed: %s", err.Error()),
+		}
+	}
+
+	return result, nil
+}
+
+// handleSkillsWebExtract executes a web content extraction skill
+func (s *Server) handleSkillsWebExtract(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.skillMgr == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Skill manager not configured",
+		}
+	}
+
+	// Parse parameters
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Sprintf("Invalid parameters: %s", err.Error()),
+		}
+	}
+
+	// Execute web extraction skill
+	result, err := s.skillMgr.ExecuteSkill(ctx, "web.extract", params)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Sprintf("Web extraction failed: %s", err.Error()),
+		}
+	}
+
+	return result, nil
+}
+
+// handleSkillsEmailSend executes an email sending skill
+func (s *Server) handleSkillsEmailSend(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.skillMgr == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Skill manager not configured",
+		}
+	}
+
+	// Parse parameters
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Sprintf("Invalid parameters: %s", err.Error()),
+		}
+	}
+
+	// Execute email sending skill
+	result, err := s.skillMgr.ExecuteSkill(ctx, "email.send", params)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Sprintf("Email sending failed: %s", err.Error()),
+		}
+	}
+
+	return result, nil
+}
+
+// handleSkillsSlackMessage executes a Slack message sending skill
+func (s *Server) handleSkillsSlackMessage(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.skillMgr == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Skill manager not configured",
+		}
+	}
+
+	// Parse parameters
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Sprintf("Invalid parameters: %s", err.Error()),
+		}
+	}
+
+	// Execute Slack message sending skill
+	result, err := s.skillMgr.ExecuteSkill(ctx, "slack.message", params)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Sprintf("Slack message failed: %s", err.Error()),
+		}
+	}
+
+	return result, nil
+}
+
+// handleSkillsFileRead executes a file reading skill
+func (s *Server) handleSkillsFileRead(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.skillMgr == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Skill manager not configured",
+		}
+	}
+
+	// Parse parameters
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Sprintf("Invalid parameters: %s", err.Error()),
+		}
+	}
+
+	// Execute file reading skill
+	result, err := s.skillMgr.ExecuteSkill(ctx, "file.read", params)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Sprintf("File reading failed: %s", err.Error()),
+		}
+	}
+
+	return result, nil
+}
+
+// handleSkillsDataAnalyze executes a data analysis skill
+func (s *Server) handleSkillsDataAnalyze(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.skillMgr == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Skill manager not configured",
+		}
+	}
+
+	// Parse parameters
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: fmt.Sprintf("Invalid parameters: %s", err.Error()),
+		}
+	}
+
+	// Execute data analysis skill
+	result, err := s.skillMgr.ExecuteSkill(ctx, "data.analyze", params)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: fmt.Sprintf("Data analysis failed: %s", err.Error()),
+		}
+	}
+
+	return result, nil
+}

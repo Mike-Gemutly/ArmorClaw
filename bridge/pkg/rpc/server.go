@@ -261,6 +261,12 @@ func (s *Server) registerHandlers() {
 		"skills.allowlist_add": s.handleSkillsAllowlistAdd,
 		"skills.allowlist_remove": s.handleSkillsAllowlistRemove,
 		"skills.allowlist_list": s.handleSkillsAllowlistList,
+		"skills.web_search": s.handleSkillsWebSearch,
+		"skills.web_extract": s.handleSkillsWebExtract,
+		"skills.email_send": s.handleSkillsEmailSend,
+		"skills.slack_message": s.handleSkillsSlackMessage,
+		"skills.file_read": s.handleSkillsFileRead,
+		"skills.data_analyze": s.handleSkillsDataAnalyze,
 	}
 	s.handlers = h
 }

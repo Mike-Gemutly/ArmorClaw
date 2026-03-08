@@ -791,6 +791,260 @@ class AsyncBridgeClient:
         """
         return await self._send_request("skills.allowlist_list")
 
+    async def skills_web_search(
+        self,
+        query: str,
+        engine: str = "duckduckgo",
+        page: int = 1,
+        per_page: int = 10,
+        safe_search: bool = False,
+        language: Optional[str] = None,
+        region: Optional[str] = None
+    ) -> Dict:
+        """
+        Perform a web search using the specified engine.
+        
+        Args:
+            query: Search query string
+            engine: Search engine ("google", "bing", "duckduckgo") - default "duckduckgo"
+            page: Page number (1-100) - default 1
+            per_page: Results per page (1-20) - default 10
+            safe_search: Enable safe search - default False
+            language: Language preference (optional)
+            region: Region preference (optional)
+            
+        Returns:
+            Search results with keys: query, engine, results, total_results, search_time, page, per_page
+            
+        Raises:
+            RuntimeError: If bridge connection fails or search fails
+        """
+        params = {
+            "query": query,
+            "engine": engine,
+            "page": page,
+            "per_page": per_page,
+            "safe_search": safe_search
+        }
+        
+        if language:
+            params["language"] = language
+        if region:
+            params["region"] = region
+            
+        return await self._send_request("skills.web_search", params)
+
+    async def skills_web_extract(
+        self,
+        url: str,
+        content_type: str = "html",
+        max_length: int = 100000,
+        include_links: bool = False,
+        include_images: bool = False,
+        include_tables: bool = False
+    ) -> Dict:
+        """
+        Extract content from a web URL.
+        
+        Args:
+            url: URL to extract content from
+            content_type: Expected content type ("html", "text") - default "html"
+            max_length: Maximum content length (1-10000000) - default 100000
+            include_links: Include extracted links - default False
+            include_images: Include extracted images - default False
+            include_tables: Include extracted tables - default False
+            
+        Returns:
+            Extracted content with keys: url, title, content_type, content, 
+                                      links, images, tables, metadata, word_count, extracted_at
+            
+        Raises:
+            RuntimeError: If bridge connection fails or extraction fails
+        """
+        params = {
+            "url": url,
+            "content_type": content_type,
+            "max_length": max_length,
+            "include_links": include_links,
+            "include_images": include_images,
+            "include_tables": include_tables
+        }
+        
+        return await self._send_request("skills.web_extract", params)
+
+    async def skills_email_send(
+        self,
+        from_email: str,
+        to: List[str],
+        subject: str,
+        body: str,
+        cc: Optional[List[str]] = None,
+        bcc: Optional[List[str]] = None,
+        html: bool = False,
+        reply_to: Optional[str] = None
+    ) -> Dict:
+        """
+        Send an email via SMTP.
+        
+        Args:
+            from_email: Sender email address
+            to: List of recipient email addresses
+            subject: Email subject
+            body: Email body content
+            cc: List of CC recipients (optional)
+            bcc: List of BCC recipients (optional)
+            html: Whether body is HTML (default False)
+            reply_to: Reply-to email address (optional)
+            
+        Returns:
+            Email sending result with keys: message_id, from, to, subject, sent_at, size, provider
+            
+        Raises:
+            RuntimeError: If bridge connection fails or email sending fails
+        """
+        params = {
+            "from": from_email,
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "html": html
+        }
+        
+        if cc:
+            params["cc"] = cc
+        if bcc:
+            params["bcc"] = bcc
+        if reply_to:
+            params["reply_to"] = reply_to
+            
+        return await self._send_request("skills.email_send", params)
+
+    async def skills_slack_message(
+        self,
+        channel: str,
+        text: str,
+        thread_ts: Optional[str] = None,
+        bot_name: Optional[str] = None,
+        icon_emoji: Optional[str] = None,
+        icon_url: Optional[str] = None,
+        attachments: Optional[List[Dict]] = None,
+        blocks: Optional[List[Dict]] = None
+    ) -> Dict:
+        """
+        Send a message to Slack.
+        
+        Args:
+            channel: Slack channel (e.g., "#general", "@username")
+            text: Message text
+            thread_ts: Thread timestamp for replies (optional)
+            bot_name: Bot name (optional)
+            icon_emoji: Bot icon emoji (e.g., ":robot_face:") (optional)
+            icon_url: Bot icon URL (optional)
+            attachments: List of Slack attachments (optional)
+            blocks: List of Slack blocks (optional)
+            
+        Returns:
+            Slack message result with keys: ok, channel, timestamp, message, sent_at, provider
+            
+        Raises:
+            RuntimeError: If bridge connection fails or Slack sending fails
+        """
+        params = {
+            "channel": channel,
+            "text": text
+        }
+        
+        if thread_ts:
+            params["thread_ts"] = thread_ts
+        if bot_name:
+            params["bot_name"] = bot_name
+        if icon_emoji:
+            params["icon_emoji"] = icon_emoji
+        if icon_url:
+            params["icon_url"] = icon_url
+        if attachments:
+            params["attachments"] = attachments
+        if blocks:
+            params["blocks"] = blocks
+            
+        return await self._send_request("skills.slack_message", params)
+
+    async def skills_file_read(
+        self,
+        path: str,
+        file_type: Optional[str] = None,
+        encoding: Optional[str] = None,
+        max_size: Optional[int] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> Dict:
+        """
+        Read and parse a file via the bridge.
+
+        Args:
+            path: Path to the file to read
+            file_type: File type ("text", "json", "csv", "pdf", or "auto")
+            encoding: File encoding ("utf-8", "ascii", "latin1")
+            max_size: Maximum file size in bytes (default 10MB)
+            limit: Maximum lines/records to read
+            offset: Starting line/record
+
+        Returns:
+            File reading result with content and metadata
+        """
+        params = {
+            "path": path
+        }
+        
+        if file_type:
+            params["type"] = file_type
+        if encoding:
+            params["encoding"] = encoding
+        if max_size:
+            params["max_size"] = max_size
+        if limit:
+            params["limit"] = limit
+        if offset:
+            params["offset"] = offset
+            
+        return await self._send_request("skills.file_read", params)
+
+    async def skills_data_analyze(
+        self,
+        data: Any,
+        analysis_type: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+        generate_charts: Optional[bool] = None,
+        detect_outliers: Optional[bool] = None
+    ) -> Dict:
+        """
+        Analyze data and generate insights via the bridge.
+
+        Args:
+            data: Data to analyze (array of objects or single object)
+            analysis_type: Type of analysis ("basic", "statistical", "patterns", "full")
+            fields: Specific fields to analyze
+            generate_charts: Whether to generate chart definitions
+            detect_outliers: Whether to detect outliers in numeric data
+
+        Returns:
+            Data analysis result with statistics, patterns, and insights
+        """
+        params = {
+            "data": data
+        }
+        
+        if analysis_type:
+            params["analysis_type"] = analysis_type
+        if fields:
+            params["fields"] = fields
+        if generate_charts is not None:
+            params["generate_charts"] = generate_charts
+        if detect_outliers is not None:
+            params["detect_outliers"] = detect_outliers
+            
+        return await self._send_request("skills.data_analyze", params)
+
     # ========================================================================
     # Sync Skills Methods (for sync compatibility)
     # ========================================================================

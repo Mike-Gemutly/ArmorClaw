@@ -161,6 +161,14 @@ func extractDomainFromName(name string) string {
 			return "weather"
 		case "web":
 			return "web"
+		case "search":
+			return "search"
+		case "extract":
+			return "extract"
+		case "email":
+			return "email"
+		case "slack":
+			return "slack"
 		default:
 			return "general"
 		}
@@ -177,6 +185,14 @@ func getRiskForDomain(domain string) string {
 		return "medium"
 	case "web":
 		return "medium"
+	case "search":
+		return "medium"
+	case "extract":
+		return "medium"
+	case "email":
+		return "high"
+	case "slack":
+		return "medium"
 	default:
 		return "low"
 	}
@@ -192,6 +208,14 @@ func getCommandForSkill(name string) string {
 		case "github":
 			return "gh"
 		case "web":
+			return "curl"
+		case "search":
+			return "curl"
+		case "extract":
+			return "curl"
+		case "email":
+			return "curl"
+		case "slack":
 			return "curl"
 		}
 	}

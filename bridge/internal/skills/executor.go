@@ -365,6 +365,14 @@ func (se *SkillExecutor) getHandlerForDomain(domain string) HandlerFunc {
 		return se.handleGithubSkill
 	case "web":
 		return se.handleWebSkill
+	case "search":
+		return se.handleWebSearchSkill
+	case "extract":
+		return se.handleWebExtractSkill
+	case "email":
+		return se.handleEmailSkill
+	case "slack":
+		return se.handleSlackSkill
 	default:
 		return se.handleGeneralSkill
 	}
@@ -401,6 +409,50 @@ func (se *SkillExecutor) handleWebSkill(ctx context.Context, params map[string]i
 		"status_code": 200,
 		"content":     "Mock content for testing",
 	}, nil
+}
+
+// handleWebSearchSkill handles web search skills
+func (se *SkillExecutor) handleWebSearchSkill(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// Validate parameters
+	if err := ValidateWebSearchParams(params); err != nil {
+		return nil, fmt.Errorf("web search validation failed: %w", err)
+	}
+
+	// Execute web search
+	return ExecuteWebSearch(ctx, params)
+}
+
+// handleWebExtractSkill handles web extraction skills
+func (se *SkillExecutor) handleWebExtractSkill(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// Validate parameters
+	if err := ValidateWebExtractParams(params); err != nil {
+		return nil, fmt.Errorf("web extract validation failed: %w", err)
+	}
+
+	// Execute web extraction
+	return ExecuteWebExtract(ctx, params)
+}
+
+// handleEmailSkill handles email-related skills
+func (se *SkillExecutor) handleEmailSkill(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// Validate parameters
+	if err := ValidateEmailSendParams(params); err != nil {
+		return nil, fmt.Errorf("email validation failed: %w", err)
+	}
+
+	// Execute email sending
+	return ExecuteEmailSend(ctx, params)
+}
+
+// handleSlackSkill handles Slack-related skills
+func (se *SkillExecutor) handleSlackSkill(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// Validate parameters
+	if err := ValidateSlackMessageParams(params); err != nil {
+		return nil, fmt.Errorf("slack message validation failed: %w", err)
+	}
+
+	// Execute Slack message sending
+	return ExecuteSlackMessage(ctx, params)
 }
 
 // handleGeneralSkill handles general/miscellaneous skills

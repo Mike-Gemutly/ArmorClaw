@@ -18,7 +18,11 @@ import re
 from typing import Optional, Dict, Any, List, Tuple
 
 # ArmorClaw: Import bridge client for communication
-from .bridge_client import AsyncBridgeClient, get_default_client
+try:
+    from .bridge_client import AsyncBridgeClient, get_default_client
+except ImportError:
+    # Fallback for direct execution
+    from bridge_client import AsyncBridgeClient, get_default_client
 
 # Version info
 __version__ = "1.1.0-sk"  # Skills-enabled version
