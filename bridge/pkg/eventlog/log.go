@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -31,6 +32,9 @@ type Log struct {
 	// Configuration
 	maxSegmentSize int64
 	flushInterval  time.Duration
+
+	// Notifications
+	cond *sync.Cond
 }
 
 // Config configures the durable log
@@ -56,6 +60,7 @@ func New(cfg Config) (*Log, error) {
 		appendCh:       make(chan *Record, 1000),
 		stopCh:         make(chan struct{}),
 	}
+	l.cond = sync.NewCond(&l.mu)
 
 	if err := l.initialize(); err != nil {
 		return nil, fmt.Errorf("failed to initialize log: %w", err)
@@ -100,6 +105,27 @@ func (l *Log) Close() error {
 		return l.active.Close()
 	}
 	return nil
+}
+
+// WaitForEvents blocks until new events are available after the cursor
+func (l *Log) WaitForEvents(ctx context.Context, cursor uint64) ([]*Record, error) {
+	for {
+		records, err := l.ReadFrom(cursor, 100)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(records) > 0 {
+			return records, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+			// Poll interval
+		}
+	}
 }
 
 func (l *Log) initialize() error {
@@ -179,4 +205,5 @@ func (l *Log) flush(batch []*Record) {
 	}
 
 	l.active.Sync()
+	l.cond.Broadcast()
 }

@@ -1809,3 +1809,40 @@ func (m *MatrixAdapter) GetEventBus() *events.MatrixEventBus {
 	defer m.mu.RUnlock()
 	return m.eventBus
 }
+
+// SendFormattedMessage sends a message with HTML formatting
+func (m *MatrixAdapter) SendFormattedMessage(ctx context.Context, roomID, plainBody, formattedBody string) error {
+	payload := map[string]interface{}{
+		"msgtype":        "m.text",
+		"body":           plainBody,
+		"format":         "org.matrix.custom.html",
+		"formatted_body": formattedBody,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	return m.SendEvent(roomID, "m.room.message", data)
+}
+
+// ReplyToEvent sends a reply to a specific event
+func (m *MatrixAdapter) ReplyToEvent(ctx context.Context, roomID, eventID, message string) error {
+	payload := map[string]interface{}{
+		"msgtype": "m.text",
+		"body":    message,
+		"m.relates_to": map[string]interface{}{
+			"m.in_reply_to": map[string]interface{}{
+				"event_id": eventID,
+			},
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	return m.SendEvent(roomID, "m.room.message", data)
+}

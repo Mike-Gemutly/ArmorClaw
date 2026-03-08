@@ -18,6 +18,8 @@ import (
 	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/internal/skills"
 	"github.com/armorclaw/bridge/pkg/appservice"
+	"github.com/armorclaw/bridge/pkg/eventbus"
+	"github.com/armorclaw/bridge/pkg/eventlog"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/studio"
 )
@@ -122,6 +124,7 @@ type Server struct {
 	appService      AppService
 	provisioningMgr ProvisioningManager
 	skillMgr        SkillManager
+	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
 }
 
@@ -137,6 +140,7 @@ type Config struct {
 	AppService      AppService
 	ProvisioningMgr ProvisioningManager
 	SkillManager    SkillManager
+	EventBus        *eventbus.EventBus
 }
 
 func New(cfg Config) (*Server, error) {
@@ -156,6 +160,7 @@ func New(cfg Config) (*Server, error) {
 		appService:      cfg.AppService,
 		provisioningMgr: cfg.ProvisioningMgr,
 		skillMgr:        cfg.SkillManager,
+		eventBus:        cfg.EventBus,
 		handlers:        make(map[string]HandlerFunc, 32),
 	}
 
@@ -457,6 +462,76 @@ func (s *Server) handleMatrixReceivePolling(ctx context.Context, req *Request, p
 	}
 }
 
+func (s *Server) handleEventsReplay(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.eventBus == nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "event bus not initialized"}
+	}
+
+	log := s.eventBus.GetLog()
+	if log == nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "durable log not enabled"}
+	}
+
+	var params struct {
+		Offset uint64 `json:"offset"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{Code: InvalidParams, Message: err.Error()}
+	}
+
+	records, err := log.ReadFrom(params.Offset, params.Limit)
+	if err != nil {
+		return nil, &ErrorObj{Code: InternalError, Message: err.Error()}
+	}
+
+	return records, nil
+}
+
+func (s *Server) handleEventsStream(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.eventBus == nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "event bus not initialized"}
+	}
+
+	log := s.eventBus.GetLog()
+	if log == nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "durable log not enabled"}
+	}
+
+	var params struct {
+		Offset    uint64 `json:"offset"`
+		TimeoutMs int    `json:"timeout_ms"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{Code: InvalidParams, Message: err.Error()}
+	}
+
+	timeout := time.Duration(params.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	// Use long-polling
+	lctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	records, err := log.WaitForEvents(lctx, params.Offset)
+	if err != nil {
+		if err == context.DeadlineExceeded {
+			return map[string]interface{}{
+				"events": []*eventlog.Record{},
+				"count":  0,
+			}, nil
+		}
+		return nil, &ErrorObj{Code: InternalError, Message: err.Error()}
+	}
+
+	return map[string]interface{}{
+		"events": records,
+		"count":  len(records),
+	}, nil
+}
+
 func (s *Server) registerHandlers() {
 	h := map[string]HandlerFunc{
 		"ai.chat":                  s.handleAIChat,
@@ -488,7 +563,6 @@ func (s *Server) registerHandlers() {
 		"pii.cancel":               s.handlePIICancel,
 		"pii.fulfill":              s.handlePIIFulfill,
 		"pii.wait_for_approval":    s.handlePIIWaitForApproval,
-		"studio.deploy":            s.handleStudio,
 		"skills.execute":           s.handleSkillsExecute,
 		"skills.list":              s.handleSkillsList,
 		"skills.get_schema":        s.handleSkillsGetSchema,
@@ -507,8 +581,17 @@ func (s *Server) registerHandlers() {
 		"matrix.login":             s.handleMatrixLogin,
 		"matrix.send":              s.handleMatrixSend,
 		"matrix.receive":           s.handleMatrixReceive,
+		"events.replay":            s.handleEventsReplay,
+		"events.stream":            s.handleEventsStream,
+		"studio.deploy":            s.handleStudio,
 	}
+
 	s.handlers = h
+}
+
+// GetMatrixAdapter returns the Matrix adapter for external integration
+func (s *Server) GetMatrixAdapter() MatrixAdapter {
+	return s.matrix
 }
 
 func (s *Server) Run(socketPath string) error {

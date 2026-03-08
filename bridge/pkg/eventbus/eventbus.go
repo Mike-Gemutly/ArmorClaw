@@ -504,6 +504,11 @@ func (b *EventBus) GetStats() map[string]interface{} {
 	return stats
 }
 
+// GetLog returns the durable log if enabled
+func (b *EventBus) GetLog() *eventlog.Log {
+	return b.log
+}
+
 // PublishBridgeEvent publishes a BridgeEvent to WebSocket clients
 // This is used for agent, workflow, HITL, and other non-Matrix events
 func (b *EventBus) PublishBridgeEvent(event BridgeEvent) error {

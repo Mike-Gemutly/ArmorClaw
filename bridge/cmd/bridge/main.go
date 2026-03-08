@@ -39,7 +39,12 @@ import (
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/armorclaw/bridge/pkg/setup"
+	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/turn"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 
 	"github.com/armorclaw/bridge/internal/skills"
 	// TODO: Voice package needs refactoring - uncomment when fixed
@@ -2241,9 +2246,62 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Provisioning manager initialized")
 	}
 
+	// Create Studio service
+	var studioService *studio.StudioIntegration
+	studioDataPath := filepath.Join(filepath.Dir(cfg.Keystore.DBPath), "studio")
+
+	// Create Docker client adapter for studio
+	studioDockerAdapter := studio.NewDockerClientAdapter(
+		func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, name string) (string, error) {
+			return dockerClient.CreateContainer(ctx, config, hostConfig, nil, nil)
+		},
+		func(ctx context.Context, containerID string) error {
+			return dockerClient.StartContainer(ctx, containerID)
+		},
+		func(ctx context.Context, containerID string, timeout time.Duration) error {
+			opts := container.StopOptions{Timeout: &[]int{int(timeout / time.Second)}[0]}
+			return dockerClient.StopContainer(ctx, containerID, opts)
+		},
+		func(ctx context.Context, containerID string, force bool) error {
+			return dockerClient.RemoveContainer(ctx, containerID, force)
+		},
+		func(ctx context.Context, containerID string) (*studio.ContainerInfo, error) {
+			inspect, err := dockerClient.InspectContainer(ctx, containerID)
+			if err != nil {
+				return nil, err
+			}
+			return &studio.ContainerInfo{
+				ID:       inspect.ID,
+				Running:  inspect.State.Running,
+				ExitCode: inspect.State.ExitCode,
+			}, nil
+		},
+		func(ctx context.Context, all bool) ([]types.Container, error) {
+			return dockerClient.ListContainers(ctx, all, filters.Args{})
+		},
+	)
+
+	// Wrap Matrix adapter for studio
+	var studioMatrix studio.MatrixAdapter
+	if matrixAdapter != nil {
+		studioMatrix = &studioMatrixAdapter{adapter: matrixAdapter}
+	}
+
+	studioService, err = studio.NewIntegration(studio.IntegrationConfig{
+		DataPath:      studioDataPath,
+		DockerClient:  studioDockerAdapter,
+		MatrixAdapter: studioMatrix,
+	})
+	if err != nil {
+		log.Printf("Warning: Failed to initialize studio: %v", err)
+		studioService = nil
+	} else {
+		log.Println("Studio service initialized")
+	}
+
 	// Log RPC dependency status
-	log.Printf("RPC dependencies: studio=disabled, provisioning=%v, skills=%v",
-		provisioningMgr != nil, skillMgr != nil)
+	log.Printf("RPC dependencies: studio=%v, provisioning=%v, skills=%v",
+		studioService != nil, provisioningMgr != nil, skillMgr != nil)
 
 	server, err := rpc.New(rpc.Config{
 		SocketPath:      cfg.Server.SocketPath,
@@ -2253,10 +2311,11 @@ func runBridgeServer(cliCfg cliConfig) {
 		AIMaxConcurrent: 4,
 		BridgeManager:   nil,
 		BrowserJobs:     browserJobs,
-		Studio:          nil, // Studio requires Docker adapter - deferred
+		Studio:          studioService,
 		AppService:      nil,
 		ProvisioningMgr: provisioningMgr,
 		SkillManager:    skillMgr,
+		EventBus:        eventBus,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -3003,4 +3062,22 @@ EXAMPLES:
 		help = fmt.Sprintf("Unknown command: %s\n\nRun 'armorclaw-bridge help' for usage.", command)
 	}
 	fmt.Println(help)
+}
+
+// studioMatrixAdapter wraps adapter.MatrixAdapter to satisfy studio.MatrixAdapter interface
+type studioMatrixAdapter struct {
+	adapter *adapter.MatrixAdapter
+}
+
+func (s *studioMatrixAdapter) SendMessage(ctx context.Context, roomID, message string) error {
+	_, err := s.adapter.SendMessage(roomID, message, "m.text")
+	return err
+}
+
+func (s *studioMatrixAdapter) SendFormattedMessage(ctx context.Context, roomID, plainBody, formattedBody string) error {
+	return s.adapter.SendFormattedMessage(ctx, roomID, plainBody, formattedBody)
+}
+
+func (s *studioMatrixAdapter) ReplyToEvent(ctx context.Context, roomID, eventID, message string) error {
+	return s.adapter.ReplyToEvent(ctx, roomID, eventID, message)
 }

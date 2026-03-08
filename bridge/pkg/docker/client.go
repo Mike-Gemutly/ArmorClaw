@@ -28,7 +28,7 @@ var dockerTracker = errsys.GetComponentTracker("docker")
 
 var (
 	ErrContainerNotFound = errors.New("container not found")
-	ErrInvalidOperation = errors.New("invalid operation for this client")
+	ErrInvalidOperation  = errors.New("invalid operation for this client")
 	ErrOperationTimedOut = errors.New("operation timed out")
 )
 
@@ -43,9 +43,9 @@ const (
 
 // SeccompProfile defines a seccomp profile for container hardening
 type SeccompProfile struct {
-	DefaultAction string   `json:"defaultAction"` // "SCMP_ACT_ALLOW", "SCMP_ACT_ERRNO"
-	Architectures  []string `json:"architectures"`
-	Syscalls       []Syscall `json:"syscalls"`
+	DefaultAction string    `json:"defaultAction"` // "SCMP_ACT_ALLOW", "SCMP_ACT_ERRNO"
+	Architectures []string  `json:"architectures"`
+	Syscalls      []Syscall `json:"syscalls"`
 }
 
 // Syscall defines a seccomp syscall rule
@@ -60,7 +60,7 @@ type Syscall struct {
 // Shell escapes are prevented via chmod a-x + LD_PRELOAD, not seccomp
 var DefaultArmorClawProfile = SeccompProfile{
 	DefaultAction: "SCMP_ACT_ALLOW",
-	Architectures:  []string{"SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_FILTER"},
+	Architectures: []string{"SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_FILTER"},
 	Syscalls: []Syscall{
 		// Block network operations (data exfiltration prevention)
 		// Shell escapes prevented via chmod a-x on binaries + LD_PRELOAD hook
@@ -101,9 +101,9 @@ type Client struct {
 
 // Config holds client configuration
 type Config struct {
-	Host         string        // Docker daemon address
-	APIVersion   string        // API version
-	Scopes       []Scope       // Allowed operations
+	Host          string        // Docker daemon address
+	APIVersion    string        // API version
+	Scopes        []Scope       // Allowed operations
 	LatencyTarget time.Duration // Target latency for operations
 }
 
@@ -374,6 +374,27 @@ func (c *Client) RemoveContainer(ctx context.Context, containerID string, force 
 	}
 
 	dockerTracker.Success("remove_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+	return nil
+}
+
+// StopContainer stops a running container
+func (c *Client) StopContainer(ctx context.Context, containerID string, options container.StopOptions) error {
+	dockerTracker.Event("stop_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+
+	if c.client == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+
+	err := c.client.ContainerStop(ctx, containerID, options)
+	if err != nil {
+		return err
+	}
+
+	if c.auditLogger != nil {
+		c.auditLogger.LogContainerStop(ctx, containerID, "user_requested", 0)
+	}
+
+	dockerTracker.Success("stop_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
 	return nil
 }
 
@@ -717,10 +738,9 @@ func containsAny(s string, substrings ...string) bool {
 
 // contains is a simple string contains helper
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (
-		s[:len(substr)] == substr ||
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr ||
 		s[len(s)-len(substr):] == substr ||
-	 indexOfSubstring(s, substr) >= 0))
+		indexOfSubstring(s, substr) >= 0))
 }
 
 // indexOfSubstring finds the index of a substring
@@ -759,8 +779,8 @@ func (c *Client) CreateContainerWithRetry(ctx context.Context, config *container
 		// Check if error is retryable
 		if !isRetryableError(err) {
 			dockerTracker.Failure("create_with_retry", err, map[string]any{
-				"image":    imageName,
-				"attempt":  attempt + 1,
+				"image":     imageName,
+				"attempt":   attempt + 1,
 				"retryable": false,
 			})
 			return "", err // Non-retryable error
@@ -842,21 +862,21 @@ func (c *Client) IsRunning(containerID string) (bool, error) {
 
 // PrewarmPoolConfig configures the container pre-warm pool
 type PrewarmPoolConfig struct {
-	PoolSize     int           // Number of warm containers to maintain
-	Image        string        // Container image to pre-warm
-	Config       *container.Config
-	HostConfig   *container.HostConfig
-	RefillDelay  time.Duration // Delay between refill checks
+	PoolSize    int    // Number of warm containers to maintain
+	Image       string // Container image to pre-warm
+	Config      *container.Config
+	HostConfig  *container.HostConfig
+	RefillDelay time.Duration // Delay between refill checks
 }
 
 // PrewarmPool maintains a pool of pre-created containers for fast startup
 type PrewarmPool struct {
-	mu         sync.Mutex
-	client     *Client
-	config     PrewarmPoolConfig
-	pool       []string // Container IDs ready to be started
-	stopCh     chan struct{}
-	running    bool
+	mu      sync.Mutex
+	client  *Client
+	config  PrewarmPoolConfig
+	pool    []string // Container IDs ready to be started
+	stopCh  chan struct{}
+	running bool
 }
 
 // NewPrewarmPool creates a new pre-warm pool
