@@ -14,7 +14,8 @@ ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, 
 ### Interactive Setup (with TTY)
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)"
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh -o /tmp/install.sh
+sudo bash /tmp/install.sh
 ```
 
 **That's it.** The wizard asks 2 questions and sets everything up.
@@ -24,7 +25,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/d
 ```bash
 export ARMORCLAW_API_KEY=sk-your-key
 export ARMORCLAW_ADMIN_USERNAME=admin  # Optional: custom admin username
-curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh -o /tmp/install.sh
+sudo bash /tmp/install.sh
 ```
 
 ### Production-Grade Bootstrap
