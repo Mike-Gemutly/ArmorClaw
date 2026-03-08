@@ -75,7 +75,7 @@ check_os() {
     source /etc/os-release
     if [[ "$ID" != "ubuntu" ]] && [[ "$ID" != "debian" ]]; then
         log_warning "This script is designed for Ubuntu/Debian. Detected: $ID"
-        read -p "Continue anyway? (y/N) " -n 1 -r
+        read -p "Continue anyway? (y/N) " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
@@ -441,7 +441,7 @@ main() {
     # Confirm installation
     log_warning "This will install ArmorClaw Bridge on your system"
     echo ""
-    read -p "Continue? (y/N) " -n 1 -r
+    read -p "Continue? (y/N) " -n 1 -r < /dev/tty
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         log_info "Installation cancelled"

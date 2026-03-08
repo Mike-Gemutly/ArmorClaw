@@ -83,7 +83,7 @@ prompt_yes_no() {
             echo -ne "${CYAN}$prompt [y/N]: ${NC}"
         fi
 
-        read -r response
+        read -r response < /dev/tty
         response=${response:-$default}
 
         case "$response" in
@@ -106,7 +106,7 @@ prompt_input() {
         echo -ne "${CYAN}$prompt: ${NC}"
     fi
 
-    read -r result
+    read -r result < /dev/tty
     echo "${result:-$default}"
 }
 
@@ -116,9 +116,9 @@ prompt_password() {
     local confirm
 
     while true; do
-        read -s -p "$prompt: " password
+        read -s -p "$prompt: " password < /dev/tty
         echo
-        read -s -p "Confirm: " confirm
+        read -s -p "Confirm: " confirm < /dev/tty
         echo
 
         if [ "$password" = "$confirm" ]; then

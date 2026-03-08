@@ -120,7 +120,7 @@ prompt_yes_no() {
 
     echo ""
     echo -ne "  ${CYAN}$prompt [${default^^}/$(echo $default | tr 'yn' 'ny')]${NC}: "
-    read -r response
+    read -r response < /dev/tty
     response=${response:-$default}
 
     case "$response" in
@@ -551,7 +551,7 @@ prompt_api_key() {
 
     echo ""
     echo -ne "  ${CYAN}Provider (openai/anthropic/openrouter/google/xai):${NC} "
-    read -r provider
+    read -r provider < /dev/tty
 
     if [[ -z "$provider" ]]; then
         print_info "No provider specified, skipping API key setup"
@@ -559,7 +559,7 @@ prompt_api_key() {
     fi
 
     echo -ne "  ${CYAN}API Key:${NC} "
-    read -s key_token
+    read -s key_token < /dev/tty
     echo ""
 
     if [[ -z "$key_token" ]]; then

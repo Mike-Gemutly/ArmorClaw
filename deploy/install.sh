@@ -219,9 +219,9 @@ ensure_docker() {
   print_info "Docker not found. Installing..."
 
   # Check if running interactively
-  if [ -t 0 ]; then
+  if [ -t 0 ] || [ -c /dev/tty ]; then
     echo -ne "  ${CYAN}Install Docker automatically? [Y/n]${NC}: "
-    read -r ans
+    read -r ans < /dev/tty
     ans=${ans:-Y}
   else
     ans="Y"

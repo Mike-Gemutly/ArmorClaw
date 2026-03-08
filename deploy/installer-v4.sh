@@ -142,7 +142,7 @@ prompt_yes_no() {
             echo -ne "${CYAN}$prompt [y/N]: ${NC}"
         fi
 
-        read -r response
+        read -r response < /dev/tty
         response="${response:-$default}"
 
         case "$response" in
@@ -176,7 +176,7 @@ prompt_input() {
         echo -ne "${CYAN}$prompt: ${NC}"
     fi
 
-    read -r result
+    read -r result < /dev/tty
     echo "${result:-$default}"
 }
 
