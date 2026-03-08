@@ -231,14 +231,14 @@ jobs:
 
           echo "✅ deploy.sh safety check passed"
 
-       - name: Verify container image
-         run: |
-           if ! docker images mikegemut/armorclaw:latest | grep -q armorclaw; then
-             echo "Building image for deployment test..."
-             docker build -t mikegemut/armorclaw:latest .
-           fi
+      - name: Verify container image
+        run: |
+          if ! docker images mikegemut/armorclaw:latest | grep -q armorclaw; then
+            echo "Building image for deployment test..."
+            docker build -t mikegemut/armorclaw:latest .
+          fi
 
-           echo "✅ Container image ready for deployment"
+          echo "✅ Container image ready for deployment"
 
   # Job 9: Installer Hardening Tests (v4.4.0+)
   installer-tests:
