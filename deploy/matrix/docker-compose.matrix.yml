@@ -65,7 +65,7 @@ services:
   # ========================================
   conduit:
     image: matrixconduit/matrix-conduit:latest
-    container_name: armorclaw-conduit
+    # container_name removed - managed by docker-compose
     restart: unless-stopped
     profiles:
       - conduit
@@ -102,7 +102,7 @@ services:
       CONDUIT_LOG: "${LOG_LEVEL:-warn}"
 
     volumes:
-      - conduit_media:/var/lib/matrix-conduit/media
+      - /var/lib/conduit:/var/lib/matrix-conduit
 
     networks:
       - matrix-internal
@@ -295,8 +295,6 @@ networks:
 # ========================================
 volumes:
   postgres_data:
-    driver: local
-  conduit_media:
     driver: local
   synapse_data:
     driver: local

@@ -193,6 +193,52 @@ configure_existing_server() {
     MATRIX_PASS="$password"
 }
 
+# ============================================
+# Smart Conduit Detection (quickstart → matrix)
+# ============================================
+
+CONTAINER="armorclaw-conduit"
+PORT="6167"
+CONDUIT_DATA_DIR="/var/lib/conduit"
+
+# Ensure Docker daemon is running
+if ! docker info >/dev/null 2>&1; then
+    print_error "Docker daemon is not running"
+    exit 1
+fi
+
+mkdir -p "$CONDUIT_DATA_DIR"
+
+USE_EXISTING_CONDUIT=false
+
+container_exists() {
+    docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"
+}
+
+container_running() {
+    docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"
+}
+
+port_in_use() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn | awk '{print $4}' | grep -q ":${PORT}$"
+    else
+        netstat -tln 2>/dev/null | grep -q ":${PORT} "
+    fi
+}
+
+if container_exists; then
+    print_info "Existing quickstart Conduit detected"
+    if ! container_running; then
+        print_info "Starting existing Conduit container"
+        docker start "$CONTAINER"
+    fi
+    USE_EXISTING_CONDUIT=true
+elif port_in_use; then
+    print_error "Port ${PORT} in use by another service"
+    exit 1
+fi
+
 deploy_local_conduit() {
     print_info "Setting up local Conduit server..."
 
@@ -219,7 +265,13 @@ deploy_local_conduit() {
 
         if prompt_yes_no "Start Matrix stack now?" "y"; then
             cd "$compose_dir/.."
-            docker compose -f "$compose_dir/docker-compose.matrix.yml" up -d
+            
+            if [ "$USE_EXISTING_CONDUIT" = true ]; then
+                print_info "Reusing existing Conduit, starting other services"
+                docker compose -f "$compose_dir/docker-compose.matrix.yml" up -d postgres synapse nginx certbot coturn
+            else
+                docker compose -f "$compose_dir/docker-compose.matrix.yml" up -d
+            fi
             print_success "Matrix stack started"
 
             # Wait for server to be ready
