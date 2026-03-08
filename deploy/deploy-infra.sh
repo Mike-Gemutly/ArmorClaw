@@ -21,7 +21,12 @@ NC='\033[0m' # No Color
 DOMAIN="${ARMORCLAW_DOMAIN:-chat.armorclaw.com}"
 EMAIL="${ARMORCLAW_EMAIL:-admin@armorclaw.com}"
 CONDUIT_VERSION="${CONDUIT_VERSION:-v0.4.0}"
-MATRIX_DATA_DIR="/var/lib/matrix-conduit"
+MATRIX_DATA_DIR="/var/lib/conduit"
+
+# Ensure shared Matrix data directory exists
+mkdir -p "$MATRIX_DATA_DIR"
+chmod 750 "$MATRIX_DATA_DIR"
+
 NGINX_CONF_DIR="/etc/nginx/sites-available"
 NGINX_ENABLED_DIR="/etc/nginx/sites-enabled"
 
