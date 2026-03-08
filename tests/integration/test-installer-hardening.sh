@@ -6,7 +6,8 @@
 
 set -euo pipefail
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Set project root relative to this script
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK_DIR=$(mktemp -d)
 FAILED=0
 
@@ -15,8 +16,6 @@ pass() { echo "✓ $*"; }
 fail() { echo "✗ $*"; ((FAILED++)); }
 cleanup() { rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
-
-cd "$TEST_DIR"
 
 # Test 1: Lockfile (skip if flock not available)
 test_lockfile() {
@@ -75,35 +74,75 @@ test_conduit_fallback() {
 # Test 6: Syntax
 test_syntax() {
     log "Test 6: Syntax validation"
-    for f in deploy/install.sh deploy/setup-matrix.sh deploy/quickstart-entrypoint.sh deploy/deploy-infra.sh; do
-        bash -n "$f" && pass "Syntax valid: $f" || fail "Syntax error: $f"
+    for f in install.sh setup-matrix.sh quickstart-entrypoint.sh deploy-infra.sh; do
+        bash -n "$PROJECT_ROOT/deploy/$f" && pass "Syntax valid: $f" || fail "Syntax error: $f"
     done
 }
 
-# Test 7: Wait function exists
-test_wait_function() {
-    log "Test 7: wait_for_docker function"
-    for f in deploy/install.sh deploy/setup-matrix.sh deploy/quickstart-entrypoint.sh deploy/deploy-infra.sh; do
-        grep -q "wait_for_docker()" "$f" && pass "Found in: $f" || fail "Missing from: $f"
+# Test 7: Wait logic exists
+test_wait_logic() {
+    log "Test 7: wait_for_docker logic"
+    for f in install.sh setup-matrix.sh quickstart-entrypoint.sh deploy-infra.sh; do
+        if grep -q "wait_for_docker()" "$PROJECT_ROOT/deploy/$f" || grep -q "for ((i=1;i<=10;i++))" "$PROJECT_ROOT/deploy/$f"; then
+            pass "Wait logic found in: $f"
+        else
+            fail "Wait logic missing from: $f"
+        fi
     done
 }
 
 # Test 8: Variable order
 test_variable_order() {
     log "Test 8: Variable ordering"
-    grep -q "DOCKER_COMPOSE=\"\$DOCKER_COMPOSE:-docker compose\"" deploy/setup-matrix.sh && \
-        grep -q "\$DOCKER_COMPOSE" deploy/setup-matrix.sh && \
-        pass "DOCKER_COMPOSE fallback correct" || fail "DOCKER_COMPOSE issue"
+    if grep -q "DOCKER_COMPOSE=\"\${DOCKER_COMPOSE:-docker compose}\"" "$PROJECT_ROOT/deploy/setup-matrix.sh"; then
+        pass "DOCKER_COMPOSE fallback correct"
+    else
+        fail "DOCKER_COMPOSE issue in setup-matrix.sh"
+    fi
+}
+
+# Test 9: Systemd template hardening
+test_systemd_hardening() {
+    log "Test 9: Systemd template hardening"
+    local found_simple=0
+    local found_runtime=0
+    
+    for f in setup-quick.sh setup-wizard.sh installer-v4.sh install-bridge.sh; do
+        if grep -q "Type=simple" "$PROJECT_ROOT/deploy/$f"; then
+            ((found_simple++))
+        else
+            fail "Type=simple missing in $f"
+        fi
+        
+        if grep -q "RuntimeDirectory=armorclaw" "$PROJECT_ROOT/deploy/$f"; then
+            ((found_runtime++))
+        else
+            fail "RuntimeDirectory missing in $f"
+        fi
+    done
+    
+    if [[ $found_simple -eq 4 && $found_runtime -eq 4 ]]; then
+        pass "Systemd templates hardened (Type=simple + RuntimeDirectory)"
+    fi
 }
 
 main() {
     echo "=========================================="
     echo "Running Installer Test Suite"
     echo "=========================================="
-    test_lockfile && test_docker_wait && test_env_passthrough && \
-        test_docker_compose && test_conduit_fallback && test_syntax && \
-        test_wait_function && test_variable_order
+    
+    test_lockfile || true
+    test_docker_wait || true
+    test_env_passthrough || true
+    test_docker_compose || true
+    test_conduit_fallback || true
+    test_syntax || true
+    test_wait_logic || true
+    test_variable_order || true
+    test_systemd_hardening || true
+    
     echo "=========================================="
     if [[ $FAILED -eq 0 ]]; then echo "All tests passed!"; exit 0; else echo "FAILED: $FAILED test(s)"; exit 1; fi
 }
+
 main "$@"

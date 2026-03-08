@@ -259,8 +259,11 @@ Documentation=https://github.com/Gemutly/ArmorClaw
 After=network-online.target docker.socket
 Wants=network-online.target docker.socket
 
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
-Type=forking
+Type=simple
 User=$USER
 Group=$GROUP
 
@@ -268,27 +271,34 @@ Group=$GROUP
 Environment="ARMORCLAW_CONFIG=$CONFIG_DIR/config.toml"
 
 # Execution
-ExecStart=$INSTALL_DIR/armorclaw-bridge --daemonize --config $CONFIG_DIR/config.toml
-ExecStop=$INSTALL_DIR/armorclaw-bridge --stop
+ExecStart=$INSTALL_DIR/armorclaw-bridge --config $CONFIG_DIR/config.toml
 ExecReload=/bin/kill -HUP \$MAINPID
-
-# Resource limits
-MemoryLimit=512M
-MemoryMax=1G
 
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=$RUN_DIR $CONFIG_DIR /var/lib/armorclaw
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+RuntimeDirectory=armorclaw
+RuntimeDirectoryMode=0755
+
+# Resource limits
+MemoryMax=1G
+LimitNOFILE=65536
+
+# Allowed paths
+ReadWritePaths=$DATA_DIR
 
 # Process management
-PIDFile=$RUN_DIR/bridge.pid
-Restart=on-failure
+Restart=always
 RestartSec=5s
-TimeoutStartSec=30s
 TimeoutStopSec=30s
+
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

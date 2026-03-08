@@ -950,9 +950,11 @@ Documentation=https://github.com/Gemutly/ArmorClaw
 After=network-online.target docker.socket
 Wants=network-online.target docker.socket
 
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
-Type=notify
-NotifyAccess=all
+Type=simple
 User=${BRIDGE_USER}
 Group=${BRIDGE_GROUP}
 
@@ -975,18 +977,24 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 
+RuntimeDirectory=armorclaw
+RuntimeDirectoryMode=0755
+
 # Resource limits
 MemoryMax=512M
 CPUQuota=50%
+LimitNOFILE=65536
 
 # Allowed paths
-ReadWritePaths=${CONFIG_DIR} ${DATA_DIR} ${RUN_DIR}
+ReadWritePaths=${DATA_DIR}
 
 # Process management
-Restart=on-failure
-RestartSec=10s
-TimeoutStartSec=30s
+Restart=always
+RestartSec=5
 TimeoutStopSec=30s
+
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

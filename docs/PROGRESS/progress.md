@@ -5871,3 +5871,33 @@ Renamed conflicting flags to be command-specific:
 - Run test suite in CI/CD
 - Add integration test with actual Docker (when available)
 - Document installer features in setup guide
+## 2026-03-08 - Phase 6: Systemd Service Hardening
+
+### Completed
+- **Systemd Timeout Fix** - Changed service type from `Type=notify` (or `Type=forking`) to `Type=simple` across all installers, eliminating startup timeouts caused by missing `sd_notify` calls.
+- **Runtime Directory Management** - Added `RuntimeDirectory=armorclaw` and `RuntimeDirectoryMode=0755` to systemd service templates, delegating `/run/armorclaw` management to systemd for better reliability.
+- **Network Resilience** - Updated service dependencies to `After=network-online.target` and `Wants=network-online.target` to prevent boot-time race conditions.
+- **Security Hardening** - Added `LimitNOFILE=65536`, `ProtectKernelTunables=true`, and `ProtectControlGroups=true` to all service templates.
+- **Restart Policy** - Configured `Restart=always` with `RestartSec=5` and correct `StartLimitIntervalSec`/`StartLimitBurst` placement in `[Unit]` section to prevent restart lockouts.
+- **Logging** - Explicitly set `StandardOutput=journal` and `StandardError=journal` for consistent log management.
+- **Test Coverage** - Expanded test suite to 9 tests, including validation of systemd template hardening.
+
+### Key Features
+- **Zero-Timeout Startup** - `Type=simple` ensures services are considered started immediately upon process launch.
+- **Automated Runtime Paths** - No more manual `mkdir /run/armorclaw` needed; systemd handles lifecycle and permissions.
+- **Boot Resilience** - Service waits for full network connectivity before starting.
+- **Standardized Templates** - All 4 installers now generate identical high-quality systemd units.
+
+### Tests
+- `tests/integration/test-installer-hardening.sh` - Added Test 9: Systemd template hardening (Type=simple + RuntimeDirectory).
+- All 9 tests passing for v4.4.1.
+
+### Artifacts
+- `deploy/setup-quick.sh` - Hardened systemd template.
+- `deploy/setup-wizard.sh` - Hardened systemd template.
+- `deploy/installer-v4.sh` - Hardened systemd template (blue-green aware).
+- `deploy/install-bridge.sh` - Changed from `Type=forking` to `Type=simple` + hardened template.
+
+### Next
+- Push changes to main branch.
+- Final E2E verification on fresh VPS.

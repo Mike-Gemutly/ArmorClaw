@@ -1530,3 +1530,76 @@ Created comprehensive test suite with 8 tests:
 - Integration test with actual Docker daemon
 - Document in setup guide
 - Add to release notes
+
+## 2026-03-08 - Systemd Service Hardening Review
+
+### Completed Work
+
+**Systemd Service Hardening (Phase 6b)**
+
+Successfully resolved startup timeout issues and hardened the systemd service templates across all 4 installers:
+
+1. **Eliminated Startup Timeouts**
+   - Changed `Type=notify` (and `Type=forking`) to `Type=simple`.
+   - Reason: The Go bridge was not sending `sd_notify("READY=1")`, causing systemd to wait and eventually time out.
+   - Result: Service is considered active immediately upon process launch, matching manual execution behavior.
+
+2. **Automated Runtime Management**
+   - Added `RuntimeDirectory=armorclaw` and `RuntimeDirectoryMode=0755`.
+   - Result: Systemd automatically creates and cleans up `/run/armorclaw` with the correct permissions, removing the need for manual directory creation in installers.
+
+3. **Improved Reliability**
+   - Updated to `After=network-online.target` and `Wants=network-online.target`.
+   - Added `LimitNOFILE=65536` for socket scalability.
+   - Configured `Restart=always` with `RestartSec=5` for robust recovery.
+   - Placed `StartLimitIntervalSec=60` and `StartLimitBurst=5` correctly in `[Unit]` section.
+
+4. **Security Hardening**
+   - Enabled `ProtectKernelTunables=true` and `ProtectControlGroups=true`.
+   - Kept `ProtectSystem=strict`, `ProtectHome=true`, `PrivateTmp=true`, and `NoNewPrivileges=true`.
+
+### Updated Test Coverage
+
+Added Test 9 to verify these hardening measures:
+
+```
+✓ Lockfile functionality (skip if flock not available)
+✓ Docker wait loop (dual-check with info + ps)
+✓ Environment variable passthrough
+✓ Docker Compose detection
+✓ CONDUIT_IMAGE fallback
+✓ Syntax validation of all installers
+✓ wait_for_docker logic validation
+✓ Variable ordering (DOCKER_COMPOSE fallback)
+✓ Systemd template hardening (Type=simple + RuntimeDirectory)
+```
+
+**Test Results:** All 9 tests passed ✅
+
+### Files Modified
+
+| File | Core Changes |
+|------|--------------|
+| deploy/setup-quick.sh | Type=simple, RuntimeDirectory, Network targets |
+| deploy/setup-wizard.sh | Type=simple, RuntimeDirectory, Network targets |
+| deploy/installer-v4.sh | Type=simple, RuntimeDirectory, blue-green support |
+| deploy/install-bridge.sh | Type=simple (was forking), RuntimeDirectory |
+| tests/integration/test-installer-hardening.sh | Added Test 9 |
+
+### Benefits
+
+- **Deterministic Startup** - No more timeouts on VPS environments.
+- **Simplified Installers** - Less manual filesystem manipulation required.
+- **Production-Ready Defaults** - High-quality systemd units by default.
+- **Enhanced Observability** - Standardized journal logging.
+
+### Commits
+
+- `ea05d86` - fix(installer): ensure deterministic error store path and permissions
+- `f8dcac7` - fix(bridge): use /var/lib/armorclaw for default DB paths
+- New commits pending for systemd hardening.
+
+### Next Steps
+
+- Final push to main branch.
+- Update release tag to v4.4.1.

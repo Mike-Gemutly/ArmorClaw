@@ -1288,28 +1288,38 @@ step_systemd() {
     sudo tee "$service_file" > /dev/null <<EOF
 [Unit]
 Description=ArmorClaw Bridge Service
-After=network.target docker.service
-Wants=docker.service
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
-Type=notify
-NotifyAccess=all
+Type=simple
 User=armorclaw
 Group=armorclaw
-ExecStart=/opt/armorclaw/armorclaw-bridge -config $CONFIG_DIR/config.toml
-Restart=on-failure
-RestartSec=10s
 
-# Resource limits
-MemoryMax=512M
-CPUQuota=50%
+ExecStart=/opt/armorclaw/armorclaw-bridge -config $CONFIG_DIR/config.toml
+
+Restart=always
+RestartSec=5
+
+RuntimeDirectory=armorclaw
+RuntimeDirectoryMode=0755
+
+LimitNOFILE=65536
+ProtectKernelTunables=true
+ProtectControlGroups=true
 
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=$CONFIG_DIR $DATA_DIR $RUN_DIR
+ReadWritePaths=$DATA_DIR
+
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
