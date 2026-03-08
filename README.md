@@ -550,6 +550,17 @@ curl http://localhost:6167/_matrix/client/versions
 
 ## Testing
 
+### GitHub Actions CI/CD
+
+ArmorClaw uses GitHub Actions for automated testing and deployment:
+
+**View all workflows:** [Actions](https://github.com/Gemutly/ArmorClaw/actions)
+
+**Current Workflows:**
+- **Test:** Comprehensive CI test suite (container hardening, secrets, exploits, E2E)
+- **Build Release:** Multi-platform binary builds (Linux, macOS, Windows)
+- **DockerHub:** Automatic Docker image builds and pushes
+
 ### Installer Test Suite (v4.4.0+)
 
 Run the comprehensive test suite to verify installer hardening:
@@ -569,9 +580,9 @@ bash tests/integration/test-installer-hardening.sh
 
 **Example output:**
 ```
-==========================================
+=========================================
 Running Installer Test Suite
-==========================================
+=========================================
 [TEST] Test 1: Lockfile functionality
 [TEST] Docker wait loop
 [TEST] Environment variable passthrough
@@ -580,7 +591,7 @@ Running Installer Test Suite
 [TEST] Syntax validation
 [TEST] wait_for_docker function
 [TEST] Variable ordering
-==========================================
+=========================================
 All tests passed!
 ```
 
@@ -697,6 +708,7 @@ The Bridge provisions the agent and invites you to its dedicated room.
 * **Troubleshooting:** [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md)
 * **Full Index:** [docs/index.md](docs/index.md)
 * **Tests:** [tests/integration/](tests/integration/) (v4.4.0+)
+* **GitHub Actions:** [Actions](https://github.com/Gemutly/ArmorClaw/actions) (CI/CD pipelines)
 
 ---
 
