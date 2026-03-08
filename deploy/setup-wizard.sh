@@ -142,6 +142,21 @@ check_command() {
     return 0
 }
 
+ensure_error_store_config() {
+    local config_file="${CONFIG_DIR}/config.toml"
+
+    sudo mkdir -p "$CONFIG_DIR"
+    sudo touch "$config_file"
+
+    if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
+        sudo tee -a "$config_file" > /dev/null <<EOF
+
+[errors]
+store_path = "$DATA_DIR/errors.db"
+EOF
+    fi
+}
+
 #=============================================================================
 # Logging
 #=============================================================================
@@ -816,7 +831,12 @@ step_configuration() {
     sudo mkdir -p "$CONFIG_DIR"
     sudo mkdir -p "$DATA_DIR"
     sudo mkdir -p "$RUN_DIR"
+
+    # Ensure armorclaw user exists
+    id -u armorclaw >/dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin armorclaw
+
     sudo chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
+    sudo chmod 700 "$DATA_DIR"
     sudo chmod 770 "$RUN_DIR"
 
     local config_file="$CONFIG_DIR/config.toml"
@@ -1109,9 +1129,15 @@ EOF
 
     print_info "Generated provisioning secret for secure device setup"
 
+    # Ensure error store path to config (idempotent)
+    ensure_error_store_config
+
     # Set permissions
     sudo chown armorclaw:armorclaw "$config_file"
     sudo chmod 640 "$config_file"
+
+    # Config sanity check
+    grep -q "store_path" "$config_file" || echo "Warning: errors.store_path not configured"
 
     print_success "Configuration file created"
     echo ""

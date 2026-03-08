@@ -95,6 +95,21 @@ fail() {
     exit 1
 }
 
+ensure_error_store_config() {
+    local config_file="${CONFIG_DIR}/config.toml"
+
+    mkdir -p "$CONFIG_DIR"
+    touch "$config_file"
+
+    if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
+        cat >> "$config_file" <<EOF
+
+[errors]
+store_path = "$DATA_DIR/errors.db"
+EOF
+    fi
+}
+
 prompt_yes_no() {
     if $NON_INTERACTIVE; then
         return 0  # Default to yes in non-interactive mode
@@ -276,11 +291,15 @@ create_user() {
 generate_config() {
     print_step "Generating configuration..."
 
+    # Ensure armorclaw user exists
+    id -u armorclaw >/dev/null 2>&1 || useradd --system --no-create-home --shell /bin/false armorclaw
+
     # Create directories
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$DATA_DIR"
     mkdir -p "$RUN_DIR"
     chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
+    chmod 700 "$DATA_DIR"
     chmod 770 "$RUN_DIR"
 
     local config_file="$CONFIG_DIR/config.toml"
@@ -354,8 +373,14 @@ port = 8080
 tls = false
 EOF
 
+    # Ensure error store path to config (idempotent)
+    ensure_error_store_config
+
     chown armorclaw:armorclaw "$config_file"
     chmod 640 "$config_file"
+
+    # Config sanity check
+    grep -q "store_path" "$config_file" || echo "Warning: errors.store_path not configured"
 
     print_success "Configuration generated: $config_file"
     print_info "Provisioning secret generated for secure QR code setup"

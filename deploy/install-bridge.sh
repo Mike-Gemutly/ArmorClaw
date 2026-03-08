@@ -19,6 +19,7 @@ BRIDGE_VERSION="${ARMORCLAW_VERSION:-v1.0.0}"
 INSTALL_DIR="/opt/armorclaw"
 BIN_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/armorclaw"
+DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"
 USER="armorclaw"
 GROUP="armorclaw"
@@ -41,6 +42,21 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+ensure_error_store_config() {
+    local config_file="${CONFIG_DIR}/config.toml"
+
+    mkdir -p "$CONFIG_DIR"
+    touch "$config_file"
+
+    if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
+        cat >> "$config_file" <<EOF
+
+[errors]
+store_path = "$DATA_DIR/errors.db"
+EOF
+    fi
 }
 
 check_root() {
@@ -183,6 +199,14 @@ install_container_image() {
 install_config() {
     log_info "Installing configuration..."
 
+    # Ensure armorclaw user exists
+    id -u "$USER" >/dev/null 2>&1 || useradd --system --user-group --shell /bin/false --home "$INSTALL_DIR" "$USER"
+
+    # Create data directory
+    mkdir -p "$DATA_DIR"
+    chown "$USER:$GROUP" "$DATA_DIR"
+    chmod 700 "$DATA_DIR"
+
     if [[ -f "./config.example.toml" ]]; then
         cp "./config.example.toml" "$CONFIG_DIR/config.toml"
     elif [[ -f "./bridge/config.example.toml" ]]; then
@@ -196,7 +220,7 @@ pid_file = "/run/armorclaw/bridge.pid"
 daemonize = false
 
 [keystore]
-db_path = "/etc/armorclaw/keystore.db"
+db_path = "/var/lib/armorclaw/keystore.db"
 master_key = ""
 
 [matrix]
@@ -213,8 +237,14 @@ output = "stdout"
 EOF
     fi
 
+    # Ensure error store path to config (idempotent)
+    ensure_error_store_config
+
     chown "$USER:$GROUP" "$CONFIG_DIR/config.toml"
     chmod 640 "$CONFIG_DIR/config.toml"
+
+    # Config sanity check
+    grep -q "store_path" "$CONFIG_DIR/config.toml" || echo "Warning: errors.store_path not configured"
 
     log_success "Configuration installed at $CONFIG_DIR/config.toml"
 }

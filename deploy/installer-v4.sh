@@ -90,6 +90,21 @@ log_error() {
     echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+ensure_error_store_config() {
+    local config_file="${CONFIG_DIR}/config.toml"
+
+    mkdir -p "$CONFIG_DIR"
+    touch "$config_file"
+
+    if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
+        cat >> "$config_file" <<EOF
+
+[errors]
+store_path = "$DATA_DIR/errors.db"
+EOF
+    fi
+}
+
 abort() {
     local code="$1"
     local message="$2"
@@ -1069,8 +1084,18 @@ download_and_verify_binary() {
 create_default_config() {
     local config_file="${CONFIG_DIR}/config.toml"
 
+    # Ensure armorclaw user exists
+    id -u "$BRIDGE_USER" >/dev/null 2>&1 || useradd -r -s /bin/false -d "$INSTALL_DIR" "$BRIDGE_USER"
+
+    # Create data directory
+    mkdir -p "$DATA_DIR"
+    chown "$BRIDGE_USER:$BRIDGE_GROUP" "$DATA_DIR"
+    chmod 700 "$DATA_DIR"
+
     if [[ -f "$config_file" ]]; then
         log_info "Configuration file already exists: $config_file"
+        # Ensure error store path to config (idempotent)
+        ensure_error_store_config
         return 0
     fi
 
@@ -1124,9 +1149,15 @@ enabled = false
 admin_room_id = ""
 TOML_CONFIG
 
+    # Ensure error store path to config (idempotent)
+    ensure_error_store_config
+
     # Set ownership and permissions
     chown "$BRIDGE_USER:$BRIDGE_GROUP" "$config_file"
     chmod 640 "$config_file"
+
+    # Config sanity check
+    grep -q "store_path" "$config_file" || echo "Warning: errors.store_path not configured"
 
     save_state "config_file" "created"
     log_success "Configuration created: $config_file"
