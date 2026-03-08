@@ -196,15 +196,15 @@ install_bridge() {
         fi
     fi
 
-    # Check for Go
-    if ! command -v go &>/dev/null; then
-        print_info "Installing Go..."
+    # Check for dependencies
+    if ! command -v go &>/dev/null || ! command -v git &>/dev/null || ! command -v gcc &>/dev/null; then
+        print_info "Installing dependencies (Go, Git, Build-essential)..."
         apt-get update -qq
-        apt-get install -y -qq golang-go
+        apt-get install -y -qq golang-go git build-essential
     fi
 
     local go_version=$(go version | awk '{print $3}')
-    print_done "Go: $go_version"
+    print_done "Dependencies ready (Go: $go_version)"
 
     # Build bridge
     print_info "Building bridge from source..."
@@ -213,13 +213,14 @@ install_bridge() {
     rm -rf "$build_dir"
     mkdir -p "$build_dir"
 
-    if ! git clone --depth 1 https://github.com/Gemutly/ArmorClaw "$build_dir" 2>/dev/null; then
+    if ! git clone --depth 1 https://github.com/Gemutly/ArmorClaw "$build_dir" &>/dev/null; then
         fail "Failed to clone source"
     fi
 
     cd "$build_dir/bridge" || fail "Bridge source missing"
 
-    if go build -o armorclaw-bridge ./cmd/bridge; then
+    # Build with CGO enabled for SQLCipher
+    if CGO_ENABLED=1 go build -o armorclaw-bridge ./cmd/bridge; then
         print_done "Bridge built successfully"
     else
         fail "Bridge build failed"
