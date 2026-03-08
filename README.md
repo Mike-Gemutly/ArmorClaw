@@ -9,18 +9,29 @@ ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, 
 
 ---
 
-## Quick Start (2 minutes)
+## Quick Install
 
-### Interactive Setup (with TTY)
+### Bridge Only (Default)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh -o /tmp/install.sh
-sudo bash /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
 
-**That's it.** The wizard asks 2 questions and sets everything up.
+### Bridge + Matrix
 
-### Non-Interactive Setup (CI/CD, no TTY)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | INSTALL_MODE=matrix bash
+```
+
+### Install Specific Version
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | VERSION=v4.6.0 bash
+```
+
+---
+
+## Non-Interactive Setup (CI/CD)
 
 ```bash
 export ARMORCLAW_API_KEY=sk-your-key
