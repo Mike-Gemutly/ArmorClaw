@@ -55,11 +55,7 @@ class BridgeClient:
             ConnectionError: If unable to connect to bridge
             RuntimeError: If RPC call fails
         """
-        request = {
-            "jsonrpc": "2.0",
-            "id": self._get_next_id(),
-            "method": method
-        }
+        request = {"jsonrpc": "2.0", "id": self._get_next_id(), "method": method}
 
         if params is not None:
             request["params"] = params
@@ -71,7 +67,7 @@ class BridgeClient:
 
             # Send request
             request_json = json.dumps(request) + "\n"
-            sock.sendall(request_json.encode('utf-8'))
+            sock.sendall(request_json.encode("utf-8"))
 
             # Receive response
             response_data = b""
@@ -82,7 +78,7 @@ class BridgeClient:
                 response_data += chunk
                 # Try to parse complete JSON
                 try:
-                    response = json.loads(response_data.decode('utf-8'))
+                    response = json.loads(response_data.decode("utf-8"))
                     break
                 except json.JSONDecodeError:
                     # Need more data
@@ -142,7 +138,7 @@ class BridgeClient:
         self,
         key_id: str,
         agent_type: str = "openclaw",
-        image: str = "armorclaw/agent:v1"
+        image: str = "armorclaw/agent:v1",
     ) -> Dict:
         """
         Start a new container with injected credentials.
@@ -155,11 +151,7 @@ class BridgeClient:
         Returns:
             Container info with keys: container_id, container_name, status, endpoint
         """
-        params = {
-            "key_id": key_id,
-            "agent_type": agent_type,
-            "image": image
-        }
+        params = {"key_id": key_id, "agent_type": agent_type, "image": image}
         return self._send_request("start", params)
 
     def stop_container(self, container_id: str) -> Dict:
@@ -172,9 +164,7 @@ class BridgeClient:
         Returns:
             Stop result with keys: status, container_id, container_name
         """
-        params = {
-            "container_id": container_id
-        }
+        params = {"container_id": container_id}
         return self._send_request("stop", params)
 
     # ========================================================================
@@ -206,9 +196,7 @@ class BridgeClient:
         Returns:
             Credential dictionary with decrypted token
         """
-        params = {
-            "id": key_id
-        }
+        params = {"id": key_id}
         return self._send_request("get_key", params)
 
     # ========================================================================
@@ -235,18 +223,10 @@ class BridgeClient:
         Returns:
             Login result with keys: status, user_id
         """
-        params = {
-            "username": username,
-            "password": password
-        }
+        params = {"username": username, "password": password}
         return self._send_request("matrix.login", params)
 
-    def matrix_send(
-        self,
-        room_id: str,
-        message: str,
-        msgtype: str = "m.text"
-    ) -> Dict:
+    def matrix_send(self, room_id: str, message: str, msgtype: str = "m.text") -> Dict:
         """
         Send a message to a Matrix room.
 
@@ -258,24 +238,22 @@ class BridgeClient:
         Returns:
             Send result with keys: event_id, room_id
         """
-        params = {
-            "room_id": room_id,
-            "message": message,
-            "msgtype": msgtype
-        }
+        params = {"room_id": room_id, "message": message, "msgtype": msgtype}
         return self._send_request("matrix.send", params)
 
-    def matrix_receive(self, limit: int = 10) -> Dict:
+    def matrix_receive(self, cursor: str = "", timeout_ms: int = 30000) -> Dict:
         """
         Receive pending Matrix events.
 
         Args:
-            limit: Maximum number of events to return
+            cursor: Cursor position to receive events from
+            timeout_ms: Long-polling timeout in milliseconds
 
         Returns:
-            Receive result with keys: events, count
+            Receive result with keys: events, count, cursor, cursor_reset
         """
-        return self._send_request("matrix.receive")
+        params = {"cursor": cursor, "timeout_ms": timeout_ms}
+        return self._send_request("matrix.receive", params)
 
     # ========================================================================
     # Config Methods
@@ -287,7 +265,7 @@ class BridgeClient:
         content: str,
         encoding: str = "raw",
         config_type: str = "",
-        metadata: Optional[Dict[str, str]] = None
+        metadata: Optional[Dict[str, str]] = None,
     ) -> Dict:
         """
         Attach a configuration file for use in containers.
@@ -346,12 +324,12 @@ class BridgeClient:
         top_p: float = 1.0,
         max_tokens: int = 1024,
         stop: Optional[List[str]] = None,
-        key_id: Optional[str] = None
+        key_id: Optional[str] = None,
     ) -> Dict:
         """
         Send a chat request to an AI provider via the bridge.
         API keys NEVER leave the bridge.
-        
+
         Args:
             messages: List of message dictionaries with 'role' and 'content'
             model: Model to use (default: gpt-4o)
@@ -360,13 +338,13 @@ class BridgeClient:
             max_tokens: Maximum tokens to generate (default: 1024)
             stop: Stop sequences (optional)
             key_id: Key ID from keystore (optional, uses default if not provided)
-            
+
         Returns:
             Response dict with content, usage, and other fields
-            
+
         Raises:
             RuntimeError: If bridge connection fails or RPC call fails
-            
+
         Example:
             result = client.ai_chat(
                 messages=[
@@ -389,13 +367,14 @@ class BridgeClient:
             params["stop"] = stop
         if key_id:
             params["key_id"] = key_id
-        
+
         return self._send_request("ai.chat", params)
 
 
 # ============================================================================
 # Async Bridge Client (for async agent operations)
 # ============================================================================
+
 
 class AsyncBridgeClient:
     """
@@ -431,24 +410,18 @@ class AsyncBridgeClient:
         Returns:
             Response dictionary
         """
-        request = {
-            "jsonrpc": "2.0",
-            "id": self._get_next_id(),
-            "method": method
-        }
+        request = {"jsonrpc": "2.0", "id": self._get_next_id(), "method": method}
 
         if params is not None:
             request["params"] = params
 
         # Connect to bridge socket
         try:
-            reader, writer = await asyncio.open_unix_connection(
-                self.socket_path
-            )
+            reader, writer = await asyncio.open_unix_connection(self.socket_path)
 
             # Send request
             request_json = json.dumps(request) + "\n"
-            writer.write(request_json.encode('utf-8'))
+            writer.write(request_json.encode("utf-8"))
             await writer.drain()
 
             # Receive response
@@ -461,7 +434,7 @@ class AsyncBridgeClient:
                     response_data += chunk
                     # Try to parse complete JSON
                     try:
-                        response = json.loads(response_data.decode('utf-8'))
+                        response = json.loads(response_data.decode("utf-8"))
                         break
                     except json.JSONDecodeError:
                         # Need more data
@@ -512,21 +485,15 @@ class AsyncBridgeClient:
         self,
         key_id: str,
         agent_type: str = "openclaw",
-        image: str = "armorclaw/agent:v1"
+        image: str = "armorclaw/agent:v1",
     ) -> Dict:
         """Start a new container (async)."""
-        params = {
-            "key_id": key_id,
-            "agent_type": agent_type,
-            "image": image
-        }
+        params = {"key_id": key_id, "agent_type": agent_type, "image": image}
         return await self._send_request("start", params)
 
     async def stop_container(self, container_id: str) -> Dict:
         """Stop a running container (async)."""
-        params = {
-            "container_id": container_id
-        }
+        params = {"container_id": container_id}
         return await self._send_request("stop", params)
 
     # ========================================================================
@@ -538,22 +505,25 @@ class AsyncBridgeClient:
         return await self._send_request("matrix.status")
 
     async def matrix_send(
-        self,
-        room_id: str,
-        message: str,
-        msgtype: str = "m.text"
+        self, room_id: str, message: str, msgtype: str = "m.text"
     ) -> Dict:
         """Send a message to a Matrix room (async)."""
-        params = {
-            "room_id": room_id,
-            "message": message,
-            "msgtype": msgtype
-        }
+        params = {"room_id": room_id, "message": message, "msgtype": msgtype}
         return await self._send_request("matrix.send", params)
 
-    async def matrix_receive(self) -> Dict:
-        """Receive pending Matrix events (async)."""
-        return await self._send_request("matrix.receive")
+    async def matrix_receive(self, cursor: str = "", timeout_ms: int = 30000) -> Dict:
+        """
+        Receive pending Matrix events (async).
+
+        Args:
+            cursor: Cursor position to receive events from
+            timeout_ms: Long-polling timeout in milliseconds
+
+        Returns:
+            Receive result with keys: events, count, cursor, cursor_reset
+        """
+        params = {"cursor": cursor, "timeout_ms": timeout_ms}
+        return await self._send_request("matrix.receive", params)
 
     # ========================================================================
     # Async Config Methods
@@ -565,7 +535,7 @@ class AsyncBridgeClient:
         content: str,
         encoding: str = "raw",
         config_type: str = "",
-        metadata: Optional[Dict[str, str]] = None
+        metadata: Optional[Dict[str, str]] = None,
     ) -> Dict:
         """
         Attach a configuration file for use in containers (async).
@@ -605,12 +575,12 @@ class AsyncBridgeClient:
         top_p: float = 1.0,
         max_tokens: int = 1024,
         stop: Optional[List[str]] = None,
-        key_id: Optional[str] = None
+        key_id: Optional[str] = None,
     ) -> Dict:
         """
         Send a chat request to an AI provider via the bridge (async).
         API keys NEVER leave the bridge.
-        
+
         Args:
             messages: List of message dictionaries with 'role' and 'content'
             model: Model to use (default: gpt-4o)
@@ -619,14 +589,14 @@ class AsyncBridgeClient:
             max_tokens: Maximum tokens to generate (default: 1024)
             stop: Stop sequences (optional)
             key_id: Key ID from keystore (optional, uses default if not provided)
-            
+
         Returns:
             Response dict with content, usage, and other fields
-            
+
         Raises:
             RuntimeError: If bridge connection fails or RPC call fails
             asyncio.TimeoutError: If request times out after 60 seconds
-            
+
         Example:
             result = await client.ai_chat(
                 messages=[
@@ -649,49 +619,42 @@ class AsyncBridgeClient:
             params["stop"] = stop
         if key_id:
             params["key_id"] = key_id
-        
-        return await asyncio.wait_for(
-            self._send_request("ai.chat", params),
-            timeout=60
-        )
+
+        return await asyncio.wait_for(self._send_request("ai.chat", params), timeout=60)
 
     # ========================================================================
     # Async Skills Methods
     # ========================================================================
 
     async def skills_execute(
-        self,
-        skill_name: str,
-        params: Optional[Dict[str, Any]] = None
+        self, skill_name: str, params: Optional[Dict[str, Any]] = None
     ) -> Dict:
         """
         Execute a skill via the bridge with PETG security validation.
-        
+
         Args:
             skill_name: Name of the skill to execute (e.g., "weather.get", "github.repo.info")
             params: Skill parameters (optional)
-            
+
         Returns:
             Skill execution result with keys: success, output, error, type, timestamp
-            
+
         Raises:
             RuntimeError: If bridge connection fails or skill execution fails
         """
-        request_params = {
-            "skill_name": skill_name
-        }
+        request_params = {"skill_name": skill_name}
         if params:
             request_params["params"] = params
-            
+
         return await self._send_request("skills.execute", request_params)
 
     async def skills_list(self) -> Dict:
         """
         List all available skills.
-        
+
         Returns:
             Skills list with keys: skills, count
-            
+
         Raises:
             RuntimeError: If bridge connection fails
         """
@@ -700,13 +663,13 @@ class AsyncBridgeClient:
     async def skills_get_schema(self, skill_name: str) -> Dict:
         """
         Get the OpenAI-compatible schema for a skill.
-        
+
         Args:
             skill_name: Name of the skill to get schema for
-            
+
         Returns:
             Schema with keys: skill_name, schema
-            
+
         Raises:
             RuntimeError: If bridge connection fails or skill not found
         """
@@ -716,13 +679,13 @@ class AsyncBridgeClient:
     async def skills_allow(self, skill_name: str) -> Dict:
         """
         Allow a skill by policy.
-        
+
         Args:
             skill_name: Name of the skill to allow
-            
+
         Returns:
             Allow result with keys: skill_name, status, message
-            
+
         Raises:
             RuntimeError: If bridge connection fails
         """
@@ -732,13 +695,13 @@ class AsyncBridgeClient:
     async def skills_block(self, skill_name: str) -> Dict:
         """
         Block a skill by policy.
-        
+
         Args:
             skill_name: Name of the skill to block
-            
+
         Returns:
             Block result with keys: skill_name, status, message
-            
+
         Raises:
             RuntimeError: If bridge connection fails
         """
@@ -748,14 +711,14 @@ class AsyncBridgeClient:
     async def skills_allowlist_add(self, value_type: str, value: str) -> Dict:
         """
         Add an IP or CIDR to the allowlist (admin override).
-        
+
         Args:
             value_type: Type of value ("ip" or "cidr")
             value: IP address or CIDR string
-            
+
         Returns:
             Add result with keys: type, value, status, message
-            
+
         Raises:
             RuntimeError: If bridge connection fails
         """
@@ -765,14 +728,14 @@ class AsyncBridgeClient:
     async def skills_allowlist_remove(self, value_type: str, value: str) -> Dict:
         """
         Remove an IP or CIDR from the allowlist.
-        
+
         Args:
             value_type: Type of value ("ip" or "cidr")
             value: IP address or CIDR string
-            
+
         Returns:
             Remove result with keys: type, value, status, message
-            
+
         Raises:
             RuntimeError: If bridge connection fails
         """
@@ -782,10 +745,10 @@ class AsyncBridgeClient:
     async def skills_allowlist_list(self) -> Dict:
         """
         Get the current allowlist.
-        
+
         Returns:
             Allowlist with keys: ips, cidrs, counts
-            
+
         Raises:
             RuntimeError: If bridge connection fails
         """
@@ -799,11 +762,11 @@ class AsyncBridgeClient:
         per_page: int = 10,
         safe_search: bool = False,
         language: Optional[str] = None,
-        region: Optional[str] = None
+        region: Optional[str] = None,
     ) -> Dict:
         """
         Perform a web search using the specified engine.
-        
+
         Args:
             query: Search query string
             engine: Search engine ("google", "bing", "duckduckgo") - default "duckduckgo"
@@ -812,10 +775,10 @@ class AsyncBridgeClient:
             safe_search: Enable safe search - default False
             language: Language preference (optional)
             region: Region preference (optional)
-            
+
         Returns:
             Search results with keys: query, engine, results, total_results, search_time, page, per_page
-            
+
         Raises:
             RuntimeError: If bridge connection fails or search fails
         """
@@ -824,14 +787,14 @@ class AsyncBridgeClient:
             "engine": engine,
             "page": page,
             "per_page": per_page,
-            "safe_search": safe_search
+            "safe_search": safe_search,
         }
-        
+
         if language:
             params["language"] = language
         if region:
             params["region"] = region
-            
+
         return await self._send_request("skills.web_search", params)
 
     async def skills_web_extract(
@@ -841,11 +804,11 @@ class AsyncBridgeClient:
         max_length: int = 100000,
         include_links: bool = False,
         include_images: bool = False,
-        include_tables: bool = False
+        include_tables: bool = False,
     ) -> Dict:
         """
         Extract content from a web URL.
-        
+
         Args:
             url: URL to extract content from
             content_type: Expected content type ("html", "text") - default "html"
@@ -853,11 +816,11 @@ class AsyncBridgeClient:
             include_links: Include extracted links - default False
             include_images: Include extracted images - default False
             include_tables: Include extracted tables - default False
-            
+
         Returns:
-            Extracted content with keys: url, title, content_type, content, 
+            Extracted content with keys: url, title, content_type, content,
                                       links, images, tables, metadata, word_count, extracted_at
-            
+
         Raises:
             RuntimeError: If bridge connection fails or extraction fails
         """
@@ -867,9 +830,9 @@ class AsyncBridgeClient:
             "max_length": max_length,
             "include_links": include_links,
             "include_images": include_images,
-            "include_tables": include_tables
+            "include_tables": include_tables,
         }
-        
+
         return await self._send_request("skills.web_extract", params)
 
     async def skills_email_send(
@@ -881,11 +844,11 @@ class AsyncBridgeClient:
         cc: Optional[List[str]] = None,
         bcc: Optional[List[str]] = None,
         html: bool = False,
-        reply_to: Optional[str] = None
+        reply_to: Optional[str] = None,
     ) -> Dict:
         """
         Send an email via SMTP.
-        
+
         Args:
             from_email: Sender email address
             to: List of recipient email addresses
@@ -895,10 +858,10 @@ class AsyncBridgeClient:
             bcc: List of BCC recipients (optional)
             html: Whether body is HTML (default False)
             reply_to: Reply-to email address (optional)
-            
+
         Returns:
             Email sending result with keys: message_id, from, to, subject, sent_at, size, provider
-            
+
         Raises:
             RuntimeError: If bridge connection fails or email sending fails
         """
@@ -907,16 +870,16 @@ class AsyncBridgeClient:
             "to": to,
             "subject": subject,
             "body": body,
-            "html": html
+            "html": html,
         }
-        
+
         if cc:
             params["cc"] = cc
         if bcc:
             params["bcc"] = bcc
         if reply_to:
             params["reply_to"] = reply_to
-            
+
         return await self._send_request("skills.email_send", params)
 
     async def skills_slack_message(
@@ -928,11 +891,11 @@ class AsyncBridgeClient:
         icon_emoji: Optional[str] = None,
         icon_url: Optional[str] = None,
         attachments: Optional[List[Dict]] = None,
-        blocks: Optional[List[Dict]] = None
+        blocks: Optional[List[Dict]] = None,
     ) -> Dict:
         """
         Send a message to Slack.
-        
+
         Args:
             channel: Slack channel (e.g., "#general", "@username")
             text: Message text
@@ -942,18 +905,15 @@ class AsyncBridgeClient:
             icon_url: Bot icon URL (optional)
             attachments: List of Slack attachments (optional)
             blocks: List of Slack blocks (optional)
-            
+
         Returns:
             Slack message result with keys: ok, channel, timestamp, message, sent_at, provider
-            
+
         Raises:
             RuntimeError: If bridge connection fails or Slack sending fails
         """
-        params = {
-            "channel": channel,
-            "text": text
-        }
-        
+        params = {"channel": channel, "text": text}
+
         if thread_ts:
             params["thread_ts"] = thread_ts
         if bot_name:
@@ -966,7 +926,7 @@ class AsyncBridgeClient:
             params["attachments"] = attachments
         if blocks:
             params["blocks"] = blocks
-            
+
         return await self._send_request("skills.slack_message", params)
 
     async def skills_file_read(
@@ -976,7 +936,7 @@ class AsyncBridgeClient:
         encoding: Optional[str] = None,
         max_size: Optional[int] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None
+        offset: Optional[int] = None,
     ) -> Dict:
         """
         Read and parse a file via the bridge.
@@ -992,10 +952,8 @@ class AsyncBridgeClient:
         Returns:
             File reading result with content and metadata
         """
-        params = {
-            "path": path
-        }
-        
+        params = {"path": path}
+
         if file_type:
             params["type"] = file_type
         if encoding:
@@ -1006,7 +964,7 @@ class AsyncBridgeClient:
             params["limit"] = limit
         if offset:
             params["offset"] = offset
-            
+
         return await self._send_request("skills.file_read", params)
 
     async def skills_data_analyze(
@@ -1015,7 +973,7 @@ class AsyncBridgeClient:
         analysis_type: Optional[str] = None,
         fields: Optional[List[str]] = None,
         generate_charts: Optional[bool] = None,
-        detect_outliers: Optional[bool] = None
+        detect_outliers: Optional[bool] = None,
     ) -> Dict:
         """
         Analyze data and generate insights via the bridge.
@@ -1030,10 +988,8 @@ class AsyncBridgeClient:
         Returns:
             Data analysis result with statistics, patterns, and insights
         """
-        params = {
-            "data": data
-        }
-        
+        params = {"data": data}
+
         if analysis_type:
             params["analysis_type"] = analysis_type
         if fields:
@@ -1042,7 +998,7 @@ class AsyncBridgeClient:
             params["generate_charts"] = generate_charts
         if detect_outliers is not None:
             params["detect_outliers"] = detect_outliers
-            
+
         return await self._send_request("skills.data_analyze", params)
 
     # ========================================================================
@@ -1050,19 +1006,15 @@ class AsyncBridgeClient:
     # ========================================================================
 
     def skills_execute_sync(
-        self,
-        skill_name: str,
-        params: Optional[Dict[str, Any]] = None
+        self, skill_name: str, params: Optional[Dict[str, Any]] = None
     ) -> Dict:
         """
         Execute a skill via the bridge (sync version).
         """
-        request_params = {
-            "skill_name": skill_name
-        }
+        request_params = {"skill_name": skill_name}
         if params:
             request_params["params"] = params
-            
+
         return self._send_request("skills.execute", request_params)
 
     def skills_list_sync(self) -> Dict:
@@ -1073,6 +1025,7 @@ class AsyncBridgeClient:
 # ============================================================================
 # Convenience Functions
 # ============================================================================
+
 
 def get_default_client() -> BridgeClient:
     """
