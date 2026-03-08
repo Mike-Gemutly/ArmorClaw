@@ -163,6 +163,16 @@ if ! docker ps >/dev/null 2>&1; then
     exit 1
 fi
 
+# Wait for Docker to be ready
+log "Waiting for Docker daemon..."
+for ((i=1;i<=10;i++)); do
+    if docker info >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+        log "Docker daemon ready"
+        break
+    fi
+    sleep 2
+done
+
 # First: detect container created from Conduit image
 CONDUIT_CONTAINER=$(docker ps -a \
     --filter "ancestor=matrixconduit/matrix-conduit" \

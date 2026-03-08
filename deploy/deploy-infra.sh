@@ -23,6 +23,12 @@ EMAIL="${ARMORCLAW_EMAIL:-admin@armorclaw.com}"
 CONDUIT_VERSION="${CONDUIT_VERSION:-v0.4.0}"
 MATRIX_DATA_DIR="/var/lib/conduit"
 
+# Docker Compose fallback
+DOCKER_COMPOSE="${DOCKER_COMPOSE:-docker compose}"
+
+# Conduit image
+CONDUIT_IMAGE="${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:$CONDUIT_VERSION}"
+
 # Ensure shared Matrix data directory exists
 mkdir -p "$MATRIX_DATA_DIR"
 chmod 750 "$MATRIX_DATA_DIR"
@@ -146,7 +152,7 @@ install_docker() {
 
     # Verify installation
     docker --version
-    docker compose version
+    $DOCKER_COMPOSE version
 
     log_success "Docker installed and running"
 }
@@ -297,7 +303,7 @@ allow_encryption = true
 allow_federation = true
 
 # Database path
-database_path = "/var/lib/matrix-conduit"
+database_path = "/var/lib/conduit"
 database_backend = "rocksdb"
 
 [global.well_known]
@@ -406,6 +412,16 @@ EOF
         exit 1
     fi
 
+    # Wait for Docker to be ready
+    log_info "Waiting for Docker daemon..."
+    for ((i=1;i<=10;i++)); do
+        if docker info >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+            log_success "Docker daemon ready"
+            break
+        fi
+        sleep 2
+    done
+
     # First: detect container created from Conduit image
     CONDUIT_CONTAINER=$(docker ps -a \
         --filter "ancestor=matrixconduit/matrix-conduit" \
@@ -442,7 +458,7 @@ EOF
 
     # Start the service
     cd /opt/matrix-conduit/docker
-    docker compose up -d
+    "$DOCKER_COMPOSE" up -d || fail "Failed to start Conduit containers"
 
     log_success "Conduit Docker service started"
     fi
@@ -601,7 +617,7 @@ verify_deployment() {
     echo ""
 
     echo "=== Docker Containers ==="
-    docker compose -f /opt/matrix-conduit/docker/docker-compose.yml ps
+    "$DOCKER_COMPOSE" -f /opt/matrix-conduit/docker/docker-compose.yml ps
     echo ""
 
     echo "=== Network Listeners ==="
