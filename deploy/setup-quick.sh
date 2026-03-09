@@ -701,15 +701,52 @@ prompt_api_key() {
     fi
 
     echo ""
-    echo -ne "  ${CYAN}Provider (openai/anthropic/openrouter/google/xai):${NC} "
-    prompt_read -r provider
+    echo "  Available AI Providers:"
+    echo "  ┌──────────────────────────────────────────────────────────────────┐"
+    echo "  │  1) openai        - OpenAI (GPT-4, GPT-3.5, o1)"                 │"
+    echo "  │  2) anthropic      - Anthropic (Claude)"                         │"
+    echo "  │  3) google         - Google Gemini (Pro, Ultra, Flash)"          │"
+    echo "  │  4) xai            - xAI (Grok)"                                 │"
+    echo "  │  5) openrouter     - OpenRouter (Multi-provider aggregator)"     │"
+    echo "  │  6) zhipu          - Zhipu AI (Z AI) [aliases: zai, glm]        │"
+    echo "  │  7) deepseek       - DeepSeek (R1, V3)"                         │"
+    echo "  │  8) moonshot       - Moonshot AI                                │"
+    echo "  │  9) nvidia         - NVIDIA NIM                                  │"
+    echo "  │ 10) groq           - Groq (Fast inference)"                      │"
+    echo "  │ 11) cloudflare     - Cloudflare AI Gateway                      │"
+    echo "  │ 12) ollama         - Local Ollama instance"                     │"
+    echo "  └──────────────────────────────────────────────────────────────────┘"
 
-    if [[ -z "$provider" ]]; then
-        print_info "No provider specified, skipping API key setup"
-        return 0
+    echo ""
+    echo -ne "  Select provider number [1-12]: "
+    prompt_read -r provider_choice
+
+    # Provider base URLs and keys
+    declare -A PROVIDERS=(
+        ["1"]="openai"
+        ["2"]="anthropic"
+        ["3"]="google"
+        ["4"]="xai"
+        ["5"]="openrouter"
+        ["6"]="zhipu"
+        ["7"]="deepseek"
+        ["8"]="moonshot"
+        ["9"]="nvidia"
+        ["10"]="groq"
+        ["11"]="cloudflare"
+        ["12"]="ollama"
+    )
+
+    # Validate provider choice
+    if [[ -z "${PROVIDERS[$provider_choice]}" ]]; then
+        print_error "Invalid provider selection"
+        return 1
     fi
 
-    echo -ne "  ${CYAN}API Key:${NC} "
+    provider_key="${PROVIDERS[$provider_choice]}"
+
+    echo ""
+    echo -ne "  API Key for ${provider_key}: "
     prompt_read -s key_token
     echo ""
 
@@ -720,8 +757,8 @@ prompt_api_key() {
 
     # Add key via RPC (if bridge is running)
     if [[ -S "$SOCKET_PATH" ]]; then
-        local key_id="${provider}-main"
-        local rpc_cmd='{"jsonrpc":"2.0","method":"add_key","params":{"id":"'"$key_id"'","provider":"'"$provider"'","token":"'"$key_token"'","display_name":"'"$provider"' API Key"},"id":1}'
+        local key_id="${provider_key}-main"
+        local rpc_cmd='{"jsonrpc":"2.0","method":"add_key","params":{"id":"'"$key_id"'","provider":"'"$provider_key"'","token":"'"$key_token"'","display_name":"'"$provider_key"' API Key"},"id":1}'
 
         if echo "$rpc_cmd" | socat - UNIX-CONNECT:"$SOCKET_PATH" &>/dev/null; then
             print_done "API key added: $key_id"

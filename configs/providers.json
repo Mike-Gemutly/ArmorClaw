@@ -1,0 +1,16 @@
+{
+  "providers": [
+    {"id": "openai", "name": "OpenAI", "protocol": "openai", "base_url": "https://api.openai.com/v1"},
+    {"id": "anthropic", "name": "Anthropic", "protocol": "anthropic", "base_url": "https://api.anthropic.com/v1"},
+    {"id": "google", "name": "Google", "protocol": "openai", "base_url": "https://generativelanguage.googleapis.com/v1"},
+    {"id": "xai", "name": "xAI", "protocol": "openai", "base_url": "https://api.x.ai/v1"},
+    {"id": "openrouter", "name": "OpenRouter", "protocol": "openai", "base_url": "https://openrouter.ai/api/v1"},
+    {"id": "zhipu", "name": "Zhipu AI (Z AI)", "protocol": "openai", "base_url": "https://api.z.ai/api/paas/v4", "aliases": ["zai", "glm"]},
+    {"id": "deepseek", "name": "DeepSeek", "protocol": "openai", "base_url": "https://api.deepseek.com/v1"},
+    {"id": "moonshot", "name": "Moonshot AI", "protocol": "openai", "base_url": "https://api.moonshot.ai/v1"},
+    {"id": "nvidia", "name": "NVIDIA NIM", "protocol": "openai", "base_url": "https://integrate.api.nvidia.com/v1"},
+    {"id": "groq", "name": "Groq", "protocol": "openai", "base_url": "https://api.groq.com/openai/v1"},
+    {"id": "cloudflare", "name": "Cloudflare", "protocol": "openai", "base_url": "https://gateway.ai.cloudflare.com/v1"},
+    {"id": "ollama", "name": "Ollama (Local)", "protocol": "openai", "base_url": "http://localhost:11434/v1"}
+  ]
+}

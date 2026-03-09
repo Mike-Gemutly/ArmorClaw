@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/armorclaw/bridge/pkg/providers"
 	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/charmbracelet/huh"
 )
@@ -30,7 +31,7 @@ var fallbackModels = map[string][]string{
 	"openrouter": {"openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-pro-1.5"},
 }
 
-// getProviderOptions returns provider options, first trying Catwalk then falling back to hardcoded list.
+// getProviderOptions returns provider options, loading from Catwalk or registry.
 func getProviderOptions() ([]apiProviderOption, bool) {
 	catwalk := NewCatwalkClient("http://localhost:8080")
 
@@ -42,8 +43,25 @@ func getProviderOptions() ([]apiProviderOption, bool) {
 		}
 	}
 
-	fmt.Println("  [Wizard] Using default provider list")
-	return apiProviders, false
+	// Load from embedded provider registry
+	fmt.Println("  [Wizard] Loading providers from registry")
+	registry := providers.LoadEmbeddedRegistry()
+	providerOptions := make([]apiProviderOption, 0, registry.GetProviderCount())
+
+	for _, p := range registry.Providers {
+		// Skip custom provider in wizard selection (requires manual input)
+		if p.ID == "custom" {
+			continue
+		}
+
+		providerOptions = append(providerOptions, apiProviderOption{
+			Name:    p.Name,
+			Key:     p.ID,
+			BaseURL: p.BaseURL,
+		})
+	}
+
+	return providerOptions, false
 }
 
 // getModelOptions returns available models for a provider.
@@ -83,14 +101,14 @@ var apiProviders = []apiProviderOption{
 	{Name: "Anthropic (Claude)", Key: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
 	{Name: "Google (Gemini)", Key: "google", BaseURL: "https://generativelanguage.googleapis.com/v1"},
 	{Name: "xAI (Grok)", Key: "xai", BaseURL: "https://api.x.ai/v1"},
-	{Name: "Zhipu AI (GLM)", Key: "openai", BaseURL: "https://open.bigmodel.cn/api/paas/v4"},
-	{Name: "DeepSeek", Key: "openai", BaseURL: "https://api.deepseek.com/v1"},
-	{Name: "Moonshot AI", Key: "openai", BaseURL: "https://api.moonshot.cn/v1"},
-	{Name: "NVIDIA NIM", Key: "openai", BaseURL: "https://integrate.api.nvidia.com/v1"},
-	{Name: "OpenRouter", Key: "openai", BaseURL: "https://openrouter.ai/api/v1"},
-	{Name: "Groq", Key: "openai", BaseURL: "https://api.groq.com/openai/v1"},
-	{Name: "Cloudflare AI Gateway", Key: "openai", BaseURL: "https://gateway.ai.cloudflare.com/v1"},
-	{Name: "Custom (OpenAI-compatible)", Key: "custom", BaseURL: ""},
+	{Name: "OpenRouter", Key: "openrouter", BaseURL: "https://openrouter.ai/api/v1"},
+	{Name: "Zhipu AI (Z AI)", Key: "zhipu", BaseURL: "https://api.z.ai/api/paas/v4"},
+	{Name: "DeepSeek", Key: "deepseek", BaseURL: "https://api.deepseek.com/v1"},
+	{Name: "Moonshot AI", Key: "moonshot", BaseURL: "https://api.moonshot.ai/v1"},
+	{Name: "NVIDIA NIM", Key: "nvidia", BaseURL: "https://integrate.api.nvidia.com/v1"},
+	{Name: "Groq", Key: "groq", BaseURL: "https://api.groq.com/openai/v1"},
+	{Name: "Cloudflare", Key: "cloudflare", BaseURL: "https://gateway.ai.cloudflare.com/v1"},
+	{Name: "Ollama (Local)", Key: "ollama", BaseURL: "http://localhost:11434/v1"},
 }
 
 // runQuickStartForms collects Quick Start configuration through two form pages:
