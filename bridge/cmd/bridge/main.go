@@ -2321,9 +2321,19 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
-	// Start the RPC server
-	if err := server.Run(cfg.Server.SocketPath); err != nil {
-		log.Fatalf("Failed to start RPC server: %v", err)
+	// Start the RPC server in a goroutine so it doesn't block other services (e.g. mDNS)
+	go func() {
+		if err := server.Run(cfg.Server.SocketPath); err != nil {
+			log.Fatalf("Failed to start RPC server: %v", err)
+		}
+	}()
+
+	// Wait a bit for the socket to be created
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat(cfg.Server.SocketPath); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	defer func() {
 		log.Println("Stopping RPC server...")

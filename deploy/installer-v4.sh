@@ -374,15 +374,16 @@ detect_system_environment() {
 
     # Check OS
     if [[ -f /etc/os-release ]]; then
-        source /etc/os-release
-        details="$PRETTY_NAME"
-        case "$ID" in
+        local os_pretty_name=$(grep "^PRETTY_NAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+        local os_id=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+        details="$os_pretty_name"
+        case "$os_id" in
             ubuntu|debian)
                 result="ok"
                 ;;
             *)
                 result="warn"
-                details="$PRETTY_NAME (untested)"
+                details="$os_pretty_name (untested)"
                 ;;
         esac
     else

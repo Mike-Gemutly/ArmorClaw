@@ -196,9 +196,11 @@ check_os() {
         exit 1
     fi
 
-    source /etc/os-release
-    if [[ "$ID" != "ubuntu" ]] && [[ "$ID" != "debian" ]]; then
-        log_warning "This script is designed for Ubuntu/Debian. Detected: $ID"
+    local os_id=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    local os_pretty_name=$(grep "^PRETTY_NAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+
+    if [[ "$os_id" != "ubuntu" ]] && [[ "$os_id" != "debian" ]]; then
+        log_warning "This script is designed for Ubuntu/Debian. Detected: $os_id"
         echo -n "Continue anyway? (y/N) "
         prompt_read -n 1 -r REPLY
         echo
@@ -206,9 +208,8 @@ check_os() {
             exit 1
         fi
     fi
-    fi
 
-    log_success "OS detected: $PRETTY_NAME"
+    log_success "OS detected: $os_pretty_name"
 }
 
 verify_checksum() {

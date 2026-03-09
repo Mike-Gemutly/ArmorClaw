@@ -297,8 +297,8 @@ check_prerequisites() {
 
     # Check OS
     if [[ -f /etc/os-release ]]; then
-        source /etc/os-release
-        print_done "OS: $PRETTY_NAME"
+        local os_pretty_name=$(grep "^PRETTY_NAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+        print_done "OS: $os_pretty_name"
     else
         print_error "Cannot detect OS"
         ((errors++)) || true

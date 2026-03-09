@@ -76,17 +76,20 @@ check_ubuntu() {
         exit 1
     fi
 
-    source /etc/os-release
-    if [[ "$ID" != "ubuntu" ]]; then
-        log_warning "This script is designed for Ubuntu. Detected: $ID"
-        read -p "Continue anyway? (y/N) " -n 1 -r
+    local os_pretty_name=$(grep "^PRETTY_NAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    local os_id=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    
+    if [[ "$os_id" != "ubuntu" ]]; then
+        log_warning "This script is designed for Ubuntu. Detected: $os_id"
+        echo -n "Continue anyway? (y/N) "
+        prompt_read -n 1 -r REPLY
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
     fi
 
-    log_success "Ubuntu detected: $PRETTY_NAME"
+    log_success "Ubuntu detected: $os_pretty_name"
 }
 
 # =============================================================================

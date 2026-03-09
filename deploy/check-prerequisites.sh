@@ -47,11 +47,12 @@ echo "=== System Requirements ==="
 
 # OS Check
 if [[ -f /etc/os-release ]]; then
-    source /etc/os-release
-    if [[ "$ID" == "ubuntu" ]] || [[ "$ID" == "debian" ]]; then
-        check_pass "OS: $PRETTY_NAME"
+    local os_pretty_name=$(grep "^PRETTY_NAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    local os_id=$(grep "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    if [[ "$os_id" == "ubuntu" ]] || [[ "$os_id" == "debian" ]]; then
+        check_pass "OS: $os_pretty_name"
     else
-        check_warn "OS: $PRETTY_NAME (Ubuntu/Debian recommended)"
+        check_warn "OS: $os_pretty_name (Ubuntu/Debian recommended)"
     fi
 else
     check_fail "Cannot detect OS"
