@@ -570,7 +570,7 @@ restart_bridge() {
         local count=0
         while [[ ! -S "$BRIDGE_SOCK" ]] && [[ $count -lt 30 ]]; do
             sleep 0.5
-            ((count++))
+            ((count++)) || true
         done
 
         if [[ -S "$BRIDGE_SOCK" ]]; then

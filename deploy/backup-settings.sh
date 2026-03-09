@@ -87,7 +87,7 @@ create_backup() {
     if $SUDO [ -f "$CONFIG_DIR/config.toml" ]; then
         $SUDO cp "$CONFIG_DIR/config.toml" "$temp_dir/armorclaw-backup/config/"
         print_success "Configuration file backed up"
-        ((items_backed_up++))
+        ((items_backed_up++)) || true
     else
         print_warning "Configuration file not found at $CONFIG_DIR/config.toml"
     fi
@@ -105,7 +105,7 @@ create_backup() {
 }
 EOF
         print_warning "Keystore metadata backed up (keys cannot be transferred - hardware-bound)"
-        ((items_backed_up++))
+        ((items_backed_up++)) || true
     fi
 
     # Backup agent configurations
@@ -113,7 +113,7 @@ EOF
         $SUDO cp -r "$DATA_DIR/agent-configs/"* "$temp_dir/armorclaw-backup/agent-configs/" 2>/dev/null || true
         local config_count=$(find "$temp_dir/armorclaw-backup/agent-configs" -name "*.json" | wc -l)
         print_success "Agent configurations backed up ($config_count files)"
-        ((items_backed_up++))
+        ((items_backed_up++)) || true
     else
         print_warning "No agent configurations found"
     fi
@@ -122,7 +122,7 @@ EOF
     if $SUDO [ -d "$DATA_DIR/matrix" ] && $SUDO [ -f "$DATA_DIR/matrix/session.json" ]; then
         $SUDO cp "$DATA_DIR/matrix/session.json" "$temp_dir/armorclaw-backup/matrix/" 2>/dev/null || true
         print_success "Matrix session data backed up"
-        ((items_backed_up++))
+        ((items_backed_up++)) || true
     else
         print_warning "No Matrix session data found"
     fi

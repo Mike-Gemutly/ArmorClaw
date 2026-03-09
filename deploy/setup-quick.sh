@@ -68,7 +68,7 @@ retry() {
         fi
         echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
         sleep $delay
-        ((n++))
+        ((n++)) || true || true
     done
 }
 
@@ -92,9 +92,9 @@ download_binary() {
     local bin_name="armorclaw-bridge-$BIN_ARCH"
     local base_url="https://github.com/$REPO/releases/download/$VERSION"
     
-    # Fallback to main branch for testing if VERSION is main
+    # Fallback to main branch build dir if VERSION is main
     if [[ "$VERSION" == "main" ]]; then
-        base_url="https://raw.githubusercontent.com/$REPO/main/build"
+        base_url="https://raw.githubusercontent.com/$REPO/main/bridge/build"
     fi
 
     print_info "Downloading prebuilt binary: $bin_name"
@@ -105,28 +105,28 @@ download_binary() {
     local sig_path="$tmp_dir/checksums.txt.sig"
     local key_path="$tmp_dir/armorclaw-signing-key.asc"
     
-    # Use strict curl flags
-    local curl_base="curl --proto =https --tlsv1.2 --fail --silent --show-error --location"
+    # Use strict curl flags in an array for safety with retry
+    local curl_opts=(--proto "=https" --tlsv1.2 --fail --silent --show-error --location)
 
-    if ! retry $curl_base "$base_url/$bin_name" -o "$bin_path"; then
-        print_warning "Failed to download binary"
+    if ! retry curl "${curl_opts[@]}" "$base_url/$bin_name" -o "$bin_path"; then
+        print_warning "Failed to download binary from $base_url/$bin_name"
         rm -rf "$tmp_dir"
         return 1
     fi
     
-    if ! retry $curl_base "$base_url/checksums.txt" -o "$checksum_path"; then
-        print_warning "Failed to download checksums"
+    if ! retry curl "${curl_opts[@]}" "$base_url/checksums.txt" -o "$checksum_path"; then
+        print_warning "Failed to download checksums from $base_url/checksums.txt"
         rm -rf "$tmp_dir"
         return 1
     fi
     
-    if ! retry $curl_base "$base_url/checksums.txt.sig" -o "$sig_path"; then
-        print_warning "Failed to download signature"
+    if ! retry curl "${curl_opts[@]}" "$base_url/checksums.txt.sig" -o "$sig_path"; then
+        print_warning "Failed to download signature from $base_url/checksums.txt.sig"
         rm -rf "$tmp_dir"
         return 1
     fi
     
-    retry $curl_base "https://raw.githubusercontent.com/$REPO/main/deploy/armorclaw-signing-key.asc" -o "$key_path"
+    retry curl "${curl_opts[@]}" "https://raw.githubusercontent.com/$REPO/main/deploy/armorclaw-signing-key.asc" -o "$key_path" || true
 
     # Verify Checksum
     print_info "Verifying binary checksum..."
@@ -146,9 +146,11 @@ download_binary() {
     gpg --homedir "$gnupg_home" --batch --import "$key_path" >/dev/null 2>&1
     
     # Verify fingerprint
-    local fpr_check=$(gpg --homedir "$gnupg_home" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
-    if [[ "$fpr_check" != "$SIGNING_KEY_FPR" ]]; then
+    local fpr_check=$(gpg --homedir "$gnupg_home" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | head -n1 | cut -d: -f10)
+    if [[ "${fpr_check:-}" != "$SIGNING_KEY_FPR" ]]; then
         print_error "Unauthorized signing key detected!"
+        echo "Expected: $SIGNING_KEY_FPR"
+        echo "Actual:   ${fpr_check:-MISSING}"
         rm -rf "$tmp_dir"
         return 1
     fi
@@ -168,6 +170,8 @@ download_binary() {
     rm -rf "$tmp_dir"
     return 0
 }
+
+
 
 print_header() {
     clear 2>/dev/null || true
@@ -297,7 +301,7 @@ check_prerequisites() {
         print_done "OS: $PRETTY_NAME"
     else
         print_error "Cannot detect OS"
-        ((errors++))
+        ((errors++)) || true
     fi
 
     # Check Docker
@@ -307,12 +311,12 @@ check_prerequisites() {
         else
             print_error "Docker is installed but not running"
             print_info "Start with: systemctl start docker"
-            ((errors++))
+            ((errors++)) || true
         fi
     else
         print_error "Docker not installed"
         print_info "Install with: curl -fsSL https://get.docker.com | sh"
-        ((errors++))
+        ((errors++)) || true
     fi
 
     # Check memory (minimum 1GB)
@@ -321,7 +325,7 @@ check_prerequisites() {
         print_done "Memory: ${total_mem}MB"
     else
         print_error "Memory: ${total_mem}MB (minimum 1GB required)"
-        ((errors++))
+        ((errors++)) || true
     fi
 
     # Check disk space (minimum 2GB)
@@ -548,7 +552,7 @@ init_keystore() {
     fi
 
     # Initialize by running bridge with --init flag
-    if sudo -u armorclaw "$INSTALL_DIR/armorclaw-bridge" --init 2>/dev/null; then
+    if $SUDO -u armorclaw "$INSTALL_DIR/armorclaw-bridge" --init 2>/dev/null; then
         print_done "Keystore initialized"
     else
         # Fallback: keystore will be created on first start
@@ -628,7 +632,7 @@ start_bridge() {
     local wait_count=0
     while [[ ! -S "$SOCKET_PATH" ]] && [[ $wait_count -lt 30 ]]; do
         sleep 0.5
-        ((wait_count++))
+        ((wait_count++)) || true
     done
 
     if [[ -S "$SOCKET_PATH" ]]; then

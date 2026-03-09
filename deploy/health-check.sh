@@ -31,17 +31,17 @@ log() {
 
 check_pass() {
     echo -e "${GREEN}✓${NC} $1"
-    ((PASS++))
+    ((PASS++)) || true
 }
 
 check_fail() {
     echo -e "${RED}✗${NC} $1"
-    ((FAIL++))
+    ((FAIL++)) || true
 }
 
 check_warn() {
     echo -e "${YELLOW}!${NC} $1"
-    ((WARN++))
+    ((WARN++)) || true
 }
 
 check_info() {

@@ -148,7 +148,7 @@ retry() {
         fi
         echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
         sleep $delay
-        ((n++))
+        ((n++)) || true
     done
 }
 
@@ -696,11 +696,11 @@ validate_environment() {
         if [[ "$value" == FAIL:* ]]; then
             status="${RED}FAIL${NC}"
             details="${value#FAIL:}"
-            ((errors++))
+            ((errors++)) || true
         elif [[ "$value" == WARN:* ]]; then
             status="${YELLOW}WARN${NC}"
             details="${value#WARN:}"
-            ((warnings++))
+            ((warnings++)) || true
         else
             status="${GREEN}OK${NC}"
             details="${value#OK:}"
@@ -1053,7 +1053,7 @@ smoke_test_rpc_health() {
         if [[ ! -S "$BRIDGE_SOCKET" ]]; then
             log_info "Waiting for socket... (attempt $attempt/$max_attempts)"
             sleep 1
-            ((attempt++))
+            ((attempt++)) || true
             continue
         fi
 
@@ -1070,7 +1070,7 @@ smoke_test_rpc_health() {
 
         log_info "Waiting for healthy bridge... (attempt $attempt/$max_attempts)"
         sleep 1
-        ((attempt++))
+        ((attempt++)) || true
     done
 
     DETECTION_RESULTS["health"]="FAIL:$E010"

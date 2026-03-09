@@ -55,7 +55,7 @@ retry() {
         fi
         echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
         sleep $delay
-        ((n++))
+        ((n++)) || true
     done
 }
 

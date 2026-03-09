@@ -54,17 +54,17 @@ setup_sudo() {
 
 pass() {
     echo -e "${GREEN}✓ PASS${NC}: $1"
-    ((PASS++))
+    ((PASS++)) || true
 }
 
 fail() {
     echo -e "${RED}✗ FAIL${NC}: $1"
-    ((FAIL++))
+    ((FAIL++)) || true
 }
 
 warn() {
     echo -e "${YELLOW}⚠ WARN${NC}: $1"
-    ((WARN++))
+    ((WARN++)) || true
 }
 
 info() {

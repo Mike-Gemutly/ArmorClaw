@@ -36,17 +36,17 @@ log_info() {
 
 log_success() {
     echo -e "${GREEN}[PASS]${NC} $1"
-    ((PASS_COUNT++))
+    ((PASS_COUNT++)) || true
 }
 
 log_fail() {
     echo -e "${RED}[FAIL]${NC} $1"
-    ((FAIL_COUNT++))
+    ((FAIL_COUNT++)) || true
 }
 
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
-    ((WARN_COUNT++))
+    ((WARN_COUNT++)) || true
 }
 
 check_test() {
@@ -57,11 +57,11 @@ check_test() {
 
     if eval "$command" &>/dev/null; then
         echo -e "${GREEN}PASS${NC}"
-        ((PASS_COUNT++))
+        ((PASS_COUNT++)) || true
         return 0
     else
         echo -e "${RED}FAIL${NC}"
-        ((FAIL_COUNT++))
+        ((FAIL_COUNT++)) || true
         return 1
     fi
 }
