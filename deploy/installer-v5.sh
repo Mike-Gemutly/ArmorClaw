@@ -293,6 +293,7 @@ download_script() {
 ########################################
 
 run_setup() {
+  export REPO VERSION
   export ARMORCLAW_API_KEY ARMORCLAW_ADMIN_USERNAME ARMORCLAW_ADMIN_PASSWORD
   export DOCKER_COMPOSE CONDUIT_VERSION CONDUIT_IMAGE
 

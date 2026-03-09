@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # ArmorClaw Bootstrap Installer (Stage-0)
-# Version: 1.4.0
+# Version: 1.4.1
 # Purpose: Environment check, integrity/authenticity verification, Stage-1 exec.
 # =============================================================================
 

@@ -34,6 +34,7 @@ readonly BRIDGE_SOCKET="/run/armorclaw/bridge.sock"
 readonly BRIDGE_DEFAULT_PORT=9000
 readonly SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
 readonly REPO="Gemutly/ArmorClaw"
+readonly VERSION="${VERSION:-main}"
 
 # Release URLs
 readonly RELEASE_BASE_URL="https://github.com/${REPO}/releases/download"

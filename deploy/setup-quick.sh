@@ -18,6 +18,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Global variables
+REPO="Gemutly/ArmorClaw"
+VERSION="${VERSION:-main}"
 CONFIG_DIR="/etc/armorclaw"
 DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"

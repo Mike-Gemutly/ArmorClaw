@@ -16,11 +16,15 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Global variables
+REPO="Gemutly/ArmorClaw"
+VERSION="${VERSION:-main}"
 CONFIG_DIR="/etc/armorclaw"
 DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"
 SOCKET_PATH="$RUN_DIR/bridge.sock"
 LOG_FILE="/var/log/armorclaw-setup.log"
+INSTALL_DIR="/opt/armorclaw"
+SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
 
 # Setup mode (quick/standard/expert)
 SETUP_MODE="standard"
