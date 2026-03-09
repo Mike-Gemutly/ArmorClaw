@@ -1,362 +1,120 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ArmorClaw Production-Grade Installer
-# Version: 1.0.0
-# Idempotent: Yes
-# Safe to re-run: Yes
-# =============================================================================
-#
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | INSTALL_MODE=matrix bash
-#   curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | VERSION=v4.6.0 bash
-#
-# Environment Variables:
-#   VERSION         - GitHub release tag (default: main)
-#   INSTALL_MODE    - quick | matrix (default: quick)
-#   ARMORCLAW_API_KEY - AI provider API key
-#   ARMORCLAW_ADMIN_USERNAME - Custom admin username
+# ArmorClaw Bootstrap Installer (Stage-0)
+# Version: 1.4.0
+# Purpose: Environment check, integrity/authenticity verification, Stage-1 exec.
 # =============================================================================
 
 set -euo pipefail
 
+# Configuration
+REPO="Gemutly/ArmorClaw"
+VERSION="${VERSION:-main}"
+INSTALLER="installer-v5.sh"
+BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/deploy"
+SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
+
 # Colors for output
+CYAN='\033[0;36m'
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-########################################
-# Helpers
-########################################
-
-print_header() {
-    clear 2>/dev/null || true
-    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}            ${BOLD}ArmorClaw Installer${NC}                             ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}            ${BOLD}Version: ${VERSION}${NC}                                  ${CYAN}║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-}
-
-print_step() {
-    echo -e "\n${BLUE}▶${NC} ${BOLD}$1${NC}"
-    echo -e "${BLUE}  ─────────────────────────────────────${NC}"
-}
-
-print_success() {
-    echo -e "  ${GREEN}✓${NC} $1"
-}
-
-print_error() {
-    echo -e "  ${RED}✗${NC} ${BOLD}ERROR:${NC} $1" >&2
-}
-
-print_warning() {
-    echo -e "  ${YELLOW}⚠${NC} $1"
-}
-
-print_info() {
-    echo -e "  ${CYAN}ℹ${NC} $1"
-}
-
-print_done() {
-    echo -e "  ${GREEN}✓${NC} $1"
-}
-
-show_spinner() {
-    local pid=$1
-    local message="$2"
-    local spin='-\|/'
-    local i=0
-    while kill -0 "$pid" 2>/dev/null; do
-        i=$(( (i+1) % 4 ))
-        printf "\r  ${YELLOW}⏳${NC} $message... ${spin:$i:1}"
-        sleep .2
+# Helper: Retry logic for network operations
+retry() {
+    local n=1
+    local max=3
+    local delay=2
+    while true; do
+        "$@" && return 0
+        if (( n == max )); then
+            return 1
+        fi
+        echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
+        sleep $delay
+        ((n++))
     done
-    printf "\r"
 }
 
-log() {
-  print_info "$*"
-}
+echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║${NC}            ${BOLD}ArmorClaw Bootstrap Loader${NC}                      ${CYAN}║${NC}"
+echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
 
-fail() {
-  print_error "$*"
-  exit 1
-}
-
-command_exists() {
-  command -v "$1" >/dev/null 2>&1
-}
-
-########################################
-# Configuration
-########################################
-
-REPO="Gemutly/ArmorClaw"
-VERSION="${VERSION:-main}"
-INSTALL_MODE="${INSTALL_MODE:-quick}"
-
-BASE_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/deploy"
-
-LOG_DIR="/var/log/armorclaw"
-LOG_FILE="${LOG_DIR}/install.log"
-LOCKFILE="/tmp/armorclaw-install.lock"
-
-CONDUIT_VERSION="${CONDUIT_VERSION:-latest}"
-CONDUIT_IMAGE="${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:$CONDUIT_VERSION}"
-INSTALLER_VERSION="2.0"
-
-########################################
-# Prerequisite Checks
-########################################
-
-check_prereqs() {
-    command -v flock >/dev/null 2>&1 || {
-        echo "ERROR: flock not installed" >&2
+# 1. Tool Verification
+echo "[armorclaw] Verifying local environment..."
+REQUIRED_TOOLS=(curl sha256sum gpg mktemp)
+for tool in "${REQUIRED_TOOLS[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo -e "${RED}ERROR:${NC} '$tool' is required but not installed."
         exit 1
-    }
-
-    command -v docker >/dev/null 2>&1 || {
-        # Docker might be installed later, but we need curl at least
-        command -v curl >/dev/null 2>&1 || {
-            echo "ERROR: curl not installed" >&2
-            exit 1
-        }
-    }
-
-    command -v tee >/dev/null 2>&1 || {
-        echo "ERROR: tee not installed" >&2
-        exit 1
-    }
-}
-
-########################################
-# Docker Compose Detection
-########################################
-
-detect_docker_compose() {
-    if docker compose version >/dev/null 2>&1; then
-        DOCKER_COMPOSE="docker compose"
-    elif command -v docker-compose >/dev/null 2>&1; then
-        DOCKER_COMPOSE="docker-compose"
-    else
-        DOCKER_COMPOSE="docker compose" # Fallback/Assumption
     fi
-    export DOCKER_COMPOSE
+done
+
+# 2. Workspace Setup
+TMP_DIR=$(mktemp -d)
+INSTALL_PATH="$TMP_DIR/$INSTALLER"
+CHECKSUM_PATH="$TMP_DIR/$INSTALLER.sha256"
+SIG_PATH="$TMP_DIR/$INSTALLER.sig"
+KEY_PATH="$TMP_DIR/armorclaw-signing-key.asc"
+GNUPGHOME="$TMP_DIR/gnupg"
+
+cleanup() {
+    rm -rf "$TMP_DIR"
 }
+trap cleanup EXIT
 
-########################################
-# Detect OS
-########################################
+# 3. Download Components (with TLS pinning and atomic moving)
+echo "[armorclaw] Downloading components ($VERSION)..."
+# Force modern TLS, HTTPS only, and strict error handling
+CURL_BASE="curl --proto =https --tlsv1.2 --fail --silent --show-error --location"
 
-detect_os() {
-  case "$(uname -s)" in
-    Linux*)   OS="linux" ;;
-    Darwin*)  OS="darwin" ;;
-    *) fail "Unsupported OS: $(uname -s)" ;;
-  esac
-  print_done "OS: $OS"
-}
+retry $CURL_BASE "$BASE_URL/$INSTALLER" -o "$INSTALL_PATH.tmp" && mv "$INSTALL_PATH.tmp" "$INSTALL_PATH"
+retry $CURL_BASE "$BASE_URL/$INSTALLER.sha256" -o "$CHECKSUM_PATH.tmp" && mv "$CHECKSUM_PATH.tmp" "$CHECKSUM_PATH"
+retry $CURL_BASE "$BASE_URL/$INSTALLER.sig" -o "$SIG_PATH.tmp" && mv "$SIG_PATH.tmp" "$SIG_PATH"
+retry $CURL_BASE "$BASE_URL/armorclaw-signing-key.asc" -o "$KEY_PATH.tmp" && mv "$KEY_PATH.tmp" "$KEY_PATH"
 
-########################################
-# Detect Architecture
-########################################
+# 4. Verify Integrity (SHA256)
+echo "[armorclaw] Verifying installer integrity..."
+EXPECTED=$(cut -d ' ' -f1 "$CHECKSUM_PATH")
+ACTUAL=$(sha256sum "$INSTALL_PATH" | awk '{print $1}')
 
-detect_arch() {
-  case "$(uname -m)" in
-    x86_64 | amd64) ARCH="amd64" ;;
-    arm64 | aarch64) ARCH="arm64" ;;
-    *) fail "Unsupported architecture: $(uname -m)" ;;
-  esac
-  print_done "Arch: $ARCH"
-}
-
-########################################
-# Sudo Handling
-########################################
-
-setup_sudo() {
-  if [ "$(id -u)" -eq 0 ]; then
-    SUDO=""
-    print_done "Running as root"
-  else
-    if command_exists sudo; then
-      SUDO="sudo"
-      print_done "Using sudo for privileged operations"
-    else
-      fail "This installer requires root or sudo."
-    fi
-  fi
-}
-
-########################################
-# Check Dependencies
-########################################
-
-check_dependencies() {
-  if ! command_exists curl; then
-    fail "curl is required but not installed."
-  fi
-  print_done "Dependencies checked"
-}
-
-########################################
-# Docker Install (optional)
-########################################
-
-ensure_docker() {
-  print_step "Checking Docker Environment"
-  if command_exists docker; then
-    print_done "Docker already installed"
-    return
-  fi
-
-  print_info "Docker not found. Installing..."
-
-  # Check if running interactively
-  if [ -t 0 ] || [ -c /dev/tty ]; then
-    echo -ne "  ${CYAN}Install Docker automatically? [Y/n]${NC}: "
-    read -r ans < /dev/tty
-    ans=${ans:-Y}
-  else
-    ans="Y"
-    print_info "Non-interactive mode: auto-installing Docker"
-  fi
-
-  if [[ "$ans" =~ ^[Yy]$ ]]; then
-    curl -fsSL https://get.docker.com | sh >/var/log/armorclaw-docker-install.log 2>&1 &
-    show_spinner $! "Installing Docker"
-    wait $!
-    
-    $SUDO systemctl enable docker >/dev/null 2>&1 || true
-    $SUDO systemctl start docker >/dev/null 2>&1 || true
-    print_success "Docker installed successfully"
-    wait_for_docker
-  else
-    fail "Docker is required. Install Docker manually and try again."
-  fi
-}
-
-########################################
-# Temp Workspace
-########################################
-
-wait_for_docker() {
-  print_info "Waiting for Docker daemon..."
-  for ((i=1;i<=10;i++)); do
-    if docker info >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
-      print_done "Docker daemon ready"
-      return 0
-    fi
-    sleep 2
-  done
-  fail "Docker failed to start within 20 seconds"
-}
-
-create_workspace() {
-  WORK_DIR=$(mktemp -d)
-  print_info "Created temp workspace: $WORK_DIR"
-
-  cleanup() {
-    rm -rf "$WORK_DIR"
-    print_info "Cleaned up temp workspace"
-  }
-
-  trap cleanup EXIT
-}
-
-########################################
-# Download Script
-########################################
-
-download_script() {
-  local file="$1"
-  local url="${BASE_URL}/${file}"
-  local dest="${WORK_DIR}/${file}"
-
-  curl -fsSL "$url" -o "$dest" >/dev/null 2>&1 &
-  show_spinner $! "Downloading ${file}"
-  wait $!
-
-  if [[ $? -ne 0 ]]; then
-      fail "Failed downloading ${file}"
-  fi
-
-  chmod +x "$dest"
-}
-
-########################################
-# Run Setup Script
-########################################
-
-run_setup() {
-  export ARMORCLAW_API_KEY ARMORCLAW_ADMIN_USERNAME ARMORCLAW_ADMIN_PASSWORD
-  export DOCKER_COMPOSE CONDUIT_VERSION CONDUIT_IMAGE
-
-  case "$INSTALL_MODE" in
-    quick)
-      download_script setup-quick.sh
-      print_step "Running Quickstart Setup"
-      exec bash "$WORK_DIR/setup-quick.sh" "$@"
-      ;;
-    matrix)
-      download_script setup-matrix.sh
-      print_step "Running Matrix Setup"
-      exec bash "$WORK_DIR/setup-matrix.sh" "$@"
-      ;;
-    *)
-      fail "Unknown INSTALL_MODE: $INSTALL_MODE. Use 'quick' or 'matrix'"
-      ;;
-  esac
-}
-
-########################################
-# Main
-########################################
-
-main() {
-  check_prereqs
-  detect_docker_compose
-
-  # Start installer logic
-  exec 200>"$LOCKFILE"
-  flock -n 200 || {
-    echo "ERROR: installer already running" >&2
+if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+    echo -e "${RED}ERROR: SHA256 checksum mismatch!${NC}"
     exit 1
-  }
-  
-  # Setup logging
-  mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp/armorclaw"
-  LOG_FILE="${LOG_DIR}/install.log"
-  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+echo -e "  ${GREEN}✓ Checksum OK${NC}"
 
-  print_header
+# 5. Verify Authenticity (GPG)
+echo "[armorclaw] Verifying GPG signature..."
+mkdir -p "$GNUPGHOME"
+chmod 700 "$GNUPGHOME"
 
-  print_info "ArmorClaw installer started"
-  print_info "Version: $INSTALLER_VERSION"
-  print_info "Log file: $LOG_FILE"
-  print_info "Detected Docker: $(docker --version 2>/dev/null || echo unavailable)"
-  print_info "Conduit image: $CONDUIT_IMAGE"
+# Import key to temporary keyring
+gpg --homedir "$GNUPGHOME" --batch --import "$KEY_PATH" >/dev/null 2>&1
 
-  print_step "System Discovery"
-  detect_os
-  detect_arch
-  setup_sudo
-  check_dependencies
+# Verify fingerprint to prevent key replacement attacks
+FPR_CHECK=$(gpg --homedir "$GNUPGHOME" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
+if [[ "$FPR_CHECK" != "$SIGNING_KEY_FPR" ]]; then
+    echo -e "${RED}ERROR: Unauthorized signing key detected!${NC}"
+    echo "Expected: $SIGNING_KEY_FPR"
+    echo "Actual:   $FPR_CHECK"
+    exit 1
+fi
 
-  create_workspace
+# Verify signature
+if ! gpg --homedir "$GNUPGHOME" --batch --verify "$SIG_PATH" "$INSTALL_PATH" >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: GPG signature verification failed!${NC}"
+    exit 1
+fi
+echo -e "  ${GREEN}✓ Signature Verified (ArmorClaw Release Signer)${NC}"
 
-  ensure_docker
+# 6. Execute Stage-1
+chmod +x "$INSTALL_PATH"
+echo ""
+echo "[armorclaw] Launching Stage-1 installer..."
+echo ""
 
-  run_setup
-
-  print_step "Installation Result"
-  print_success "Installation complete!"
-}
-
-main "$@"
+# We use exec so that the Stage-1 installer takes over the PID
+exec "$INSTALL_PATH" "$@"

@@ -23,6 +23,29 @@ BACKUP_DIR="${1:-.}"
 # Helper Functions
 #=============================================================================
 
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
+# Determine sudo usage
+setup_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            print_info "Sudo detected (elevation will be used when needed)"
+        else
+            print_warning "Some files may not be readable without root or sudo access."
+            SUDO=""
+        fi
+    else
+        SUDO=""
+        print_warning "Running as root is not recommended. Consider running as a normal user."
+    fi
+}
+
 print_success() {
     echo -e "${GREEN}✓ $1${NC}"
 }
@@ -61,8 +84,8 @@ create_backup() {
     local items_backed_up=0
 
     # Backup configuration
-    if [ -f "$CONFIG_DIR/config.toml" ]; then
-        cp "$CONFIG_DIR/config.toml" "$temp_dir/armorclaw-backup/config/"
+    if $SUDO [ -f "$CONFIG_DIR/config.toml" ]; then
+        $SUDO cp "$CONFIG_DIR/config.toml" "$temp_dir/armorclaw-backup/config/"
         print_success "Configuration file backed up"
         ((items_backed_up++))
     else
@@ -71,7 +94,7 @@ create_backup() {
 
     # Backup keystore structure (not the encrypted data - that's hardware-bound)
     # We backup the schema/structure info for reference
-    if [ -f "$DATA_DIR/keystore.db" ]; then
+    if $SUDO [ -f "$DATA_DIR/keystore.db" ]; then
         # Create a metadata file about the keystore
         cat > "$temp_dir/armorclaw-backup/keystore/keystore-info.json" <<EOF
 {
@@ -86,9 +109,9 @@ EOF
     fi
 
     # Backup agent configurations
-    if [ -d "$DATA_DIR/agent-configs" ] && [ "$(ls -A $DATA_DIR/agent-configs 2>/dev/null)" ]; then
-        cp -r "$DATA_DIR/agent-configs/"* "$temp_dir/armorclaw-backup/agent-configs/" 2>/dev/null || true
-        local config_count=$(find "$temp_dir/armorclaw-backup/agent-configs" -name "*.json" | wc -l)
+    if $SUDO [ -d "$DATA_DIR/agent-configs" ] && [ "$($SUDO ls -A $DATA_DIR/agent-configs 2>/dev/null)" ]; then
+        $SUDO cp -r "$DATA_DIR/agent-configs/"* "$temp_dir/armorclaw-backup/agent-configs/" 2>/dev/null || true
+        local config_count=$($SUDO find "$temp_dir/armorclaw-backup/agent-configs" -name "*.json" | wc -l)
         print_success "Agent configurations backed up ($config_count files)"
         ((items_backed_up++))
     else
@@ -96,8 +119,8 @@ EOF
     fi
 
     # Backup Matrix session data
-    if [ -d "$DATA_DIR/matrix" ] && [ -f "$DATA_DIR/matrix/session.json" ]; then
-        cp "$DATA_DIR/matrix/session.json" "$temp_dir/armorclaw-backup/matrix/" 2>/dev/null || true
+    if $SUDO [ -d "$DATA_DIR/matrix" ] && $SUDO [ -f "$DATA_DIR/matrix/session.json" ]; then
+        $SUDO cp "$DATA_DIR/matrix/session.json" "$temp_dir/armorclaw-backup/matrix/" 2>/dev/null || true
         print_success "Matrix session data backed up"
         ((items_backed_up++))
     else
@@ -222,22 +245,17 @@ usage() {
 # Main
 #=============================================================================
 
+setup_sudo
+
 # Check for help flag
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     usage
     exit 0
 fi
 
-# Check if running as root (needed to read config files)
-if [ "$EUID" -ne 0 ]; then
-    print_warning "Some files may not be readable without root access"
-    print_info "Run with sudo for complete backup"
-    echo ""
-fi
-
 # Create output directory if needed
 if [ ! -d "$BACKUP_DIR" ]; then
-    mkdir -p "$BACKUP_DIR"
+    $SUDO mkdir -p "$BACKUP_DIR"
 fi
 
 create_backup

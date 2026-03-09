@@ -24,12 +24,16 @@ RUN_DIR="/run/armorclaw"
 SOCKET_PATH="$RUN_DIR/bridge.sock"
 LOG_FILE="/var/log/armorclaw-setup.log"
 INSTALL_DIR="/opt/armorclaw"
+SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
 
 # Non-interactive mode
 NON_INTERACTIVE=false
 if [[ "${1:-}" == "--non-interactive" || "${1:-}" == "-y" ]]; then
     NON_INTERACTIVE=true
 fi
+
+# Prefer binary distribution
+USE_BINARY="${USE_BINARY:-true}"
 
 # Smart defaults for quick setup
 DEFAULT_LOG_LEVEL="info"
@@ -42,6 +46,126 @@ DEFAULT_MATRIX_ENABLED="false"
 #=============================================================================
 # Helper Functions
 #=============================================================================
+
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
+# Helper: Retry logic for network operations
+retry() {
+    local n=1
+    local max=3
+    local delay=2
+    while true; do
+        "$@" && return 0
+        if (( n == max )); then
+            return 1
+        fi
+        echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
+        sleep $delay
+        ((n++))
+    done
+}
+
+detect_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) BIN_ARCH="linux-amd64" ;;
+        aarch64|arm64) BIN_ARCH="linux-arm64" ;;
+        *)
+            print_warning "Unsupported architecture for binary distribution: $arch"
+            BIN_ARCH=""
+            ;;
+    esac
+}
+
+download_binary() {
+    if [[ -z "$BIN_ARCH" ]]; then
+        return 1
+    fi
+
+    local bin_name="armorclaw-bridge-$BIN_ARCH"
+    local base_url="https://github.com/$REPO/releases/download/$VERSION"
+    
+    # Fallback to main branch for testing if VERSION is main
+    if [[ "$VERSION" == "main" ]]; then
+        base_url="https://raw.githubusercontent.com/$REPO/main/build"
+    fi
+
+    print_info "Downloading prebuilt binary: $bin_name"
+    
+    local tmp_dir=$(mktemp -d)
+    local bin_path="$tmp_dir/$bin_name"
+    local checksum_path="$tmp_dir/checksums.txt"
+    local sig_path="$tmp_dir/checksums.txt.sig"
+    local key_path="$tmp_dir/armorclaw-signing-key.asc"
+    
+    # Use strict curl flags
+    local curl_base="curl --proto =https --tlsv1.2 --fail --silent --show-error --location"
+
+    if ! retry $curl_base "$base_url/$bin_name" -o "$bin_path"; then
+        print_warning "Failed to download binary"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    if ! retry $curl_base "$base_url/checksums.txt" -o "$checksum_path"; then
+        print_warning "Failed to download checksums"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    if ! retry $curl_base "$base_url/checksums.txt.sig" -o "$sig_path"; then
+        print_warning "Failed to download signature"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    retry $curl_base "https://raw.githubusercontent.com/$REPO/main/deploy/armorclaw-signing-key.asc" -o "$key_path"
+
+    # Verify Checksum
+    print_info "Verifying binary checksum..."
+    if ! grep "$bin_name" "$checksum_path" | (cd "$tmp_dir" && sha256sum -c - >/dev/null 2>&1); then
+        print_error "Binary checksum verification failed!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    print_done "Checksum OK"
+
+    # Verify Signature
+    print_info "Verifying release signature..."
+    local gnupg_home="$tmp_dir/gnupg"
+    mkdir -p "$gnupg_home"
+    chmod 700 "$gnupg_home"
+    
+    gpg --homedir "$gnupg_home" --batch --import "$key_path" >/dev/null 2>&1
+    
+    # Verify fingerprint
+    local fpr_check=$(gpg --homedir "$gnupg_home" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
+    if [[ "$fpr_check" != "$SIGNING_KEY_FPR" ]]; then
+        print_error "Unauthorized signing key detected!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! gpg --homedir "$gnupg_home" --batch --verify "$sig_path" "$checksum_path" >/dev/null 2>&1; then
+        print_error "GPG signature verification failed for checksums.txt!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    print_done "Signature Verified"
+
+    # Move to final location
+    $SUDO mkdir -p "$INSTALL_DIR"
+    $SUDO install -m 755 "$bin_path" "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO ln -sf "$INSTALL_DIR/armorclaw-bridge" /usr/local/bin/armorclaw-bridge
+    
+    rm -rf "$tmp_dir"
+    return 0
+}
 
 print_header() {
     clear 2>/dev/null || true
@@ -98,7 +222,7 @@ fail() {
 ensure_error_store_config() {
     local config_file="${CONFIG_DIR}/config.toml"
 
-    mkdir -p "$CONFIG_DIR"
+    $SUDO mkdir -p "$CONFIG_DIR"
     touch "$config_file"
 
     if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
@@ -120,7 +244,7 @@ prompt_yes_no() {
 
     echo ""
     echo -ne "  ${CYAN}$prompt [${default^^}/$(echo $default | tr 'yn' 'ny')]${NC}: "
-    read -r response < /dev/tty
+    prompt_read -r response
     response=${response:-$default}
 
     case "$response" in
@@ -151,12 +275,19 @@ check_prerequisites() {
 
     local errors=0
 
-    # Check for sudo/root
+    # Determine sudo usage
     if [[ $EUID -ne 0 ]]; then
-        print_error "This script must be run as root (use sudo)"
-        exit 1
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            print_done "Sudo detected (elevation will be used when needed)"
+        else
+            print_error "This script requires root privileges or sudo to be installed."
+            exit 1
+        fi
+    else
+        SUDO=""
+        print_warning "Running as root is not recommended. Consider running as a normal user."
     fi
-    print_done "Running as root"
 
     # Check OS
     if [[ -f /etc/os-release ]]; then
@@ -218,17 +349,30 @@ install_bridge() {
         print_done "Bridge already installed at $INSTALL_DIR/armorclaw-bridge"
 
         if ! $NON_INTERACTIVE && prompt_yes_no "Reinstall bridge?" "n"; then
-            rm -f "$INSTALL_DIR/armorclaw-bridge"
+            $SUDO rm -f "$INSTALL_DIR/armorclaw-bridge"
         else
             return 0
+        fi
+    fi
+
+    # Try binary install first if enabled
+    if [[ "${USE_BINARY:-true}" == "true" ]]; then
+        detect_arch
+        if [[ -n "$BIN_ARCH" ]]; then
+            if download_binary; then
+                print_success "Bridge installed via binary distribution"
+                return 0
+            else
+                print_warning "Binary installation failed, falling back to source build"
+            fi
         fi
     fi
 
     # Check for dependencies
     if ! command -v go &>/dev/null || ! command -v git &>/dev/null || ! command -v gcc &>/dev/null; then
         print_info "Installing dependencies (Go, Git, Build-essential)..."
-        apt-get update -qq
-        apt-get install -y -qq golang-go git build-essential
+        $SUDO apt-get update -qq
+        $SUDO apt-get install -y -qq golang-go git build-essential
     fi
 
     local go_version=$(go version | awk '{print $3}')
@@ -236,6 +380,7 @@ install_bridge() {
 
     # Build bridge
     print_info "Building bridge from source..."
+
 
     local build_dir="/tmp/armorclaw-src"
     rm -rf "$build_dir"
@@ -261,10 +406,10 @@ install_bridge() {
     fi
 
     # Install to system location
-    mkdir -p "$INSTALL_DIR"
-    mv armorclaw-bridge "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/armorclaw-bridge"
-    ln -sf "$INSTALL_DIR/armorclaw-bridge" /usr/local/bin/armorclaw-bridge
+    $SUDO mkdir -p "$INSTALL_DIR"
+    $SUDO mv armorclaw-bridge "$INSTALL_DIR/"
+    $SUDO chmod +x "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO ln -sf "$INSTALL_DIR/armorclaw-bridge" /usr/local/bin/armorclaw-bridge
 
     print_success "Bridge installed to $INSTALL_DIR/armorclaw-bridge"
 }
@@ -279,7 +424,7 @@ create_user() {
     if id "armorclaw" &>/dev/null; then
         print_done "User 'armorclaw' already exists"
     else
-        useradd -r -s /bin/false -d "$DATA_DIR" armorclaw
+        $SUDO useradd -r -s /bin/false -d "$DATA_DIR" armorclaw
         print_done "User 'armorclaw' created"
     fi
 }
@@ -292,15 +437,15 @@ generate_config() {
     print_step "Generating configuration..."
 
     # Ensure armorclaw user exists
-    id -u armorclaw >/dev/null 2>&1 || useradd --system --no-create-home --shell /bin/false armorclaw
+    id -u armorclaw >/dev/null 2>&1 || $SUDO useradd --system --no-create-home --shell /bin/false armorclaw
 
     # Create directories
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$DATA_DIR"
-    mkdir -p "$RUN_DIR"
-    chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
-    chmod 700 "$DATA_DIR"
-    chmod 770 "$RUN_DIR"
+    $SUDO mkdir -p "$CONFIG_DIR"
+    $SUDO mkdir -p "$DATA_DIR"
+    $SUDO mkdir -p "$RUN_DIR"
+    $SUDO chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
+    $SUDO chmod 700 "$DATA_DIR"
+    $SUDO chmod 770 "$RUN_DIR"
 
     local config_file="$CONFIG_DIR/config.toml"
 
@@ -376,8 +521,8 @@ EOF
     # Ensure error store path to config (idempotent)
     ensure_error_store_config
 
-    chown armorclaw:armorclaw "$config_file"
-    chmod 640 "$config_file"
+    $SUDO chown armorclaw:armorclaw "$config_file"
+    $SUDO chmod 640 "$config_file"
 
     # Config sanity check
     grep -q "store_path" "$config_file" || echo "Warning: errors.store_path not configured"
@@ -418,7 +563,7 @@ setup_systemd() {
 
     local service_file="/etc/systemd/system/armorclaw-bridge.service"
 
-    cat > "$service_file" <<EOF
+    $SUDO tee "$service_file" > /dev/null <<EOF
 [Unit]
 Description=ArmorClaw Bridge Service
 After=network-online.target docker.service
@@ -458,7 +603,7 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
+    $SUDO systemctl daemon-reload
     print_done "Systemd service configured"
 }
 
@@ -470,7 +615,7 @@ start_bridge() {
     print_step "Starting bridge..."
 
     # Start service
-    if systemctl start armorclaw-bridge; then
+    if $SUDO systemctl start armorclaw-bridge; then
         print_done "Bridge service started"
     else
         fail "Failed to start bridge service"
@@ -551,7 +696,7 @@ prompt_api_key() {
 
     echo ""
     echo -ne "  ${CYAN}Provider (openai/anthropic/openrouter/google/xai):${NC} "
-    read -r provider < /dev/tty
+    prompt_read -r provider
 
     if [[ -z "$provider" ]]; then
         print_info "No provider specified, skipping API key setup"
@@ -559,7 +704,7 @@ prompt_api_key() {
     fi
 
     echo -ne "  ${CYAN}API Key:${NC} "
-    read -s key_token < /dev/tty
+    prompt_read -s key_token
     echo ""
 
     if [[ -z "$key_token" ]]; then

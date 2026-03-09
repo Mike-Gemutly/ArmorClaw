@@ -66,7 +66,11 @@ if [ -z "$SHARED_SECRET" ]; then
     echo "  5. Run this script again"
     echo "  6. REMOVE the line from conduit.toml and restart Conduit"
     echo ""
-    read -p "Enter shared secret (or press Enter to exit): " SHARED_SECRET
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read -p "Enter shared secret (or press Enter to exit): " SHARED_SECRET < /dev/tty
+    else
+        SHARED_SECRET=""
+    fi
     if [ -z "$SHARED_SECRET" ]; then
         exit 1
     fi
@@ -75,7 +79,11 @@ fi
 # Get username if not provided
 if [ -z "$USERNAME" ]; then
     echo ""
-    read -p "Username [admin]: " USERNAME
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read -p "Username [admin]: " USERNAME < /dev/tty
+    else
+        USERNAME="admin"
+    fi
     USERNAME="${USERNAME:-admin}"
 fi
 
@@ -86,7 +94,12 @@ if [ -z "$PASSWORD" ]; then
     echo ""
 
     while true; do
-        read -s -p "Enter password (min 8 chars): " PASSWORD
+        if [ -t 0 ] || [ -c /dev/tty ]; then
+            read -s -p "Enter password (min 8 chars): " PASSWORD < /dev/tty
+        else
+            echo "Error: Password required in non-interactive mode"
+            exit 1
+        fi
         echo ""
 
         if [ ${#PASSWORD} -lt 8 ]; then
@@ -94,7 +107,9 @@ if [ -z "$PASSWORD" ]; then
             continue
         fi
 
-        read -s -p "Confirm password: " PASSWORD_CONFIRM
+        if [ -t 0 ] || [ -c /dev/tty ]; then
+            read -s -p "Confirm password: " PASSWORD_CONFIRM < /dev/tty
+        fi
         echo ""
 
         if [ "$PASSWORD" != "$PASSWORD_CONFIRM" ]; then

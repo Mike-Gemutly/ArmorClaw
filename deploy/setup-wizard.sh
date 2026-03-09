@@ -40,6 +40,126 @@ REQUIRED_COMMANDS=("docker" "docker compose" "go" "tar" "systemctl")
 # Helper Functions
 #=============================================================================
 
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
+# Helper: Retry logic for network operations
+retry() {
+    local n=1
+    local max=3
+    local delay=2
+    while true; do
+        "$@" && return 0
+        if (( n == max )); then
+            return 1
+        fi
+        echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
+        sleep $delay
+        ((n++))
+    done
+}
+
+detect_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) BIN_ARCH="linux-amd64" ;;
+        aarch64|arm64) BIN_ARCH="linux-arm64" ;;
+        *)
+            print_warning "Unsupported architecture for binary distribution: $arch"
+            BIN_ARCH=""
+            ;;
+    esac
+}
+
+download_binary() {
+    if [[ -z "$BIN_ARCH" ]]; then
+        return 1
+    fi
+
+    local bin_name="armorclaw-bridge-$BIN_ARCH"
+    local base_url="https://github.com/$REPO/releases/download/$VERSION"
+    
+    # Fallback to main branch for testing if VERSION is main
+    if [[ "$VERSION" == "main" ]]; then
+        base_url="https://raw.githubusercontent.com/$REPO/main/build"
+    fi
+
+    print_info "Downloading prebuilt binary: $bin_name"
+    
+    local tmp_dir=$(mktemp -d)
+    local bin_path="$tmp_dir/$bin_name"
+    local checksum_path="$tmp_dir/checksums.txt"
+    local sig_path="$tmp_dir/checksums.txt.sig"
+    local key_path="$tmp_dir/armorclaw-signing-key.asc"
+    
+    # Use strict curl flags
+    local curl_base="curl --proto =https --tlsv1.2 --fail --silent --show-error --location"
+
+    if ! retry $curl_base "$base_url/$bin_name" -o "$bin_path"; then
+        print_warning "Failed to download binary"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    if ! retry $curl_base "$base_url/checksums.txt" -o "$checksum_path"; then
+        print_warning "Failed to download checksums"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    if ! retry $curl_base "$base_url/checksums.txt.sig" -o "$sig_path"; then
+        print_warning "Failed to download signature"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    retry $curl_base "https://raw.githubusercontent.com/$REPO/main/deploy/armorclaw-signing-key.asc" -o "$key_path"
+
+    # Verify Checksum
+    print_info "Verifying binary checksum..."
+    if ! grep "$bin_name" "$checksum_path" | (cd "$tmp_dir" && sha256sum -c - >/dev/null 2>&1); then
+        print_error "Binary checksum verification failed!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    print_done "Checksum OK"
+
+    # Verify Signature
+    print_info "Verifying release signature..."
+    local gnupg_home="$tmp_dir/gnupg"
+    mkdir -p "$gnupg_home"
+    chmod 700 "$gnupg_home"
+    
+    gpg --homedir "$gnupg_home" --batch --import "$key_path" >/dev/null 2>&1
+    
+    # Verify fingerprint
+    local fpr_check=$(gpg --homedir "$gnupg_home" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
+    if [[ "$fpr_check" != "$SIGNING_KEY_FPR" ]]; then
+        print_error "Unauthorized signing key detected!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! gpg --homedir "$gnupg_home" --batch --verify "$sig_path" "$checksum_path" >/dev/null 2>&1; then
+        print_error "GPG signature verification failed for checksums.txt!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    print_done "Signature Verified"
+
+    # Move to final location
+    $SUDO mkdir -p "$INSTALL_DIR"
+    $SUDO install -m 755 "$bin_path" "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO ln -sf "$INSTALL_DIR/armorclaw-bridge" /usr/local/bin/armorclaw-bridge
+    
+    rm -rf "$tmp_dir"
+    return 0
+}
+
 print_header() {
     echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║${NC}        ${BOLD}ArmorClaw Setup Wizard${NC}                      ${CYAN}║${NC}"
@@ -83,7 +203,7 @@ prompt_yes_no() {
             echo -ne "${CYAN}$prompt [y/N]: ${NC}"
         fi
 
-        read -r response < /dev/tty
+        prompt_read -r response
         response=${response:-$default}
 
         case "$response" in
@@ -106,7 +226,7 @@ prompt_input() {
         echo -ne "${CYAN}$prompt: ${NC}"
     fi
 
-    read -r result < /dev/tty
+    prompt_read -r result
     echo "${result:-$default}"
 }
 
@@ -116,9 +236,9 @@ prompt_password() {
     local confirm
 
     while true; do
-        read -s -p "$prompt: " password < /dev/tty
+        prompt_read -s -p "$prompt: " password
         echo
-        read -s -p "Confirm: " confirm < /dev/tty
+        prompt_read -s -p "Confirm: " confirm
         echo
 
         if [ "$password" = "$confirm" ]; then
@@ -145,11 +265,11 @@ check_command() {
 ensure_error_store_config() {
     local config_file="${CONFIG_DIR}/config.toml"
 
-    sudo mkdir -p "$CONFIG_DIR"
-    sudo touch "$config_file"
+    $SUDO mkdir -p "$CONFIG_DIR"
+    $SUDO touch "$config_file"
 
     if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [errors]
 store_path = "$DATA_DIR/errors.db"
@@ -350,16 +470,16 @@ import_agent_settings() {
     fi
 
     # Create target directories
-    sudo mkdir -p "$CONFIG_DIR"
-    sudo mkdir -p "$DATA_DIR"
-    sudo mkdir -p "$DATA_DIR/agent-configs"
+    $SUDO mkdir -p "$CONFIG_DIR"
+    $SUDO mkdir -p "$DATA_DIR"
+    $SUDO mkdir -p "$DATA_DIR/agent-configs"
 
     # Import configuration
     if [ "$IMPORT_CONFIG" = "true" ]; then
         print_info "Importing configuration..."
-        sudo cp "$temp_dir/armorclaw-backup/config/config.toml" "$CONFIG_DIR/config.toml"
-        sudo chown armorclaw:armorclaw "$CONFIG_DIR/config.toml" 2>/dev/null || true
-        sudo chmod 640 "$CONFIG_DIR/config.toml"
+        $SUDO cp "$temp_dir/armorclaw-backup/config/config.toml" "$CONFIG_DIR/config.toml"
+        $SUDO chown armorclaw:armorclaw "$CONFIG_DIR/config.toml" 2>/dev/null || true
+        $SUDO chmod 640 "$CONFIG_DIR/config.toml"
         print_success "Configuration imported"
         SETTINGS_IMPORTED="true"
     fi
@@ -377,8 +497,8 @@ import_agent_settings() {
     # Import agent configurations
     if [ "$IMPORT_AGENT_CONFIGS" = "true" ]; then
         print_info "Importing agent configurations..."
-        sudo cp -r "$temp_dir/armorclaw-backup/agent-configs/"* "$DATA_DIR/agent-configs/" 2>/dev/null || true
-        sudo chown -R armorclaw:armorclaw "$DATA_DIR/agent-configs" 2>/dev/null || true
+        $SUDO cp -r "$temp_dir/armorclaw-backup/agent-configs/"* "$DATA_DIR/agent-configs/" 2>/dev/null || true
+        $SUDO chown -R armorclaw:armorclaw "$DATA_DIR/agent-configs" 2>/dev/null || true
         print_success "Agent configurations imported"
         SETTINGS_IMPORTED="true"
     fi
@@ -386,9 +506,9 @@ import_agent_settings() {
     # Import Matrix session (if applicable)
     if [ "$IMPORT_MATRIX" = "true" ]; then
         print_info "Importing Matrix session..."
-        sudo mkdir -p "$DATA_DIR/matrix"
-        sudo cp "$temp_dir/armorclaw-backup/matrix/session.json" "$DATA_DIR/matrix/" 2>/dev/null || true
-        sudo chown -R armorclaw:armorclaw "$DATA_DIR/matrix" 2>/dev/null || true
+        $SUDO mkdir -p "$DATA_DIR/matrix"
+        $SUDO cp "$temp_dir/armorclaw-backup/matrix/session.json" "$DATA_DIR/matrix/" 2>/dev/null || true
+        $SUDO chown -R armorclaw:armorclaw "$DATA_DIR/matrix" 2>/dev/null || true
         print_success "Matrix session imported"
         SETTINGS_IMPORTED="true"
     fi
@@ -467,8 +587,8 @@ EOF
     # Check for unzip command
     if ! check_command unzip; then
         print_info "Installing unzip for backup import support..."
-        sudo apt-get update -qq && sudo apt-get install -y -qq unzip 2>/dev/null || \
-        sudo yum install -y -q unzip 2>/dev/null || \
+        $SUDO apt-get update -qq && sudo apt-get install -y -qq unzip 2>/dev/null || \
+        $SUDO yum install -y -q unzip 2>/dev/null || \
         print_warning "Could not install unzip; import feature may be limited"
     fi
 
@@ -578,15 +698,18 @@ step_prerequisites() {
         print_warning "CPU: $cpu_cores core (2+ cores recommended)"
     fi
 
-    # Check for sudo/root
-    print_info "Checking permissions..."
-    if [ "$EUID" -eq 0 ]; then
-        print_success "Running as root"
-    elif sudo -n true 2>/dev/null; then
-        print_success "Sudo access available"
+    # Determine sudo usage
+    if [ "$EUID" -ne 0 ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            print_success "Sudo detected (elevation will be used when needed)"
+        else
+            print_error "This script requires root or sudo access"
+            all_ok=false
+        fi
     else
-        print_error "This script requires root or sudo access"
-        all_ok=false
+        SUDO=""
+        print_warning "Running as root is not recommended. Consider running as a normal user."
     fi
 
     if [ "$all_ok" = false ]; then
@@ -612,7 +735,7 @@ step_docker() {
         if prompt_yes_no "Install Docker?" "y"; then
             print_info "Installing Docker..."
             curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
+            $SUDO sh get-docker.sh
             rm get-docker.sh
 
             # Add user to docker group
@@ -621,7 +744,7 @@ step_docker() {
                 user="$USER"
             fi
             if [ -n "$user" ]; then
-                sudo usermod -aG docker "$user"
+                $SUDO usermod -aG docker "$user"
                 print_warning "You will need to log out and log back in for group changes to take effect"
             fi
 
@@ -634,11 +757,11 @@ step_docker() {
 
     # Check if Docker is running
     print_info "Checking if Docker daemon is running..."
-    if sudo docker info &> /dev/null; then
+    if $SUDO docker info &> /dev/null; then
         print_success "Docker daemon is running"
     else
         print_error "Docker daemon is not running"
-        print_info "Start it with: sudo systemctl start docker"
+        print_info "Start it with: $SUDO systemctl start docker"
         exit 1
     fi
 
@@ -651,7 +774,7 @@ step_docker() {
 
     # Test Docker with a simple container
     print_info "Testing Docker with hello-world container..."
-    if sudo docker run --rm hello-world &> /dev/null; then
+    if $SUDO docker run --rm hello-world &> /dev/null; then
         print_success "Docker is working correctly"
     else
         print_error "Docker test failed"
@@ -668,9 +791,9 @@ step_container() {
 
     # Check if image exists locally
     print_info "Checking for ArmorClaw agent container image..."
-    if sudo docker images | grep -q "armorclaw/agent"; then
+    if $SUDO docker images | grep -q "armorclaw/agent"; then
         print_success "Container image found locally"
-        sudo docker images | grep "armorclaw/agent"
+        $SUDO docker images | grep "armorclaw/agent"
     else
         print_info "Container image not found locally"
 
@@ -680,7 +803,7 @@ step_container() {
                 print_info "Building container image..."
                 print_info "This may take several minutes on first build..."
 
-                if sudo docker build -t armorclaw/agent:v1 .; then
+                if $SUDO docker build -t armorclaw/agent:v1 .; then
                     print_success "Container image built successfully"
                 else
                     print_error "Container build failed"
@@ -695,10 +818,10 @@ step_container() {
     fi
 
     # Show container info
-    if sudo docker images | grep -q "armorclaw/agent"; then
+    if $SUDO docker images | grep -q "armorclaw/agent"; then
         echo ""
         echo -e "${BOLD}Container Image Details:${NC}"
-        sudo docker images armorclaw/agent:v1
+        $SUDO docker images armorclaw/agent:v1
         echo ""
     fi
 }
@@ -714,7 +837,7 @@ step_bridge_install() {
     if [ -f "/usr/local/bin/armorclaw-bridge" ] || [ -f "/opt/armorclaw/armorclaw-bridge" ]; then
         print_info "Bridge binary found"
         if prompt_yes_no "Reinstall bridge?"; then
-            sudo rm -f /usr/local/bin/armorclaw-bridge /opt/armorclaw/armorclaw-bridge
+            $SUDO rm -f /usr/local/bin/armorclaw-bridge /opt/armorclaw/armorclaw-bridge
         else
             print_success "Using existing bridge installation"
             return
@@ -746,10 +869,10 @@ step_bridge_install() {
 
                 # Install to system location
                 print_info "Installing to /opt/armorclaw/..."
-                sudo mkdir -p /opt/armorclaw
-                sudo mv armorclaw-bridge /opt/armorclaw/
-                sudo chmod +x /opt/armorclaw/armorclaw-bridge
-                sudo ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge
+                $SUDO mkdir -p /opt/armorclaw
+                $SUDO mv armorclaw-bridge /opt/armorclaw/
+                $SUDO chmod +x /opt/armorclaw/armorclaw-bridge
+                $SUDO ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge
                 print_success "Bridge installed"
             else
                 print_error "Bridge build failed"
@@ -758,9 +881,20 @@ step_bridge_install() {
             cd ..
             ;;
         2)
-            print_info "Pre-built binary option not yet implemented"
-            print_info "Please build from source (option 1)"
-            exit 1
+            print_info "Installing pre-built binary..."
+            detect_arch
+            if [[ -n "$BIN_ARCH" ]]; then
+                if download_binary; then
+                    print_success "Bridge installed via binary distribution"
+                else
+                    print_error "Binary installation failed"
+                    print_info "Please try building from source (option 1)"
+                    exit 1
+                fi
+            else
+                print_error "Unsupported architecture for binary distribution"
+                exit 1
+            fi
             ;;
         *)
             print_error "Invalid option"
@@ -773,7 +907,7 @@ step_bridge_install() {
     if id "armorclaw" &>/dev/null; then
         print_success "User 'armorclaw' already exists"
     else
-        sudo useradd -r -s /bin/false -d /var/lib/armorclaw armorclaw
+        $SUDO useradd -r -s /bin/false -d /var/lib/armorclaw armorclaw
         print_success "User 'armorclaw' created"
     fi
 }
@@ -828,16 +962,16 @@ step_configuration() {
     print_step 7 13 "Configuration File Creation"
 
     print_info "Creating configuration directory..."
-    sudo mkdir -p "$CONFIG_DIR"
-    sudo mkdir -p "$DATA_DIR"
-    sudo mkdir -p "$RUN_DIR"
+    $SUDO mkdir -p "$CONFIG_DIR"
+    $SUDO mkdir -p "$DATA_DIR"
+    $SUDO mkdir -p "$RUN_DIR"
 
     # Ensure armorclaw user exists
-    id -u armorclaw >/dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin armorclaw
+    id -u armorclaw >/dev/null 2>&1 || $SUDO useradd --system --no-create-home --shell /usr/sbin/nologin armorclaw
 
-    sudo chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
-    sudo chmod 700 "$DATA_DIR"
-    sudo chmod 770 "$RUN_DIR"
+    $SUDO chown armorclaw:armorclaw "$RUN_DIR" "$DATA_DIR" 2>/dev/null || true
+    $SUDO chmod 700 "$DATA_DIR"
+    $SUDO chmod 770 "$RUN_DIR"
 
     local config_file="$CONFIG_DIR/config.toml"
 
@@ -969,7 +1103,7 @@ step_configuration() {
 
     # Create configuration file
     print_info "Creating configuration file: $config_file"
-    sudo tee "$config_file" > /dev/null <<EOF
+    $SUDO tee "$config_file" > /dev/null <<EOF
 # ArmorClaw Bridge Configuration
 # Generated by setup wizard on $(date)
 
@@ -985,7 +1119,7 @@ enabled = $matrix_enabled
 EOF
 
     if [ "$matrix_enabled" = "true" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 homeserver_url = "$matrix_url"
 username = "$matrix_user"
 password = "$matrix_pass"
@@ -994,7 +1128,7 @@ EOF
 
     # Zero-trust configuration
     if [ "$matrix_enabled" = "true" ] && [ "$enable_trust" = "true" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [matrix.zero_trust]
 trusted_senders = [
@@ -1008,7 +1142,7 @@ EOF
     fi
 
     # Budget configuration
-    sudo tee -a "$config_file" > /dev/null <<EOF
+    $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [budget]
 daily_limit_usd = $budget_daily
@@ -1017,7 +1151,7 @@ alert_threshold = 80.0
 hard_stop = $budget_hardstop
 EOF
 
-    sudo tee -a "$config_file" > /dev/null <<EOF
+    $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [logging]
 level = "$log_level"
@@ -1026,14 +1160,14 @@ output = "$log_output"
 EOF
 
     if [ -n "$log_file" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 file = "$log_file"
 EOF
     fi
 
     # Voice and WebRTC configuration
     if [ -n "$VOICE_CONFIG" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [voice]
 $VOICE_CONFIG
@@ -1062,7 +1196,7 @@ EOF
 
     # WebRTC signaling configuration
     if [ -n "$WEBRTC_SIGNALING" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [webrtc.signaling]
 $WEBRTC_SIGNALING
@@ -1076,14 +1210,14 @@ EOF
 
     # Notifications configuration
     if [ "$notifications_enabled" = "true" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [notifications]
 enabled = true
 $notifications_config
 EOF
     else
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [notifications]
 enabled = false
@@ -1094,13 +1228,13 @@ EOF
 
     # Event bus configuration
     if [ "$eventbus_enabled" = "true" ]; then
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [eventbus]
 $eventbus_config
 EOF
     else
-        sudo tee -a "$config_file" > /dev/null <<EOF
+        $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [eventbus]
 websocket_enabled = false
@@ -1113,7 +1247,7 @@ EOF
 
     # Provisioning configuration (for secure device setup)
     PROVISIONING_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 32)
-    sudo tee -a "$config_file" > /dev/null <<EOF
+    $SUDO tee -a "$config_file" > /dev/null <<EOF
 
 [provisioning]
 # Secret key for signing QR code configurations
@@ -1133,8 +1267,8 @@ EOF
     ensure_error_store_config
 
     # Set permissions
-    sudo chown armorclaw:armorclaw "$config_file"
-    sudo chmod 640 "$config_file"
+    $SUDO chown armorclaw:armorclaw "$config_file"
+    $SUDO chmod 640 "$config_file"
 
     # Config sanity check
     grep -q "store_path" "$config_file" || echo "Warning: errors.store_path not configured"
@@ -1162,7 +1296,7 @@ step_keystore() {
         echo "  • A new keystore will be created for this system"
         echo ""
         if prompt_yes_no "Initialize new keystore for this system?"; then
-            sudo rm -f "$keystore_db" "$keystore_db.salt" 2>/dev/null || true
+            $SUDO rm -f "$keystore_db" "$keystore_db.salt" 2>/dev/null || true
         else
             print_info "Keystore will be created on first bridge start"
             return
@@ -1172,7 +1306,7 @@ step_keystore() {
     if [ -f "$keystore_db" ]; then
         print_info "Keystore already exists at $keystore_db"
         if prompt_yes_no "Reinitialize keystore? (WARNING: This will delete all stored credentials)"; then
-            sudo rm -f "$keystore_db" "$keystore_db.salt"
+            $SUDO rm -f "$keystore_db" "$keystore_db.salt"
         else
             print_success "Using existing keystore"
             return
@@ -1191,7 +1325,7 @@ EOF
     print_info "Initializing keystore..."
 
     # Initialize keystore by running bridge with init command
-    if sudo -u armorclaw /opt/armorclaw/armorclaw-bridge --init; then
+    if $SUDO -u armorclaw /opt/armorclaw/armorclaw-bridge --init; then
         print_success "Keystore initialized"
         print_info "Keystore database: $keystore_db"
         print_info "Salt file: $keystore_db.salt"
@@ -1238,7 +1372,7 @@ step_api_key() {
     local key_token=""
     echo ""
     print_info "Enter your API key:"
-    read -s -p "  " key_token
+    prompt_read -s -p "  " key_token
     echo
 
     if [ -z "$key_token" ]; then
@@ -1276,7 +1410,7 @@ step_systemd() {
     if [ -f "$service_file" ]; then
         print_info "Service file already exists"
         if prompt_yes_no "Recreate service file?"; then
-            sudo rm -f "$service_file"
+            $SUDO rm -f "$service_file"
         else
             print_success "Using existing service file"
             return
@@ -1285,7 +1419,7 @@ step_systemd() {
 
     print_info "Creating systemd service..."
 
-    sudo tee "$service_file" > /dev/null <<EOF
+    $SUDO tee "$service_file" > /dev/null <<EOF
 [Unit]
 Description=ArmorClaw Bridge Service
 After=network-online.target docker.service
@@ -1329,7 +1463,7 @@ EOF
 
     # Reload systemd
     print_info "Reloading systemd daemon..."
-    sudo systemctl daemon-reload
+    $SUDO systemctl daemon-reload
 
     print_success "Systemd service configured"
     echo ""
@@ -1652,11 +1786,11 @@ EOF
 
         if [ -f "./deploy/setup-firewall.sh" ] && [ -f "./deploy/harden-ssh.sh" ]; then
             print_info "Running firewall configuration..."
-            sudo bash ./deploy/setup-firewall.sh
+            $SUDO bash ./deploy/setup-firewall.sh
             print_success "Firewall configured"
 
             print_info "Running SSH hardening..."
-            sudo bash ./deploy/harden-ssh.sh
+            $SUDO bash ./deploy/harden-ssh.sh
             print_success "SSH hardened"
 
             print_warning "You may need to reconnect SSH after hardening"
@@ -1737,7 +1871,7 @@ step_start_agent() {
     echo -e "${BLUE}Starting ArmorClaw Bridge...${NC}"
 
     # Start the bridge
-    if ! sudo systemctl start armorclaw-bridge 2>/dev/null; then
+    if ! $SUDO systemctl start armorclaw-bridge 2>/dev/null; then
         echo ""
         echo -e "${RED}✗ Failed to start bridge${NC}"
         echo "Start it manually with:"
@@ -1757,7 +1891,7 @@ step_start_agent() {
 
     # Get the first key ID
     local key_id
-    key_id=$(sudo "$INSTALL_DIR/armorclaw-bridge" list-keys 2>/dev/null | grep -m1 '•' | awk '{print $2}' || echo "")
+    key_id=$($SUDO "$INSTALL_DIR/armorclaw-bridge" list-keys 2>/dev/null | grep -m1 '•' | awk '{print $2}' || echo "")
 
     if [ -z "$key_id" ]; then
         echo ""
@@ -1772,7 +1906,7 @@ step_start_agent() {
 
     # Start the agent
     local output
-    output=$(sudo "$INSTALL_DIR/armorclaw-bridge" start --key "$key_id" 2>&1)
+    output=$($SUDO "$INSTALL_DIR/armorclaw-bridge" start --key "$key_id" 2>&1)
     local exit_code=$?
 
     if [ $exit_code -ne 0 ]; then

@@ -557,7 +557,11 @@ prompt_input() {
     # Use read -p to print prompt AND read input in one atomic operation
     # This prevents the prompt echo from being captured as input
     # The -r prevents backslash interpretation
-    IFS= read -p "$full_prompt" -r result || true
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        IFS= read -p "$full_prompt" -r result < /dev/tty || true
+    else
+        result=""
+    fi
 
     # Step 1: Strip carriage returns (handles CRLF from terminals)
     result="${result%$'\r'}"
@@ -600,7 +604,11 @@ prompt_password() {
 
     # Use read -s for silent input (hidden), -p for prompt
     # The -s flag prevents echo of typed characters
-    IFS= read -s -p "$full_prompt" -r result || true
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        IFS= read -s -p "$full_prompt" -r result < /dev/tty || true
+    else
+        result=""
+    fi
 
     # Print newline after hidden input (cursor is still on same line)
     echo ""
@@ -644,7 +652,11 @@ prompt_yes_no() {
         fi
 
         # Use read -p for atomic prompt + read operation
-        IFS= read -p "$full_prompt" -r response || true
+        if [ -t 0 ] || [ -c /dev/tty ]; then
+            IFS= read -p "$full_prompt" -r response < /dev/tty || true
+        else
+            response=""
+        fi
 
         # Strip carriage returns and ANSI escape sequences
         response="${response%$'\r'}"

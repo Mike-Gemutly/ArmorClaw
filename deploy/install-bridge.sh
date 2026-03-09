@@ -23,13 +23,137 @@ DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"
 USER="armorclaw"
 GROUP="armorclaw"
+SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
+REPO="Gemutly/ArmorClaw"
+VERSION="${BRIDGE_VERSION}"
+USE_BINARY="${USE_BINARY:-true}"
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+# Helper: Retry logic for network operations
+retry() {
+    local n=1
+    local max=3
+    local delay=2
+    while true; do
+        "$@" && return 0
+        if (( n == max )); then
+            return 1
+        fi
+        echo -e "  [armorclaw] Retrying in ${delay}s... ($n/$max)"
+        sleep $delay
+        ((n++))
+    done
+}
+
+detect_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) BIN_ARCH="linux-amd64" ;;
+        aarch64|arm64) BIN_ARCH="linux-arm64" ;;
+        *)
+            log_warning "Unsupported architecture for binary distribution: $arch"
+            BIN_ARCH=""
+            ;;
+    esac
+}
+
+download_binary() {
+    if [[ -z "$BIN_ARCH" ]]; then
+        return 1
+    fi
+
+    local bin_name="armorclaw-bridge-$BIN_ARCH"
+    local base_url="https://github.com/$REPO/releases/download/$VERSION"
+    
+    # Fallback to main branch for testing if VERSION is main
+    if [[ "$VERSION" == "main" || "$VERSION" == "v1.0.0" ]]; then
+        base_url="https://raw.githubusercontent.com/$REPO/main/build"
+    fi
+
+    log_info "Downloading prebuilt binary: $bin_name"
+    
+    local tmp_dir=$(mktemp -d)
+    local bin_path="$tmp_dir/$bin_name"
+    local checksum_path="$tmp_dir/checksums.txt"
+    local sig_path="$tmp_dir/checksums.txt.sig"
+    local key_path="$tmp_dir/armorclaw-signing-key.asc"
+    
+    # Use strict curl flags
+    local curl_base="curl --proto =https --tlsv1.2 --fail --silent --show-error --location"
+
+    if ! retry $curl_base "$base_url/$bin_name" -o "$bin_path"; then
+        log_warning "Failed to download binary"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    if ! retry $curl_base "$base_url/checksums.txt" -o "$checksum_path"; then
+        log_warning "Failed to download checksums"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    if ! retry $curl_base "$base_url/checksums.txt.sig" -o "$sig_path"; then
+        log_warning "Failed to download signature"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    retry $curl_base "https://raw.githubusercontent.com/$REPO/main/deploy/armorclaw-signing-key.asc" -o "$key_path"
+
+    # Verify Checksum
+    log_info "Verifying binary checksum..."
+    if ! grep "$bin_name" "$checksum_path" | (cd "$tmp_dir" && sha256sum -c - >/dev/null 2>&1); then
+        log_error "Binary checksum verification failed!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    log_success "Checksum OK"
+
+    # Verify Signature
+    log_info "Verifying release signature..."
+    local gnupg_home="$tmp_dir/gnupg"
+    mkdir -p "$gnupg_home"
+    chmod 700 "$gnupg_home"
+    
+    gpg --homedir "$gnupg_home" --batch --import "$key_path" >/dev/null 2>&1
+    
+    # Verify fingerprint
+    local fpr_check=$(gpg --homedir "$gnupg_home" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
+    if [[ "$fpr_check" != "$SIGNING_KEY_FPR" ]]; then
+        log_error "Unauthorized signing key detected!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! gpg --homedir "$gnupg_home" --batch --verify "$sig_path" "$checksum_path" >/dev/null 2>&1; then
+        log_error "GPG signature verification failed for checksums.txt!"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    log_success "Signature Verified"
+
+    # Move to final location
+    $SUDO mkdir -p "$INSTALL_DIR"
+    $SUDO install -m 755 "$bin_path" "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO ln -sf "$INSTALL_DIR/armorclaw-bridge" /usr/local/bin/armorclaw-bridge
+    
+    rm -rf "$tmp_dir"
+    return 0
 }
 
 log_success() {
@@ -47,7 +171,7 @@ log_error() {
 ensure_error_store_config() {
     local config_file="${CONFIG_DIR}/config.toml"
 
-    mkdir -p "$CONFIG_DIR"
+    $SUDO mkdir -p "$CONFIG_DIR"
     touch "$config_file"
 
     if ! grep -q "^\[errors\]" "$config_file" 2>/dev/null; then
@@ -75,11 +199,13 @@ check_os() {
     source /etc/os-release
     if [[ "$ID" != "ubuntu" ]] && [[ "$ID" != "debian" ]]; then
         log_warning "This script is designed for Ubuntu/Debian. Detected: $ID"
-        read -p "Continue anyway? (y/N) " -n 1 -r < /dev/tty
+        echo -n "Continue anyway? (y/N) "
+        prompt_read -n 1 -r REPLY
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
+    fi
     fi
 
     log_success "OS detected: $PRETTY_NAME"
@@ -118,7 +244,7 @@ create_user() {
     if id "$USER" &>/dev/null; then
         log_warning "User $USER already exists"
     else
-        useradd --system --user-group --shell /bin/false --home "$INSTALL_DIR" "$USER"
+        $SUDO useradd --system --user-group --shell /bin/false --home "$INSTALL_DIR" "$USER"
         log_success "Created user: $USER"
     fi
 }
@@ -126,21 +252,34 @@ create_user() {
 create_directories() {
     log_info "Creating directories..."
 
-    mkdir -p "$INSTALL_DIR"
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$RUN_DIR"
-    mkdir -p "$INSTALL_DIR/containers"
+    $SUDO mkdir -p "$INSTALL_DIR"
+    $SUDO mkdir -p "$CONFIG_DIR"
+    $SUDO mkdir -p "$RUN_DIR"
+    $SUDO mkdir -p "$INSTALL_DIR/containers"
 
-    chown -R "$USER:$GROUP" "$INSTALL_DIR"
-    chown -R "$USER:$GROUP" "$RUN_DIR"
-    chmod 755 "$CONFIG_DIR"
-    chmod 770 "$RUN_DIR"
+    $SUDO chown -R "$USER:$GROUP" "$INSTALL_DIR"
+    $SUDO chown -R "$USER:$GROUP" "$RUN_DIR"
+    $SUDO chmod 755 "$CONFIG_DIR"
+    $SUDO chmod 770 "$RUN_DIR"
 
     log_success "Directories created"
 }
 
 install_binary() {
     log_info "Installing bridge binary..."
+
+    # Try binary install first if enabled
+    if [[ "${USE_BINARY:-true}" == "true" ]]; then
+        detect_arch
+        if [[ -n "$BIN_ARCH" ]]; then
+            if download_binary; then
+                log_success "Bridge installed via binary distribution"
+                return 0
+            else
+                log_warning "Binary installation failed, falling back to local source"
+            fi
+        fi
+    fi
 
     local binary_source=""
 
@@ -163,12 +302,12 @@ install_binary() {
     fi
 
     # Copy to installation directory
-    cp "$binary_source" "$INSTALL_DIR/armorclaw-bridge"
-    chmod 755 "$INSTALL_DIR/armorclaw-bridge"
-    chown "$USER:$GROUP" "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO cp "$binary_source" "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO chmod 755 "$INSTALL_DIR/armorclaw-bridge"
+    $SUDO chown "$USER:$GROUP" "$INSTALL_DIR/armorclaw-bridge"
 
     # Create symlink in BIN_DIR
-    ln -sf "$INSTALL_DIR/armorclaw-bridge" "$BIN_DIR/armorclaw-bridge"
+    $SUDO ln -sf "$INSTALL_DIR/armorclaw-bridge" "$BIN_DIR/armorclaw-bridge"
 
     # Verify installation
     if "$INSTALL_DIR/armorclaw-bridge" --version &>/dev/null; then
@@ -200,20 +339,20 @@ install_config() {
     log_info "Installing configuration..."
 
     # Ensure armorclaw user exists
-    id -u "$USER" >/dev/null 2>&1 || useradd --system --user-group --shell /bin/false --home "$INSTALL_DIR" "$USER"
+    id -u "$USER" >/dev/null 2>&1 || $SUDO useradd --system --user-group --shell /bin/false --home "$INSTALL_DIR" "$USER"
 
     # Create data directory
-    mkdir -p "$DATA_DIR"
-    chown "$USER:$GROUP" "$DATA_DIR"
-    chmod 700 "$DATA_DIR"
+    $SUDO mkdir -p "$DATA_DIR"
+    $SUDO chown "$USER:$GROUP" "$DATA_DIR"
+    $SUDO chmod 700 "$DATA_DIR"
 
     if [[ -f "./config.example.toml" ]]; then
-        cp "./config.example.toml" "$CONFIG_DIR/config.toml"
+        $SUDO cp "./config.example.toml" "$CONFIG_DIR/config.toml"
     elif [[ -f "./bridge/config.example.toml" ]]; then
-        cp "./bridge/config.example.toml" "$CONFIG_DIR/config.toml"
+        $SUDO cp "./bridge/config.example.toml" "$CONFIG_DIR/config.toml"
     else
         # Create minimal default config
-        cat > "$CONFIG_DIR/config.toml" <<'EOF'
+        $SUDO tee "$CONFIG_DIR/config.toml" > /dev/null <<EOF
 [server]
 socket_path = "/run/armorclaw/bridge.sock"
 pid_file = "/run/armorclaw/bridge.pid"
@@ -240,8 +379,8 @@ EOF
     # Ensure error store path to config (idempotent)
     ensure_error_store_config
 
-    chown "$USER:$GROUP" "$CONFIG_DIR/config.toml"
-    chmod 640 "$CONFIG_DIR/config.toml"
+    $SUDO chown "$USER:$GROUP" "$CONFIG_DIR/config.toml"
+    $SUDO chmod 640 "$CONFIG_DIR/config.toml"
 
     # Config sanity check
     grep -q "store_path" "$CONFIG_DIR/config.toml" || echo "Warning: errors.store_path not configured"
@@ -252,7 +391,7 @@ EOF
 install_systemd_service() {
     log_info "Installing systemd service..."
 
-    cat > "/etc/systemd/system/armorclaw-bridge.service" <<EOF
+    $SUDO tee "/etc/systemd/system/armorclaw-bridge.service" > /dev/null <<EOF
 [Unit]
 Description=ArmorClaw Bridge - Secure AI Agent Container Manager
 Documentation=https://github.com/Gemutly/ArmorClaw
@@ -304,8 +443,8 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable armorclaw-bridge.service
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable armorclaw-bridge.service
 
     log_success "Systemd service installed and enabled"
 }
@@ -343,7 +482,7 @@ systemctl disable armorclaw-bridge.service || true
 
 # Remove service file
 rm -f /etc/systemd/system/armorclaw-bridge.service
-systemctl daemon-reload
+$SUDO systemctl daemon-reload
 
 # Remove symlink
 rm -f /usr/local/bin/armorclaw-bridge
@@ -374,8 +513,8 @@ fi
 echo "ArmorClaw Bridge removed successfully"
 EOF
 
-    chmod +x "$INSTALL_DIR/uninstall.sh"
-    chown "$USER:$GROUP" "$INSTALL_DIR/uninstall.sh"
+    $SUDO chmod +x "$INSTALL_DIR/uninstall.sh"
+    $SUDO chown "$USER:$GROUP" "$INSTALL_DIR/uninstall.sh"
 
     log_success "Uninstall script created at $INSTALL_DIR/uninstall.sh"
 }
@@ -441,7 +580,7 @@ main() {
     # Confirm installation
     log_warning "This will install ArmorClaw Bridge on your system"
     echo ""
-    read -p "Continue? (y/N) " -n 1 -r < /dev/tty
+    echo -n "Continue? (y/N) "; prompt_read -n 1 -r REPLY
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         log_info "Installation cancelled"

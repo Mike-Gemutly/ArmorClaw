@@ -29,6 +29,29 @@ WARN=0
 # Helper Functions
 #=============================================================================
 
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
+# Determine sudo usage
+setup_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            info "Sudo detected (elevation will be used when needed)"
+        else
+            warn "This script works best with root privileges or sudo."
+            SUDO=""
+        fi
+    else
+        SUDO=""
+        warn "Running as root is not recommended. Consider running as a normal user."
+    fi
+}
+
 pass() {
     echo -e "${GREEN}✓ PASS${NC}: $1"
     ((PASS++))
@@ -71,28 +94,28 @@ check_firewall() {
     fi
 
     # Check UFW active
-    if ufw status | grep -q "Status: active"; then
+    if $SUDO ufw status | grep -q "Status: active"; then
         pass "UFW is active"
     else
         fail "UFW is not active"
     fi
 
     # Check default deny
-    if ufw status | grep -q "Default: deny"; then
+    if $SUDO ufw status | grep -q "Default: deny"; then
         pass "Default deny policy is set"
     else
         warn "Default deny policy may not be fully set"
     fi
 
     # Check SSH allowed
-    if ufw status | grep -q "22/tcp"; then
+    if $SUDO ufw status | grep -q "22/tcp"; then
         pass "SSH is allowed"
     else
         warn "SSH may not be allowed (remote access at risk)"
     fi
 
     # Check rate limiting
-    if ufw status | grep -q "LIMIT"; then
+    if $SUDO ufw status | grep -q "LIMIT"; then
         pass "SSH rate limiting is enabled"
     else
         warn "SSH rate limiting is not enabled"
@@ -115,7 +138,7 @@ check_container_security() {
     fi
 
     # Check Docker running
-    if docker info &> /dev/null; then
+    if $SUDO docker info &> /dev/null; then
         pass "Docker daemon is running"
     else
         fail "Docker daemon is not running"
@@ -141,8 +164,8 @@ check_container_security() {
     fi
 
     # Check for privileged containers
-    PRIVILEGED=$(docker ps --format '{{.Names}}' --filter status=running 2>/dev/null | while read container; do
-        docker inspect --format '{{.HostConfig.Privileged}}' "$container" 2>/dev/null
+    PRIVILEGED=$($SUDO docker ps --format '{{.Names}}' --filter status=running 2>/dev/null | while read container; do
+        $SUDO docker inspect --format '{{.HostConfig.Privileged}}' "$container" 2>/dev/null
     done | grep -c "true" || echo "0")
 
     if [ "$PRIVILEGED" -eq 0 ]; then
@@ -223,7 +246,7 @@ check_users() {
     # Check armorclaw user
     if id "armorclaw" &>/dev/null; then
         pass "ArmorClaw user exists"
-        SHELL=$(getent passwd armorclaw | cut -d: -f7)
+        SHELL=$($SUDO getent passwd armorclaw | cut -d: -f7)
         if [ "$SHELL" = "/bin/false" ] || [ "$SHELL" = "/usr/sbin/nologin" ]; then
             pass "ArmorClaw user has no login shell"
         else
@@ -234,7 +257,7 @@ check_users() {
     fi
 
     # Check for passwordless sudo
-    if sudo -l -U armorclaw 2>/dev/null | grep -q "NOPASSWD"; then
+    if $SUDO -l -U armorclaw 2>/dev/null | grep -q "NOPASSWD"; then
         warn "ArmorClaw user has passwordless sudo"
     else
         pass "ArmorClaw user does not have passwordless sudo"
@@ -298,7 +321,7 @@ check_audit() {
     fi
 
     # Check auditd running
-    if service auditd status > /dev/null 2>&1 || systemctl is-active auditd > /dev/null 2>&1; then
+    if $SUDO service auditd status > /dev/null 2>&1 || $SUDO systemctl is-active auditd > /dev/null 2>&1; then
         pass "Auditd is running"
     else
         warn "Auditd is not running"
@@ -452,4 +475,5 @@ main() {
 }
 
 # Run main
+setup_sudo
 main "$@"
