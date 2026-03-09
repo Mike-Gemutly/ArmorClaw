@@ -43,7 +43,9 @@ DEFAULT_LOG_FORMAT="text"
 DEFAULT_DAILY_BUDGET="5.00"
 DEFAULT_MONTHLY_BUDGET="100.00"
 DEFAULT_HARD_STOP="true"
-DEFAULT_MATRIX_ENABLED="false"
+
+# Track Matrix installation state
+MATRIX_ENABLED="false"
 
 #=============================================================================
 # Helper Functions
@@ -296,7 +298,16 @@ ensure_matrix() {
         return 1
     fi
 
-    print_done "Matrix installed"
+    # Verify Matrix actually started
+    print_info "Verifying Matrix installation..."
+    sleep 3
+
+    if ! is_matrix_running; then
+        print_error "Matrix installation completed but server is not running"
+        return 1
+    fi
+
+    print_done "Matrix installed and running"
     return 0
 }
 
@@ -822,7 +833,8 @@ prompt_api_key() {
 generate_qr_code() {
     print_step "Device Provisioning"
 
-    if ! is_matrix_running; then
+    # Check both the flag AND actual running state
+    if [[ "$MATRIX_ENABLED" == "false" ]] && ! is_matrix_running; then
         echo ""
         print_warning "Matrix server not installed or running."
         echo "QR connection requires a Matrix server (Conduit)."
@@ -918,7 +930,7 @@ print_completion() {
 
     echo -e "${BOLD}Quick Start:${NC}"
     echo ""
-    if is_matrix_running; then
+    if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
         echo "  1. ${CYAN}Connect ArmorChat${NC} (scan QR code above)"
     else
         echo "  1. ${CYAN}Enable Matrix${NC} to get QR connection:"
@@ -984,12 +996,17 @@ main() {
     print_step "Matrix Server"
     if is_matrix_running; then
         print_done "Matrix already running"
+        MATRIX_ENABLED="true"
     else
         echo ""
         echo "  Matrix enables ArmorChat connections and QR provisioning."
         echo ""
         if prompt_yes_no "Enable ArmorChat QR provisioning (requires Matrix)?" "y"; then
-            ensure_matrix
+            if ensure_matrix; then
+                MATRIX_ENABLED="true"
+            else
+                print_warning "Matrix installation failed. QR provisioning will be skipped."
+            fi
         else
             print_info "Bridge-only mode enabled."
             print_info "Run later: sudo ./deploy/setup-matrix.sh"
