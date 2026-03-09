@@ -263,6 +263,44 @@ prompt_yes_no() {
 }
 
 #=============================================================================
+# Matrix Helpers
+#=============================================================================
+
+is_matrix_running() {
+    # Check if conduit service is active
+    if systemctl is-active --quiet conduit 2>/dev/null; then
+        return 0
+    fi
+
+    # Check if conduit container is running
+    if command -v docker >/dev/null 2>&1; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "conduit"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+ensure_matrix() {
+    if is_matrix_running; then
+        return 0
+    fi
+
+    print_info "Matrix server not detected — installing Conduit..."
+
+    # Launch Matrix setup script from repo
+    local matrix_setup_url="https://raw.githubusercontent.com/$REPO/$VERSION/deploy/setup-matrix.sh"
+    if ! curl -fsSL "$matrix_setup_url" | $SUDO bash; then
+        print_error "Failed to install Matrix server"
+        return 1
+    fi
+
+    print_done "Matrix installed"
+    return 0
+}
+
+#=============================================================================
 # Logging
 #=============================================================================
 
@@ -677,7 +715,13 @@ verify_health() {
 }
 
 #=============================================================================
-# Step 9: Optional API Key
+# Step 9: Matrix Server (Optional but recommended)
+#=============================================================================
+
+# (Handled in main flow)
+
+#=============================================================================
+# Step 10: Optional API Key
 #=============================================================================
 
 prompt_api_key() {
@@ -703,18 +747,18 @@ prompt_api_key() {
     echo ""
     echo "  Available AI Providers:"
     echo "  ┌──────────────────────────────────────────────────────────────────┐"
-    echo "  │  1) openai        - OpenAI (GPT-4, GPT-3.5, o1)"                 │"
-    echo "  │  2) anthropic      - Anthropic (Claude)"                         │"
-    echo "  │  3) google         - Google Gemini (Pro, Ultra, Flash)"          │"
-    echo "  │  4) xai            - xAI (Grok)"                                 │"
-    echo "  │  5) openrouter     - OpenRouter (Multi-provider aggregator)"     │"
-    echo "  │  6) zhipu          - Zhipu AI (Z AI) [aliases: zai, glm]        │"
-    echo "  │  7) deepseek       - DeepSeek (R1, V3)"                         │"
-    echo "  │  8) moonshot       - Moonshot AI                                │"
+    echo "  │  1) openai        - OpenAI (GPT-4, GPT-3.5, o1)                  │"
+    echo "  │  2) anthropic      - Anthropic (Claude)                          │"
+    echo "  │  3) google         - Google Gemini (Pro, Ultra, Flash)           │"
+    echo "  │  4) xai            - xAI (Grok)                                  │"
+    echo "  │  5) openrouter     - OpenRouter (Multi-provider aggregator)      │"
+    echo "  │  6) zhipu          - Zhipu AI (Z AI) [aliases: zai, glm]         │"
+    echo "  │  7) deepseek       - DeepSeek (R1, V3)                           │"
+    echo "  │  8) moonshot       - Moonshot AI                                 │"
     echo "  │  9) nvidia         - NVIDIA NIM                                  │"
-    echo "  │ 10) groq           - Groq (Fast inference)"                      │"
-    echo "  │ 11) cloudflare     - Cloudflare AI Gateway                      │"
-    echo "  │ 12) ollama         - Local Ollama instance"                     │"
+    echo "  │ 10) groq           - Groq (Fast inference)                       │"
+    echo "  │ 11) cloudflare     - Cloudflare AI Gateway                       │"
+    echo "  │ 12) ollama         - Local Ollama instance                       │"
     echo "  └──────────────────────────────────────────────────────────────────┘"
 
     echo ""
@@ -772,11 +816,22 @@ prompt_api_key() {
 }
 
 #=============================================================================
-# Step 10: Generate QR Code for Provisioning
+# Step 11: Generate QR Code for Provisioning
 #=============================================================================
 
 generate_qr_code() {
     print_step "Device Provisioning"
+
+    if ! is_matrix_running; then
+        echo ""
+        print_warning "Matrix server not installed or running."
+        echo "QR connection requires a Matrix server (Conduit)."
+        echo ""
+        echo "To enable:"
+        echo "  sudo ./deploy/setup-matrix.sh"
+        echo ""
+        return 0
+    fi
 
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local provision_script="$script_dir/armorclaw-provision.sh"
@@ -863,7 +918,12 @@ print_completion() {
 
     echo -e "${BOLD}Quick Start:${NC}"
     echo ""
-    echo "  1. ${CYAN}Connect ArmorChat${NC} (scan QR code above)"
+    if is_matrix_running; then
+        echo "  1. ${CYAN}Connect ArmorChat${NC} (scan QR code above)"
+    else
+        echo "  1. ${CYAN}Enable Matrix${NC} to get QR connection:"
+        echo "     sudo ./deploy/setup-matrix.sh"
+    fi
     echo "  2. ${CYAN}Add API key${NC}:"
     echo "     sudo armorclaw-bridge add-key --provider openai --token sk-..."
     echo "  3. ${CYAN}Start an agent${NC}:"
@@ -919,6 +979,23 @@ main() {
     setup_systemd
     start_bridge
     verify_health
+
+    # Step 9: Matrix Server (Optional but recommended)
+    print_step "Matrix Server"
+    if is_matrix_running; then
+        print_done "Matrix already running"
+    else
+        echo ""
+        echo "  Matrix enables ArmorChat connections and QR provisioning."
+        echo ""
+        if prompt_yes_no "Enable ArmorChat QR provisioning (requires Matrix)?" "y"; then
+            ensure_matrix
+        else
+            print_info "Bridge-only mode enabled."
+            print_info "Run later: sudo ./deploy/setup-matrix.sh"
+        fi
+    fi
+
     prompt_api_key
     generate_qr_code
 
