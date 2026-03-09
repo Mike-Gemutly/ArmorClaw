@@ -23,6 +23,11 @@
 Dockerfile* text eol=lf
 docker-compose*.yml text eol=lf
 
+# Signature and checksum files should always use LF
+*.sig text eol=lf
+*.asc text eol=lf
+*.sha256 text eol=lf
+
 # Binary files
 *.png binary
 *.jpg binary

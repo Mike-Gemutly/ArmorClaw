@@ -3,7 +3,7 @@
 # Interactive guided installation and configuration
 # Version: 2.0.0 - Added mode selection
 
-set -e
+set -eu
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,8 +16,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Global variables
-REPO="Gemutly/ArmorClaw"
-VERSION="${VERSION:-main}"
+export REPO="Gemutly/ArmorClaw"
+export VERSION="${VERSION:-main}"
 CONFIG_DIR="/etc/armorclaw"
 DATA_DIR="/var/lib/armorclaw"
 RUN_DIR="/run/armorclaw"
