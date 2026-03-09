@@ -1,31 +1,29 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.4.0-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Version](https://img.shields.io/badge/version-v4.5.0-blue)](https://github.com/Gemutly/ArmorClaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
 
 ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, and manage tasks—while you approve sensitive actions via your phone.
 
-**🛡️ v4.4.0 Highlights:** Production-grade hardened installer with Docker daemon readiness checks, parallel install prevention, persistent logging, and comprehensive test suite.
+**🛡️ v4.5.0 Highlights:** New **Provider Registry Architecture** with 12+ pre-configured providers (including Zhipu AI/Z AI and Moonshot), and an **Integrated Matrix/Conduit setup** in the quick installer.
 
 ---
 
-## Quick Install
+## Quick Install (All-in-One)
 
-### Bridge Only (Default)
+The recommended way to start is the bootstrap installer, which now includes an optional **Matrix/Conduit** setup for instant QR provisioning:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
 
-**v4.4.0+ notes:** Production-grade hardened installer with 19 security improvements (see [Testing](#testing) for details).
-
-### Bridge + Matrix
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | INSTALL_MODE=matrix bash
-```
+**v4.5.0+ Improvements:**
+- **🚀 Provider Registry** - 12+ AI providers pre-configured (Zhipu, Moonshot, DeepSeek, Groq, etc.)
+- **💬 Matrix-Ready** - Installer detects if Matrix is missing and offers to auto-install Conduit
+- **📱 One-Click QR** - Instant ArmorChat connection after setup completes
+- **🛡️ Hardened Security** - GPG-verified bootstrap, lockfile protection, and persistent logging
 
 ### Install Specific Version
 
@@ -255,49 +253,39 @@ bash tests/integration/test-installer-hardening.sh
 
 ---
 
-## Supported AI Providers
+## Supported AI Providers (v4.5.0+)
 
-ArmorClaw supports multiple AI providers through a unified interface:
+ArmorClaw now uses a **Provider Registry** pattern. The installer provides a selection menu, and the Bridge resolves aliases (like `zai` or `glm`) automatically.
 
-### Native Providers
-| Provider | Provider ID | API Key Format |
-|----------|-------------|----------------|
-| OpenAI | `openai` | `sk-proj-...` |
-| Anthropic | `anthropic` | `sk-ant-...` |
-| Google Gemini | `google` | `AIza...` |
-| xAI (Grok) | `xai` | `xai-...` |
+### Included in Registry:
+| Provider | ID | Protocol | Description |
+|----------|----|----------|-------------|
+| **OpenAI** | `openai` | openai | GPT-4o, o1, etc. |
+| **Anthropic** | `anthropic` | anthropic | Claude 3.5 Sonnet/Opus |
+| **Zhipu AI (Z AI)** | `zhipu` | openai | `api.z.ai` (aliases: `zai`, `glm`) |
+| **DeepSeek** | `deepseek` | openai | DeepSeek R1, V3 |
+| **Moonshot AI** | `moonshot` | openai | Moonshot/Kimi |
+| **Google Gemini** | `google` | openai | Gemini 1.5 Pro/Flash |
+| **xAI** | `xai` | openai | Grok-1, Grok-2 |
+| **OpenRouter** | `openrouter` | openai | Multi-provider aggregator |
+| **Groq** | `groq` | openai | Ultra-fast Llama/Mixtral |
+| **NVIDIA NIM** | `nvidia` | openai | NVIDIA-hosted models |
+| **Cloudflare** | `cloudflare` | openai | AI Gateway |
+| **Ollama** | `ollama` | openai | Local models via `localhost:11434` |
 
-### OpenAI-Compatible Providers
-Use `--provider openai` with `--base-url` for these providers:
-
-| Provider | Base URL |
-|----------|----------|
-| Zhipu AI (GLM) | `https://open.bigmodel.cn/api/paas/v4` |
-| DeepSeek | `https://api.deepseek.com/v1` |
-| Moonshot AI | `https://api.moonshot.cn/v1` |
-| NVIDIA NIM | `https://integrate.api.nvidia.com/v1` |
-| OpenRouter | `https://openrouter.ai/api/v1` |
-| Groq | `https://api.groq.com/openai/v1` |
-| Cloudflare AI Gateway | `https://gateway.ai.cloudflare.com/v1` |
-| Custom | `https://your-api.com/v1` |
-
-### Adding a Custom Provider
+### Adding a Key via CLI:
 
 ```bash
-# Example: Adding Zhipu AI
-armorclaw-bridge add-key \
-  --provider openai \
-  --base-url https://open.bigmodel.cn/api/paas/v4 \
-  --id zhipu \
-  --token your-api-key
+# Add Zhipu AI key
+armorclaw-bridge add-key --provider zhipu --token your-key
 
-# Example: Adding DeepSeek
-armorclaw-bridge add-key \
-  --provider openai \
-  --base-url https://api.deepseek.com/v1 \
-  --id deepseek \
-  --token your-api-key
+# Use an alias
+armorclaw-bridge add-key --provider zai --token your-key
 ```
+
+### Adding Custom Providers:
+
+You can add any OpenAI-compatible provider by editing `/etc/armorclaw/providers.json`. See the [Provider Registry Guide](docs/reference/provider-registry.md) for details.
 
 ### Dynamic Provider Discovery (Catwalk)
 
