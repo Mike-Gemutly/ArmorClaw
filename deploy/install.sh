@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # ArmorClaw Bootstrap Installer (Stage-0)
-# Version: 1.4.1
+# Version: 1.4.2
 # Purpose: Environment check, integrity/authenticity verification, Stage-1 exec.
 # =============================================================================
 
@@ -12,7 +12,7 @@ REPO="Gemutly/ArmorClaw"
 VERSION="${VERSION:-main}"
 INSTALLER="installer-v5.sh"
 BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/deploy"
-SIGNING_KEY_FPR="A47C720541284DFA2461BEC9E895A88B0B75750B"
+SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
 
 # Colors for output
 CYAN='\033[0;36m'
@@ -87,27 +87,22 @@ fi
 echo -e "  ${GREEN}✓ Checksum OK${NC}"
 
 # 5. Verify Authenticity (GPG)
-echo "[armorclaw] Importing signing key..."
-
-retry curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-  "$BASE_URL/armorclaw-signing-key.asc" -o armorclaw-signing-key.asc
-
 echo "[armorclaw] Verifying GPG signature..."
 mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
 
 # Import key to temporary keyring
-# Import key to temporary keyring
-gpg --homedir "$GNUPGHOME" --batch --import armorclaw-signing-key.asc >/dev/null 2>&1
+gpg --homedir "$GNUPGHOME" --batch --import "$KEY_PATH" >/dev/null 2>&1
 
 # Verify fingerprint to prevent key replacement attacks
-FPR_CHECK=$(gpg --homedir "$GNUPGHOME" --with-colons --fingerprint | grep "^fpr" | cut -d: -f10)
+FPR_CHECK=$(gpg --homedir "$GNUPGHOME" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
 if [[ "$FPR_CHECK" != "$SIGNING_KEY_FPR" ]]; then
     echo -e "${RED}ERROR: Unauthorized signing key detected!${NC}"
     echo "Expected: $SIGNING_KEY_FPR"
     echo "Actual:   $FPR_CHECK"
     exit 1
 fi
+
 
 # Verify signature
 if ! gpg --homedir "$GNUPGHOME" --batch --verify "$SIG_PATH" "$INSTALL_PATH" >/dev/null 2>&1; then
