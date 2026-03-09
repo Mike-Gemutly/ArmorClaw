@@ -92,16 +92,16 @@ echo "[armorclaw] Importing signing key..."
 retry curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
   "$BASE_URL/armorclaw-signing-key.asc" -o armorclaw-signing-key.asc
 
-gpg --import armorclaw-signing-key.asc >/dev/null 2>&1
 echo "[armorclaw] Verifying GPG signature..."
 mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
 
 # Import key to temporary keyring
-gpg --homedir "$GNUPGHOME" --batch --import "$KEY_PATH" >/dev/null 2>&1
+# Import key to temporary keyring
+gpg --homedir "$GNUPGHOME" --batch --import armorclaw-signing-key.asc >/dev/null 2>&1
 
 # Verify fingerprint to prevent key replacement attacks
-FPR_CHECK=$(gpg --homedir "$GNUPGHOME" --with-colons --fingerprint releases@armorclaw.ai | grep "^fpr" | cut -d: -f10)
+FPR_CHECK=$(gpg --homedir "$GNUPGHOME" --with-colons --fingerprint | grep "^fpr" | cut -d: -f10)
 if [[ "$FPR_CHECK" != "$SIGNING_KEY_FPR" ]]; then
     echo -e "${RED}ERROR: Unauthorized signing key detected!${NC}"
     echo "Expected: $SIGNING_KEY_FPR"
