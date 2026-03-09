@@ -31,10 +31,26 @@ test_lockfile() {
         pass "Lockfile test skipped (flock not available)"
         return 0
     fi
-    exec 200>"$WORK_DIR/lock"
-    if ! flock -n 200; then fail "Failed to acquire lock"; return 1; fi
-    if flock -n 200 2>/dev/null; then fail "Second process got lock"; flock -u 200 2>/dev/null; return 1; fi
-    flock -u 200 2>/dev/null || true
+    
+    # Acquire lock in a subshell and hold it
+    (
+        exec 200>"$WORK_DIR/lock"
+        flock -n 200 || exit 1
+        sleep 0.5
+    ) &
+    local locker_pid=$!
+    
+    # Give the subshell a moment to acquire the lock
+    sleep 0.1
+    
+    # Try to acquire the same lock from this process
+    if ( exec 200>"$WORK_DIR/lock"; flock -n 200 ) 2>/dev/null; then
+        fail "Second process got lock"
+        kill $locker_pid 2>/dev/null || true
+        return 1
+    fi
+    
+    wait $locker_pid
     pass "Lockfile functional"
 }
 
