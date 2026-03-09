@@ -28,11 +28,26 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        log_error "This script must be run as root"
-        exit 1
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
+# Determine sudo usage
+setup_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            log_info "Sudo detected (elevation will be used when needed)"
+        else
+            log_error "This script requires root privileges or sudo."
+            exit 1
+        fi
+    else
+        SUDO=""
+        log_warning "Running as root is not recommended. Consider running as a normal user."
     fi
 }
 
@@ -40,8 +55,8 @@ check_root() {
 check_ufw() {
     if ! command -v ufw &> /dev/null; then
         log_info "UFW not found. Installing..."
-        apt-get update -qq
-        apt-get install -y ufw
+        $SUDO apt-get update -qq
+        $SUDO apt-get install -y ufw
         log_success "UFW installed"
     else
         log_info "UFW is already installed"
@@ -66,30 +81,30 @@ configure_firewall() {
 
     # Reset UFW to default state
     log_info "Resetting UFW to default state..."
-    ufw --force reset
+    $SUDO ufw --force reset
 
     # Set default policies
     log_info "Setting default policies (deny incoming, allow outgoing)..."
-    ufw default deny incoming
-    ufw default allow outgoing
+    $SUDO ufw default deny incoming
+    $SUDO ufw default allow outgoing
 
     # Allow SSH
     log_info "Allowing SSH on port ${ssh_port}..."
-    ufw allow "${ssh_port}/tcp" comment 'SSH'
+    $SUDO ufw allow "${ssh_port}/tcp" comment 'SSH'
 
     # Allow Tailscale if installed
     if [ "$tailscale_installed" = "true" ]; then
         log_info "Tailscale detected - allowing UDP port 41641..."
-        ufw allow 41641/udp comment 'Tailscale VPN'
+        $SUDO ufw allow 41641/udp comment 'Tailscale VPN'
     fi
 
     # Allow localhost
     log_info "Allowing localhost traffic..."
-    ufw allow from 127.0.0.1
+    $SUDO ufw allow from 127.0.0.1
 
     # Enable UFW
     log_info "Enabling firewall..."
-    echo "y" | ufw enable
+    echo "y" | $SUDO ufw enable
 
     log_success "Firewall configured successfully"
 }
@@ -99,7 +114,7 @@ show_status() {
     echo ""
     log_info "Current firewall status:"
     echo ""
-    ufw status numbered
+    $SUDO ufw status numbered
     echo ""
 }
 
@@ -107,7 +122,7 @@ show_status() {
 verify_firewall() {
     log_info "Verifying firewall is active..."
 
-    if ufw status | grep -q "Status: active"; then
+    if $SUDO ufw status | grep -q "Status: active"; then
         log_success "Firewall is active"
         return 0
     else
@@ -155,7 +170,8 @@ interactive_mode() {
     echo ""
 
     # Prompt for SSH port
-    read -p "SSH port (default: 22): " ssh_port
+    echo -n "SSH port (default: 22): "
+    prompt_read -r ssh_port
     ssh_port=${ssh_port:-22}
 
     # Verify SSH port is numeric
@@ -173,7 +189,8 @@ interactive_mode() {
     fi
     echo ""
 
-    read -p "Continue? (y/N): " confirm
+    echo -n "Continue? (y/N): "
+    prompt_read -r confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         log_info "Firewall setup cancelled"
         exit 0
@@ -195,13 +212,14 @@ interactive_mode() {
         echo "  3. If you can connect, type 'yes' below"
         echo ""
 
-        read -p "SSH connection test successful? (y/N): " ssh_test
+        echo -n "SSH connection test successful? (y/N): "
+        prompt_read -r ssh_test
         if [[ ! "$ssh_test" =~ ^[Yy]$ ]]; then
             log_warning "SSH test failed. Disabling firewall for safety..."
-            ufw --force reset
-            ufw default allow incoming
-            ufw default allow outgoing
-            echo "y" | ufw enable
+            $SUDO ufw --force reset
+            $SUDO ufw default allow incoming
+            $SUDO ufw default allow outgoing
+            echo "y" | $SUDO ufw enable
             log_info "Firewall has been disabled. Please fix SSH access and try again."
             exit 1
         fi
@@ -225,10 +243,10 @@ non_interactive_mode() {
 
 # Main function
 main() {
-    check_root
+    setup_sudo
     check_ufw
 
-    if [ "$AUTO_CONFIRM" = "1" ] || [ "$1" = "--yes" ]; then
+    if [ "${AUTO_CONFIRM:-0}" = "1" ] || [ "${1:-}" = "--yes" ]; then
         non_interactive_mode "${2:-22}"
     else
         interactive_mode

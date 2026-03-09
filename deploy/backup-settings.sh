@@ -111,7 +111,7 @@ EOF
     # Backup agent configurations
     if $SUDO [ -d "$DATA_DIR/agent-configs" ] && [ "$($SUDO ls -A $DATA_DIR/agent-configs 2>/dev/null)" ]; then
         $SUDO cp -r "$DATA_DIR/agent-configs/"* "$temp_dir/armorclaw-backup/agent-configs/" 2>/dev/null || true
-        local config_count=$($SUDO find "$temp_dir/armorclaw-backup/agent-configs" -name "*.json" | wc -l)
+        local config_count=$(find "$temp_dir/armorclaw-backup/agent-configs" -name "*.json" | wc -l)
         print_success "Agent configurations backed up ($config_count files)"
         ((items_backed_up++))
     else
@@ -185,15 +185,15 @@ EOF
     local zip_path="$BACKUP_DIR/${backup_name}.zip"
 
     if ! command -v zip &> /dev/null; then
-        print_error "zip command not found. Install with: sudo apt-get install zip"
+        print_error "zip command not found. Install with: $SUDO apt-get install zip"
         rm -rf "$temp_dir"
         exit 1
     fi
 
-    (cd "$temp_dir" && zip -r "$zip_path" armorclaw-backup/)
+    (cd "$temp_dir" && $SUDO zip -r "$zip_path" armorclaw-backup/)
 
     # Cleanup
-    rm -rf "$temp_dir"
+    $SUDO rm -rf "$temp_dir"
 
     echo ""
     print_success "Backup created: $zip_path"

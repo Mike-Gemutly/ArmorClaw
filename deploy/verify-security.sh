@@ -183,9 +183,9 @@ check_permissions() {
     section "File Permission Checks"
 
     # Check config directory
-    if [ -d "$CONFIG_DIR" ]; then
+    if $SUDO [ -d "$CONFIG_DIR" ]; then
         pass "Config directory exists"
-        PERMS=$(stat -c '%a' "$CONFIG_DIR" 2>/dev/null || stat -f '%Lp' "$CONFIG_DIR")
+        PERMS=$($SUDO stat -c '%a' "$CONFIG_DIR" 2>/dev/null || $SUDO stat -f '%Lp' "$CONFIG_DIR")
         if [ "$PERMS" -le "750" ]; then
             pass "Config directory permissions are secure ($PERMS)"
         else
@@ -272,21 +272,21 @@ check_network() {
     section "Network Security Checks"
 
     # Check SYN cookies
-    if [ "$(cat /proc/sys/net/ipv4/tcp_syncookies 2>/dev/null)" = "1" ]; then
+    if [ "$($SUDO cat /proc/sys/net/ipv4/tcp_syncookies 2>/dev/null)" = "1" ]; then
         pass "TCP SYN cookies enabled"
     else
         warn "TCP SYN cookies not enabled"
     fi
 
     # Check IP forwarding
-    if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "0" ]; then
+    if [ "$($SUDO cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "0" ]; then
         pass "IP forwarding disabled"
     else
         warn "IP forwarding is enabled"
     fi
 
     # Check reverse path filtering
-    if [ "$(cat /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null)" = "1" ]; then
+    if [ "$($SUDO cat /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null)" = "1" ]; then
         pass "Reverse path filtering enabled"
     else
         warn "Reverse path filtering not enabled"
@@ -294,11 +294,11 @@ check_network() {
 
     # Check for unexpected listening ports
     info "Checking listening ports..."
-    LISTENING=$(ss -tuln | grep LISTEN | wc -l)
+    LISTENING=$($SUDO ss -tuln | grep LISTEN | wc -l)
     info "Found $LISTENING listening ports"
 
     # Check for exposed Docker socket
-    if ss -xl | grep -q "docker.sock"; then
+    if $SUDO ss -xl | grep -q "docker.sock"; then
         warn "Docker socket is exposed"
     else
         pass "Docker socket not exposed on network"

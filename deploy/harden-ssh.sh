@@ -28,11 +28,26 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        log_error "This script must be run as root"
-        exit 1
+# Helper for interactive prompts (handles curl | bash and non-interactive envs)
+prompt_read() {
+    if [ -t 0 ] || [ -c /dev/tty ]; then
+        read "$@" < /dev/tty
+    fi
+}
+
+# Determine sudo usage
+setup_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            log_info "Sudo detected (elevation will be used when needed)"
+        else
+            log_error "This script requires root privileges or sudo."
+            exit 1
+        fi
+    else
+        SUDO=""
+        log_warning "Running as root is not recommended. Consider running as a normal user."
     fi
 }
 
@@ -44,17 +59,17 @@ backup_config() {
     log_info "Backing up SSH configuration..."
 
     # Create backup directory
-    mkdir -p "$backup_dir"
+    $SUDO mkdir -p "$backup_dir"
 
     # Create timestamped backup
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_file="${backup_dir}/sshd_config_${timestamp}"
 
-    cp "$ssh_config" "$backup_file"
+    $SUDO cp "$ssh_config" "$backup_file"
     log_success "Backup created: $backup_file"
 
     # Create symlink to latest backup
-    ln -sf "$backup_file" "${backup_dir}/sshd_config_latest"
+    $SUDO ln -sf "$backup_file" "${backup_dir}/sshd_config_latest"
 }
 
 # Check if user has SSH keys
@@ -106,22 +121,22 @@ harden_ssh() {
 
     # Modify SSH config using sed
     # Disable root login
-    sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' "$ssh_config"
+    $SUDO sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' "$ssh_config"
 
     # Disable password authentication
-    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$ssh_config"
+    $SUDO sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$ssh_config"
 
     # Disable challenge-response authentication
-    sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$ssh_config"
+    $SUDO sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$ssh_config"
 
     # Enable PubkeyAuthentication (ensure it's set to yes)
-    sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' "$ssh_config"
+    $SUDO sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' "$ssh_config"
 
     # Set stricter authentication methods
-    sed -i 's/^#\?AuthenticationMethods.*/AuthenticationMethods publickey/' "$ssh_config"
+    $SUDO sed -i 's/^#\?AuthenticationMethods.*/AuthenticationMethods publickey/' "$ssh_config"
 
     # Disable PAM for SSH (optional, adds security)
-    sed -i 's/^#\?UsePAM.*/UsePAM no/' "$ssh_config"
+    $SUDO sed -i 's/^#\?UsePAM.*/UsePAM no/' "$ssh_config"
 
     log_success "SSH configuration hardened"
 }
@@ -134,10 +149,10 @@ show_config() {
     log_info "Current SSH security settings:"
     echo ""
 
-    echo "PermitRootLogin: $(grep -E '^#?PermitRootLogin' "$ssh_config" | tail -1 | cut -d' ' -f2)"
-    echo "PasswordAuthentication: $(grep -E '^#?PasswordAuthentication' "$ssh_config" | tail -1 | cut -d' ' -f2)"
-    echo "PubkeyAuthentication: $(grep -E '^#?PubkeyAuthentication' "$ssh_config" | tail -1 | cut -d' ' -f2)"
-    echo "ChallengeResponseAuthentication: $(grep -E '^#?ChallengeResponseAuthentication' "$ssh_config" | tail -1 | cut -d' ' -f2)"
+    echo "PermitRootLogin: $($SUDO grep -E '^#?PermitRootLogin' "$ssh_config" | tail -1 | cut -d' ' -f2)"
+    echo "PasswordAuthentication: $($SUDO grep -E '^#?PasswordAuthentication' "$ssh_config" | tail -1 | cut -d' ' -f2)"
+    echo "PubkeyAuthentication: $($SUDO grep -E '^#?PubkeyAuthentication' "$ssh_config" | tail -1 | cut -d' ' -f2)"
+    echo "ChallengeResponseAuthentication: $($SUDO grep -E '^#?ChallengeResponseAuthentication' "$ssh_config" | tail -1 | cut -d' ' -f2)"
     echo ""
 }
 
@@ -145,12 +160,12 @@ show_config() {
 test_config() {
     log_info "Testing SSH configuration syntax..."
 
-    if sshd -t 2>&1 | grep -q "Could not load host key"; then
+    if $SUDO sshd -t 2>&1 | grep -q "Could not load host key"; then
         log_warning "Host keys not found. Generating..."
-        ssh-keygen -A
+        $SUDO ssh-keygen -A
     fi
 
-    local test_output=$(sshd -t 2>&1)
+    local test_output=$($SUDO sshd -t 2>&1)
     if [ -n "$test_output" ]; then
         log_error "SSH configuration test failed:"
         echo "$test_output"
@@ -167,9 +182,9 @@ restart_ssh() {
 
     # Detect service management system
     if command -v systemctl &> /dev/null; then
-        systemctl restart sshd || systemctl restart ssh
+        $SUDO systemctl restart sshd || $SUDO systemctl restart ssh
     elif command -v service &> /dev/null; then
-        service sshd restart || service ssh restart
+        $SUDO service sshd restart || $SUDO service ssh restart
     else
         log_error "Could not detect service management system"
         return 1
@@ -191,7 +206,7 @@ restore_backup() {
 
     log_info "Restoring from backup: $backup_file"
 
-    cp "$backup_file" "$ssh_config"
+    $SUDO cp "$backup_file" "$ssh_config"
 
     log_success "Configuration restored. Restarting SSH..."
     restart_ssh
@@ -253,7 +268,8 @@ interactive_mode() {
         echo "  cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys"
         echo ""
 
-        read -p "Continue anyway? (NOT RECOMMENDED) (y/N): " continue_anyway
+        echo -n "Continue anyway? (NOT RECOMMENDED) (y/N): "
+        prompt_read -r continue_anyway
         if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
             log_info "SSH hardening cancelled"
             exit 0
@@ -270,7 +286,8 @@ interactive_mode() {
     echo "  • Enable public key authentication"
     echo ""
 
-    read -p "Continue with SSH hardening? (y/N): " confirm
+    echo -n "Continue with SSH hardening? (y/N): "
+    prompt_read -r confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         log_info "SSH hardening cancelled"
         exit 0
@@ -293,7 +310,8 @@ interactive_mode() {
         # Verify SSH access
         log_warning "IMPORTANT: Test your SSH access in a NEW terminal now!"
         echo ""
-        read -p "SSH access test successful? (y/N): " ssh_test
+        echo -n "SSH access test successful? (y/N): "
+        prompt_read -r ssh_test
         if [[ ! "$ssh_test" =~ ^[Yy]$ ]]; then
             log_warning "SSH test failed. Restoring original configuration..."
             restore_backup
@@ -310,7 +328,7 @@ interactive_mode() {
 
 # Non-interactive mode
 non_interactive_mode() {
-    if [ "$1" = "--restore" ]; then
+    if [ "${1:-}" = "--restore" ]; then
         restore_backup
         exit 0
     fi
@@ -334,11 +352,11 @@ non_interactive_mode() {
 
 # Main function
 main() {
-    check_root
+    setup_sudo
 
-    if [ "$AUTO_CONFIRM" = "1" ] || [ "$1" = "--yes" ]; then
+    if [ "${AUTO_CONFIRM:-0}" = "1" ] || [ "${1:-}" = "--yes" ]; then
         non_interactive_mode "$@"
-    elif [ "$1" = "--restore" ]; then
+    elif [ "${1:-}" = "--restore" ]; then
         restore_backup
     else
         interactive_mode
