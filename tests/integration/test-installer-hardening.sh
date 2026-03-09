@@ -19,6 +19,12 @@ trap cleanup EXIT
 
 # Test 1: Lockfile (skip if flock not available)
 test_lockfile() {
+    # Skip on Windows compatibility layers (MSYS, MINGW, Cygwin)
+    if uname | grep -qiE 'mingw|msys|cygwin'; then
+        log "Skipping flock test on Windows compatibility layer"
+        return 0
+    fi
+
     log "Test 1: Lockfile functionality"
     if ! command -v flock >/dev/null 2>&1; then
         log "flock not installed, skipping"
@@ -79,11 +85,21 @@ test_syntax() {
     done
 }
 
+# Core installer scripts that require Docker runtime
+INSTALLER_SCRIPTS=(
+  setup-matrix.sh
+  quickstart-entrypoint.sh
+  deploy-infra.sh
+  installer-v5.sh
+)
+
 # Test 7: Wait logic exists
 test_wait_logic() {
     log "Test 7: wait_for_docker logic"
-    for f in install.sh setup-matrix.sh quickstart-entrypoint.sh deploy-infra.sh; do
-        if grep -q "wait_for_docker()" "$PROJECT_ROOT/deploy/$f" || grep -q "for ((i=1;i<=10;i++))" "$PROJECT_ROOT/deploy/$f"; then
+    for f in "${INSTALLER_SCRIPTS[@]}"; do
+        script="$PROJECT_ROOT/deploy/$f"
+
+        if grep -q "wait_for_docker()" "$script" || grep -q "for ((i=1;i<=10;i++))" "$script"; then
             pass "Wait logic found in: $f"
         else
             fail "Wait logic missing from: $f"
