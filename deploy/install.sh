@@ -12,7 +12,7 @@ REPO="Gemutly/ArmorClaw"
 VERSION="${VERSION:-main}"
 INSTALLER="installer-v5.sh"
 BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/deploy"
-SIGNING_KEY_FPR="A1482657223EAFE1C481B74A8F535F90685749E0"
+SIGNING_KEY_FPR="A47C720541284DFA2461BEC9E895A88B0B75750B"
 
 # Colors for output
 CYAN='\033[0;36m'
@@ -38,7 +38,7 @@ retry() {
 }
 
 echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}            ${BOLD}ArmorClaw Bootstrap Loader${NC}                      ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}            ${BOLD}ArmorClaw Bootstrap Loader${NC} ${CYAN}║${NC}"
 echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
