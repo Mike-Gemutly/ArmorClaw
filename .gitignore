@@ -99,3 +99,7 @@ claude_code_zai_env.sh
 
 # Windows null device artifacts
 nul
+
+*.key
+revoke-cert.asc
+private-keys-v1.d/
