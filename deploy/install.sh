@@ -87,6 +87,12 @@ fi
 echo -e "  ${GREEN}✓ Checksum OK${NC}"
 
 # 5. Verify Authenticity (GPG)
+echo "[armorclaw] Importing signing key..."
+
+retry curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+  "$BASE_URL/armorclaw-signing-key.asc" -o armorclaw-signing-key.asc
+
+gpg --import armorclaw-signing-key.asc >/dev/null 2>&1
 echo "[armorclaw] Verifying GPG signature..."
 mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
