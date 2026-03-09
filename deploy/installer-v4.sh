@@ -1094,9 +1094,9 @@ download_binary() {
     local bin_name="armorclaw-bridge-$BIN_ARCH"
     local base_url="${RELEASE_BASE_URL}/$version"
     
-    # Fallback to main branch for testing if VERSION is main
+    # Use latest release if VERSION is main or latest
     if [[ "$version" == "main" || "$version" == "latest" ]]; then
-        base_url="https://raw.githubusercontent.com/$REPO/main/build"
+        base_url="https://github.com/$REPO/releases/latest/download"
     fi
 
     log_info "Downloading prebuilt binary: $bin_name"
