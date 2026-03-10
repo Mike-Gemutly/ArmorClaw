@@ -1,8 +1,8 @@
 # ArmorClaw Quickstart Review
 
 > **Purpose:** Complete guide to the Docker quickstart process and post-deployment steps
-> **Version:** 0.5.0
-> **Last Updated:** 2026-03-07
+> **Version:** 0.5.2
+> **Last Updated:** 2026-03-10
 > **Status:** Active Reference
 
 ---
@@ -134,6 +134,76 @@ Matrix Homeserver → MatrixAdapter → MatrixEventBus → RPC matrix.receive �
 - Uses long-polling (25ms) instead of aggressive polling
 - Handles cursor reset gracefully
 - Reduced CPU and network overhead
+
+### Installer Test Fixes (v0.5.1)
+
+Updated test suite for Windows compatibility and proper test scoping:
+
+| Test | Fix | Result |
+|------|-----|--------|
+| Test 1 (Lockfile) | Skip on MSYS/MINGW/Cygwin | ✅ Passes on Linux, skipped on Windows |
+| Test 7 (wait_for_docker) | Validate only core installer scripts | ✅ Excludes Stage-0 bootstrap |
+
+**Files Changed:**
+- `tests/integration/test-installer-hardening.sh`
+
+**Key Changes:**
+- Added MSYS/MINGW/Cygwin detection for flock test
+- Defined explicit `INSTALLER_SCRIPTS` array for clarity
+- `install.sh` now excluded (Stage-0 bootstrap, Docker handled by Stage-1)
+
+---
+
+### Runtime Bug Fixes (v0.5.1)
+
+#### 1. Matrix Sync Loop Not Started
+
+**Problem:** The MatrixAdapter background sync loop was never started in main.go, preventing inbound Matrix events from reaching the agent.
+
+**Location:** `bridge/cmd/bridge/main.go` line 2174-2176
+
+**Fix:** Added `matrixAdapter.StartSync()` after successful login:
+
+```go
+if err := matrixAdapter.Login(cfg.Matrix.Username, cfg.Matrix.Password); err != nil {
+    log.Printf("Warning: Matrix login failed (will use anonymous mode): %v", err)
+} else {
+    matrixAdapter.StartSync()
+    log.Println("Matrix sync loop started")
+}
+```
+
+**Impact:** This enables the complete Matrix → Bridge → Agent communication path:
+- Matrix sync loop runs every 5 seconds
+- Events pulled from Matrix homeserver
+- Events published to MatrixEventBus
+- Agent receives events via `matrix.receive`
+
+**Files Changed:**
+- `bridge/cmd/bridge/main.go`
+
+---
+
+#### 2. Goroutine Leak in Matrix Event Receive Path (v0.5.1)
+
+**Problem:** The original `WaitForEvents` used blocking `cond.Wait()` without context, and `handleMatrixReceiveWithEventBus` spawned detached goroutines that could leak when timeout occurred.
+
+**Fix:** Replaced blocking wait with ticker-based polling (25ms intervals) with proper context cancellation.
+
+**Location:** `bridge/internal/events/matrix_event_bus.go` and `bridge/pkg/rpc/server.go`
+
+**Changes:**
+- `WaitForEvents` now accepts `context.Context` parameter
+- Uses `time.NewTicker(25 * time.Millisecond)` for wake-up
+- Checks `ctx.Done()` for cancellation
+- RPC handler no longer spawns detached goroutines
+- Passes context with timeout directly to `WaitForEvents`
+
+**Impact:** No goroutine leaks, proper timeout handling, event delivery within 25ms.
+
+**Files Changed:**
+- `bridge/internal/events/matrix_event_bus.go`
+- `bridge/pkg/rpc/server.go`
 
 ---
 

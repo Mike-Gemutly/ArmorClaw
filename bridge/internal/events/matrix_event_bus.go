@@ -1,8 +1,10 @@
 package events
 
 import (
+	"context"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 const DefaultMaxEvents = 1024
@@ -138,20 +140,22 @@ func (b *MatrixEventBus) GetEventsAfter(cursor uint64) ([]MatrixEvent, uint64, b
 	return b.getEventsAfterLocked(cursor)
 }
 
-func (b *MatrixEventBus) WaitForEvents(cursor uint64) ([]MatrixEvent, uint64, bool) {
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *MatrixEventBus) WaitForEvents(ctx context.Context, cursor uint64) ([]MatrixEvent, uint64, bool) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
-
 		events, next, reset := b.getEventsAfterLocked(cursor)
 
-		if reset || len(events) > 0 {
+		if len(events) > 0 || reset {
 			return events, next, reset
 		}
 
-		b.cond.Wait()
+		select {
+		case <-ctx.Done():
+			return nil, cursor, false
+		case <-ticker.C:
+		}
 	}
 }
 

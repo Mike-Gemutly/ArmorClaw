@@ -300,6 +300,9 @@ func (s *Server) handleMatrixLogin(ctx context.Context, req *Request) (interface
 		}
 	}
 
+	// Start sync loop after successful login
+	matrix.StartSync()
+
 	return map[string]interface{}{
 		"success": true,
 		"user_id": matrix.GetUserID(),
@@ -387,47 +390,35 @@ func (s *Server) handleMatrixReceiveWithEventBus(ctx context.Context, req *Reque
 
 	eventBus := matrix.GetEventBus()
 	if eventBus == nil {
-		return nil, &ErrorObj{
-			Code:    InternalError,
-			Message: "event bus not configured",
-		}
+		return map[string]interface{}{
+			"events":       []events.MatrixEvent{},
+			"cursor":       strconv.FormatUint(cursor, 10),
+			"count":        0,
+			"cursor_reset": false,
+		}, nil
 	}
-
-	// Use long-polling with timeout
-	type receiveResult struct {
-		events []events.MatrixEvent
-		cursor uint64
-		reset  bool
-	}
-	resCh := make(chan receiveResult, 1)
-
-	go func() {
-		evs, next, rst := eventBus.WaitForEvents(cursor)
-		resCh <- receiveResult{evs, next, rst}
-	}()
 
 	timeout := time.Duration(params.TimeoutMs) * time.Millisecond
-	select {
-	case <-ctx.Done():
-		return nil, &ErrorObj{
-			Code:    RequestCancelled,
-			Message: ctx.Err().Error(),
-		}
-	case r := <-resCh:
+	recvCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	evs, next, reset := eventBus.WaitForEvents(recvCtx, cursor)
+
+	if recvCtx.Err() != nil && len(evs) == 0 && !reset {
 		return map[string]interface{}{
-			"events":       r.events,
-			"cursor":       strconv.FormatUint(r.cursor, 10),
-			"count":        len(r.events),
-			"cursor_reset": r.reset,
-		}, nil
-	case <-time.After(timeout):
-		// Return empty result on timeout
-		return map[string]interface{}{
-			"events": []events.MatrixEvent{},
-			"cursor": strconv.FormatUint(cursor, 10),
-			"count":  0,
+			"events":       []events.MatrixEvent{},
+			"cursor":       strconv.FormatUint(cursor, 10),
+			"count":        0,
+			"cursor_reset": false,
 		}, nil
 	}
+
+	return map[string]interface{}{
+		"events":       evs,
+		"cursor":       strconv.FormatUint(next, 10),
+		"count":        len(evs),
+		"cursor_reset": reset,
+	}, nil
 }
 
 func (s *Server) handleMatrixReceivePolling(ctx context.Context, req *Request, params *struct {

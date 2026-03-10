@@ -47,6 +47,12 @@ DEFAULT_HARD_STOP="true"
 # Track Matrix installation state
 MATRIX_ENABLED="false"
 
+# Cleanup handler
+cleanup() {
+    [ -n "${WORK_DIR:-}" ] && [ -d "$WORK_DIR" ] && rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
+
 #=============================================================================
 # Helper Functions
 #=============================================================================

@@ -144,7 +144,7 @@ check_prerequisites() {
     print_success "Bridge configuration found"
 
     # Check if Matrix is already enabled
-    if grep -q 'enabled = true' "$CONFIG_FILE" 2>/dev/null | grep -A5 '\[matrix\]'; then
+    if grep -A5 '^\[matrix\]' "$CONFIG_FILE" 2>/dev/null | grep -Eq '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true'; then
         print_warning "Matrix appears to be already enabled"
         if ! prompt_yes_no "Continue with reconfiguration?" "n"; then
             exit 0

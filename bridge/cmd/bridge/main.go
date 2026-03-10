@@ -2171,8 +2171,10 @@ func runBridgeServer(cliCfg cliConfig) {
 			// Initialize the Matrix adapter
 			if err := matrixAdapter.Login(cfg.Matrix.Username, cfg.Matrix.Password); err != nil {
 				log.Printf("Warning: Matrix login failed (will use anonymous mode): %v", err)
+			} else {
+				matrixAdapter.StartSync()
+				log.Println("Matrix sync loop started")
 			}
-
 			log.Printf("Matrix adapter initialized: %s", matrixAdapter.GetUserID())
 		}
 	}

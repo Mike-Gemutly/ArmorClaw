@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/armorclaw/bridge/internal/ai"
 	"github.com/armorclaw/bridge/pkg/providers"
 	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/charmbracelet/huh"
@@ -54,6 +55,11 @@ func getProviderOptions() ([]apiProviderOption, bool) {
 			continue
 		}
 
+		// Filter out unsupported providers
+		if !ai.IsSupportedProvider(ai.ProviderType(p.ID)) {
+			continue
+		}
+
 		providerOptions = append(providerOptions, apiProviderOption{
 			Name:    p.Name,
 			Key:     p.ID,
@@ -94,21 +100,6 @@ func getModelOptions(providerKey string) []string {
 
 	// No models known - return generic default
 	return []string{"default"}
-}
-
-var apiProviders = []apiProviderOption{
-	{Name: "OpenAI", Key: "openai", BaseURL: "https://api.openai.com/v1"},
-	{Name: "Anthropic (Claude)", Key: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
-	{Name: "Google (Gemini)", Key: "google", BaseURL: "https://generativelanguage.googleapis.com/v1"},
-	{Name: "xAI (Grok)", Key: "xai", BaseURL: "https://api.x.ai/v1"},
-	{Name: "OpenRouter", Key: "openrouter", BaseURL: "https://openrouter.ai/api/v1"},
-	{Name: "Zhipu AI (Z AI)", Key: "zhipu", BaseURL: "https://api.z.ai/api/paas/v4"},
-	{Name: "DeepSeek", Key: "deepseek", BaseURL: "https://api.deepseek.com/v1"},
-	{Name: "Moonshot AI", Key: "moonshot", BaseURL: "https://api.moonshot.ai/v1"},
-	{Name: "NVIDIA NIM", Key: "nvidia", BaseURL: "https://integrate.api.nvidia.com/v1"},
-	{Name: "Groq", Key: "groq", BaseURL: "https://api.groq.com/openai/v1"},
-	{Name: "Cloudflare", Key: "cloudflare", BaseURL: "https://gateway.ai.cloudflare.com/v1"},
-	{Name: "Ollama (Local)", Key: "ollama", BaseURL: "http://localhost:11434/v1"},
 }
 
 // runQuickStartForms collects Quick Start configuration through two form pages:

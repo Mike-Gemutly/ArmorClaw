@@ -70,7 +70,7 @@ trap cleanup EXIT
 # 3. Download Components (with TLS pinning and atomic moving)
 echo "[armorclaw] Downloading components (branch: $VERSION)..."
 # Force modern TLS, HTTPS only, and strict error handling
-CURL_BASE="curl --proto =https --tlsv1.2 --fail --silent --show-error --location"
+CURL_BASE="curl --proto =https --tlsv1.2 --fail --silent --show-error --location --connect-timeout 10 --max-time 60"
 
 retry $CURL_BASE "$BASE_URL/$INSTALLER" -o "$INSTALL_PATH.tmp"
 retry $CURL_BASE "$BASE_URL/$INSTALLER.sha256" -o "$CHECKSUM_PATH.tmp"

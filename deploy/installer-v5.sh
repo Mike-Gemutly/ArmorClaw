@@ -261,7 +261,8 @@ create_workspace() {
   print_info "Created temp workspace: $WORK_DIR"
 
   cleanup() {
-    rm -rf "$WORK_DIR"
+    flock -u 200 2>/dev/null || true
+    rm -rf "$WORK_DIR" 2>/dev/null || true
     print_info "Cleaned up temp workspace"
   }
 
@@ -328,6 +329,7 @@ main() {
     echo "ERROR: installer already running" >&2
     exit 1
   }
+  trap 'flock -u 200 2>/dev/null || true' EXIT
   
   # Setup logging
   mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp/armorclaw"

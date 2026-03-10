@@ -5,8 +5,18 @@ import "time"
 type ProviderType string
 
 const (
-	ProviderOpenAI    ProviderType = "openai"
-	ProviderAnthropic ProviderType = "anthropic"
+	ProviderOpenAI     ProviderType = "openai"
+	ProviderAnthropic  ProviderType = "anthropic"
+	ProviderXAI        ProviderType = "xai"
+	ProviderOpenRouter ProviderType = "openrouter"
+	ProviderDeepSeek   ProviderType = "deepseek"
+	ProviderGroq       ProviderType = "groq"
+	ProviderMoonshot   ProviderType = "moonshot"
+	ProviderNVIDIA     ProviderType = "nvidia"
+	ProviderZhipu      ProviderType = "zhipu"
+	ProviderOllama     ProviderType = "ollama"
+	ProviderGoogle     ProviderType = "google"
+	ProviderCloudflare ProviderType = "cloudflare"
 )
 
 var ProviderTimeouts = map[ProviderType]time.Duration{
@@ -70,18 +80,18 @@ type ChatChunk struct {
 }
 
 const (
-	MaxMessages        = 100
-	MaxPromptSize      = 32 * 1024 // ~8k tokens
-	MaxTokens          = 4096
-	MaxConcurrent      = 10
-	RatePerMinute      = 30
-	GlobalRateLimit    = 120
-	MaxPromptTokens    = 8000
+	MaxMessages         = 100
+	MaxPromptSize       = 32 * 1024 // ~8k tokens
+	MaxTokens           = 4096
+	MaxConcurrent       = 10
+	RatePerMinute       = 30
+	GlobalRateLimit     = 120
+	MaxPromptTokens     = 8000
 	MaxCompletionTokens = 4096
 	MaxTotalTokens      = 12000
 	UserBurstCapacity   = 60
 	GlobalBurstCapacity = 200
-	CharsPerToken = 4 // Approximate token estimation (~4 characters per token)
+	CharsPerToken       = 4 // Approximate token estimation (~4 characters per token)
 )
 
 const (
