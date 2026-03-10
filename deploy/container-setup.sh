@@ -58,6 +58,43 @@ COMPLIANCE_PATTERNS_PII="false"
 COMPLIANCE_PATTERNS_PHI="false"
 MATRIX_AVAILABLE=false
 
+# Configuration
+LOCKFILE="/tmp/armorclaw-container-setup.lock"
+
+# Helper for time-bounded Docker pulls
+docker_pull_with_timeout() {
+    local image="$1"
+    local timeout="${2:-300}" # Default 5 minutes
+    
+    print_info "Pulling image: $image (timeout: ${timeout}s)..."
+    
+    # Run pull in background with timeout
+    (
+        if ! timeout "$timeout" docker pull "$image" >/dev/null 2>&1; then
+            exit 1
+        fi
+    ) &
+    local pull_pid=$!
+    
+    show_spinner "$pull_pid" "Downloading $image"
+    wait "$pull_pid"
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        print_error "Failed to pull $image within ${timeout}s"
+        return 1
+    fi
+    print_success "Image $image ready"
+    return 0
+}
+
+# Acquire lock
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    echo "ERROR: Another container-setup.sh instance is already running."
+    exit 1
+fi
+
 # Track if setup succeeded (for cleanup trap)
 SETUP_SUCCEEDED=false
 
@@ -298,6 +335,10 @@ show_error_summary() {
 # Cleanup trap - only runs on failure
 cleanup_on_failure() {
     local exit_code=$?
+
+    # Release lock
+    flock -u 200 2>/dev/null || true
+
     if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
         log_critical "Setup failed with exit code: $exit_code"
 
@@ -346,6 +387,9 @@ preflight_checks() {
     log_section "Preflight Checks"
     print_info "Running preflight checks..."
     echo ""
+
+    # Pre-pull required helper images to prevent timeouts during execution
+    docker_pull_with_timeout "alpine" 60 || true
 
     local checks_passed=0
     local checks_failed=0
@@ -1585,6 +1629,9 @@ start_matrix_stack() {
     # Use direct 'docker run' instead of compose because network_mode: "service:armorclaw"
     # doesn't work in compose (armorclaw is not a compose service, it's the quickstart container)
     print_info "Starting Conduit container (this may take a few minutes on first run)..."
+
+    # Time-bounded pull to prevent indefinite hangs
+    docker_pull_with_timeout "matrixconduit/matrix-conduit:latest" 300 || true
 
     # Remove any existing container first
     docker rm -f armorclaw-conduit 2>/dev/null || true

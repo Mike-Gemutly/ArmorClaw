@@ -1,8 +1,11 @@
 package providers
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 )
 
 // LoadFromEnvironment loads the provider registry with ENV override priority
@@ -10,15 +13,40 @@ import (
 func LoadFromEnvironment() (*Registry, error) {
 	// Priority 1: ENV override
 	if envURL := os.Getenv("ARMORCLAW_PROVIDERS_URL"); envURL != "" {
-		// Note: For full ENV URL support, we'd need HTTP client code
-		// For now, just return the embedded registry
-		// TODO: Implement remote registry download
-		fmt.Fprintf(os.Stderr, "Warning: ARMORCLAW_PROVIDERS_URL not yet implemented, using embedded registry\n")
-		return &EmbeddedRegistry, nil
+		registry, err := fetchRemoteRegistry(envURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to fetch remote registry from %s: %v. Falling back to local/embedded.\n", envURL, err)
+		} else {
+			return registry, nil
+		}
 	}
 
 	// Priority 2: Local registry file
 	return LoadRegistry(DefaultRegistryPath)
+}
+
+// fetchRemoteRegistry downloads and parses a registry from a URL
+func fetchRemoteRegistry(url string) (*Registry, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var registry Registry
+	if err := json.NewDecoder(resp.Body).Decode(&registry); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	return &registry, nil
 }
 
 // LoadDefaultRegistry loads the default registry

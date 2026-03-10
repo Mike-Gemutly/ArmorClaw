@@ -36,6 +36,22 @@ CONDUIT_IMAGE="${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:$CONDUIT_VERSION}"
 AUTO_ENABLE=false
 DOMAIN=""
 
+LOCKFILE="/tmp/armorclaw-matrix-setup.lock"
+
+# Cleanup handler
+cleanup() {
+    # Release lock
+    flock -u 200 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Acquire lock
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    echo -e "${RED}ERROR:${NC} Another instance of setup-matrix.sh is already running."
+    exit 1
+fi
+
 #=============================================================================
 # Helper Functions
 #=============================================================================

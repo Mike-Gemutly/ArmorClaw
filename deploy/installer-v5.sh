@@ -256,17 +256,26 @@ wait_for_docker() {
   fail "Docker failed to start within 20 seconds"
 }
 
+########################################
+# Cleanup
+########################################
+
+cleanup() {
+  # Release lock
+  flock -u 200 2>/dev/null || true
+  
+  # Remove workspace if it exists
+  if [[ -n "${WORK_DIR:-}" ]] && [[ -d "$WORK_DIR" ]]; then
+    rm -rf "$WORK_DIR" 2>/dev/null || true
+    print_info "Cleaned up temp workspace"
+  fi
+}
+
+trap cleanup EXIT
+
 create_workspace() {
   WORK_DIR=$(mktemp -d)
   print_info "Created temp workspace: $WORK_DIR"
-
-  cleanup() {
-    flock -u 200 2>/dev/null || true
-    rm -rf "$WORK_DIR" 2>/dev/null || true
-    print_info "Cleaned up temp workspace"
-  }
-
-  trap cleanup EXIT
 }
 
 ########################################
@@ -329,7 +338,6 @@ main() {
     echo "ERROR: installer already running" >&2
     exit 1
   }
-  trap 'flock -u 200 2>/dev/null || true' EXIT
   
   # Setup logging
   mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp/armorclaw"

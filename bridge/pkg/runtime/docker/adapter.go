@@ -3,9 +3,11 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // DockerRuntime implements runtime.Runtime using Docker Engine.
@@ -163,71 +166,126 @@ func (d *DockerRuntime) RemoveContainer(ctx context.Context, id string, force bo
 }
 
 // ExecContainer executes a command in a running container.
-// TODO: Fix for Docker API v28 - type signatures changed
 func (d *DockerRuntime) ExecContainer(ctx context.Context, id string, config *runtime.ExecConfig) (*runtime.ExecResult, error) {
-	return nil, fmt.Errorf("ExecContainer not yet implemented for Docker API v28")
+	// Create exec instance
+	execConfig := containertypes.ExecOptions{
+		Cmd:          config.Cmd,
+		Env:          config.Env,
+		User:         config.User,
+		WorkingDir:   config.WorkingDir,
+		Tty:          config.Tty,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execResp, err := d.client.ContainerExecCreate(ctx, id, execConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	// Start exec and attach
+	resp, err := d.client.ContainerExecAttach(ctx, execResp.ID, containertypes.ExecStartOptions{
+		Tty: config.Tty,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to attach to exec: %w", err)
+	}
+	defer resp.Close()
+
+	// Read output
+	var stdout, stderr bytes.Buffer
+	if config.Tty {
+		_, err = io.Copy(&stdout, resp.Reader)
+	} else {
+		_, err = stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read exec output: %w", err)
+	}
+
+	// Inspect exec result to get exit code
+	inspectResp, err := d.client.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect exec: %w", err)
+	}
+
+	return &runtime.ExecResult{
+		ExitCode: inspectResp.ExitCode,
+		Stdout:   stdout.Bytes(),
+		Stderr:   stderr.Bytes(),
+	}, nil
 }
 
 // ExecContainerStream executes a command and streams output.
-// TODO: Fix for Docker API v28 - type signatures changed
 func (d *DockerRuntime) ExecContainerStream(ctx context.Context, id string, config *runtime.ExecConfig) (<-chan []byte, <-chan []byte, error) {
-	return nil, nil, fmt.Errorf("ExecContainerStream not yet implemented for Docker API v28")
+	// Create exec instance
+	execConfig := containertypes.ExecOptions{
+		Cmd:          config.Cmd,
+		Env:          config.Env,
+		User:         config.User,
+		WorkingDir:   config.WorkingDir,
+		Tty:          config.Tty,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execResp, err := d.client.ContainerExecCreate(ctx, id, execConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	// Start exec and attach
+	resp, err := d.client.ContainerExecAttach(ctx, execResp.ID, containertypes.ExecStartOptions{
+		Tty: config.Tty,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to attach to exec: %w", err)
+	}
+
+	stdoutChan := make(chan []byte, 100)
+	stderrChan := make(chan []byte, 100)
+
+	go func() {
+		defer resp.Close()
+		defer close(stdoutChan)
+		defer close(stderrChan)
+
+		if config.Tty {
+			// In TTY mode, stdout and stderr are mixed
+			buf := make([]byte, 4096)
+			for {
+				n, err := resp.Reader.Read(buf)
+				if n > 0 {
+					data := make([]byte, n)
+					copy(data, buf[:n])
+					stdoutChan <- data
+				}
+				if err != nil {
+					break
+				}
+			}
+		} else {
+			// In non-TTY mode, use StdCopy to demultiplex
+			// Since StdCopy expects io.Writer, we'll use custom writers that send to channels
+			stdoutWriter := &chanWriter{ch: stdoutChan}
+			stderrWriter := &chanWriter{ch: stderrChan}
+			_, _ = stdcopy.StdCopy(stdoutWriter, stderrWriter, resp.Reader)
+		}
+	}()
+
+	return stdoutChan, stderrChan, nil
 }
 
-// ExecContainerStream executes a command and streams output.
-// TODO: Fix for Docker API v28 - type signatures changed
-// func (d *DockerRuntime) ExecContainerStream(ctx context.Context, id string, config *runtime.ExecConfig) (<-chan []byte, <-chan []byte, error) {
-// 	// Create exec instance
-// 	execConfig := containertypes.ExecConfig{
-// 		Cmd:          config.Cmd,
-// 		Env:          config.Env,
-// 		User:         config.User,
-// 		WorkingDir:   config.WorkingDir,
-// 		Tty:          config.Tty,
-// 		AttachStdout: true,
-// 		AttachStderr: true,
-// 	}
-//
-// 	execResp, err := d.client.ContainerExecCreate(ctx, id, execConfig)
-// 	if err != nil {
-// 		return nil, nil, fmt.Errorf("failed to create exec: %w", err)
-// 	}
-//
-// 	// Attach to exec
-// 	attachResp, err := d.client.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{
-// 		Tty: config.Tty,
-// 	})
-// 	if err != nil {
-// 		return nil, nil, fmt.Errorf("failed to attach exec: %w", err)
-// 	}
-//
-// 	// Create channels for streaming
-// 	stdoutCh := make(chan []byte, 100)
-// 	stderrCh := make(chan []byte, 100)
-//
-// 	go func() {
-// 		defer close(stdoutCh)
-// 		defer close(stderrCh)
-// 		defer attachResp.Close()
-//
-// 		buf := make([]byte, 4096)
-// 		for {
-// 			n, err := attachResp.Reader.Read(buf)
-// 			if n > 0 {
-// 				// Docker multiplexes stdout/stderr with an 8-byte header
-// 				// For simplicity, send all to stdout
-// 				data := make([]byte, n)
-// 				copy(data, buf[:n])
-// 				stdoutCh <- data
-// 			}
-// 			if err != nil {
-// 				break
-// 			}
-// 		}
-// 	}()
-//
-// 	return stdoutCh, stderrCh, nil
-// }
+type chanWriter struct {
+	ch chan []byte
+}
+
+func (w *chanWriter) Write(p []byte) (n int, err error) {
+	data := make([]byte, len(p))
+	copy(data, p)
+	w.ch <- data
+	return len(p), nil
+}
 
 // ContainerStatus returns the current status of a container.
 func (d *DockerRuntime) ContainerStatus(ctx context.Context, id string) (runtime.Status, error) {

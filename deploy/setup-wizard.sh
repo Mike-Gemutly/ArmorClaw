@@ -3,11 +3,31 @@
 # Interactive guided installation and configuration
 # Version: 2.0.0 - Added mode selection
 
-set -eu
+set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
+# Configuration
+REPO="Gemutly/ArmorClaw"
+VERSION="${VERSION:-main}"
+LOCKFILE="/tmp/armorclaw-wizard.lock"
+
+# Cleanup handler
+cleanup() {
+    # Release lock
+    flock -u 200 2>/dev/null || true
+    
+    # Reset terminal state
+    stty sane 2>/dev/null || true
+    tput cnorm 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Acquire lock
+exec 200>"$LOCKFILE"
+flock -n 200 || {
+    echo -e "\n${RED}ERROR:${NC} Another instance of setup-wizard.sh is already running."
+    echo "Please wait for it to finish or remove $LOCKFILE if you are sure it is stale."
+    exit 1
+}
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
