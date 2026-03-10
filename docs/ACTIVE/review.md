@@ -402,6 +402,38 @@ The `quickstart.sh` script then:
 4. **Claims OWNER role** for admin user via `provisioning.claim`
 5. **Generates QR code** for ArmorChat mobile provisioning
 
+### Installer Hardening & Reliability (v0.5.2)
+
+I have completed a major hardening pass across the entire deployment stack to resolve documentation-to-runtime drift and improve operational reliability.
+
+#### 1. Critical Bug Fixes
+| Component | Issue | Fix |
+|-----------|-------|-----|
+| `setup-matrix.sh` | Inverted grep logic | Fixed to correctly detect existing `[matrix]` configuration sections. |
+| `setup-quick.sh` | Broken cleanup trap | Implemented safe variable check `[ -n "${WORK_DIR:-}" ]` to prevent accidental deletions. |
+| `bridge/rpc` | Missing StartSync | Added `matrix.StartSync()` to `handleMatrixLogin` to ensure event delivery starts after API login. |
+
+#### 2. Hardening & Security
+| Script | Improvement | Impact |
+|--------|-------------|--------|
+| `setup-wizard.sh` | Added `flock` + `set -euo pipefail` | Prevents parallel executions and ensures atomic configuration. |
+| `container-setup.sh` | Added `flock` + pull timeouts | Prevents overlapping setups and indefinite hangs during image pulls. |
+| `installer-v5.sh` | Global `EXIT` trap refactor | Guarantees workspace cleanup and lock release on all exit paths. |
+| `install.sh` | Curl connect timeouts | Prevents bootstrap hangs on unstable networks. |
+
+#### 3. Future Hardening & Compatibility
+| Feature | Implementation | Impact |
+|---------|----------------|--------|
+| **Docker SDK v28** | Full `ExecContainer` implementation | Resolved legacy "not yet implemented" stubs with current SDK type signatures. |
+| **Time-Bounded Pulls**| `docker_pull_with_timeout` | Added 60s/300s limits to image downloads with progress spinners. |
+| **Remote Registry** | `ARMORCLAW_PROVIDERS_URL` | Implemented secure remote downloading of AI provider configurations with local fallback. |
+
+**Verification Status:**
+- ✅ All 29 deployment scripts pass `bash -n` syntax validation.
+- ✅ Bridge successfully builds with Docker adapter updates.
+- ✅ Remote registry tests pass in `pkg/providers`.
+- ✅ Lockfile exclusion logic verified between separate processes.
+
 ---
 
 ## What You MUST Do After Setup
