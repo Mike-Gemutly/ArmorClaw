@@ -874,7 +874,7 @@ step_bridge_install() {
     echo "  2. Use pre-built binary (if available)"
     echo ""
 
-    local choice=$(prompt_input "Choose option [1/2]" "1")
+    local choice=$(prompt_input "Choose option [1/2]" "2")
 
     case "$choice" in
         1)
