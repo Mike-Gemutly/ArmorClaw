@@ -34,8 +34,8 @@ if [[ "${1:-}" == "--non-interactive" || "${1:-}" == "-y" ]]; then
     NON_INTERACTIVE=true
 fi
 
-# Prefer binary distribution
-USE_BINARY="${USE_BINARY:-true}"
+# Prefer binary distribution (disabled until release is created)
+USE_BINARY="${USE_BINARY:-false}"
 
 # Smart defaults for quick setup
 DEFAULT_LOG_LEVEL="info"
