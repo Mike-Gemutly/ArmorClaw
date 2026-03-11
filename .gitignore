@@ -92,6 +92,10 @@ C:\Users\Micha\.claude\projects\
 # OpenCode agent workspace
 .opencode/
 
+# Bridge build artifacts
+bridge/build/
+bridge/armorclaw-bridge
+
 # Local deployment artifacts
 *.tar.gz
 *.tgz
