@@ -1,9 +1,34 @@
 # ArmorClaw Architecture Review
 
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.5.0
-> **Last Updated:** 2026-03-10
+> **Version:** 4.6.0
+> **Last Updated:** 2026-03-11
 > **Status:** Active Reference
+
+---
+
+## Phase 6: VPS Deployment (2026-03-11)
+
+### ✅ Deployment Fixes
+
+| Issue | Fix | Status |
+|-------|-----|--------|
+| GPG signature verification failing | Generated new signing key, re-signed installer | ✅ Fixed |
+| sed corrupting .sig files | Excluded .sig from line-ending normalization | ✅ Fixed |
+| Binary 404 errors | Disabled binary download until release created | ✅ Fixed |
+| Matrix not auto-installing | Auto-installs Conduit in quickstart mode | ✅ Fixed |
+
+### Key Changes (v0.6.0)
+
+1. **GPG Key Rotation** - New signing key fingerprint:
+   - Old: `A1482657223EAFE1C481B74A8F535F90685749E0` (expired)
+   - New: `55AD64228EF6B4A342DA480A09C43CFA8AC93062`
+
+2. **Installer Signature Fix** - The `sed -i 's/\r$//'` command was corrupting GPG signatures. Fixed by excluding `.sig` files from normalization.
+
+3. **Binary Download Disabled** - Set `USE_BINARY=false` until GitHub release with prebuilt binaries is created.
+
+4. **Quickstart Auto-Matrix** - `setup-quick.sh` now auto-installs Matrix Conduit instead of prompting, improving VPS deployment experience.
 
 ---
 
