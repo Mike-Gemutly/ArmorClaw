@@ -141,7 +141,7 @@ COPY deploy/view-setup-log.sh /opt/armorclaw/
 COPY deploy/quickstart-entrypoint.sh /opt/armorclaw/
 COPY deploy/rename-admin.sh /opt/armorclaw/
 COPY deploy/bootstrap-admin.py /opt/armorclaw/bootstrap-admin.py
-COPY deploy/quickstart.sh /opt/armorclaw/quickstart.sh
+COPY deploy/setup-quick.sh /opt/armorclaw/quickstart.sh
 
 RUN chmod +x /opt/armorclaw/*.sh && \
     ln -sf /opt/armorclaw/view-setup-log.sh /usr/local/bin/view-setup-log && \
