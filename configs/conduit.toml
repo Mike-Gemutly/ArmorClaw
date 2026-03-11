@@ -13,6 +13,7 @@ max_request_size = 20000000
 # Security: Registration disabled by default for production
 # Use registration_shared_secret for admin bootstrap
 allow_registration = false
+# registration_shared_secret = "<64-char-hex-secret>"  # Set at runtime
 allow_federation = true
 allow_check_for_updates = true
 

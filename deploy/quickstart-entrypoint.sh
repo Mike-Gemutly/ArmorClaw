@@ -121,6 +121,7 @@ if [ ! -f "$CONDUIT_CONFIG" ]; then
 fi
 
 # Detect or use provided server name
+SERVER_NAME_USER_PROVIDED=false
 if [ -z "$ARMORCLAW_SERVER_NAME" ]; then
     # Auto-detect: try external IP, fallback to hostname, then localhost
     ARMORCLAW_SERVER_NAME=$(curl -sf --connect-timeout 3 ifconfig.me 2>/dev/null || \
@@ -129,6 +130,7 @@ if [ -z "$ARMORCLAW_SERVER_NAME" ]; then
                            echo "localhost")
     log "Auto-detected server name: $ARMORCLAW_SERVER_NAME"
 else
+    SERVER_NAME_USER_PROVIDED=true
     log "Using provided server name: $ARMORCLAW_SERVER_NAME"
 fi
 
@@ -194,31 +196,94 @@ fi
 if [ -n "$CONDUIT_CONTAINER" ]; then
     log "Existing Conduit: $CONDUIT_CONTAINER"
     USE_EXISTING_CONDUIT=true
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONDUIT_CONTAINER}$"; then
-        log "Starting existing Conduit container"
-        docker start "$CONDUIT_CONTAINER" || {
-            log "Failed to start existing Conduit"
-            exit 1
-        }
+    
+    # Get existing server name from the container's config
+    EXISTING_SERVER_NAME=$(docker exec "$CONDUIT_CONTAINER" cat /etc/conduit.toml 2>/dev/null | grep '^server_name' | sed 's/.*=\s*"\([^"]*\)".*/\1/' || echo "")
+    
+    if [ -n "$EXISTING_SERVER_NAME" ]; then
+        log "Found existing server name in database: $EXISTING_SERVER_NAME"
+        
+        # Check if user provided a different server name
+        if [ "$SERVER_NAME_USER_PROVIDED" = true ] && [ "$ARMORCLAW_SERVER_NAME" != "$EXISTING_SERVER_NAME" ]; then
+            log_warn "Provided server name ($ARMORCLAW_SERVER_NAME) differs from existing database ($EXISTING_SERVER_NAME)"
+            log_warn "Conduit cannot reuse database after changing server name"
+            
+            # Delete the old database to start fresh with new server name
+            log "Deleting existing database to apply new server name..."
+            docker rm -f "$CONDUIT_CONTAINER" >/dev/null 2>&1 || true
+            docker volume rm armorclaw-conduit-data >/dev/null 2>&1 || true
+            CONDUIT_CONTAINER=""
+            USE_EXISTING_CONDUIT=false
+            # Re-update config with the new server name
+            if grep -q '^server_name\s*=' "$CONDUIT_CONFIG"; then
+                sed -i "s/^server_name\s*=.*/server_name = \"$ARMORCLAW_SERVER_NAME\"/" "$CONDUIT_CONFIG"
+            else
+                echo "server_name = \"$ARMORCLAW_SERVER_NAME\"" >> "$CONDUIT_CONFIG"
+            fi
+            SERVER_NAME="$ARMORCLAW_SERVER_NAME"
+            log "Will create new database with server name: $SERVER_NAME"
+        else
+            # Use existing server name from database (either user-provided matches, or auto-detected differs)
+            ARMORCLAW_SERVER_NAME="$EXISTING_SERVER_NAME"
+            SERVER_NAME="$EXISTING_SERVER_NAME"
+            # Update config to match
+            if grep -q '^server_name\s*=' "$CONDUIT_CONFIG"; then
+                sed -i "s/^server_name\s*=.*/server_name = \"$SERVER_NAME\"/" "$CONDUIT_CONFIG"
+            else
+                echo "server_name = \"$SERVER_NAME\"" >> "$CONDUIT_CONFIG"
+            fi
+            log "Using existing server name from database: $SERVER_NAME"
+        fi
+    fi
+    
+    if [ "$USE_EXISTING_CONDUIT" = true ] && [ -n "$CONDUIT_CONTAINER" ]; then
+        if ! docker ps --format '{{.Names}}' | grep -q "^${CONDUIT_CONTAINER}$"; then
+            log "Starting existing Conduit container"
+            docker start "$CONDUIT_CONTAINER" || {
+                log "Failed to start existing Conduit"
+                exit 1
+            }
+        fi
     fi
 fi
 
 # Create container if not found
 if [ "$USE_EXISTING_CONDUIT" = false ]; then
     log "Creating Conduit container"
+    # Create Conduit config directly inside the armorclaw container
+    # This will be mounted into the Conduit container at /etc/conduit.toml
+    mkdir -p /tmp
+    cat > /tmp/armorclaw-conduit.toml << EOF
+[global]
+server_name = "$SERVER_NAME"
+database_backend = "rocksdb"
+database_path = "/var/lib/matrix-conduit"
+EOF
+
+    # Fix permissions on the data volume
+    docker run --rm -v armorclaw-conduit-data:/var/lib/matrix-conduit alpine chown -R 10000:10000 /var/lib/matrix-conduit
+
     docker run -d \
         --name armorclaw-conduit \
         --restart unless-stopped \
         --user 10000:10000 \
-        -v "$CONFIG_DIR:/etc/armorclaw:ro" \
-        -v /var/lib/conduit:/var/lib/conduit \
-        -p 6167:6167 \
+        --network container:armorclaw \
+        --cap-add=NET_BIND_SERVICE \
+        -e CONDUIT_SERVER_NAME="$ARMORCLAW_SERVER_NAME" \
+        -e CONDUIT_DATABASE_BACKEND="rocksdb" \
+        -e CONDUIT_DATABASE_PATH="/var/lib/matrix-conduit" \
+        -e CONDUIT_ALLOW_REGISTRATION=true \
+        -e CONDUIT_CONFIG=/etc/conduit.toml \
+        -e CONDUIT_ADDRESS="0.0.0.0" \
+        -e CONDUIT_PORT=6167 \
+        -v /tmp/armorclaw-conduit.toml:/etc/conduit.toml:ro \
+        -v armorclaw-conduit-data:/var/lib/matrix-conduit \
         matrixconduit/matrix-conduit:latest
 fi
 
 # Wait for Conduit to be ready
 log "Waiting for Conduit to start..."
-MAX_WAIT=30
+MAX_WAIT=120
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
     if curl -sf http://localhost:6167/_matrix/client/versions >/dev/null 2>&1; then
@@ -235,8 +300,23 @@ if [ $WAITED -eq $MAX_WAIT ]; then
     exit 1
 fi
 
+# Copy Conduit config into container for bootstrap script
+cp /tmp/armorclaw-conduit.toml /etc/conduit.toml
+
 # Run the bootstrap binary
 log "Running admin bootstrap..."
+
+# Check for Python script first (preferred), then Go binary
+if [ -x "/opt/armorclaw/bootstrap-admin.py" ]; then
+    BOOTSTRAP_SCRIPT="/opt/armorclaw/bootstrap-admin.py"
+elif [ -x "$BOOTSTRAP_SCRIPT" ]; then
+    # Use Go binary as fallback
+    true
+else
+    log_error "Bootstrap script not found"
+    exit 1
+fi
+
 if [ -x "$BOOTSTRAP_SCRIPT" ]; then
     # Set environment for bootstrap script
     export ARMORCLAW_ADMIN_PASSWORD="$ARMORCLAW_ADMIN_PASSWORD"

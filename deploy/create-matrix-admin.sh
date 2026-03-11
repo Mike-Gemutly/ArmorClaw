@@ -1,20 +1,21 @@
 #!/bin/bash
 # ArmorClaw Matrix Admin User Creation
-# Creates admin user via Conduit's shared-secret registration API
-# Version: 2.0.0
+# Creates admin user via Conduit's registration token API
+# Version: 2.1.0
 #
 # Usage:
 #   ./deploy/create-matrix-admin.sh [username] [password]
 #   ./deploy/create-matrix-admin.sh admin MySecurePass123
 #   ./deploy/create-matrix-admin.sh                         # prompts for both
 #
-# Security: Uses Synapse-compatible shared-secret registration.
-# Requires registration_shared_secret to be set in conduit.toml.
+# Security: Uses Conduit's registration_token for secure admin creation.
+# Requires registration_token to be set in conduit.toml.
 # The setup wizard handles this automatically during first-run setup.
 #
 # For post-setup use, temporarily add to conduit.toml:
-#   registration_shared_secret = "your-secret-here"
-# Then restart Conduit, run this script, and remove the line.
+#   allow_registration = true
+#   registration_token = "your-secret-here"
+# Then restart Conduit, run this script, and remove the lines.
 
 # NOTE: Do NOT use set -e. We handle errors explicitly.
 
@@ -127,39 +128,17 @@ if [ ${#PASSWORD} -lt 8 ]; then
     exit 1
 fi
 
-# Register user via Synapse-compatible shared-secret registration API
-# Step 1: Get nonce
+# Register user via Conduit registration token API
+# Conduit uses registration_token (not HMAC like Synapse)
 echo ""
 echo -e "${CYAN}Registering user @${USERNAME}:${SERVER_NAME}...${NC}"
 
-NONCE_RESPONSE=$(curl -sf --connect-timeout 10 "${CONDUIT_URL}/_synapse/admin/v1/register" 2>/dev/null)
-if [ $? -ne 0 ] || [ -z "$NONCE_RESPONSE" ]; then
-    echo -e "${RED}Error: Failed to get registration nonce${NC}"
-    echo "This may mean registration_shared_secret is not set in conduit.toml"
-    exit 1
-fi
-
-NONCE=$(echo "$NONCE_RESPONSE" | jq -r '.nonce // empty' 2>/dev/null)
-if [ -z "$NONCE" ]; then
-    echo -e "${RED}Error: Invalid nonce response: $NONCE_RESPONSE${NC}"
-    exit 1
-fi
-
-# Step 2: Compute HMAC-SHA1
-# Format: nonce + \0 + username + \0 + password + \0 + "admin"
-MAC=$(printf '%s\0%s\0%s\0%s' "$NONCE" "$USERNAME" "$PASSWORD" "admin" | \
-    openssl dgst -sha1 -hmac "$SHARED_SECRET" | awk '{print $NF}')
-
-if [ -z "$MAC" ]; then
-    echo -e "${RED}Error: Failed to compute HMAC${NC}"
-    exit 1
-fi
-
-# Step 3: Register with HMAC
+# Conduit uses registration_token directly in the request body
+# No HMAC calculation needed - just pass the token
 REG_RESPONSE=$(curl -s --connect-timeout 10 -X POST \
-    "${CONDUIT_URL}/_synapse/admin/v1/register" \
+    "${CONDUIT_URL}/_matrix/client/v3/register" \
     -H "Content-Type: application/json" \
-    -d "{\"nonce\":\"$NONCE\",\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\",\"admin\":true,\"mac\":\"$MAC\"}" 2>/dev/null)
+    -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\",\"token\":\"$SHARED_SECRET\"}" 2>/dev/null)
 
 # Check for errors
 ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.error // empty' 2>/dev/null)
@@ -198,9 +177,9 @@ echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}Security Reminder:${NC}"
 echo ""
-echo -e "  ${GREEN}✓${NC} User created via shared-secret registration (no open registration)"
-echo -e "  ${YELLOW}⚠${NC} Remove registration_shared_secret from conduit.toml"
-echo -e "  ${YELLOW}⚠${NC} Restart Conduit after removing the secret"
+echo -e "  ${GREEN}✓${NC} User created via registration token (no open registration)"
+echo -e "  ${YELLOW}⚠${NC} Remove registration_token from conduit.toml"
+echo -e "  ${YELLOW}⚠${NC} Restart Conduit after removing the token"
 echo ""
 echo "Connect with Element X or ArmorChat:"
 echo "  Homeserver: ${CONDUIT_URL}"

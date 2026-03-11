@@ -1,13 +1,13 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.5.0-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Version](https://img.shields.io/badge/version-v4.6.0-blue)](https://github.com/Gemutly/ArmorClaw)
 [![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
 
 ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, and manage tasks—while you approve sensitive actions via your phone.
 
-**🛡️ v4.5.0 Highlights:** New **Provider Registry Architecture** with 12+ pre-configured providers (including Zhipu AI/Z AI and Moonshot), and an **Integrated Matrix/Conduit setup** in the quick installer.
+**🛡️ v4.6.0 Highlights:** **Environment Variable API Keys** (keys stored in .zshrc, never persisted to disk), **SQLCipher-linked bridge**, and **21 Browser Skills** for Chrome DevTools MCP integration.
 
 ---
 
@@ -19,10 +19,10 @@ The recommended way to start is the bootstrap installer, which now includes an o
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
 
-**v4.5.0+ Improvements:**
-- **🚀 Provider Registry** - 12+ AI providers pre-configured (Zhipu, Moonshot, DeepSeek, Groq, etc.)
-- **💬 Matrix-Ready** - Installer detects if Matrix is missing and offers to auto-install Conduit
-- **📱 One-Click QR** - Instant ArmorChat connection after setup completes
+**v4.6.0 Improvements:**
+- **🔐 Environment API Keys** - Keys from env vars (OPENROUTER_API_KEY, ZAI_API_KEY, OPEN_AI_KEY), never persisted to disk
+- **🔗 SQLCipher Linked** - Bridge binary links against SQLCipher for encrypted keystore
+- **🌐 21 Browser Skills** - Chrome DevTools MCP skills (navigate, click, fill, screenshot, etc.)
 - **🛡️ Hardened Security** - GPG-verified bootstrap, lockfile protection, and persistent logging
 
 ### Install Specific Version
@@ -35,10 +35,19 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 
 ## Non-Interactive Setup (CI/CD)
 
+API keys are read from environment variables - set these in your shell profile (.zshrc):
+
 ```bash
-export ARMORCLAW_API_KEY=sk-your-key
-export ARMORCLAW_ADMIN_USERNAME=admin  # Optional: custom admin username
-export CONDUIT_VERSION=v1.0.0          # Optional: specify Conduit version
+# Add to your .zshrc
+export OPENROUTER_API_KEY=sk-or-v1-xxx   # For OpenRouter (recommended)
+export ZAI_API_KEY=xxx                   # For xAI (Grok)
+export OPEN_AI_KEY=xxx                   # For OpenAI
+
+# Optional settings
+export ARMORCLAW_ADMIN_USERNAME=admin    # Custom admin username
+export CONDUIT_VERSION=v1.0.0            # Specify Conduit version
+
+# Run installer
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh -o /tmp/install.sh
 sudo bash /tmp/install.sh
 ```
@@ -57,7 +66,12 @@ The production-grade installer (install.sh) now includes:
 
 **Environment Variables:**
 ```bash
-ARMORCLAW_API_KEY         # AI provider API key (required)
+# API Keys (any one required - stored in .zshrc, never persisted to disk)
+OPENROUTER_API_KEY         # OpenRouter (recommended - supports many providers)
+OPEN_AI_KEY               # OpenAI
+ZAI_API_KEY               # xAI (Grok)
+
+# Optional
 ARMORCLAW_ADMIN_USERNAME  # Custom admin username (optional)
 ARMORCLAW_ADMIN_PASSWORD  # Custom admin password (optional)
 CONDUIT_VERSION           # Conduit version (default: latest)
@@ -273,14 +287,18 @@ ArmorClaw now uses a **Provider Registry** pattern. The installer provides a sel
 | **Cloudflare** | `cloudflare` | openai | AI Gateway |
 | **Ollama** | `ollama` | openai | Local models via `localhost:11434` |
 
-### Adding a Key via CLI:
+### Adding API Keys
+
+API keys are read from environment variables at runtime - no need to store them in the keystore:
 
 ```bash
-# Add Zhipu AI key
-armorclaw-bridge add-key --provider zhipu --token your-key
+# Add to your .zshrc or environment
+export OPENROUTER_API_KEY=sk-or-v1-xxx   # Recommended - access to many providers
+export ZAI_API_KEY=xxx                   # xAI (Grok)
+export OPEN_AI_KEY=xxx                   # OpenAI
 
-# Use an alias
-armorclaw-bridge add-key --provider zai --token your-key
+# The bridge automatically uses available keys
+# No CLI command needed - keys are read from environment at startup
 ```
 
 ### Adding Custom Providers:
@@ -354,9 +372,9 @@ mkdir -p configs
 # Copy example configs (or create your own)
 cp configs/conduit.toml.example configs/conduit.toml 2>/dev/null || true
 
-# Set your server IP/domain
+# Set your server IP/domain and API keys
 export MATRIX_DOMAIN=your-server.example.com
-export ARMORCLAW_API_KEY=sk-your-key
+export OPENROUTER_API_KEY=sk-or-v1-xxx  # Add to .zshrc for persistence
 
 # Start the stack
 docker compose -f docker-compose-full.yml up -d
@@ -383,8 +401,8 @@ For testing or when using an external Matrix server:
 # Using quickstart with --bridge-only flag
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash -s -- --bridge-only
 
-# Or with external Matrix
-export ARMORCLAW_API_KEY=sk-your-key
+# Or with external Matrix (add keys to .zshrc first)
+export OPENROUTER_API_KEY=sk-or-v1-xxx
 export ARMORCLAW_EXTERNAL_MATRIX=true
 export ARMORCLAW_MATRIX_HOMESERVER_URL=http://your-matrix-server:6167
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
@@ -402,12 +420,13 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 ### Non-Interactive (CI/CD)
 
 ```bash
-# Minimal - auto-detects server IP
-export ARMORCLAW_API_KEY=sk-your-key
+# Minimal - auto-detects server IP (add API keys to .zshrc)
+# Recommended: use OPENROUTER_API_KEY for access to many providers
+source ~/.zshrc  # Load API keys
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 
 # Or with explicit server IP/domain
-export ARMORCLAW_API_KEY=sk-your-key
+export OPENROUTER_API_KEY=sk-or-v1-xxx
 export ARMORCLAW_SERVER_NAME=192.168.1.50
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
@@ -437,13 +456,13 @@ Use for:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ARMORCLAW_API_KEY` | AI provider API key | (required) |
+| `OPENROUTER_API_KEY` | OpenRouter API key (recommended) | (from .zshrc) |
+| `OPEN_AI_KEY` | OpenAI API key | (from .zshrc) |
+| `ZAI_API_KEY` | xAI API key | (from .zshrc) |
 | `ARMORCLAW_SERVER_NAME` | Server hostname or IP | auto-detected |
 | `ARMORCLAW_EXTERNAL_MATRIX` | Use external Matrix server | `false` |
 | `ARMORCLAW_MATRIX_HOMESERVER_URL` | External Matrix URL | `http://127.0.0.1:6167` |
 | `ARMORCLAW_MATRIX_ENABLED` | Enable Matrix integration | `true` |
-| `ARMORCLAW_MATRIX_USERNAME` | Bridge Matrix username | `bridge` |
-| `ARMORCLAW_MATRIX_PASSWORD` | Bridge Matrix password | `bridgepass` |
 | `ARMORCLAW_ADMIN_PASSWORD` | Admin password | auto-generated |
 
 ### Manual Docker Run
@@ -458,7 +477,7 @@ docker run -it --name armorclaw \
   -v armorclaw-data:/etc/armorclaw \
   -v armorclaw-keystore:/var/lib/armorclaw \
   -p 8443:8443 -p 6167:6167 -p 5000:5000 \
-  -e ARMORCLAW_API_KEY=sk-your-key \
+  -e OPENROUTER_API_KEY=sk-or-v1-xxx \
   -e ARMORCLAW_EXTERNAL_MATRIX=true \
   mikegemut/armorclaw:latest
 ```
@@ -495,7 +514,8 @@ ArmorClaw uses the Docker socket to create isolated agent containers. This is sa
 |---------|-------------|
 | **E2EE Messaging** | All communication via Matrix protocol |
 | **BlindFill™** | Secrets injected directly, agents never see values |
-| **Memory-Only Secrets** | API keys never written to disk |
+| **Memory-Only Secrets** | API keys read from environment variables, never written to disk |
+| **SQLCipher Keystore** | Encrypted local storage for other secrets |
 | **Container Isolation** | Each agent in hardened, isolated container |
 | **HITL Approval** | Human-in-the-loop for sensitive operations |
 | **Audit Logging** | All operations logged for compliance |
@@ -632,10 +652,15 @@ docker compose -f docker-compose-full.yml up -d --build
 
 ```bash
 cd ArmorClaw/bridge
+
+# Install Go 1.24+ and SQLCipher development libraries
+# Build with SQLCipher support
+export CGO_ENABLED=1
+export CGO_CFLAGS="-I/usr/include/sqlcipher"
+export CGO_LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
+
 go build -o armorclaw-bridge ./cmd/bridge
 ```
-
-**Note:** Bridge requires Debian-based images for SQLCipher compatibility.
 
 ---
 

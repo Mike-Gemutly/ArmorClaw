@@ -3,29 +3,37 @@
 # Pull and run - setup wizard launches automatically
 
 # ============================================================================
-# Stage 1: Go Bridge Builder
+# Stage 1: Go Bridge Builder (runtime-matched glibc)
 # ============================================================================
 FROM golang:1.24-bookworm AS bridge-builder
 
-# Install CGO dependencies required by SQLCipher keystore
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libc-dev libsqlcipher-dev \
-    && rm -rf /var/lib/apt/lists/*
+    build-essential \
+    pkg-config \
+    libsqlcipher-dev \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+WORKDIR /src
 
-# Copy Go module files first for caching
-COPY bridge/go.mod bridge/go.sum ./
+# Prime module cache first for faster rebuilds
+COPY bridge/go.mod bridge/go.sum /src/bridge/
+WORKDIR /src/bridge
 RUN go mod download
 
 # Copy bridge source
-COPY bridge/ ./
+WORKDIR /src
+COPY bridge/ /src/bridge/
 
-# Build with CGO enabled (required for go-sqlcipher)
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o armorclaw-bridge ./cmd/bridge
+WORKDIR /src/bridge
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV GOARCH=amd64
+ENV CGO_CFLAGS="-I/usr/include"
+ENV CGO_LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
 
-# Build bootstrap-admin binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o bootstrap-admin ./cmd/bootstrap-admin
+# Build the Linux bridge against the same libc family as runtime
+RUN go build -trimpath -ldflags="-s -w" -o /out/armorclaw-bridge ./cmd/bridge
 
 # ============================================================================
 # Stage 2: Agent Runtime Builder
@@ -51,7 +59,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir aiohttp websockets python-dotenv
+    pip install --no-cache-dir aiohttp websockets python-dotenv toml requests
 
 # ============================================================================
 # Stage 3: Quick Start Runtime
@@ -73,28 +81,33 @@ COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core runtime
-    python3 python3-venv \
-    # Required for setup wizard and bridge
-    curl wget jq socat \
-    # SQLCipher runtime library (encrypted SQLite for keystore)
+    bash \
+    curl \
+    jq \
+    socat \
+    python3 \
+    python3-venv \
+    python3-pip \
     libsqlcipher0 \
-    # System utilities
-    ca-certificates procps openssl gnupg \
-    # Terminal capabilities for Huh? TUI framework
-    # ncurses-base provides basic terminfo (xterm, vt100, linux)
-    # ncurses-term provides extended terminfo for screen, tmux, alacritty, etc.
-    ncurses-base ncurses-term \
-    # QR code generation for ArmorChat mobile app connection
+    ca-certificates \
+    procps \
+    openssl \
+    gnupg \
+    ncurses-base \
+    ncurses-term \
     qrencode \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker Compose V2 as both standalone binary and CLI plugin
-# The CLI plugin path enables 'docker compose' (V2 subcommand form)
 RUN curl -fsSL "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose && \
     chmod +x /usr/local/bin/docker-compose && \
     mkdir -p /usr/lib/docker/cli-plugins && \
     ln -sf /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose
+
+# Copy bridge into the path quickstart expects
+COPY --from=bridge-builder /out/armorclaw-bridge /opt/armorclaw/armorclaw-bridge
+RUN chmod +x /opt/armorclaw/armorclaw-bridge \
+ && ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge
 
 # Create ArmorClaw user
 RUN groupadd -g 10001 armorclaw && \
@@ -104,16 +117,10 @@ RUN groupadd -g 10001 armorclaw && \
 RUN mkdir -p /opt/armorclaw \
              /etc/armorclaw \
              /var/lib/armorclaw \
+             /var/lib/conduit \
              /run/armorclaw \
              /var/log/armorclaw \
-    && chown -R armorclaw:armorclaw /opt/armorclaw /etc/armorclaw /var/lib/armorclaw /run/armorclaw /var/log/armorclaw
-
-# Copy bridge binary from builder
-COPY --from=bridge-builder /build/armorclaw-bridge /opt/armorclaw/
-COPY --from=bridge-builder /build/bootstrap-admin /opt/armorclaw/
-RUN chmod +x /opt/armorclaw/armorclaw-bridge /opt/armorclaw/bootstrap-admin && \
-    ln -sf /opt/armorclaw/armorclaw-bridge /usr/local/bin/armorclaw-bridge && \
-    ln -sf /opt/armorclaw/bootstrap-admin /usr/local/bin/bootstrap-admin
+     && chown -R armorclaw:armorclaw /opt/armorclaw /etc/armorclaw /var/lib/armorclaw /run/armorclaw /var/log/armorclaw
 
 # Copy agent runtime from builder
 COPY --from=agent-builder /opt/venv /opt/venv
@@ -126,818 +133,39 @@ COPY --from=agent-builder /usr/bin/npx /usr/bin/npx
 COPY container/opt/openclaw/* /opt/armorclaw/agent/
 COPY container/openclaw/ /opt/armorclaw/agent/openclaw/
 
-# Copy setup scripts
+# Copy deployment scripts
 COPY deploy/container-setup.sh /opt/armorclaw/
 COPY deploy/health-check.sh /opt/armorclaw/
 COPY deploy/create-matrix-admin.sh /opt/armorclaw/
 COPY deploy/view-setup-log.sh /opt/armorclaw/
 COPY deploy/quickstart-entrypoint.sh /opt/armorclaw/
 COPY deploy/rename-admin.sh /opt/armorclaw/
+COPY deploy/bootstrap-admin.py /opt/armorclaw/bootstrap-admin.py
+COPY deploy/quickstart.sh /opt/armorclaw/quickstart.sh
+
 RUN chmod +x /opt/armorclaw/*.sh && \
     ln -sf /opt/armorclaw/view-setup-log.sh /usr/local/bin/view-setup-log && \
     ln -sf /opt/armorclaw/rename-admin.sh /usr/local/bin/rename-admin
 
-# Copy configuration templates
+# Copy configuration files
 COPY configs/ /opt/armorclaw/configs/
-
-# Copy docker-compose files
 COPY docker-compose.yml /opt/armorclaw/
 COPY docker-compose-full.yml /opt/armorclaw/
 COPY docker-compose.matrix.yml /opt/armorclaw/
 COPY docker-compose.bridge.yml /opt/armorclaw/
-
-# Copy environment template
 COPY .env.template /opt/armorclaw/.env.template
 
-# Create quickstart entrypoint
-RUN cat > /opt/armorclaw/quickstart.sh << 'ENTRYPOINT'
-#!/bin/bash
-# ArmorClaw Quick Start Entrypoint
-# Launches container setup on first run, then starts bridge
-# Version: 0.3.7
-
-# NOTE: Do NOT use set -e. Transient failures must not kill the container.
-# Critical commands check errors explicitly.
-
-CONFIG_FILE="/etc/armorclaw/config.toml"
-SETUP_FLAG="/etc/armorclaw/.setup_complete"
-API_KEY_TEMP="/var/lib/armorclaw/.api_key_temp"
-PASSWORD_FILE="/var/lib/armorclaw/.admin_password"
-LOG_DIR="/var/log/armorclaw"
-LOG_FILE="$LOG_DIR/setup.log"
-VERSION="0.3.7"
-
-# Debug mode (set ARMORCLAW_DEBUG=true to enable)
-DEBUG="${ARMORCLAW_DEBUG:-false}"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-#=============================================================================
-# Logging Functions
-#=============================================================================
-
-init_logging() {
-    mkdir -p "$LOG_DIR" 2>/dev/null || true
-    touch "$LOG_FILE" 2>/dev/null || true
-    chmod 644 "$LOG_FILE" 2>/dev/null || true
-}
-
-log_to_file() {
-    local level="$1"
-    shift
-    local message="$*"
-    local timestamp
-    timestamp=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
-    echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
-}
-
-log_info()  { log_to_file "INFO" "$@"; }
-log_error() { log_to_file "ERROR" "$@"; }
-log_debug() { [ "$DEBUG" = true ] && log_to_file "DEBUG" "$@"; }
-
-# Initialize logging first
-init_logging
-
-# Redirect all output to log file AND stdout (Phase 1: Persistent Log File System)
-exec > >(tee -a "$LOG_FILE") 2>&1
-
-log_info "ArmorClaw Quick Start v${VERSION} starting"
-log_info "Debug mode: $DEBUG"
-
-# Enable debug tracing if requested (Phase 3: Debug Mode)
-if [ "$DEBUG" = true ]; then
-    set -x
-    log_debug "Debug tracing enabled"
-fi
-
-#=============================================================================
-# Development Mode: Auto-backup logs to catch before crash
-#=============================================================================
-# Set ARMORCLAW_DEV_MODE=true to enable automatic log backup to /tmp
-# This helps catch logs even if container crashes and is removed
-LOG_BACKUP_PID=""
-
-start_log_backup() {
-    # Backup location - use /tmp on host if accessible, otherwise container /tmp
-    BACKUP_DIR="${ARMORCLAW_LOG_BACKUP_DIR:-/tmp/armorclaw-logs}"
-    mkdir -p "$BACKUP_DIR" 2>/dev/null || BACKUP_DIR="/tmp"
-
-    # Start background process to copy logs every 2 seconds
-    (
-        while true; do
-            if [ -f "$LOG_FILE" ]; then
-                cp "$LOG_FILE" "$BACKUP_DIR/setup.log.backup" 2>/dev/null || true
-                # Also create timestamped backup every 30 seconds
-                if [ $(($(date +%s) % 30)) -eq 0 ]; then
-                    cp "$LOG_FILE" "$BACKUP_DIR/setup.log.$(date +%s)" 2>/dev/null || true
-                    # Keep only last 5 timestamped backups
-                    ls -t "$BACKUP_DIR"/setup.log.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
-                fi
-            fi
-            sleep 2
-        done
-    ) &
-    LOG_BACKUP_PID=$!
-    log_info "Log backup started (backup dir: $BACKUP_DIR)"
-}
-
-stop_log_backup() {
-    if [ -n "$LOG_BACKUP_PID" ]; then
-        kill $LOG_BACKUP_PID 2>/dev/null || true
-        LOG_BACKUP_PID=""
-    fi
-}
-
-# Start log backup in dev mode or if explicitly requested
-if [ "${ARMORCLAW_DEV_MODE:-false}" = true ] || [ "${ARMORCLAW_LOG_BACKUP:-false}" = true ]; then
-    start_log_backup
-    # Ensure backup stops on exit
-    trap stop_log_backup EXIT
-fi
-
-#=============================================================================
-# Crash Handler (Phase 2: Crash Handler & Error Capture)
-#=============================================================================
-
-# Track if setup succeeded (for crash handler)
-SETUP_SUCCEEDED=false
-
-# Rollback function - cleans up partial state on failure
-rollback_setup() {
-    log_info "Rolling back partial setup..."
-    echo -e "${YELLOW}Rolling back partial setup...${NC}"
-
-    # Stop any containers we may have started
-    if command -v docker >/dev/null 2>&1; then
-        cd /opt/armorclaw 2>/dev/null || true
-        docker compose down --volumes 2>/dev/null || true
-        docker-compose down --volumes 2>/dev/null || true
-    fi
-
-    # Clean up partial config files
-    rm -f "$SETUP_FLAG" 2>/dev/null || true
-    rm -f "$API_KEY_TEMP" 2>/dev/null || true
-    rm -f "$PASSWORD_FILE" 2>/dev/null || true
-    rm -f /tmp/armorclaw-wizard.json 2>/dev/null || true
-    rm -f /etc/armorclaw/config.toml 2>/dev/null || true
-
-    # Don't remove data volumes - user may want to inspect them
-    log_info "Rollback complete"
-}
-
-# Crash handler - shows error summary and log location on failure
-crash_handler() {
-    local exit_code=$?
-
-    # Stop log backup if running
-    stop_log_backup
-
-    # Only run on failure (non-zero exit)
-    if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
-        log_error "Setup failed with exit code: $exit_code"
-
-        echo ""
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${RED}SETUP FAILED (exit code: $exit_code)${NC}"
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-
-        # Perform rollback
-        rollback_setup
-
-        # Show log file location
-        if [ -f "$LOG_FILE" ]; then
-            echo ""
-            echo -e "${CYAN}Log file locations:${NC}"
-            echo "  Primary:   $LOG_FILE"
-            if [ -f "/tmp/armorclaw-logs/setup.log.backup" ]; then
-                echo "  Backup:    /tmp/armorclaw-logs/setup.log.backup"
-            fi
-            echo ""
-            echo -e "${CYAN}To retrieve logs:${NC}"
-            echo "  docker cp armorclaw:$LOG_FILE ./setup.log"
-            if [ -f "/tmp/armorclaw-logs/setup.log.backup" ]; then
-                echo "  docker cp armorclaw:/tmp/armorclaw-logs/setup.log.backup ./setup.log.backup"
-            fi
-            echo ""
-            echo -e "${YELLOW}Last 30 lines of log:${NC}"
-            echo ""
-            tail -30 "$LOG_FILE" 2>/dev/null || echo "(no log available)"
-            echo ""
-        fi
-
-        echo -e "${CYAN}Common issues and fixes:${NC}"
-        echo "  • Docker socket not accessible - run with --user root"
-        echo "  • Terminal incompatibility - try environment variable mode:"
-        echo "      -e ARMORCLAW_API_KEY=sk-your-key"
-        echo "  • Permission denied - check volume permissions"
-        echo ""
-        echo -e "${CYAN}For development debugging:${NC}"
-        echo "  docker run -e ARMORCLAW_DEV_MODE=true ..."
-        echo ""
-    fi
-
-    exit $exit_code
-}
-trap crash_handler INT TERM EXIT
-
-# Disable cleanup trap on success (call this before normal exit)
-disable_crash_handler() {
-    SETUP_SUCCEEDED=true
-    trap - INT TERM EXIT
-}
-
-# Handle --help and --version flags before any setup
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-    echo "ArmorClaw Quick Start - Self-contained deployment image"
-    echo ""
-    echo "Usage: docker run [OPTIONS] armorclaw/quickstart [COMMAND]"
-    echo ""
-    echo "Commands:"
-    echo "  --help, -h     Show this help message"
-    echo "  --version, -v  Show version information"
-    echo "  (no args)      Start ArmorClaw bridge (requires Docker socket)"
-    echo ""
-    echo "Deployment Profiles:"
-    echo "  Quick Start (default)  - 2 prompts, running in ~2 minutes"
-    echo "  Enterprise/Compliance  - PII/PHI scrubbing, HIPAA, audit logging"
-    echo ""
-    echo "  Set profile via: -e ARMORCLAW_PROFILE=enterprise"
-    echo ""
-    echo "Required volumes:"
-    echo "  -v /var/run/docker.sock:/var/run/docker.sock"
-    echo "  -v armorclaw-data:/etc/armorclaw (optional, persists config)"
-    echo ""
-    echo "Important: Run with --user root to access Docker socket:"
-    echo "  docker run --user root -v /var/run/docker.sock:/var/run/docker.sock ..."
-    echo ""
-    echo "Environment variables (non-interactive mode):"
-    echo "  ARMORCLAW_SERVER_NAME  Server domain or IP"
-    echo "  ARMORCLAW_API_KEY      AI provider API key"
-    echo "  ARMORCLAW_PROFILE      Deployment profile (quick|enterprise)"
-    echo "  ARMORCLAW_SKIP_MATRIX  Skip Matrix setup, run bridge only (true|false)"
-    echo "  ARMORCLAW_HIPAA        Enable HIPAA mode (true|false)"
-    echo "  ARMORCLAW_QUARANTINE   Enable quarantine mode (true|false)"
-    echo "  ARMORCLAW_DEBUG        Enable debug mode (true|false)"
-    echo ""
-    echo "Examples:"
-    echo "  # Bridge only (no Matrix, fastest):"
-    echo "  docker run -it --name armorclaw \\"
-    echo "    --user root \\"
-    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-    echo "    -v armorclaw-keystore:/var/lib/armorclaw \\"
-    echo "    -p 8443:8443 \\"
-    echo "    -e ARMORCLAW_SKIP_MATRIX=true \\"
-    echo "    mikegemut/armorclaw:latest"
-    echo ""
-    echo "  # Quick start (interactive):"
-    echo "  docker run -it --name armorclaw \\"
-    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-    echo "    -v armorclaw-data:/etc/armorclaw \\"
-    echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
-    echo "    mikegemut/armorclaw:latest"
-    echo ""
-    echo "  # Enterprise (non-interactive):"
-    echo "  docker run -d --name armorclaw \\"
-    echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-    echo "    -v armorclaw-data:/etc/armorclaw \\"
-    echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
-    echo "    -e ARMORCLAW_PROFILE=enterprise \\"
-    echo "    -e ARMORCLAW_SERVER_NAME=your-domain.com \\"
-    echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
-    echo "    -e ARMORCLAW_HIPAA=true \\"
-    echo "    mikegemut/armorclaw:latest"
-    echo ""
-    echo "  # Debug mode (verbose logging):"
-    echo "  docker run -it --name armorclaw \\"
-    echo "    -e ARMORCLAW_DEBUG=true \\"
-    echo "    ..."
-    SETUP_SUCCEEDED=true
-    exit 0
-fi
-
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
-    echo "ArmorClaw Quick Start v${VERSION}"
-    echo "Bridge: $(/opt/armorclaw/armorclaw-bridge --version 2>/dev/null || echo 'installed')"
-    echo "Node.js: $(node --version 2>/dev/null || echo 'installed')"
-    SETUP_SUCCEEDED=true
-    exit 0
-fi
-
-echo -e "${CYAN}"
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║        ${BOLD}ArmorClaw Quick Start${NC}${CYAN}                          ║"
-echo "║        ${BOLD}Self-Contained Deployment${NC}${CYAN}                    ║"
-echo "╚══════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-
-# Check if setup is needed
-if [ ! -f "$SETUP_FLAG" ]; then
-    echo -e "${CYAN}First run detected. Starting container setup...${NC}"
-    echo ""
-
-    # Check for Docker socket
-    if [ ! -S /var/run/docker.sock ]; then
-        echo -e "${RED}ERROR: Docker socket not found at /var/run/docker.sock${NC}"
-        echo -e "${RED}This container requires Docker socket access.${NC}"
-        echo ""
-        echo "Run with: docker run -v /var/run/docker.sock:/var/run/docker.sock ..."
-        exit 1
-    fi
-
-    # Quick Docker daemon connectivity test (with diagnostics)
-    echo -e "${CYAN}Testing Docker connectivity...${NC}"
-    if ! docker info >/dev/null 2>&1; then
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${RED}ERROR: Docker daemon not accessible${NC}"
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-        echo "Docker socket exists but daemon is not responding."
-        echo ""
-        echo "Diagnostics:"
-        echo "  User:          $(id 2>/dev/null || echo 'unknown')"
-        echo "  Socket perms:  $(ls -la /var/run/docker.sock 2>/dev/null || echo 'unknown')"
-        echo "  Docker error:"
-        docker info 2>&1 | head -3 | while read -r line; do
-            echo "    $line"
-        done
-        echo ""
-        echo "Common fixes:"
-        echo "  1. Ensure Docker is running on the host: systemctl status docker"
-        echo "  2. Run container with --user root"
-        echo "  3. Fix socket permissions: sudo chmod 666 /var/run/docker.sock"
-        echo "  4. Add user to docker group: sudo usermod -aG docker \$USER"
-        echo ""
-        echo "Debug mode (for more info):"
-        echo "  docker run -e ARMORCLAW_DEBUG=true ..."
-        echo ""
-        exit 1
-    fi
-    echo -e "${GREEN}Docker connectivity OK${NC}"
-    echo ""
-
-    #=============================================================================
-    # Quick Mode: Skip Matrix setup entirely
-    #=============================================================================
-    # If ARMORCLAW_SKIP_MATRIX=true, create a minimal config and skip wizard
-    # This is useful for testing or when you don't need Matrix integration
-
-    if [ "${ARMORCLAW_SKIP_MATRIX:-false}" = true ]; then
-        echo -e "${CYAN}Quick mode: Skipping Matrix setup${NC}"
-        log_info "Quick mode enabled - skipping Matrix setup"
-
-        # Create minimal config with Matrix disabled
-        cat > "$CONFIG_FILE" << 'QUICKCONFIG'
-# ArmorClaw Bridge Configuration
-# Generated in quick mode (Matrix disabled)
-
-socket_path = "/run/armorclaw/bridge.sock"
-db_path = "/var/lib/armorclaw/keystore.db"
-log_level = "info"
-
-[server]
-socket_path = "/run/armorclaw/bridge.sock"
-
-[keystore]
-db_path = "/var/lib/armorclaw/keystore.db"
-
-[matrix]
-enabled = false
-homeserver_url = ""
-
-[logging]
-level = "info"
-format = "text"
-output = "stdout"
-QUICKCONFIG
-
-        # Mark setup complete
-        touch "$SETUP_FLAG"
-
-        echo -e "${GREEN}✓ Minimal config created (Matrix disabled)${NC}"
-        echo -e "${GREEN}✓ Setup complete${NC}"
-        echo ""
-        log_info "Quick mode setup complete"
-    else
-        #=============================================================================
-        # Terminal Setup for Huh? TUI
-        #=============================================================================
-    # Huh? requires proper terminal capabilities. Ensure TERM is set
-    # and terminal supports ANSI escape codes.
-
-    setup_terminal() {
-        local old_term="${TERM:-<unset>}"
-
-        # Ensure TERM is set - default to xterm-256color for modern terminals
-        if [ -z "${TERM:-}" ] || [ "${TERM}" = "dumb" ]; then
-            # Try to detect terminal capabilities
-            if command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
-                # Terminal supports colors, use 256-color mode
-                export TERM="xterm-256color"
-            elif [ -t 0 ]; then
-                # We have a TTY but no tput - assume basic xterm
-                export TERM="xterm"
-            else
-                # No TTY - set TERM anyway for non-interactive mode
-                export TERM="xterm"
-            fi
-            log_info "Set TERM=$TERM (was: $old_term)"
-        fi
-
-        # Verify terminal capabilities
-        if [ "${TERM}" != "dumb" ] && [ -t 0 ] && [ -t 1 ]; then
-            log_info "Terminal setup complete: TERM=$TERM"
-            return 0
-        fi
-
-        # Terminal may not support TUI
-        log_info "Terminal has limited capabilities"
-        return 1
-    }
-
-    # Terminal cleanup on exit (handles crashes gracefully)
-    # This extends crash_handler with terminal reset for the TUI wizard phase
-    cleanup_and_handle_crash() {
-        local exit_code=$?
-
-        # Always reset terminal state first (even if crash_handler will run)
-        if [ -t 0 ]; then
-            stty sane 2>/dev/null || true
-            tput cnorm 2>/dev/null || true  # Show cursor
-            tput sgr0 2>/dev/null || true   # Reset colors
-        fi
-
-        # Then delegate to the main crash_handler for rollback and error display
-        # Only if this is a failure (non-zero exit and not succeeded)
-        if [ "$SETUP_SUCCEEDED" != true ] && [ $exit_code -ne 0 ]; then
-            # Restore the original crash_handler trap and call it
-            trap crash_handler INT TERM EXIT
-            crash_handler
-        fi
-
-        exit $exit_code
-    }
-
-    # Register cleanup for various exit scenarios (replaces earlier trap during setup)
-    trap cleanup_and_handle_crash EXIT INT TERM
-
-    # Setup terminal before launching wizard
-    setup_terminal
-    TERM_SETUP_RESULT=$?
-
-    # If terminal setup failed but we have env vars, proceed anyway
-    if [ $TERM_SETUP_RESULT -ne 0 ] && [ -z "${ARMORCLAW_API_KEY:-}" ]; then
-        echo -e "${YELLOW}Note: Terminal has limited capabilities.${NC}"
-        echo -e "${YELLOW}If the wizard doesn't display correctly, use environment variables:${NC}"
-        echo -e "${YELLOW}  -e ARMORCLAW_API_KEY=sk-your-key${NC}"
-        echo ""
-    fi
-
-    # Run container setup via the Huh? TUI wizard.
-    # The Go binary handles BOTH interactive and non-interactive modes:
-    #   - If ARMORCLAW_API_KEY env var is set, it runs non-interactive
-    #   - Otherwise, it launches the TUI wizard
-    # After collecting config, it delegates infrastructure setup
-    # (Docker Compose, Matrix, certs) to container-setup.sh.
-    # Secrets are passed through environment variables, never written to disk.
-    #
-    # Fallback chain:
-    #   1. Go wizard (handles env vars OR TUI based on context)
-    #   2. Bash wizard (container-setup.sh) - fallback only
-    setup_failed=false
-    WIZARD_CRASHED=false
-
-    if [ -x /opt/armorclaw/armorclaw-bridge ]; then
-        # Check if we're in non-interactive mode (for logging)
-        if [ -n "${ARMORCLAW_API_KEY:-}" ]; then
-            echo -e "${CYAN}Environment variables detected - using non-interactive mode${NC}"
-            log_info "Running wizard in non-interactive mode (env vars)"
-        else
-            echo -e "${CYAN}Launching setup wizard...${NC}"
-            log_info "Launching Huh? TUI wizard"
-        fi
-
-        # Run wizard and capture exit code
-        set +e
-        /opt/armorclaw/armorclaw-bridge container-setup
-        WIZARD_EXIT=$?
-        set -e
-
-        if [ $WIZARD_EXIT -ne 0 ]; then
-            echo ""
-            echo -e "${YELLOW}Wizard exited with code $WIZARD_EXIT${NC}"
-            log_error "Wizard exited with code $WIZARD_EXIT"
-
-            # Check if it's a user abort vs a crash
-            if [ $WIZARD_EXIT -eq 130 ]; then
-                echo -e "${YELLOW}Setup cancelled by user.${NC}"
-                log_info "Setup cancelled by user"
-                exit 130
-            fi
-
-            # Mark as crashed for terminal reset decision
-            WIZARD_CRASHED=true
-
-            # Log error code INS-002 for wizard crash
-            log_error "[INS-002] Wizard crashed - attempting fallback"
-
-            # FULL terminal reset - critical after Go TUI crash
-            # The Go huh? library leaves terminal in raw mode on crash
-            if [ -t 0 ]; then
-                # Step 1: Restore all terminal modes to sane defaults
-                stty sane 2>/dev/null || true
-                # Step 2: Explicitly re-enable critical modes
-                stty echo icanon isig ixon 2>/dev/null || true
-                # Step 3: Flush pending input
-                stty min 1 time 0 2>/dev/null || true
-                # Step 4: Reset rendering state
-                if command -v tput >/dev/null 2>&1; then
-                    tput sgr0 2>/dev/null || true
-                    tput cnorm 2>/dev/null || true
-                    tput cr 2>/dev/null || true
-                    tput ed 2>/dev/null || true
-                fi
-                # Step 5: Small delay to let terminal settle
-                sleep 0.1 2>/dev/null || sleep 1 2>/dev/null || true
-            fi
-
-            echo -e "${YELLOW}Attempting fallback to bash wizard...${NC}"
-            cd /opt/armorclaw
-
-            if [ -x ./container-setup.sh ]; then
-                if ! ./container-setup.sh; then
-                    echo -e "${YELLOW}Bash wizard also failed.${NC}"
-                    log_error "Bash wizard also failed"
-                    setup_failed=true
-                fi
-            else
-                echo -e "${RED}Bash wizard not found.${NC}"
-                log_error "Bash wizard not found"
-                setup_failed=true
-            fi
-        else
-            log_info "Wizard completed successfully"
-        fi
-    else
-        echo -e "${YELLOW}Go wizard not available, using bash wizard...${NC}"
-        log_info "Go wizard not available, using bash wizard"
-        cd /opt/armorclaw
-
-        if [ -x ./container-setup.sh ]; then
-            if ! ./container-setup.sh; then
-                log_error "Bash wizard failed"
-                setup_failed=true
-            fi
-        else
-            echo -e "${RED}No setup wizard available.${NC}"
-            log_error "No setup wizard available"
-            setup_failed=true
-        fi
-    fi
-
-    if [ "$setup_failed" = true ]; then
-        echo ""
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${RED}ERROR: Container setup failed.${NC}"
-        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-
-        # Show help
-        echo "Common issues:"
-        echo "  • Docker socket not accessible - run with --user root"
-        echo "  • Terminal incompatibility - try environment variable mode"
-        echo "  • Permission denied - fix volume permissions"
-        echo ""
-        echo "To retry with environment variables (non-interactive):"
-        echo "  docker run -it --user root \\"
-        echo "    -v /var/run/docker.sock:/var/run/docker.sock \\"
-        echo "    -v armorclaw-config:/etc/armorclaw \\"
-        echo "    -v armorclaw-data:/var/lib/armorclaw \\"
-        echo "    -e ARMORCLAW_SERVER_NAME=your-ip \\"
-        echo "    -e ARMORCLAW_API_KEY=sk-your-key \\"
-        echo "    -e ARMORCLAW_PROFILE=quick \\"
-        echo "    -p 8443:8443 -p 6167:6167 -p 5000:5000 \\"
-        echo "    mikegemut/armorclaw:latest"
-        echo ""
-        echo "To retry:"
-        echo "  1. Fix the issue above"
-        echo "  2. Remove the container: docker rm -f armorclaw"
-        echo "  3. Re-run the docker command"
-        echo ""
-        exit 1
-    fi
-
-    # Mark setup complete
-    touch "$SETUP_FLAG"
-
-    fi # End of else block (ARMORCLAW_SKIP_MATRIX)
-fi
-
-# Check configuration exists and has required fields
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo -e "${RED}ERROR: Configuration not found at $CONFIG_FILE${NC}"
-    echo -e "${RED}Run setup first: /opt/armorclaw/container-setup.sh${NC}"
-    exit 1
-fi
-
-for field in socket_path homeserver_url db_path; do
-    if ! grep -q "${field}" "$CONFIG_FILE" 2>/dev/null; then
-        echo -e "${RED}ERROR: Config missing required field: $field${NC}"
-        echo -e "${RED}Remove $SETUP_FLAG and re-run to repeat setup.${NC}"
-        exit 1
-    fi
-done
-
-# Check for corrupted keystore database
-KEYSTORE_DB="/var/lib/armorclaw/keystore.db"
-if [ -f "$KEYSTORE_DB" ]; then
-    # Check if it's a valid SQLite database (corrupted files fail this)
-    if ! file "$KEYSTORE_DB" 2>/dev/null | grep -q "SQLite"; then
-        echo -e "${YELLOW}Warning: Corrupted keystore detected, rebuilding...${NC}"
-        rm -f "$KEYSTORE_DB" "$KEYSTORE_DB-shm" "$KEYSTORE_DB-wal" 2>/dev/null
-        log_info "Removed corrupted keystore database"
-    fi
-fi
-
-echo -e "${GREEN}Starting ArmorClaw Bridge...${NC}"
-echo ""
-
-# Start bridge in background to inject API key
-/opt/armorclaw/armorclaw-bridge &
-BRIDGE_PID=$!
-
-# Wait for bridge socket
-echo -e "${CYAN}Waiting for bridge to initialize...${NC}"
-max_attempts=30
-attempt=0
-while [ ! -S /run/armorclaw/bridge.sock ] && [ $attempt -lt $max_attempts ]; do
-    sleep 1
-    attempt=$((attempt + 1))
-    echo -n "."
-done
-echo ""
-
-if [ -S /run/armorclaw/bridge.sock ]; then
-    echo -e "${GREEN}Bridge socket ready${NC}"
-
-    # Brief wait for RPC server to finish initialization
-    sleep 2
-
-    # Inject API key if temp file exists (with retry)
-    if [ -f "$API_KEY_TEMP" ]; then
-        echo -e "${CYAN}Injecting API key into keystore...${NC}"
-        source "$API_KEY_TEMP" 2>/dev/null || true
-
-        if [ -n "$api_key" ]; then
-            # Use provider from temp file, default to openai
-            key_provider="${provider:-openai}"
-            # Add API key via RPC with retry (bridge RPC may need a moment)
-            inject_ok=false
-            for inject_attempt in 1 2 3; do
-                RESPONSE=$(echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"store_key\",\"params\":{\"id\":\"${key_provider}-default\",\"provider\":\"${key_provider}\",\"token\":\"$api_key\",\"display_name\":\"Default API\"}}" | \
-                    socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{"error":"failed"}')
-                if echo "$RESPONSE" | grep -q '"result"'; then
-                    inject_ok=true
-                    break
-                fi
-                [ $inject_attempt -lt 3 ] && sleep 2
-            done
-
-            if [ "$inject_ok" = true ]; then
-                echo -e "${GREEN}API key injected successfully${NC}"
-                rm -f "$API_KEY_TEMP"
-            else
-                echo -e "${YELLOW}Warning: Could not inject API key after 3 attempts${NC}"
-                echo -e "${YELLOW}Add manually via RPC: store_key${NC}"
-            fi
-        fi
-    fi
-
-    echo ""
-    # ── Auto-claim OWNER role for setup admin user ──
-    ADMIN_INFO_FILE="/var/lib/armorclaw/.admin_user"
-    if [ -f "$ADMIN_INFO_FILE" ]; then
-        ADMIN_USER=$(sed -n '1p' "$ADMIN_INFO_FILE")
-        ADMIN_SERVER=$(sed -n '2p' "$ADMIN_INFO_FILE")
-        ADMIN_MATRIX_ID="@${ADMIN_USER}:${ADMIN_SERVER}"
-
-        echo -e "${CYAN}Assigning OWNER role to admin user...${NC}"
-
-        # Step 1: Create provisioning token (with retry)
-        SETUP_TOKEN=""
-        for prov_attempt in 1 2 3; do
-            TOKEN_RESP=$(echo '{"jsonrpc":"2.0","id":10,"method":"provisioning.start","params":{}}' | \
-                socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
-            SETUP_TOKEN=$(echo "$TOKEN_RESP" | jq -r '.result.setup_token // empty' 2>/dev/null)
-            [ -n "$SETUP_TOKEN" ] && break
-            [ $prov_attempt -lt 3 ] && sleep 2
-        done
-
-        if [ -n "$SETUP_TOKEN" ]; then
-            # Step 2: Claim with admin's Matrix ID as device_id → first claim = OWNER
-            CLAIM_RESP=$(printf '{"jsonrpc":"2.0","id":11,"method":"provisioning.claim","params":{"setup_token":"%s","device_id":"%s","device_name":"Admin (setup)","device_type":"element-x"}}' \
-                "$SETUP_TOKEN" "$ADMIN_MATRIX_ID" | \
-                socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
-
-            CLAIM_ROLE=$(echo "$CLAIM_RESP" | jq -r '.result.role // empty' 2>/dev/null)
-            if [ "$CLAIM_ROLE" = "OWNER" ]; then
-                echo -e "${GREEN}✓ Admin ${ADMIN_MATRIX_ID} assigned OWNER role${NC}"
-            else
-                echo -e "${YELLOW}⚠ Admin role claim returned: ${CLAIM_ROLE:-unknown}${NC}"
-            fi
-        else
-            echo -e "${YELLOW}⚠ Provisioning not available — admin can claim OWNER via ArmorChat QR${NC}"
-        fi
-
-        # Step 3: Generate a second token for ArmorChat QR code
-        QR_RESP=$(echo '{"jsonrpc":"2.0","id":12,"method":"provisioning.start","params":{}}' | \
-            socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null || echo '{}')
-
-        QR_DATA=$(echo "$QR_RESP" | jq -r '.result.qr_data // empty' 2>/dev/null)
-        QR_SETUP_TOKEN=$(echo "$QR_RESP" | jq -r '.result.setup_token // empty' 2>/dev/null)
-
-        if [ -n "$QR_DATA" ]; then
-            echo ""
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo -e "${BOLD}ArmorChat Provisioning QR${NC}"
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo ""
-            echo "  Scan this link with ArmorChat to connect:"
-            echo -e "  ${GREEN}${QR_DATA}${NC}"
-            echo ""
-            if command -v qrencode >/dev/null 2>&1; then
-                echo "$QR_DATA" | qrencode -t UTF8 2>/dev/null || true
-            else
-                echo "  (Install qrencode for ASCII QR: apt-get install qrencode)"
-            fi
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        fi
-
-        # Clean up admin info file
-        rm -f "$ADMIN_INFO_FILE"
-    fi
-
-    echo ""
-    echo -e "${GREEN}ArmorClaw Bridge is running!${NC}"
-    echo ""
-    echo "To connect with Element X:"
-    echo "  1. Open Element X"
-    echo "  2. Set homeserver URL (shown during setup)"
-    echo "  3. Log in with admin credentials"
-    echo "  4. Open 'ArmorClaw Bridge' room and send !status"
-    echo ""
-    echo "To connect with ArmorChat:"
-    echo "  Scan the QR code above, or run:"
-    echo "    armorclaw-bridge generate-qr"
-    echo ""
-
-    # Wait for bridge process
-    if kill -0 $BRIDGE_PID 2>/dev/null; then
-        # Disable crash handler - setup succeeded, bridge is running
-        log_info "Setup completed successfully - bridge running"
-        disable_crash_handler
-        wait $BRIDGE_PID
-        EXIT_CODE=$?
-        if [ $EXIT_CODE -ne 0 ]; then
-            echo -e "${RED}Bridge exited with code $EXIT_CODE${NC}"
-            log_error "Bridge exited with code $EXIT_CODE"
-        fi
-        exit $EXIT_CODE
-    else
-        echo -e "${RED}Bridge process is no longer running${NC}"
-        log_error "Bridge process is no longer running"
-        exit 1
-    fi
-else
-    echo -e "${RED}ERROR: Bridge failed to create socket${NC}"
-    log_error "Bridge failed to create socket"
-    kill $BRIDGE_PID 2>/dev/null || true
-    exit 1
-fi
-ENTRYPOINT
-
-RUN chmod +x /opt/armorclaw/quickstart.sh
-
-# Environment
+# Set environment
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV ARMORCLAW_CONFIG="/etc/armorclaw/config.toml"
+ENV CONDUIT_IMAGE=${CONDUIT_IMAGE:-matrixconduit/matrix-conduit:latest}
 
-# Expose ports (when running as bridge)
 EXPOSE 8443 5000 6167
 
-# Volumes
 VOLUME ["/etc/armorclaw", "/var/lib/armorclaw", "/run/armorclaw", "/var/log/armorclaw"]
 
-# Health check - verifies RPC server is responding, not just socket exists
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null | grep -q '"result"' || exit 1
 
-# Entrypoint - launches production-grade bootstrap on first run
-ENTRYPOINT ["/opt/armorclaw/quickstart-entrypoint.sh"]
+ENTRYPOINT ["/opt/armorclaw/quickstart.sh"]

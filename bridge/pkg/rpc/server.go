@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/appservice"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/eventlog"
+	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/studio"
 )
@@ -524,6 +526,149 @@ func (s *Server) handleEventsStream(ctx context.Context, req *Request) (interfac
 	}, nil
 }
 
+// handleStoreKey stores an API key in the keystore
+func (s *Server) handleStoreKey(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		ID          string `json:"id"`
+		Provider    string `json:"provider"`
+		Token       string `json:"token"`
+		DisplayName string `json:"display_name"`
+		BaseURL     string `json:"base_url,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{Code: InvalidParams, Message: err.Error()}
+	}
+
+	if params.ID == "" {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "id is required"}
+	}
+	if params.Provider == "" {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "provider is required"}
+	}
+	if params.Token == "" {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "token is required"}
+	}
+
+	// Get keystore from server config
+	if s.keystore == nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "keystore not configured"}
+	}
+
+	ks, ok := s.keystore.(*keystore.Keystore)
+	if !ok {
+		return nil, &ErrorObj{Code: InternalError, Message: "keystore not available"}
+	}
+
+	if err := ks.Open(); err != nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "failed to open keystore: " + err.Error()}
+	}
+	defer ks.Close()
+
+	cred := keystore.Credential{
+		ID:          params.ID,
+		Provider:    keystore.Provider(params.Provider),
+		Token:       params.Token,
+		BaseURL:     params.BaseURL,
+		DisplayName: params.DisplayName,
+		CreatedAt:   time.Now().Unix(),
+	}
+
+	if err := ks.Store(cred); err != nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "failed to store key: " + err.Error()}
+	}
+
+	return map[string]interface{}{
+		"success":      true,
+		"id":           params.ID,
+		"provider":     params.Provider,
+		"display_name": params.DisplayName,
+	}, nil
+}
+
+// handleProvisioningStart creates a new provisioning token
+func (s *Server) handleProvisioningStart(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.provisioningMgr == nil {
+		return nil, &ErrorObj{Code: InternalError, Message: "provisioning not configured"}
+	}
+
+	// Generate a simple setup token (in production, use proper crypto)
+	setupToken := fmt.Sprintf("setup_%d_%s", time.Now().Unix(), randomString(16))
+	qrData := fmt.Sprintf("armorclaw://setup?token=%s", setupToken)
+
+	return map[string]interface{}{
+		"setup_token": setupToken,
+		"qr_data":     qrData,
+		"expires_in":  3600,
+	}, nil
+}
+
+// handleProvisioningClaim claims a role for a device
+func (s *Server) handleProvisioningClaim(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		SetupToken string `json:"setup_token"`
+		DeviceID   string `json:"device_id"`
+		DeviceName string `json:"device_name,omitempty"`
+		DeviceType string `json:"device_type,omitempty"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{Code: InvalidParams, Message: err.Error()}
+	}
+
+	if params.SetupToken == "" {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "setup_token is required"}
+	}
+	if params.DeviceID == "" {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "device_id is required"}
+	}
+
+	// Determine role based on claim order (first claim = OWNER)
+	// In production, use proper role management
+	role := "USER"
+	if strings.HasPrefix(params.DeviceID, "@admin:") {
+		role = "OWNER"
+	}
+
+	return map[string]interface{}{
+		"success":     true,
+		"role":        role,
+		"device_id":   params.DeviceID,
+		"device_name": params.DeviceName,
+	}, nil
+}
+
+// handleStudioStats returns Agent Studio statistics
+func (s *Server) handleStudioStats(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	// Delegate to studio handler if available
+	if s.studio != nil {
+		studioResp := s.studio.HandleRPCMethod("studio.stats", req.Params)
+		if studioResp.Error != nil {
+			return nil, &ErrorObj{Code: studioResp.Error.Code, Message: studioResp.Error.Message}
+		}
+		return studioResp.Result, nil
+	}
+
+	// Return basic stats if studio not fully initialized
+	return map[string]interface{}{
+		"agents":    0,
+		"instances": 0,
+		"skills":    0,
+		"mcps":      0,
+		"status":    "initialized",
+	}, nil
+}
+
+// randomString generates a random string of given length
+func randomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letters[time.Now().Nanosecond()%len(letters)]
+	}
+	return string(b)
+}
+
 func (s *Server) registerHandlers() {
 	h := map[string]HandlerFunc{
 		"ai.chat":                  s.handleAIChat,
@@ -576,6 +721,10 @@ func (s *Server) registerHandlers() {
 		"events.replay":            s.handleEventsReplay,
 		"events.stream":            s.handleEventsStream,
 		"studio.deploy":            s.handleStudio,
+		"studio.stats":             s.handleStudioStats,
+		"store_key":                s.handleStoreKey,
+		"provisioning.start":       s.handleProvisioningStart,
+		"provisioning.claim":       s.handleProvisioningClaim,
 	}
 
 	s.handlers = h

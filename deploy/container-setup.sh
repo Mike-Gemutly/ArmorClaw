@@ -1641,9 +1641,14 @@ start_matrix_stack() {
         --name armorclaw-conduit \
         --restart unless-stopped \
         --network container:armorclaw \
-        -v /opt/armorclaw/conduit.toml:/etc/conduit.toml:ro \
-        -v /var/lib/conduit:/var/lib/conduit \
+        -e CONDUIT_SERVER_NAME="${MATRIX_SERVER_NAME}" \
+        -e CONDUIT_DATABASE_BACKEND="rocksdb" \
+        -e CONDUIT_DATABASE_PATH="/var/lib/matrix-conduit" \
+        -e CONDUIT_ALLOW_REGISTRATION=true \
         -e CONDUIT_CONFIG=/etc/conduit.toml \
+        -e CONDUIT_REGISTRATION_SHARED_SECRET="${REGISTRATION_SHARED_SECRET}" \
+        -v armorclaw-conduit-data:/var/lib/matrix-conduit \
+        -v /opt/armorclaw/conduit.toml:/etc/conduit.toml:ro \
         matrixconduit/matrix-conduit:latest 2>&1)
     local CONDUIT_EXIT=$?
 
@@ -1815,68 +1820,72 @@ register_matrix_user() {
 
     print_info "Registering Matrix user: $username"
 
-    # Method 1: Try standard Matrix v3 registration API (works with Conduit)
-    # This requires allow_registration = true in conduit.toml
+    # Method 1: Conduit native shared-secret registration
+    # This uses the registration_shared_secret that was set when Conduit started
+    if [ -n "$REGISTRATION_SHARED_SECRET" ]; then
+        print_info "Using Conduit shared-secret registration..."
+
+        # Compute HMAC-SHA1 for shared-secret registration
+        # Format: username + \0 + password + \0 + "admin" (or "notadmin")
+        local admin_flag="notadmin"
+        if [ "$is_admin" = "true" ]; then
+            admin_flag="admin"
+        fi
+
+        local MAC
+        MAC=$(printf '%s\0%s\0%s' "$username" "$password" "$admin_flag" | \
+            openssl dgst -sha1 -hmac "$REGISTRATION_SHARED_SECRET" | awk '{print $NF}')
+
+        if [ -n "$MAC" ]; then
+            local REG_RESPONSE
+            REG_RESPONSE=$(curl -sf --connect-timeout 10 -X POST \
+                "http://localhost:6167/_matrix/client/v3/register" \
+                -H "Content-Type: application/json" \
+                -d "{\"username\":\"$username\",\"password\":\"$password\",\"admin\":$is_admin,\"mac\":\"$MAC\"}" 2>/dev/null)
+
+            if [ -n "$REG_RESPONSE" ]; then
+                local USER_ID
+                USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // empty' 2>/dev/null)
+                if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
+                    print_success "Registered Matrix user: $USER_ID"
+                    return 0
+                fi
+
+                # Check if user already exists
+                local ERROR_MSG
+                ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.errcode // .error // empty' 2>/dev/null)
+                if [ "$ERROR_MSG" = "M_USER_IN_USE" ] || echo "$REG_RESPONSE" | grep -qi "already\|exists\|in.use"; then
+                    print_info "User @${username}:${server_name} already exists"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    # Method 2: Fallback to standard Matrix v3 registration (when allow_registration=true)
+    # This is less secure but works for non-admin users when open registration is enabled
+    print_info "Trying standard Matrix registration..."
     local REG_RESPONSE
     REG_RESPONSE=$(curl -sf --connect-timeout 10 -X POST \
         "http://localhost:6167/_matrix/client/v3/register" \
         -H "Content-Type: application/json" \
-        -d "{\"username\":\"$username\",\"password\":\"$password\",\"auth\":{\"type\":\"m.login.dummy\"}}" 2>/dev/null)
+        -d "{\"username\":\"$username\",\"password\":\"$password\"}" 2>/dev/null)
     local REG_EXIT=$?
 
     if [ $REG_EXIT -eq 0 ] && [ -n "$REG_RESPONSE" ]; then
         local USER_ID
         USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // .access_token // empty' 2>/dev/null)
-        if [ -n "$USER_ID" ]; then
+        if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
             print_success "Registered Matrix user: $USER_ID"
             return 0
         fi
-    fi
 
-    # Check if user already exists
-    local ERROR_MSG
-    ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.errcode // .error // empty' 2>/dev/null)
-    if [ "$ERROR_MSG" = "M_USER_IN_USE" ] || echo "$REG_RESPONSE" | grep -qi "already\|exists\|in.use"; then
-        print_info "User @${username}:${server_name} already exists"
-        return 0
-    fi
-
-    # Method 2: Try Synapse admin API (for Synapse compatibility)
-    if [ -n "$REGISTRATION_SHARED_SECRET" ]; then
-        print_info "Trying Synapse admin API for registration..."
-
-        # Step 1: Get nonce
-        local NONCE_RESPONSE
-        NONCE_RESPONSE=$(curl -sf --connect-timeout 10 "http://localhost:6167/_synapse/admin/v1/register" 2>/dev/null)
-        if [ $? -eq 0 ] && [ -n "$NONCE_RESPONSE" ]; then
-            local NONCE
-            NONCE=$(echo "$NONCE_RESPONSE" | jq -r '.nonce // empty' 2>/dev/null)
-            if [ -n "$NONCE" ]; then
-                # Step 2: Compute HMAC
-                local admin_flag="notadmin"
-                if [ "$is_admin" = "true" ]; then
-                    admin_flag="admin"
-                fi
-
-                local MAC
-                MAC=$(printf '%s\0%s\0%s\0%s' "$NONCE" "$username" "$password" "$admin_flag" | \
-                    openssl dgst -sha1 -hmac "$REGISTRATION_SHARED_SECRET" | awk '{print $NF}')
-
-                if [ -n "$MAC" ]; then
-                    # Step 3: Register with Synapse API
-                    REG_RESPONSE=$(curl -sf --connect-timeout 10 -X POST \
-                        "http://localhost:6167/_synapse/admin/v1/register" \
-                        -H "Content-Type: application/json" \
-                        -d "{\"nonce\":\"$NONCE\",\"username\":\"$username\",\"password\":\"$password\",\"admin\":$is_admin,\"mac\":\"$MAC\"}" 2>/dev/null)
-
-                    local USER_ID
-                    USER_ID=$(echo "$REG_RESPONSE" | jq -r '.user_id // empty' 2>/dev/null)
-                    if [ -n "$USER_ID" ]; then
-                        print_success "Registered Matrix user: $USER_ID"
-                        return 0
-                    fi
-                fi
-            fi
+        # Check if user already exists
+        local ERROR_MSG
+        ERROR_MSG=$(echo "$REG_RESPONSE" | jq -r '.errcode // .error // empty' 2>/dev/null)
+        if [ "$ERROR_MSG" = "M_USER_IN_USE" ] || echo "$REG_RESPONSE" | grep -qi "already\|exists\|in.use"; then
+            print_info "User @${username}:${server_name} already exists"
+            return 0
         fi
     fi
 
@@ -1887,7 +1896,7 @@ register_matrix_user() {
     print_info "Manual registration command:"
     print_info "  curl -X POST http://localhost:6167/_matrix/client/v3/register \\"
     print_info "    -H 'Content-Type: application/json' \\"
-    print_info "    -d '{\"username\":\"$username\",\"password\":\"$password\",\"auth\":{\"type\":\"m.login.dummy\"}}'"
+    print_info "    -d '{\"username\":\"$username\",\"password\":\"$password\"}'"
     return 1
 }
 

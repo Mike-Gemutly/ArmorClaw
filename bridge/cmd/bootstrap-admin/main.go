@@ -64,10 +64,6 @@ func logDebug(format string, args ...interface{}) {
 	fmt.Fprintf(logger, "[%s] [DEBUG] %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 }
 
-type NonceResponse struct {
-	Nonce string `json:"nonce"`
-}
-
 type RegisterResponse struct {
 	UserID  string `json:"user_id"`
 	ErrCode string `json:"errcode"`
@@ -134,13 +130,14 @@ func waitForConduit(timeout time.Duration, maxAttempts int) bool {
 }
 
 func updateConduitConfigLine(key, value string) error {
-	data, err := os.ReadFile(conduitConfigPath)
+	file, err := os.Open(conduitConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
+	defer file.Close()
 
-	var buf bytes.Buffer
-	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var lines []string
+	scanner := bufio.NewScanner(file)
 	keyFound := false
 
 	for scanner.Scan() {
@@ -149,13 +146,13 @@ func updateConduitConfigLine(key, value string) error {
 
 		if strings.HasPrefix(trimmed, key+" ") || strings.HasPrefix(trimmed, key+"=") {
 			if strings.Contains(key, "allow_registration") {
-				buf.WriteString(fmt.Sprintf("allow_registration = %s\n", value))
+				lines = append(lines, fmt.Sprintf("allow_registration = %s", value))
 			} else {
-				buf.WriteString(fmt.Sprintf("%s = \"%s\"\n", key, value))
+				lines = append(lines, fmt.Sprintf("%s = \"%s\"", key, value))
 			}
 			keyFound = true
 		} else {
-			buf.WriteString(line + "\n")
+			lines = append(lines, line)
 		}
 	}
 
@@ -165,13 +162,14 @@ func updateConduitConfigLine(key, value string) error {
 
 	if !keyFound {
 		if strings.Contains(key, "allow_registration") {
-			buf.WriteString(fmt.Sprintf("allow_registration = %s\n", value))
+			lines = append(lines, fmt.Sprintf("allow_registration = %s", value))
 		} else {
-			buf.WriteString(fmt.Sprintf("%s = \"%s\"\n", key, value))
+			lines = append(lines, fmt.Sprintf("%s = \"%s\"", key, value))
 		}
 	}
 
-	if err := os.WriteFile(conduitConfigPath, buf.Bytes(), 0600); err != nil {
+	output := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(conduitConfigPath, []byte(output), 0600); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 
@@ -180,13 +178,14 @@ func updateConduitConfigLine(key, value string) error {
 }
 
 func removeConfigLine(key string) error {
-	data, err := os.ReadFile(conduitConfigPath)
+	file, err := os.Open(conduitConfigPath)
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 
-	var buf bytes.Buffer
-	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var lines []string
+	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -195,14 +194,15 @@ func removeConfigLine(key string) error {
 		if strings.HasPrefix(trimmed, key+" ") || strings.HasPrefix(trimmed, key+"=") {
 			continue
 		}
-		buf.WriteString(line + "\n")
+		lines = append(lines, line)
 	}
 
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(conduitConfigPath, buf.Bytes(), 0600); err != nil {
+	output := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(conduitConfigPath, []byte(output), 0600); err != nil {
 		return err
 	}
 
@@ -210,8 +210,10 @@ func removeConfigLine(key string) error {
 	return nil
 }
 
-func computeHMAC(nonce, username, password, sharedSecret string) string {
-	data := fmt.Sprintf("%s\x00%s\x00%s\x00admin", nonce, username, password)
+// computeHMAC computes HMAC-SHA1 for Conduit native registration
+// Conduit format: username\0password\0admin_flag (no nonce)
+func computeHMAC(username, password, sharedSecret string) string {
+	data := fmt.Sprintf("%s\x00%s\x00admin", username, password)
 	mac := hmac.New(sha1.New, []byte(sharedSecret))
 	mac.Write([]byte(data))
 	return hex.EncodeToString(mac.Sum(nil))
@@ -219,11 +221,6 @@ func computeHMAC(nonce, username, password, sharedSecret string) string {
 
 func registerAdmin(sharedSecret, password string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-
-	nonceResp, err := getNonce(client)
-	if err != nil {
-		return "", err
-	}
 
 	attemptUsername := adminUsername
 	maxRetries := 3
@@ -234,10 +231,10 @@ func registerAdmin(sharedSecret, password string) (string, error) {
 			logInfo("Trying alternative username: %s", attemptUsername)
 		}
 
-		mac := computeHMAC(nonceResp.Nonce, attemptUsername, password, sharedSecret)
+		// Conduit native registration: use Matrix v3 endpoint with mac
+		mac := computeHMAC(attemptUsername, password, sharedSecret)
 
 		payload := map[string]interface{}{
-			"nonce":    nonceResp.Nonce,
 			"username": attemptUsername,
 			"password": password,
 			"admin":    true,
@@ -249,8 +246,9 @@ func registerAdmin(sharedSecret, password string) (string, error) {
 			return "", err
 		}
 
+		// Use Conduit's native registration endpoint
 		resp, err := client.Post(
-			conduitURL+"/_synapse/admin/v1/register",
+			conduitURL+"/_matrix/client/v3/register",
 			"application/json",
 			bytes.NewReader(body),
 		)
@@ -265,7 +263,7 @@ func registerAdmin(sharedSecret, password string) (string, error) {
 		}
 
 		var regResp RegisterResponse
-		if err := json.Unmarshal(respBody, &regResp); err != nil {
+		if err := json.Unmarshal(respBody, ®Resp); err != nil {
 			return "", err
 		}
 
@@ -294,34 +292,10 @@ func registerAdmin(sharedSecret, password string) (string, error) {
 			return "", fmt.Errorf("registration failed: %s", regResp.Error)
 		}
 
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return "", fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
 	}
 
 	return "", fmt.Errorf("failed to register admin after %d attempts", maxRetries)
-}
-
-func getNonce(client *http.Client) (*NonceResponse, error) {
-	resp, err := client.Get(conduitURL + "/_synapse/admin/v1/register")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var nonceResp NonceResponse
-	if err := json.Unmarshal(body, &nonceResp); err != nil {
-		return nil, err
-	}
-
-	if nonceResp.Nonce == "" {
-		return nil, fmt.Errorf("no nonce returned")
-	}
-
-	return &nonceResp, nil
 }
 
 func sendSIGHUP() error {
@@ -467,9 +441,8 @@ func main() {
 	fmt.Printf("Admin Username: @%s:%s\n", adminUsername, serverName)
 	fmt.Printf("Admin Password: %s\n", password)
 	fmt.Println("")
-	fmt.Println("⚠️  SAVE CREDENTIALS NOW - They will NOT be stored!")
+	fmt.Println("SAVE CREDENTIALS NOW - They will NOT be stored!")
 	fmt.Println("   Password is shown ONLY this once.")
-	fmt.Println("")
 	fmt.Printf("Next: Connect via Element X or ArmorChat using http://<your-ip>:6167\n")
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 

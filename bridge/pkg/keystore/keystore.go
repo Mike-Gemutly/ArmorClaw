@@ -15,7 +15,6 @@ import (
 	"crypto/sha512"
 	"database/sql"
 	"encoding/base64"
-
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -506,7 +505,14 @@ func (ks *Keystore) Store(cred Credential) error {
 }
 
 // Retrieve retrieves and decrypts a credential
+// First checks environment variables, then falls back to keystore
 func (ks *Keystore) Retrieve(id string) (*Credential, error) {
+	// First check environment variables
+	if envCred := retrieveFromEnv(id); envCred != nil {
+		return envCred, nil
+	}
+
+	// Fall back to keystore
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 
@@ -587,6 +593,34 @@ func (ks *Keystore) Retrieve(id string) (*Credential, error) {
 	}
 
 	return &cred, nil
+}
+
+// retrieveFromEnv checks environment variables for API keys
+// This allows keys to be stored in .zshrc instead of the encrypted keystore
+func retrieveFromEnv(id string) *Credential {
+	// Map key IDs to environment variables
+	envMap := map[string]struct {
+		envVar   string
+		provider Provider
+	}{
+		"openai-default":     {envVar: "OPEN_AI_KEY", provider: ProviderOpenAI},
+		"openrouter-default": {envVar: "OPENROUTER_API_KEY", provider: ProviderOpenRouter},
+		"xai-default":        {envVar: "ZAI_API_KEY", provider: ProviderXAI},
+	}
+
+	if mapping, ok := envMap[id]; ok {
+		if token := os.Getenv(mapping.envVar); token != "" {
+			return &Credential{
+				ID:          id,
+				Provider:    mapping.provider,
+				Token:       token,
+				DisplayName: "Environment Variable",
+				CreatedAt:   time.Now().Unix(),
+			}
+		}
+	}
+
+	return nil
 }
 
 // List returns all stored key information (without decrypting tokens)

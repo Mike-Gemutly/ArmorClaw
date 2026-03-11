@@ -2552,10 +2552,15 @@ func parseFlags() cliConfig {
 	flag.BoolVar(&cfg.help, "help", false, "Show help message")
 
 	// Quick-start command flags
+	flag.StringVar(&cfg.addKeyProvider, "p", "", "Provider for add-key (short for --provider)")
 	flag.StringVar(&cfg.addKeyProvider, "provider", "", "Provider for add-key (openai, anthropic, openrouter, google, xai, or any OpenAI-compatible)")
+	flag.StringVar(&cfg.addKeyToken, "t", "", "API token for add-key (short for --token)")
 	flag.StringVar(&cfg.addKeyToken, "token", "", "API token for add-key (or use ARMORCLAW_API_KEY env var)")
+	flag.StringVar(&cfg.addKeyId, "i", "", "Key ID for add-key (short for --id)")
 	flag.StringVar(&cfg.addKeyId, "id", "", "Key ID for add-key (default: <provider>-default)")
+	flag.StringVar(&cfg.addKeyDisplayName, "n", "", "Display name for add-key (short for --display-name)")
 	flag.StringVar(&cfg.addKeyDisplayName, "display-name", "", "Display name for add-key")
+	flag.StringVar(&cfg.addKeyBaseURL, "b", "", "Base URL for OpenAI-compatible API providers (short for --base-url)")
 	flag.StringVar(&cfg.addKeyBaseURL, "base-url", "", "Base URL for OpenAI-compatible API providers")
 	flag.StringVar(&cfg.startKeyId, "key", "", "Key ID for start command")
 	// QR code command flags
@@ -2568,12 +2573,26 @@ func parseFlags() cliConfig {
 	flag.StringVar(&cfg.agentKey, "agent-key", "", "API key ID for agent (start-agent command)")
 	flag.StringVar(&cfg.agentCapabilities, "capabilities", "chat", "Comma-separated capabilities (start-agent command)")
 
+	// Pre-parse to extract command first (before full flag parsing)
+	// This handles: armorclaw-bridge add-key --provider openai
+	// The "add-key" would be parsed as a flag value, so we need special handling
+	if len(os.Args) > 1 {
+		// Check if first arg looks like a command (not a flag)
+		if !strings.HasPrefix(os.Args[1], "-") {
+			cfg.command = os.Args[1]
+			// Remove command from args for flag parsing
+			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+		}
+	}
+
 	flag.Parse()
 
-	// Check for command-line commands (first argument after flags)
-	args := flag.Args()
-	if len(args) > 0 {
-		cfg.command = args[0]
+	// If command wasn't set from pre-parse, check args
+	if cfg.command == "" {
+		args := flag.Args()
+		if len(args) > 0 {
+			cfg.command = args[0]
+		}
 	}
 
 	// Apply ARMORCLAW_CONFIG env var if --config flag was not explicitly set

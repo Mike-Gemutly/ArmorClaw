@@ -89,6 +89,9 @@ docker-volumes/
 # Claude Code memory (local only)
 C:\Users\Micha\.claude\projects\
 
+# OpenCode agent workspace
+.opencode/
+
 # Local deployment artifacts
 *.tar.gz
 *.tgz
