@@ -308,20 +308,57 @@ ensure_matrix() {
 
     print_info "Matrix server not detected — installing Conduit..."
 
-    # Launch Matrix setup script from repo
-    local matrix_setup_url="https://raw.githubusercontent.com/$REPO/$VERSION/deploy/setup-matrix.sh"
-    if ! curl -fsSL "$matrix_setup_url" | $SUDO bash; then
-        print_error "Failed to install Matrix server"
+    # Check Docker
+    if ! command -v docker >/dev/null 2>&1; then
+        print_error "Docker is required for Matrix"
         return 1
     fi
 
-    # Verify Matrix actually started
-    print_info "Verifying Matrix installation..."
-    sleep 3
-
-    if ! is_matrix_running; then
-        print_error "Matrix installation completed but server is not running"
+    if ! docker info >/dev/null 2>&1; then
+        print_error "Docker daemon is not running"
         return 1
+    fi
+
+    # Run Conduit container directly (non-interactive)
+    local CONDUIT_DATA_DIR="/var/lib/conduit"
+    $SUDO mkdir -p "$CONDUIT_DATA_DIR"
+    $SUDO chown 1000:1000 "$CONDUIT_DATA_DIR" 2>/dev/null || true
+
+    if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-conduit$"; then
+        docker start armorclaw-conduit 2>/dev/null || true
+    else
+        docker run -d \
+            --name armorclaw-conduit \
+            --restart unless-stopped \
+            -p 6167:6167 \
+            -p 8448:8448 \
+            -v "$CONDUIT_DATA_DIR:/data" \
+            -e CONDUIT_SERVER_NAME="localhost" \
+            -e CONDUIT_DATABASE_PATH="/data/conduit.db" \
+            -e CONDUIT_REGISTRATION_ENABLED="true" \
+            matrixconduit/matrix-conduit:latest 2>/dev/null
+    fi
+
+    # Wait for Matrix to start
+    print_info "Waiting for Matrix server..."
+    sleep 5
+
+    # Verify Matrix is running
+    if ! is_matrix_running; then
+        print_error "Matrix server failed to start"
+        print_info "Check logs: docker logs armorclaw-conduit"
+        return 1
+    fi
+
+    # Update bridge config to enable Matrix
+    local config_file="$CONFIG_DIR/config.toml"
+    if [[ -f "$config_file" ]]; then
+        if grep -q '^enabled = false' "$config_file" 2>/dev/null; then
+            sed -i 's/enabled = false/enabled = true/' "$config_file"
+        fi
+        if grep -q 'homeserver_url = ""' "$config_file"; then
+            sed -i 's|homeserver_url = ""|homeserver_url = "http://localhost:6167"|' "$config_file"
+        fi
     fi
 
     print_done "Matrix installed and running"
@@ -1009,24 +1046,23 @@ main() {
     start_bridge
     verify_health
 
-    # Step 9: Matrix Server (Optional but recommended)
+    # Step 9: Matrix Server (auto-install in quickstart)
     print_step "Matrix Server"
     if is_matrix_running; then
         print_done "Matrix already running"
         MATRIX_ENABLED="true"
     else
         echo ""
-        echo "  Matrix enables ArmorChat connections and QR provisioning."
-        echo ""
-        if prompt_yes_no "Enable ArmorChat QR provisioning (requires Matrix)?" "y"; then
-            if ensure_matrix; then
-                MATRIX_ENABLED="true"
-            else
-                print_warning "Matrix installation failed. QR provisioning will be skipped."
-            fi
+        echo "  Installing Matrix server for ArmorChat connections..."
+        if ensure_matrix; then
+            MATRIX_ENABLED="true"
+            print_success "Matrix installed and running"
         else
-            print_info "Bridge-only mode enabled."
-            print_info "Run later: sudo ./deploy/setup-matrix.sh"
+            print_warning "Matrix installation failed."
+            echo ""
+            echo "  To install manually later:"
+            echo "    sudo ./deploy/setup-matrix.sh"
+            echo ""
         fi
     fi
 
