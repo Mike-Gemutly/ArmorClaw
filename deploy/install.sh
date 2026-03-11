@@ -13,7 +13,7 @@ VERSION="${VERSION:-main}"
 INSTALLER="installer-v5.sh"
 BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/deploy"
 # Official Fingerprint: 573A 62B2 39F9 8A6B 98EF 917D 03FC 7E7C CF74 8504
-SIGNING_KEY_FPR="856DE216BFFB2FECBBFB5C586F6C1C4E1EC3C5AB"
+SIGNING_KEY_FPR="55AD64228EF6B4A342DA480A09C43CFA8AC93062"
 
 # Colors for output
 CYAN='\033[0;36m'
@@ -77,8 +77,8 @@ retry $CURL_BASE "$BASE_URL/$INSTALLER.sha256" -o "$CHECKSUM_PATH.tmp"
 retry $CURL_BASE "$BASE_URL/$INSTALLER.sig" -o "$SIG_PATH.tmp"
 retry $CURL_BASE "$BASE_URL/armorclaw-signing-key.asc" -o "$KEY_PATH.tmp"
 
-# Normalize line endings to LF before verification (crucial for signatures)
-sed -i 's/\r$//' "$INSTALL_PATH.tmp" "$CHECKSUM_PATH.tmp" "$SIG_PATH.tmp" "$KEY_PATH.tmp"
+# Normalize line endings to LF before verification (not for .sig - it's binary)
+sed -i 's/\r$//' "$INSTALL_PATH.tmp" "$CHECKSUM_PATH.tmp" "$KEY_PATH.tmp"
 
 mv "$INSTALL_PATH.tmp" "$INSTALL_PATH"
 mv "$CHECKSUM_PATH.tmp" "$CHECKSUM_PATH"
