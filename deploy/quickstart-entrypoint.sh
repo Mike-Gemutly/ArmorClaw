@@ -79,6 +79,12 @@ fi
 
 set -e
 
+# Ensure qrencode is installed for QR code generation
+if ! command -v qrencode >/dev/null 2>&1; then
+    log "Installing qrencode for QR code display..."
+    apt-get update -qq && apt-get install -y -qq qrencode 2>/dev/null || true
+fi
+
 # Check if already bootstrapped
 if [ -f "$INIT_FLAG" ]; then
     log "Configuration already bootstrapped, starting services..."
@@ -341,13 +347,10 @@ if [ -x "$BOOTSTRAP_SCRIPT" ]; then
         echo ""
         
         # Generate QR code for mobile app
-        if command -v qrencode >/dev/null 2>&1; then
-            echo -e "${CYAN}QR Code for ArmorChat:${NC}"
-            # Create config URL
-            CONFIG_URL="armorclaw://config?server=$SERVER_NAME&port=6167&user=admin&pass=$ARMORCLAW_ADMIN_PASSWORD"
-            echo "$CONFIG_URL" | qrencode -t ANSI
-            echo ""
-        fi
+        echo -e "${CYAN}QR Code for ArmorChat:${NC}"
+        CONFIG_URL="armorclaw://config?server=$SERVER_NAME&port=6167&user=admin&pass=$ARMORCLAW_ADMIN_PASSWORD"
+        echo "$CONFIG_URL" | qrencode -t ANSI
+        echo ""
         
         # Show bridge command examples
         echo -e "${CYAN}Bridge Commands:${NC}"

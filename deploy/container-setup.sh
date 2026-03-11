@@ -727,19 +727,22 @@ prompt_yes_no() {
 
 check_required_tools() {
     local missing=()
-    for cmd in openssl jq socat curl docker; do
+    for cmd in openssl jq socat curl docker qrencode; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             missing+=("$cmd")
         fi
     done
 
     if [ ${#missing[@]} -gt 0 ]; then
-        set_error "INS-006" "Required tools missing: ${missing[*]}"
-        print_error "Required tools missing: ${missing[*]}"
-        print_error "Install with: apt-get install -y ${missing[*]}"
-        exit 1
+        print_info "Installing missing required tools: ${missing[*]}"
+        apt-get update -qq && apt-get install -y -qq "${missing[@]}" 2>/dev/null || {
+            set_error "INS-006" "Required tools missing and could not install: ${missing[*]}"
+            print_error "Required tools missing: ${missing[*]}"
+            print_error "Install with: apt-get install -y ${missing[*]}"
+            exit 1
+        }
     fi
-    log_success "Required tools verified (openssl, jq, socat, curl, docker)"
+    log_success "Required tools verified (openssl, jq, socat, curl, docker, qrencode)"
 }
 
 validate_config_vars() {
