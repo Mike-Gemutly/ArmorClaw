@@ -378,49 +378,69 @@ ensure_matrix() {
         return 1
     fi
 
-    # Detect server IP for domain
     MATRIX_DOMAIN=$(hostname -I | awk '{print $1}')
     print_info "Server IP: $MATRIX_DOMAIN"
 
-    # Generate admin password
     MATRIX_ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
     print_info "Generated admin password"
 
-    # Run Conduit container directly (non-interactive)
     local CONDUIT_DATA_DIR="/var/lib/conduit"
+    local CONDUIT_CONFIG_FILE="/etc/conduit.toml"
     $SUDO mkdir -p "$CONDUIT_DATA_DIR"
     $SUDO chown 1000:1000 "$CONDUIT_DATA_DIR" 2>/dev/null || true
 
+    $SUDO tee "$CONDUIT_CONFIG_FILE" >/dev/null <<EOF
+[global]
+server_name = "${MATRIX_DOMAIN}"
+database_backend = "rocksdb"
+database_path = "/data"
+address = "0.0.0.0"
+port = 6167
+max_request_size = 20000000
+allow_registration = true
+allow_federation = true
+allow_check_for_updates = false
+trusted_servers = ["matrix.org"]
+EOF
+    print_info "Created Conduit config: $CONDUIT_CONFIG_FILE"
+
     if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-conduit$"; then
-        docker start armorclaw-conduit 2>/dev/null || true
-    else
-        docker run -d \
-            --name armorclaw-conduit \
-            --restart unless-stopped \
-            -p 6167:6167 \
-            -p 8448:8448 \
-            -v "$CONDUIT_DATA_DIR:/data" \
-            -e CONDUIT_SERVER_NAME="${MATRIX_DOMAIN}" \
-            -e CONDUIT_DATABASE_PATH="/data/conduit.db" \
-            -e CONDUIT_REGISTRATION_ENABLED="true" \
-            matrixconduit/matrix-conduit:latest 2>/dev/null
+        docker rm -f armorclaw-conduit 2>/dev/null || true
     fi
 
-    # Wait for Matrix to start
-    print_info "Waiting for Matrix server..."
-    sleep 5
+    docker run -d \
+        --name armorclaw-conduit \
+        --restart unless-stopped \
+        -p 6167:6167 \
+        -p 8448:8448 \
+        -v "$CONDUIT_DATA_DIR:/data" \
+        -v "$CONDUIT_CONFIG_FILE:/etc/conduit.toml:ro" \
+        -e CONDUIT_CONFIG="/etc/conduit.toml" \
+        matrixconduit/matrix-conduit:latest 2>/dev/null
 
-    # Verify Matrix is running
+    print_info "Waiting for Matrix server..."
+    local wait_count=0
+    while [[ $wait_count -lt 30 ]]; do
+        if curl -sf "http://localhost:6167/_matrix/client/versions" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+        ((wait_count++)) || true
+    done
+
     if ! is_matrix_running; then
         print_error "Matrix server failed to start"
         print_info "Check logs: docker logs armorclaw-conduit"
         return 1
     fi
+    print_done "Matrix server started"
 
-    # Create admin user
     create_matrix_admin_user "$MATRIX_DOMAIN" "$MATRIX_ADMIN_USER" "$MATRIX_ADMIN_PASSWORD" || true
 
-    # Update bridge config to enable Matrix
+    $SUDO sed -i 's/allow_registration = true/allow_registration = false/' "$CONDUIT_CONFIG_FILE"
+    docker restart armorclaw-conduit 2>/dev/null || true
+    print_info "Registration disabled for security"
+
     local config_file="$CONFIG_DIR/config.toml"
     if [[ -f "$config_file" ]]; then
         if grep -q '^enabled = false' "$config_file" 2>/dev/null; then
