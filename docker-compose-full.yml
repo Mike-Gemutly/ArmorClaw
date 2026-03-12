@@ -11,10 +11,10 @@ services:
     container_name: armorclaw-matrix
     restart: unless-stopped
     volumes:
-      - conduit_data:/var/lib/conduit
-      - ./configs/conduit.toml:/etc/conduit.toml:ro
+      - conduit_data:/var/lib/matrix-conduit
+      - ./configs/conduit.toml:/etc/conduit/conduit.toml:ro
     environment:
-      - CONDUIT_CONFIG=/etc/conduit.toml
+      - CONDUIT_CONFIG=/etc/conduit/conduit.toml
     ports:
       - "6167:6167"   # Client API
       - "8448:8448"   # Federation
@@ -104,12 +104,15 @@ services:
     volumes:
       - bridge_data:/etc/armorclaw
       - bridge_run:/run/armorclaw
+      - bridge_keystore:/var/lib/armorclaw
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - armorclaw-net
     depends_on:
-      - matrix
-      - sygnal
+      matrix:
+        condition: service_healthy
+      sygnal:
+        condition: service_started
     environment:
       - ARMORCLAW_CONFIG=/etc/armorclaw/config.toml
       - ARMORCLAW_MATRIX_ENABLED=${ARMORCLAW_MATRIX_ENABLED:-true}
@@ -139,7 +142,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: 172.20.0.0/24  # Narrowed from /16 to avoid overlap with matrix-net
 
 # ========================================
 # Volumes
@@ -156,4 +159,6 @@ volumes:
   bridge_data:
     driver: local
   bridge_run:
+    driver: local
+  bridge_keystore:
     driver: local

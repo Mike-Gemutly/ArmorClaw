@@ -282,13 +282,13 @@ networks:
     internal: true  # No external access
     ipam:
       config:
-        - subnet: 172.21.0.0/16
+        - subnet: 172.24.0.0/24
 
   matrix-public:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.22.0.0/16
+        - subnet: 172.25.0.0/24
 
 # ========================================
 # Volumes

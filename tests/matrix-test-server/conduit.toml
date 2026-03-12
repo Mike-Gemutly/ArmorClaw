@@ -22,8 +22,11 @@ address = "0.0.0.0"
 # Maximum request size (bytes)
 max_request_size = 20_000_000
 
-# Whether to allow registration (true for testing)
-allow_registration = true
+# Whether to allow registration (disabled for security - use registration_shared_secret)
+allow_registration = false
+
+# Shared secret for automated test user registration
+registration_shared_secret = "test-registration-secret-change-in-production"
 
 # Registration token (set to allow registration with token)
 # registration_token = "armorclaw-test-token"
@@ -46,12 +49,12 @@ log = "info"
 # OpenID Connect (disabled for local testing)
 trusted_servers = ["matrix.org"]
 
-# TURN server configuration
+# TURN server configuration (disabled for local testing)
 [global.turn]
-turn_uris = ["turn:localhost:3478?transport=udp", "turn:localhost:3478?transport=tcp"]
-turn_secret = "armorclaw-test-turn-secret"
-turn_username = "armorclaw"
-turn_password = "test-password"
+turn_uris = []
+turn_secret = ""
+turn_username = ""
+turn_password = ""
 
 # CORS settings for web clients
 [global.well_known]

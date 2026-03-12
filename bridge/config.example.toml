@@ -40,7 +40,8 @@ homeserver_url = "https://matrix.example.com"
 username = "bridge-bot"
 
 # Matrix password for auto-login
-password = "change-me"
+# SECURITY: Do not store real passwords in this file. Use ARMORCLAW_MATRIX_PASSWORD env var.
+password = ""
 
 # Device ID for the Matrix client
 device_id = "armorclaw-bridge"
@@ -154,11 +155,13 @@ cleanup_interval = "1m"
 # TURN server configuration for NAT traversal
 enabled = true
 
-# TURN server address
-server = "turn:matrix.armorclaw.com:3478"
+# TURN server address (leave empty for none, or use your own TURN server)
+# Example: turn:your-server.com:3478
+server = ""
 
-# STUN server address
-stun_server = "stun:matrix.armorclaw.com:3478"
+# STUN server address (defaults to stun.l.google.com:19302 if not set)
+# Override with ARMORCLAW_WEBRTC_STUN_SERVER env var if needed
+stun_server = ""
 
 [webrtc.media]
 # Audio configuration
@@ -169,8 +172,9 @@ payload_type = 111   # RTP payload type for Opus codec
 
 [webrtc.security]
 # Call session token secret for HMAC generation
-# In production, use a strong random secret (32+ bytes)
-token_secret = "change-me-to-a-strong-random-secret"
+# SECURITY: Set this via ARMORCLAW_WEBRTC_TURN_SECRET env var in production
+# If empty, a random secret is generated at startup (with warning logged)
+token_secret = ""
 
 # Token TTL (should be shorter than session TTL for security)
 token_ttl = "15m"

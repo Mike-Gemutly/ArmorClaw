@@ -25,46 +25,46 @@ import (
 type TokenType string
 
 const (
-	TokenTypeSetup      TokenType = "setup"
-	TokenTypeBonding    TokenType = "bonding"
-	TokenTypeAPISecret  TokenType = "api_secret"
-	TokenTypeInvite     TokenType = "invite"
+	TokenTypeSetup        TokenType = "setup"
+	TokenTypeBonding      TokenType = "bonding"
+	TokenTypeAPISecret    TokenType = "api_secret"
+	TokenTypeInvite       TokenType = "invite"
 	TokenTypeVerification TokenType = "verification"
-	TokenTypeConfig     TokenType = "config" // Client configuration (ArmorTerminal/ArmorChat)
+	TokenTypeConfig       TokenType = "config" // Client configuration (ArmorTerminal/ArmorChat)
 )
 
 // TokenState represents the state of a one-time token
 type TokenState string
 
 const (
-	TokenStateActive   TokenState = "active"
-	TokenStateUsed     TokenState = "used"
-	TokenStateExpired  TokenState = "expired"
-	TokenStateRevoked  TokenState = "revoked"
+	TokenStateActive  TokenState = "active"
+	TokenStateUsed    TokenState = "used"
+	TokenStateExpired TokenState = "expired"
+	TokenStateRevoked TokenState = "revoked"
 )
 
 // OneTimeToken represents a token for secure operations
 type OneTimeToken struct {
 	mu sync.RWMutex
 
-	ID          string      `json:"id"`
-	Token       string      `json:"token"`
-	Type        TokenType   `json:"type"`
-	State       TokenState  `json:"state"`
-	CreatedAt   time.Time   `json:"created_at"`
-	ExpiresAt   time.Time   `json:"expires_at"`
-	MaxUses     int         `json:"max_uses"`
-	UseCount    int         `json:"use_count"`
+	ID        string     `json:"id"`
+	Token     string     `json:"token"`
+	Type      TokenType  `json:"type"`
+	State     TokenState `json:"state"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	MaxUses   int        `json:"max_uses"`
+	UseCount  int        `json:"use_count"`
 
 	// Context data
-	Payload     string      `json:"payload,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Payload  string            `json:"payload,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 
 	// Usage tracking
-	UsedBy      []TokenUsage `json:"used_by,omitempty"`
+	UsedBy []TokenUsage `json:"used_by,omitempty"`
 
 	// Signature
-	Signature   string      `json:"signature"`
+	Signature string `json:"signature"`
 }
 
 // TokenUsage tracks token usage
@@ -76,32 +76,32 @@ type TokenUsage struct {
 
 // QRManager handles QR code generation and token management
 type QRManager struct {
-	mu        sync.RWMutex
-	tokens    map[string]*OneTimeToken
+	mu         sync.RWMutex
+	tokens     map[string]*OneTimeToken
 	signingKey []byte
-	config    QRConfig
+	config     QRConfig
 
 	// Server info for URL generation
-	serverURL    string
-	bridgeURL    string
-	serverName   string
+	serverURL  string
+	bridgeURL  string
+	serverName string
 }
 
 // QRConfig configures QR code behavior
 type QRConfig struct {
 	DefaultTokenExpiration time.Duration
-	MaxActiveTokens       int
-	QRSize                int
-	QRRecoveryLevel       qrcode.RecoveryLevel
+	MaxActiveTokens        int
+	QRSize                 int
+	QRRecoveryLevel        qrcode.RecoveryLevel
 }
 
 // DefaultQRConfig returns sensible defaults
 func DefaultQRConfig() QRConfig {
 	return QRConfig{
 		DefaultTokenExpiration: 10 * time.Minute,
-		MaxActiveTokens:       10,
-		QRSize:                256,
-		QRRecoveryLevel:       qrcode.Medium,
+		MaxActiveTokens:        10,
+		QRSize:                 256,
+		QRRecoveryLevel:        qrcode.Medium,
 	}
 }
 
@@ -261,15 +261,15 @@ func (m *QRManager) GenerateVerificationQR(deviceID string) (*QRResult, error) {
 
 // ConfigPayload contains server configuration for client apps
 type ConfigPayload struct {
-	Version         int    `json:"version"`           // Config format version
+	Version          int    `json:"version"`           // Config format version
 	MatrixHomeserver string `json:"matrix_homeserver"` // Matrix homeserver URL
-	RpcURL          string `json:"rpc_url"`           // Bridge RPC endpoint
-	WsURL           string `json:"ws_url"`            // WebSocket endpoint
-	PushGateway     string `json:"push_gateway"`      // Push gateway URL
-	ServerName      string `json:"server_name"`       // Human-readable server name
-	Region          string `json:"region,omitempty"`  // Server region
-	ExpiresAt       int64  `json:"expires_at"`        // Unix timestamp
-	Signature       string `json:"signature"`         // HMAC signature
+	RpcURL           string `json:"rpc_url"`           // Bridge RPC endpoint
+	WsURL            string `json:"ws_url"`            // WebSocket endpoint
+	PushGateway      string `json:"push_gateway"`      // Push gateway URL
+	ServerName       string `json:"server_name"`       // Human-readable server name
+	Region           string `json:"region,omitempty"`  // Server region
+	ExpiresAt        int64  `json:"expires_at"`        // Unix timestamp
+	Signature        string `json:"signature"`         // HMAC signature
 }
 
 // GenerateConfigQR generates a QR code with server configuration for ArmorTerminal/ArmorChat
@@ -424,11 +424,11 @@ func (m *QRManager) signConfig(config *ConfigPayload) string {
 
 // ConfigQRResult contains the result of config QR generation
 type ConfigQRResult struct {
-	Token     *OneTimeToken `json:"token"`
+	Token     *OneTimeToken  `json:"token"`
 	Config    *ConfigPayload `json:"config"`
-	URL       string         `json:"url"`        // Web URL
-	DeepLink  string         `json:"deep_link"`  // armorclaw:// deep link
-	QRImage   []byte         `json:"qr_image"`   // PNG QR code
+	URL       string         `json:"url"`       // Web URL
+	DeepLink  string         `json:"deep_link"` // armorclaw:// deep link
+	QRImage   []byte         `json:"qr_image"`  // PNG QR code
 	ExpiresAt time.Time      `json:"expires_at"`
 }
 
@@ -439,6 +439,16 @@ type QRResult struct {
 	DeepLink  string        `json:"deep_link"`
 	QRImage   []byte        `json:"qr_image"`
 	ExpiresAt time.Time     `json:"expires_at"`
+}
+
+// ToTerminal returns an ASCII QR code for terminal display
+// using the skip2/go-qrcode library already in use
+func (r *QRResult) ToTerminal() (string, error) {
+	qrCode, err := qrcode.New(r.DeepLink, qrcode.Medium)
+	if err != nil {
+		return "", err
+	}
+	return qrCode.ToSmallString(false), nil
 }
 
 // createToken creates a new one-time token

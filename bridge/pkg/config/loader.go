@@ -109,11 +109,26 @@ func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("ARMORCLAW_MATRIX_DEVICE_ID"); v != "" {
 		cfg.Matrix.DeviceID = v
 	}
+
 	if v := os.Getenv("ARMORCLAW_MATRIX_SYNC_INTERVAL"); v != "" {
 		var interval int
 		if _, err := fmt.Sscanf(v, "%d", &interval); err == nil {
 			cfg.Matrix.SyncInterval = interval
 		}
+	}
+
+	// WebRTC overrides
+	if v := os.Getenv("ARMORCLAW_WEBRTC_STUN_SERVER"); v != "" {
+		// Override the default STUN server
+		if len(cfg.WebRTC.ICEServers) > 0 {
+			cfg.WebRTC.ICEServers[0].URLs = []string{v}
+		}
+	}
+	if v := os.Getenv("ARMORCLAW_WEBRTC_TURN_URL"); v != "" {
+		cfg.WebRTC.TURNServerURL = v
+	}
+	if v := os.Getenv("ARMORCLAW_WEBRTC_TURN_SECRET"); v != "" {
+		cfg.WebRTC.TURNSharedSecret = v
 	}
 
 	// Logging overrides

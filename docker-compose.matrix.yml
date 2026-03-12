@@ -104,7 +104,7 @@ networks:
     name: armorclaw-matrix
     ipam:
       config:
-        - subnet: 172.20.0.0/24
+        - subnet: 172.26.0.0/24
 
 # ========================================
 # Volumes

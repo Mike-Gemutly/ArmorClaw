@@ -1,9 +1,68 @@
 # ArmorClaw Architecture Review
 
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.6.0
+> **Version:** 4.7.0
 > **Last Updated:** 2026-03-11
 > **Status:** Active Reference
+
+---
+
+## Phase 7: Deployment Audit Fixes (2026-03-11)
+
+### Critical Issues Resolved
+
+| Issue | Fix | Files Changed |
+|-------|-----|---------------|
+| Network subnet overlap (172.20.0.0/16 vs /24) | Narrowed all /16 subnets to /24 | docker-compose-full.yml, docker-compose.matrix.yml, deploy/matrix/docker-compose.matrix.yml |
+| Test config open registration | Disabled `allow_registration`, added `registration_shared_secret` | tests/matrix-test-server/conduit.toml |
+| Missing bridge_keystore volume | Added `bridge_keystore:/var/lib/armorclaw` | docker-compose-full.yml |
+| Missing health check condition | Added `condition: service_healthy` | docker-compose-full.yml |
+| Conduit path inconsistency | Unified to `/var/lib/matrix-conduit` | docker-compose-full.yml |
+| Config mount path inconsistency | Unified to `/etc/conduit/conduit.toml` | docker-compose-full.yml |
+| Hardcoded TURN secrets in test | Replaced with empty values | tests/matrix-test-server/conduit.toml |
+| Hardcoded STUN server | Made configurable via `ARMORCLAW_WEBRTC_STUN_SERVER` | bridge/pkg/config/loader.go |
+| Auto-generated secrets without warning | Added startup warnings | bridge/cmd/bridge/main.go |
+| Fake URLs in config.example.toml | Replaced with empty strings + security guidance | bridge/config.example.toml |
+
+### Network Subnet Allocation (Final)
+
+```
+172.20.0.0/24 - docker-compose-full.yml (armorclaw-net)
+172.21.0.0/24 - docker-compose.bridge.yml (bridge-net)
+172.23.0.0/16 - deploy/browser (browser-internal)
+172.24.0.0/24 - deploy/matrix (matrix-internal)
+172.25.0.0/24 - deploy/matrix (matrix-public)
+172.26.0.0/24 - docker-compose.matrix.yml (matrix-net)
+```
+
+**All subnets are now unique and non-overlapping.**
+
+### New Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ARMORCLAW_WEBRTC_STUN_SERVER` | `stun.l.google.com:19302` | Override default STUN server |
+| `ARMORCLAW_WEBRTC_TURN_URL` | (none) | TURN server URL |
+| `ARMORCLAW_WEBRTC_TURN_SECRET` | (none) | TURN shared secret for production |
+
+### Path Consistency Achieved
+
+- Conduit data: `/var/lib/matrix-conduit` (consistent across stacks)
+- Conduit config: `/etc/conduit/conduit.toml` (consistent mount path)
+- CONDUIT_CONFIG env: `/etc/conduit/conduit.toml` (matches mount)
+
+### Files Modified
+
+```
+bridge/cmd/bridge/main.go               |  1 + (WebRTC warning)
+bridge/config.example.toml              | 18 + (security placeholders)
+bridge/pkg/config/loader.go             | 15 + (STUN/TURN env vars)
+deploy/matrix/docker-compose.matrix.yml |  4 + (subnet fix)
+docker-compose-full.yml                 | 17 + (volume, health, subnet, paths)
+docker-compose.matrix.yml               |  2 + (subnet fix)
+tests/matrix-test-server/conduit.toml   | 17 + (security hardening)
+7 files changed, 51 insertions(+), 23 deletions(-)
+```
 
 ---
 
@@ -196,7 +255,6 @@ ArmorClaw v4.5.0 provides a **production-ready AI agent platform** that runs AI 
 │                                 │                                           │
 │                                 ▼                                           │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-<<<<<<< HEAD
 │  │ 2. GO WIZARD (armorclaw-bridge container-setup)                     │   │
 │  │    • Check env vars FIRST (tryNonInteractive)                      │   │
 │  │      - If OPENROUTER_API_KEY or ZAI_API_KEY set → non-interactive  │   │
@@ -206,17 +264,8 @@ ArmorClaw v4.5.0 provides a **production-ready AI agent platform** that runs AI 
 │  │      - Step 1 of 2: AI Provider + API Key (from env vars)          │   │
 │  │      - Step 2 of 2: Admin Password + Deploy confirmation           │   │
 │  │    • Output: /tmp/armorclaw-wizard.json + env vars for secrets     │   │
-=======
-│  │ 2. INSTALLER-V5.SH (Stage-1 Full Installer)                   │   │
-│  │    • Detect OS/arch (Linux/ARM64, etc.)                        │   │
-│  │    • Check prerequisites (Docker, sudo)                          │   │
-│  │    • Detect Docker Compose (compose vs docker-compose)              │   │
-│  │    • Download setup scripts (setup-quick.sh, setup-matrix.sh)      │   │
-│  │    • Wait for Docker daemon (20s timeout, dual-check)            │   │
 │  │    • Lockfile protection (flock)                                 │   │
 │  │    • Persistent logging (/var/log/armorclaw/install.log)          │   │
-│  │    • Export env vars: DOCKER_COMPOSE, CONDUIT_IMAGE, etc.        │   │
->>>>>>> b2a095fe5c03a375c78e8bedf59d22f6e83263e7
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                 │                                           │
 │                                 ▼                                           │
@@ -512,7 +561,6 @@ The bridge uses a **high-throughput event bus** with zero-allocation receive pat
 
 ---
 
-<<<<<<< HEAD
 ## Install Script Flow (v0.4.2)
 
 The `install.sh` script orchestrates the entire deployment process:
@@ -579,13 +627,14 @@ export OPENROUTER_API_KEY=sk-or-v1-xxx
 export ARMORCLAW_SERVER_NAME=192.168.1.50
 curl -fsSL ... | bash
 ```
-=======
+
+---
+
 ## Agent Studio (v4.5.0)
 
 ### Overview
 
 Agent Studio provides a **no-code interface** for creating and managing AI agents through Matrix chat commands or JSON-RPC.
->>>>>>> b2a095fe5c03a375c78e8bedf59d22f6e83263e7
 
 ### Components
 
@@ -824,15 +873,15 @@ docker-compose --profile discord up -d
 
 ## Installation Script Flow (v4.5.0)
 
-<<<<<<< HEAD
+### Bootstrap Flow
+
 1. **Starts the bridge binary** in background
 2. **Waits for socket** at `/run/armorclaw/bridge.sock`
 3. **API keys are read from environment variables** (not stored in keystore)
 4. **Claims OWNER role** for admin user via `provisioning.claim`
 5. **Generates QR code** for ArmorChat mobile provisioning
-=======
+
 ### Stage-0: Bootstrap (install.sh)
->>>>>>> b2a095fe5c03a375c78e8bedf59d22f6e83263e7
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
@@ -996,14 +1045,9 @@ docker exec armorclaw rm /var/lib/armorclaw/.admin_password
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-<<<<<<< HEAD
 | `ARMORCLAW_SERVER_NAME` | Auto | Server domain or IP. Auto-detected on host. |
-| `ARMORCLAW_API_BASE_URL` | OpenAI URL | Custom API endpoint (for Anthropic, GLM-5, etc.) |
-| `ARMORCLAW_PROFILE` | `quick` | `quick` or `enterprise` |
-=======
 | `ARMORCLAW_API_BASE_URL` | Provider default | Custom API endpoint (for Anthropic, Zhipu, etc.) |
 | `ARMORCLAW_ADMIN_USERNAME` | (generated) | Custom admin username |
->>>>>>> b2a095fe5c03a375c78e8bedf59d22f6e83263e7
 | `ARMORCLAW_ADMIN_PASSWORD` | (generated) | Admin password for Matrix |
 | `ARMORCLAW_PROFILE` | `quick` | `quick` or `matrix` |
 | `CONDUIT_VERSION` | `latest` | Conduit version to install |
@@ -1090,7 +1134,6 @@ echo '{"jsonrpc":"2.0","id":1,"method":"studio.list_mcps"}' | \
 
 ---
 
-<<<<<<< HEAD
 ## Troubleshooting
 
 ### Setup Failed
@@ -1153,7 +1196,7 @@ Last 30 lines of log:
 3. **Check RPC:**
    ```bash
    echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
-     docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+    docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
    ```
 
 ### Agent Studio Issues
@@ -1166,13 +1209,13 @@ Last 30 lines of log:
 2. **List skills:**
    ```bash
    echo '{"jsonrpc":"2.0","id":1,"method":"studio.list_skills"}' | \
-     docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+    docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
    ```
 
 3. **Check agent instances:**
    ```bash
    echo '{"jsonrpc":"2.0","id":1,"method":"studio.list_instances"}' | \
-     docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+    docker exec -i armorclaw socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
    ```
 
 ---
@@ -1204,774 +1247,19 @@ armorclaw container
     └── setup.log            # Setup log
 
 # API Keys: Read from environment variables at runtime
-# - OPENROUTER_API_KEY → openai-default
+# - OPENROUTER_API_KEY → openrouter-default
 # - ZAI_API_KEY → xai-default
 # - OPEN_AI_KEY → openai-default
 ```
 
-### Network Topology
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  Host (VPS/Server)                                      │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │  armorclaw container (mikegemut/armorclaw)      │   │
-│  │                                                 │   │
-│  │  ┌─────────────┐    ┌─────────────┐            │   │
-│  │  │ Bridge      │    │ Matrix      │            │   │
-│  │  │ (Go binary) │◄──►│ Conduit     │            │   │
-│  │  │ :8443/RPC   │    │ :6167       │            │   │
-│  │  │             │    │             │            │   │
-│  │  │ + Studio    │    └─────────────┘            │   │
-│  │  │ + Browser   │                              │   │
-│  │  │ + MCP       │                              │   │
-│  │  └─────────────┘                              │   │
-│  │         │                   │                   │   │
-│  │         │    ┌─────────────┐│                   │   │
-│  │         └───►│ Sygnal      ││                   │   │
-│  │              │ Push :5000  ││                   │   │
-│  │              └─────────────┘│                   │   │
-│  │                            │                   │   │
-│  └────────────────────────────────────────────────┘   │
-│                           │                            │
-│  Docker Socket ───────────┘ (mounted)                 │
-│                                                        │
-└────────────────────────────────────────────────────────┘
-         │              │              │
-      :8443          :6167          :5000
-    (HTTPS/RPC)    (Matrix)      (Push)
-```
-
 ---
 
-## ArmorChat Communication Architecture
-
-### Overview
-
-ArmorChat communicates with ArmorClaw through **Matrix protocol** for all messaging and **JSON-RPC** for direct bridge commands. This architecture provides:
-
-- **End-to-End Encryption (E2EE)** - All messages encrypted via Matrix
-- **Push Notifications** - Real-time alerts via Sygnal + FCM
-- **Offline Support** - Messages queued and delivered when online
-- **Multi-Device** - Same account on multiple devices
-
-### Communication Stack
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     ARMORCLAW ↔ ARMORCHAT COMMUNICATION                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────┐                              ┌─────────────────┐       │
-│  │ ArmorChat       │                              │ ArmorClaw       │       │
-│  │ (Android)       │                              │ (VPS)           │       │
-│  │                 │                              │                 │       │
-│  │ Matrix SDK      │◄──── E2EE Messages ────────►│ Matrix Conduit  │       │
-│  │ (Kotlin)        │                              │ (Rust)          │       │
-│  │                 │                              │                 │       │
-│  │ FCM Push        │◄──── Push Notifications ────│ Sygnal          │       │
-│  │                 │                              │ (Python)        │       │
-│  │                 │                              │                 │       │
-│  │ JSON-RPC Client │◄──── Direct Commands ──────►│ Bridge RPC      │       │
-│  │ (HTTP/HTTPS)    │                              │ (Unix Socket)   │       │
-│  └─────────────────┘                              └─────────────────┘       │
-│         │                                                │                   │
-│         │                                                │                   │
-│         │              PROTOCOLS USED                     │                   │
-│         │                                                │                   │
-│         │  Matrix (CS API):                              │                   │
-│         │  - /_matrix/client/v3/                         │                   │
-│         │  - /_matrix/media/v3/                          │                   │
-│         │  - m.room.message events                       │                   │
-│         │  - Custom events (com.armorclaw.*)             │                   │
-│         │                                                │                   │
-│         │  Push (FCM):                                   │                   │
-│         │  - Sygnal → FCM → Device                       │                   │
-│         │  - Includes room_id, event_id                  │                   │
-│         │                                                │                   │
-│         │  JSON-RPC (HTTP):                              │                   │
-│         │  - POST to :8443/rpc                           │                   │
-│         │  - Auth via Bearer token                       │                   │
-│         │                                                │                   │
-│         └────────────────────────────────────────────────┘                   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Initial Connection Flow
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     ARMORCHAT PROVISIONING FLOW                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  Step 1: SETUP COMPLETE (Bridge displays QR)                                │
-│  ───────────────────────────────────────                                    │
-│                                                                             │
-│  Bridge generates provisioning data:                                        │
-│  {                                                                          │
-│    "server_name": "192.168.1.50:6167",                                      │
-│    "setup_token": "armorclaw-setup-abc123",                                │
-│    "qr_data": "armorclaw://192.168.1.50:6167?token=abc123"                  │
-│  }                                                                          │
-│                                                                             │
-│  Step 2: USER SCANS QR CODE                                                 │
-│  ────────────────────────────                                               │
-│                                                                             │
-│  ArmorChat parses URI:                                                      │
-│    armorclaw://<server>:<port>?token=<setup_token>                          │
-│                                                                             │
-│  Step 3: ARMORCHAT CONNECTS TO MATRIX                                       │
-│  ───────────────────────────────────────                                    │
-│                                                                             │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │ ArmorChat   │────►│ Conduit     │────►│ Register    │                    │
-│  │             │     │ :6167       │     │ Device      │                    │
-│  └─────────────┘     └─────────────┘     └─────────────┘                    │
-│         │                                        │                           │
-│         │  1. GET /_matrix/client/versions       │                           │
-│         │  2. POST /_matrix/client/v3/register   │                           │
-│         │     (with setup_token as device_id)    │                           │
-│         │  3. Receive access_token, device_id    │                           │
-│         │                                        │                           │
-│         ▼                                        ▼                           │
-│                                                                             │
-│  Step 4: BRIDGE AUTO-CLAIMS OWNER ROLE                                      │
-│  ──────────────────────────────────────                                      │
-│                                                                             │
-│  Bridge calls: provisioning.claim(setup_token, device_id)                   │
-│  → First claim = OWNER role                                                 │
-│  → User added to "ArmorClaw Bridge" room                                    │
-│                                                                             │
-│  Step 5: E2EE SETUP                                                         │
-│  ─────────────────                                                          │
-│                                                                             │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │ ArmorChat   │────►│ Matrix SDK  │────►│ Key         │                    │
-│  │             │     │ Crypto       │     │ Exchange    │                    │
-│  └─────────────┘     └─────────────┘     └─────────────┘                    │
-│         │                                        │                           │
-│         │  1. Generate device keys               │                           │
-│         │  2. Upload keys to server              │                           │
-│         │  3. Download bridge's keys             │                           │
-│         │  4. Verify via emoji (optional)        │                           │
-│         │                                        │                           │
-│         ▼                                        ▼                           │
-│                                                                             │
-│  Step 6: PUSH NOTIFICATION SETUP                                            │
-│  ─────────────────────────────────                                          │
-│                                                                             │
-│  ArmorChat enables push via Matrix HTTP Pusher:                             │
-│    POST /_matrix/client/v3/pushers/set                                      │
-│    {                                                                        │
-│      "pushkey": "<FCM-token>",                                              │
-│      "app_id": "com.armorclaw.armorchat",                                   │
-│      "data": { "url": "http://server:5000/_matrix/push/v1/notify" }         │
-│    }                                                                        │
-│                                                                             │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │ ArmorChat   │────►│ Conduit     │────►│ Sygnal      │                    │
-│  │             │     │             │     │ :5000       │                    │
-│  └─────────────┘     └─────────────┘     └─────────────┘                    │
-│         │                                        │                           │
-│         │  Register pusher with FCM token        │                           │
-│         │                                        │                           │
-│         ▼                                        ▼                           │
-│                                                                             │
-│  Step 7: READY TO COMMUNICATE                                               │
-│  ─────────────────────────────                                              │
-│                                                                             │
-│  ArmorChat can now:                                                         │
-│  • Send encrypted messages to Bridge room                                   │
-│  • Receive push notifications                                               │
-│  • Execute commands via !agent, !status                                     │
-│  • Control browser via Matrix events                                        │
-│  • Approve PII via BlindFill                                                │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Ongoing Communication
-
-#### Message Flow (User → Agent → Response)
-
-```
-User Types Message                    Bridge Processing                    Response
-─────────────────                    ──────────────────                   ─────────
-      │                                     │                                   │
-      │  1. User types: "Book a flight"    │                                   │
-      │                                     │                                   │
-      ▼                                     │                                   │
-┌─────────────┐                             │                                   │
-│ ArmorChat   │                             │                                   │
-│ Matrix SDK  │                             │                                   │
-│             │                             │                                   │
-│ Encrypt     │                             │                                   │
-│ message     │                             │                                   │
-└──────┬──────┘                             │                                   │
-       │                                    │                                   │
-       │  m.room.encrypted                  │                                   │
-       │  (ciphertext)                      │                                   │
-       │                                    │                                   │
-       ▼                                    ▼                                   │
-┌─────────────┐                       ┌─────────────┐                          │
-│ Conduit     │──────────────────────►│ Bridge      │                          │
-│ :6167       │                       │ Matrix      │                          │
-│             │                       │ Adapter     │                          │
-└─────────────┘                       └──────┬──────┘                          │
-                                             │                                 │
-                                             │  2. Decrypt message             │
-                                             │  3. Route to agent or AI        │
-                                             │  4. Process request             │
-                                             │                                 │
-                                             ▼                                 │
-                                       ┌─────────────┐                          │
-                                       │ Agent / AI  │                          │
-                                       │ Processor   │                          │
-                                       └──────┬──────┘                          │
-                                              │                                  │
-                                              │  5. Generate response            │
-                                              │                                  │
-                                              ▼                                  │
-                                       ┌─────────────┐                          │
-                                       │ Bridge      │                          │
-                                       │             │                          │
-                                       │ Encrypt     │                          │
-                                       │ response    │                          │
-                                       └──────┬──────┘                          │
-                                              │                                  │
-                                              │  m.room.encrypted                │
-                                              │  (response ciphertext)           │
-                                              │                                  │
-                                              ▼                                  │
-                                       ┌─────────────┐     ┌─────────────┐      │
-                                       │ Conduit     │────►│ ArmorChat   │      │
-                                       │             │     │ Decrypt     │      │
-                                       └─────────────┘     │ Display     │      │
-                                                           └─────────────┘      │
-                                              │                                  │
-                                              │  6. Push notification            │
-                                              │     (if app in background)       │
-                                              ▼                                  │
-                                       ┌─────────────┐     ┌─────────────┐      │
-                                       │ Sygnal      │────►│ FCM         │      │
-                                       │ :5000       │     │ → Device    │      │
-                                       └─────────────┘     └─────────────┘      │
-```
-
-#### Browser Control Flow
-
-```
-User Requests Browser Action           Bridge Processing              Browser Executes
-─────────────────────────              ──────────────────             ────────────────
-              │                              │                              │
-              │  1. User taps "Navigate"     │                              │
-              │     in ArmorChat UI          │                              │
-              │                              │                              │
-              ▼                              │                              │
-       ┌─────────────┐                       │                              │
-       │ ArmorChat   │                       │                              │
-       │             │                       │                              │
-       │ JSON-RPC    │                       │                              │
-       │ POST /rpc   │                       │                              │
-       └──────┬──────┘                       │                              │
-              │                              │                              │
-              │  browser.enqueue_job({       │                              │
-              │    agent_id,                 │                              │
-              │    commands: [               │                              │
-              │      { type: "navigate",     │                              │
-              │        url: "..." }          │                              │
-              │    ]                         │                              │
-              │  })                          │                              │
-              │                              │                              │
-              ▼                              ▼                              │
-       ┌─────────────┐                 ┌─────────────┐                      │
-       │ Bridge RPC  │────────────────►│ Browser     │                      │
-       │ :8443       │                 │ Queue       │                      │
-       └─────────────┘                 │ Processor   │                      │
-                                       └──────┬──────┘                      │
-                                              │                             │
-                                              │  2. Queue job               │
-                                              │  3. Pick up from queue      │
-                                              │                             │
-                                              ▼                             │
-                                       ┌─────────────┐                      │
-                                       │ Browser     │                      │
-                                       │ Service     │                      │
-                                       │ (Playwright)│                      │
-                                       └──────┬──────┘                      │
-                                              │                             │
-                                              │  4. Execute command         │
-                                              │                             │
-                                              ▼                             │
-                                       ┌─────────────┐                      │
-                                       │ Status      │                      │
-                                       │ Events      │                      │
-                                       └──────┬──────┘                      │
-                                              │                             │
-       ┌─────────────┐                        │                             │
-       │ ArmorChat   │◄───────────────────────┘                             │
-       │             │                                                      │
-       │ Matrix:     │  com.armorclaw.browser.status                        │
-       │   {         │  {                                                   │
-       │     status: │    "status": "navigating",                           │
-       │     url,    │    "url": "https://...",                             │
-       │     progress│    "progress": 50                                    │
-       │   }         │  }                                                   │
-       └─────────────┘                                                      │
-```
-
-### Key Communication Endpoints
-
-| Endpoint | Protocol | Purpose |
-|----------|----------|---------|
-| `:6167/_matrix/client/*` | Matrix CS API | All Matrix operations |
-| `:6167/_matrix/federation/*` | Matrix Federation | Server-to-server (optional) |
-| `:5000/_matrix/push/v1/notify` | HTTP POST | Push notifications |
-| `:8443/rpc` | JSON-RPC 2.0 | Direct bridge commands |
-| `:8443/health` | HTTP GET | Bridge health check |
-
-### Provisioning RPC Methods
-
-| Method | Purpose |
-|--------|---------|
-| `provisioning.start` | Generate setup token and QR data |
-| `provisioning.claim` | Claim device with token (first = OWNER) |
-| `provisioning.status` | Check provisioning state |
-
-### Security Model
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  SECURITY LAYERS                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Layer 1: Network                                                │
-│  ───────────────                                                 │
-│  • HTTPS/TLS for all external traffic                            │
-│  • Self-signed certs generated on setup                          │
-│  • Optional Let's Encrypt with Caddy                             │
-│                                                                  │
-│  Layer 2: Matrix Authentication                                  │
-│  ────────────────────────────                                    │
-│  • Access tokens for all API calls                               │
-│  • Device-specific tokens                                        │
-│  • Token stored securely in Android Keystore                     │
-│                                                                  │
-│  Layer 3: End-to-End Encryption                                  │
-│  ─────────────────────────────                                   │
-│  • Olm/Megolm encryption (Matrix SDK)                            │
-│  • Device keys generated locally                                 │
-│  • Cross-signing for verification                                │
-│  • Emoji verification for bridge                                 │
-│                                                                  │
-│  Layer 4: Role-Based Access Control                              │
-│  ───────────────────────────────                                 │
-│  • OWNER: Full access, can manage users                          │
-│  • ADMIN: Can create agents, manage MCPs                         │
-│  • USER: Can use agents, request MCP access                      │
-│                                                                  │
-│  Layer 5: BlindFill PII Protection                               │
-│  ─────────────────────────────                                   │
-│  • PII never sent to agent                                       │
-│  • Decrypted only in browser memory                              │
-│  • User approval required per-field                              │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## ArmorChat Android Integration
-
-### Event Types Reference
-
-| Event Type | Direction | Purpose |
-|------------|-----------|---------|
-| `com.armorclaw.browser.response` | Bridge → Client | Command results |
-| `com.armorclaw.browser.status` | Bridge → Client | Browser state changes |
-| `com.armorclaw.agent.status` | Bridge → Client | Agent state machine transitions |
-| `com.armorclaw.pii.response` | Client → Bridge | User's PII approval/denial |
-
-> **Important:** Agent state events use `com.armorclaw.agent.status` (not `.state`)
-
-### Matrix Event Listeners
-
-```kotlin
-class BrowserCommandHandler(
-    private val matrixClient: MatrixClient,
-    private val controlPlaneStore: ControlPlaneStore
-) {
-    fun subscribe() {
-        // Listen for browser responses (command results)
-        matrixClient.onEvent("com.armorclaw.browser.response") { event ->
-            handleBrowserResponse(event)
-        }
-
-        // Listen for browser status updates (navigation, form detection, etc.)
-        matrixClient.onEvent("com.armorclaw.browser.status") { event ->
-            handleBrowserStatus(event)
-        }
-
-        // Listen for agent status changes (state machine transitions)
-        matrixClient.onEvent("com.armorclaw.agent.status") { event ->
-            handleAgentStatus(event)
-        }
-    }
-
-    private fun handleAgentStatus(event: MatrixEvent) {
-        val status = AgentStatusEvent.fromJson(event.content)
-
-        when (status.status) {
-            "idle" -> showIdleState()
-            "browsing" -> showBrowsingState(status.metadata.url)
-            "form_filling" -> showFormFillingState(status.metadata.progress)
-            "awaiting_approval" -> showApprovalNeeded(status.metadata.fieldsRequested)
-            "awaiting_captcha" -> showCaptchaUI()
-            "awaiting_2fa" -> show2FAUI()
-            "processing_payment" -> showProcessingPayment()
-            "complete" -> showComplete(status.metadata)
-            "error" -> showError(status.metadata.error)
-        }
-    }
-}
-```
-
-### Agent Status Event Structure
-
-```kotlin
-data class AgentStatusEvent(
-    val agent_id: String,
-    val status: String,          // "idle" | "browsing" | "form_filling" | etc.
-    val previous: String?,       // Previous status
-    val timestamp: Long,         // Unix milliseconds
-    val metadata: StatusMetadata?
-)
-
-data class StatusMetadata(
-    val url: String?,            // Current browser URL
-    val step: String?,           // Current step description
-    val progress: Int?,          // 0-100 progress
-    val error: String?,          // Error message if status == "error"
-    val task_id: String?,        // Current task identifier
-    val task_type: String?,      // e.g., "flight_booking"
-    val fields_requested: List<String>? // PII fields needed (when awaiting_approval)
-)
-```
-
-### PII Field Reference Mapping
-
-```kotlin
-fun mapPIIFieldRef(ref: String): PiiField {
-    return when (ref) {
-        "payment.card_number" -> PiiField(
-            name = "Card Number",
-            sensitivity = SensitivityLevel.HIGH,
-            description = "Credit or debit card number",
-            currentValue = maskCardNumber(storedCard?.last4)
-        )
-        "payment.cvv" -> PiiField(
-            name = "CVV",
-            sensitivity = SensitivityLevel.CRITICAL,
-            description = "Card verification code",
-            currentValue = null // Never display
-        )
-        "payment.card_expiry" -> PiiField(
-            name = "Expiry Date",
-            sensitivity = SensitivityLevel.MEDIUM,
-            description = "MM/YY format",
-            currentValue = storedCard?.expiry
-        )
-        "payment.card_name" -> PiiField(
-            name = "Cardholder Name",
-            sensitivity = SensitivityLevel.LOW,
-            description = "Name on card"
-        )
-        "personal.name" -> PiiField(
-            name = "Full Name",
-            sensitivity = SensitivityLevel.LOW,
-            description = "Your full name"
-        )
-        "personal.address" -> PiiField(
-            name = "Address",
-            sensitivity = SensitivityLevel.MEDIUM,
-            description = "Street address"
-        )
-        "personal.email" -> PiiField(
-            name = "Email",
-            sensitivity = SensitivityLevel.LOW,
-            description = "Contact email"
-        )
-        "personal.phone" -> PiiField(
-            name = "Phone",
-            sensitivity = SensitivityLevel.LOW,
-            description = "Phone number"
-        )
-        else -> PiiField(
-            name = ref.substringAfterLast("."),
-            sensitivity = SensitivityLevel.HIGH,
-            description = "Requested: $ref"
-        )
-    }
-}
-```
-
-### JSON-RPC Browser Queue Client
-
-```kotlin
-class BrowserQueueClient(
-    private val bridgeUrl: String,
-    private val authToken: String
-) {
-    suspend fun enqueueJob(request: EnqueueJobRequest): Result<BrowserJob>
-    suspend fun getJob(jobId: String): Result<BrowserJob>
-    suspend fun cancelJob(jobId: String): Result<Unit>
-    suspend fun retryJob(jobId: String): Result<Unit>
-    suspend fun getQueueStats(): Result<QueueStats>
-    suspend fun listJobs(agentId: String? = null, status: List<String>? = null): Result<List<BrowserJob>>
-}
-
-data class EnqueueJobRequest(
-    val id: String? = null,           // Optional, auto-generated if omitted
-    val agent_id: String,
-    val room_id: String,
-    val definition_id: String? = null,
-    val commands: List<BrowserCommandJson>,
-    val priority: Int = 5,            // 1-10, higher = processed first
-    val timeout: Int = 300,           // Seconds
-    val max_retries: Int = 2,
-    val expires_in: Int? = null       // Seconds from now
-)
-
-data class BrowserJob(
-    val id: String,
-    val agent_id: String,
-    val room_id: String,
-    val user_id: String?,
-    val definition_id: String?,
-    val status: JobStatus,            // "pending" | "running" | "completed" | "failed" | "cancelled"
-    val priority: Int,
-    val attempts: Int,
-    val current_step: Int,
-    val total_steps: Int,
-    val error: String?,
-    val created_at: Long,
-    val started_at: Long?,
-    val completed_at: Long?,
-    val result: Map<String, Any?>?
-)
-
-data class QueueStats(
-    val total: Int,
-    val pending: Int,
-    val running: Int,
-    val completed: Int,
-    val failed: Int,
-    val cancelled: Int,
-    val awaiting_pii: Int,
-    val active_workers: Int,
-    val queue_depth: Int
-)
-```
-
-### PII Response Handling
-
-```kotlin
-// When user approves/denies in BlindFill dialog:
-fun respondToPIIRequest(requestId: String, approved: Boolean, values: Map<String, String>?) {
-    // Send PII response as Matrix event
-    matrixClient.sendEvent(roomId, mapOf(
-        "type" to "com.armorclaw.pii.response",
-        "content" to mapOf(
-            "request_id" to requestId,
-            "approved" to approved,
-            "values" to (values ?: emptyMap<String, String>())
-        )
-    ))
-
-    // Clear pending request
-    controlPlaneStore.removePiiRequest(requestId)
-}
-
-// In ChatViewModel - connect to existing approvePiiRequest
-fun approvePiiRequest(approvedFields: Set<String>) {
-    val request = _pendingPiiRequest.value ?: return
-
-    val values = mutableMapOf<String, String>()
-    approvedFields.forEach { fieldName ->
-        when (fieldName) {
-            "Card Number" -> values["payment.card_number"] = secureStorage.getCardNumber()
-            "CVV" -> values["payment.cvv"] = secureStorage.getCVV()
-            "Expiry Date" -> values["payment.card_expiry"] = secureStorage.getCardExpiry()
-            "Cardholder Name" -> values["payment.card_name"] = userPrefs.getCardName()
-            "Full Name" -> values["personal.name"] = userPrefs.getFullName()
-            "Address" -> values["personal.address"] = userPrefs.getAddress()
-            "Email" -> values["personal.email"] = userPrefs.getEmail()
-            "Phone" -> values["personal.phone"] = userPrefs.getPhone()
-        }
-    }
-
-    respondToPIIRequest(request.requestId, approved = true, values = values)
-}
-```
-
-### Complete Checkout Flow Example
-
-```kotlin
-fun startCheckout(url: String, agent: AgentDefinition) = scope.launch {
-    // 1. Create browser job via JSON-RPC
-    val job = queueClient.enqueueJob(
-        EnqueueJobRequest(
-            agent_id = agent.id,
-            room_id = currentRoomId,
-            definition_id = agent.definitionId,
-            commands = listOf(
-                BrowserCommandJson("navigate", mapOf("url" to url, "waitUntil" to "load")),
-                BrowserCommandJson("fill", mapOf(
-                    "fields" to listOf(
-                        mapOf("selector" to "#email", "value" to userPrefs.email),
-                        mapOf("selector" to "#address", "value_ref" to "personal.address")
-                    )
-                )),
-                BrowserCommandJson("click", mapOf("selector" to "#continue-btn", "waitFor" to "navigation"))
-            ),
-            priority = 5,
-            timeout = 300
-        )
-    ).getOrThrow()
-
-    // 2. Subscribe to status updates
-    matrixService.onEvent("com.armorclaw.agent.status")
-        .filter { it.content.agent_id == agent.id }
-        .collect { event ->
-            val status = AgentStatusEvent.fromJson(event.content)
-            when (status.status) {
-                "awaiting_approval" -> {
-                    showBlindFillDialog(status.metadata?.fields_requested ?: emptyList())
-                }
-                "complete" -> {
-                    showCheckoutComplete(status.metadata)
-                }
-                "error" -> {
-                    showError(status.metadata?.error ?: "Unknown error")
-                }
-            }
-        }
-}
-```
-
----
-
-## Browser Service Architecture (v0.4.1)
-
-### Components
-
-The browser automation system consists of three main components:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     BROWSER AUTOMATION ARCHITECTURE                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
-│  │ ArmorChat       │     │ Bridge          │     │ Browser Service │       │
-│  │ (Android)       │     │ (Go)            │     │ (TypeScript)    │       │
-│  │                 │     │                 │     │                 │       │
-│  │ JSON-RPC        │────►│ Browser Client  │────►│ Playwright      │       │
-│  │ Matrix Events   │     │ Queue Processor │     │ Stealth Mode    │       │
-│  │                 │     │                 │     │                 │       │
-│  └─────────────────┘     └─────────────────┘     └─────────────────┘       │
-│         │                       │                       │                   │
-│         │                       ▼                       │                   │
-│         │              ┌─────────────────┐              │                   │
-│         │              │ Job Queue       │              │                   │
-│         │              │ (SQLite)        │              │                   │
-│         │              └─────────────────┘              │                   │
-│         │                       │                       │                   │
-│         └───────────────────────┴───────────────────────┘                   │
-│                     Matrix Events (status, response)                         │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Browser Service (TypeScript/Playwright)
-
-**Location:** `browser-service/`
-
-**Features:**
-- Playwright-based headless browser automation
-- Anti-detection / stealth mode
-- Screenshot capture with element cropping
-- Form filling with PII injection
-- Cookie and session management
-- Proxy rotation support
-
-**API Endpoints:**
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Service health check |
-| `/navigate` | POST | Navigate to URL |
-| `/fill` | POST | Fill form fields |
-| `/click` | POST | Click element |
-| `/extract` | POST | Extract page data |
-| `/screenshot` | POST | Capture screenshot |
-| `/status` | GET | Current browser state |
-
-### Browser Client (Go)
-
-**Location:** `bridge/pkg/browser/`
-
-**Components:**
-- `client.go` - HTTP client for browser-service API
-- `processor.go` - Job queue processor with retry logic
-- `browser.go` - Core browser types and interfaces
-
-**Configuration:**
-```toml
-[browser]
-enabled = true
-service_url = "http://localhost:3001"
-timeout = 30
-max_retries = 3
-retry_delay = 2
-
-[browser.stealth]
-enabled = true
-fingerprint_seed = ""
-
-[browser.queue]
-max_workers = 3
-max_depth = 100
-```
-
-### Deployment
-
-**Docker Compose:** `deploy/browser/docker-compose.browser.yml`
-
-```yaml
-services:
-  browser-service:
-    build: ../../browser-service
-    ports:
-      - "3001:3001"
-    environment:
-      - NODE_ENV=production
-      - STEALTH_MODE=true
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      - seccomp=unconfined
-```
-
----
-
-=======
->>>>>>> b2a095fe5c03a375c78e8bedf59d22f6e83263e7
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 4.7.0 | 2026-03-11 | **Deployment Audit:** Network subnet fixes, test security hardening, STUN/TURN env vars, config placeholder cleanup. |
+| 4.6.0 | 2026-03-11 | **GPG Key Rotation:** New signing key, installer signature fix, binary download disabled until release. |
 | 4.5.0 | 2026-03-10 | **Provider Registry:** Embedded 12+ providers (Zhipu, Moonshot, DeepSeek, Groq). **Matrix Integration:** Auto-detect and install Conduit. **Catwalk:** Dynamic provider/model discovery with `/ai` commands. |
 | 4.4.0 | 2026-03-08 | **Systemd Hardening:** Type=simple, RuntimeDirectory, deterministic startup. **Installer:** Lockfile, Docker readiness, persistent logging, GPG verification v1.4.3. |
 | 4.3.0 | 2026-03-06 | **Catwalk AI:** Dynamic provider discovery, runtime switching via Matrix commands, Catwalk v0.28.3 integration. |
@@ -1982,6 +1270,25 @@ services:
 ---
 
 ## Recent Reviews
+
+### 2026-03-11 - Deployment Audit
+
+**Audited Areas:**
+- Docker compose network subnets
+- Conduit volume mount paths
+- Matrix/Conduit configuration consistency
+- Browser-service integration
+- Bridge startup assumptions
+
+**Issues Found & Fixed:**
+1. Network subnet overlaps (CRITICAL) - Narrowed all /16 to /24
+2. Test config open registration (HIGH) - Disabled, added shared secret
+3. Missing keystore volume (HIGH) - Added bridge_keystore to full stack
+4. Missing health check condition (HIGH) - Added condition: service_healthy
+5. Hardcoded TURN secrets (MEDIUM) - Replaced with empty values
+6. Hardcoded STUN server (MEDIUM) - Made configurable via env var
+7. Auto-generated secrets without warning (MEDIUM) - Added startup warnings
+8. Fake URLs in config.example.toml (MEDIUM) - Replaced with empty + guidance
 
 ### 2026-03-08 - Installer Hardening Review
 
@@ -2009,48 +1316,3 @@ services:
 5. **Docker Compose Detection**
    - Detects both 'docker compose' and 'docker-compose'
    - Fallback mechanism in sub-installers
-
-**Test Coverage:** 8 tests (all passing ✅)
-
-### 2026-03-08 - Systemd Service Hardening Review
-
-**Completed Work:**
-
-**Systemd Service Hardening (Phase 6b)**
-
-1. **Eliminated Startup Timeouts**
-   - Changed Type=notify to Type=simple
-   - Service active immediately upon process launch
-
-2. **Automated Runtime Management**
-   - RuntimeDirectory=armorclaw and RuntimeDirectoryMode=0755
-   - Systemd creates/cleans up /run/armorclaw automatically
-
-3. **Improved Reliability**
-   - After=network-online.target and Wants=network-online.target
-   - LimitNOFILE=65536 for socket scalability
-   - Restart=always with RestartSec=5
-
-4. **Security Hardening**
-   - ProtectKernelTunables=true and ProtectControlGroups=true
-
-**Test Coverage:** 9 tests (all passing ✅)
-
----
-
-## Related Documentation
-
-- **[quickstart-docker.md](../guides/quickstart-docker.md)** - Full quickstart guide
-- **[error-catalog.md](../guides/error-catalog.md)** - Error codes and solutions
-- **[configuration.md](../guides/configuration.md)** - Post-setup configuration
-- **[troubleshooting.md](../guides/troubleshooting.md)** - Detailed troubleshooting
-- **[rpc-api.md](../reference/rpc-api.md)** - Complete JSON-RPC API reference
-- **[agent-studio-rpc-api.md](../reference/agent-studio-rpc-api.md)** - Agent Studio RPC methods
-- **[provider-registry-complete.md](../PROGRESS/provider-registry-complete.md)** - Provider registry implementation
-- **[progress.md](../PROGRESS/progress.md)** - Complete progress log
-
----
-
-**Document Version:** 4.5.0
-**Last Updated:** 2026-03-10
-**Maintainer:** ArmorClaw Team
