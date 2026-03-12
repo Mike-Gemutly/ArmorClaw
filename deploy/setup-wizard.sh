@@ -594,7 +594,7 @@ EOF
     else
         echo "  11. Start first agent (optional)"
         echo ""
-        echo "  ${CYAN}(Advanced features can be configured later with separate scripts)${NC}"
+        echo -e "  ${CYAN}(Advanced features can be configured later with separate scripts)${NC}"
     fi
 
     cat <<EOF
@@ -953,8 +953,8 @@ ${YELLOW}Please verify you have set (or will set) the following:${NC}
 
 EOF
 
-    echo "  1. ${CYAN}OpenAI${NC}: https://platform.openai.com/settings/limits"
-    echo "  2. ${CYAN}Anthropic${NC}: https://console.anthropic.com/settings/limits"
+    echo -e "  1. ${CYAN}OpenAI${NC}: https://platform.openai.com/settings/limits"
+    echo -e "  2. ${CYAN}Anthropic${NC}: https://console.anthropic.com/settings/limits"
     echo ""
     echo -e "${BOLD}Provider Cost Configuration${NC}"
     echo ""
@@ -1021,9 +1021,9 @@ step_configuration() {
     # Enhanced logging configuration
     echo ""
     print_info "${BOLD}Logging Configuration${NC}"
-    echo "  ${CYAN}Level:${NC}   debug, info, warn, error"
-    echo "  ${CYAN}Format:${NC}  text (human-readable) or json (structured for log aggregation)"
-    echo "  ${CYAN}Output:${NC}  stdout (console) or file:/path/to/log (persistent)"
+    echo -e "  ${CYAN}Level:${NC}   debug, info, warn, error"
+    echo -e "  ${CYAN}Format:${NC}  text (human-readable) or json (structured for log aggregation)"
+    echo -e "  ${CYAN}Output:${NC}  stdout (console) or file:/path/to/log (persistent)"
     echo ""
     print_info "${CYAN}Recommendation:${NC} Use JSON format for production with log aggregation"
     print_info "Security events are always logged regardless of level"
@@ -1601,19 +1601,19 @@ print_completion() {
     echo -e "${BOLD}Next Steps:${NC}"
     echo ""
     echo "1. Start the bridge:"
-    echo "   ${CYAN}sudo systemctl start armorclaw-bridge${NC}"
+    echo -e "   ${CYAN}sudo systemctl start armorclaw-bridge${NC}"
     echo ""
     echo "2. Enable auto-start on boot:"
-    echo "   ${CYAN}sudo systemctl enable armorclaw-bridge${NC}"
+    echo -e "   ${CYAN}sudo systemctl enable armorclaw-bridge${NC}"
     echo ""
     echo "3. Check status:"
-    echo "   ${CYAN}sudo systemctl status armorclaw-bridge${NC}"
+    echo -e "   ${CYAN}sudo systemctl status armorclaw-bridge${NC}"
     echo ""
     echo "4. View logs:"
-    echo "   ${CYAN}sudo journalctl -u armorclaw-bridge -f${NC}"
+    echo -e "   ${CYAN}sudo journalctl -u armorclaw-bridge -f${NC}"
     echo ""
     echo "5. Test the bridge:"
-    echo "   ${CYAN}echo '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"id\":1}' | sudo socat - UNIX-CONNECT:$SOCKET_PATH${NC}"
+    echo -e "   ${CYAN}echo '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"id\":1}' | sudo socat - UNIX-CONNECT:$SOCKET_PATH${NC}"
     echo ""
 
     echo -e "${BOLD}Configuration:${NC}"
@@ -1624,8 +1624,8 @@ print_completion() {
     echo ""
 
     echo -e "${BOLD}Backup & Migration:${NC}"
-    echo "  Create backup:  ${CYAN}sudo ./deploy/backup-settings.sh${NC}"
-    echo "  Restore backup: ${CYAN}sudo ./deploy/setup-wizard.sh${NC} (choose import option)"
+    echo -e "  Create backup:  ${CYAN}sudo ./deploy/backup-settings.sh${NC}"
+    echo -e "  Restore backup: ${CYAN}sudo ./deploy/setup-wizard.sh${NC} (choose import option)"
     echo ""
 
     echo -e "${BOLD}Documentation:${NC}"
@@ -1887,7 +1887,7 @@ step_start_agent() {
         echo ""
         echo -e "${YELLOW}⊘ Skipping agent startup${NC}"
         echo "You can start an agent later with:"
-        echo "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge start --key <key-id>${NC}"
+        echo -e "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge start --key <key-id>${NC}"
         return
     fi
 
@@ -1899,10 +1899,10 @@ step_start_agent() {
         echo ""
         echo -e "${RED}✗ Failed to start bridge${NC}"
         echo "Start it manually with:"
-        echo "  ${CYAN}sudo systemctl start armorclaw-bridge${NC}"
+        echo -e "  ${CYAN}sudo systemctl start armorclaw-bridge${NC}"
         echo ""
         echo "Then start an agent with:"
-        echo "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge start --key <key-id>${NC}"
+        echo -e "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge start --key <key-id>${NC}"
         return
     fi
 
@@ -1921,7 +1921,7 @@ step_start_agent() {
         echo ""
         echo -e "${YELLOW}⚠ No API keys found in keystore${NC}"
         echo "Add a key with:"
-        echo "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge add-key --provider <provider> --token <token>${NC}"
+        echo -e "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge add-key --provider <provider> --token <token>${NC}"
         return
     fi
 
@@ -1939,7 +1939,7 @@ step_start_agent() {
         echo "$output"
         echo ""
         echo "Check bridge logs with:"
-        echo "  ${CYAN}sudo journalctl -u armorclaw-bridge -n 50${NC}"
+        echo -e "  ${CYAN}sudo journalctl -u armorclaw-bridge -n 50${NC}"
         return
     fi
 
@@ -1951,7 +1951,7 @@ step_start_agent() {
 
     if [ -n "$container_id" ]; then
         echo ""
-        echo "  Container ID: ${CYAN}$container_id${NC}"
+        echo -e "  Container ID: ${CYAN}$container_id${NC}"
     fi
 
     echo ""
@@ -1961,19 +1961,19 @@ step_start_agent() {
     echo ""
 
     echo -e "${BOLD}Check agent status:${NC}"
-    echo "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge status${NC}"
+    echo -e "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge status${NC}"
     echo ""
 
     echo -e "${BOLD}View agent logs:${NC}"
     if [ -n "$container_id" ]; then
-        echo "  ${CYAN}docker logs -f $container_id${NC}"
+        echo -e "  ${CYAN}docker logs -f $container_id${NC}"
     else
-        echo "  ${CYAN}docker logs -f <container-id>${NC}"
+        echo -e "  ${CYAN}docker logs -f <container-id>${NC}"
     fi
     echo ""
 
     echo -e "${BOLD}Stop the agent:${NC}"
-    echo "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge stop --name my-agent${NC}"
+    echo -e "  ${CYAN}sudo $INSTALL_DIR/armorclaw-bridge stop --name my-agent${NC}"
     echo ""
 
     echo -e "${BOLD}Next Steps:${NC}"

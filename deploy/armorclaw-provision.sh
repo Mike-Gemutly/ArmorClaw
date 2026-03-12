@@ -307,7 +307,7 @@ generate_qr_code() {
 show_url_fallback() {
     echo -e "${YELLOW}QR code generation unavailable.${NC}"
     echo "Install qrencode for visual QR codes:"
-    echo "  ${CYAN}sudo apt install qrencode${NC}"
+    echo -e "  ${CYAN}sudo apt install qrencode${NC}"
     echo ""
     echo -e "${BOLD}Copy this URL to ArmorChat:${NC}"
     echo ""

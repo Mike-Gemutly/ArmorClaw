@@ -648,15 +648,15 @@ print_summary() {
     echo ""
     echo -e "${BOLD}Important Commands:${NC}"
     echo ""
-    echo "  Firewall status:    ${CYAN}ufw status verbose${NC}"
-    echo "  Fail2Ban status:    ${CYAN}fail2ban-client status${NC}"
-    echo "  View logs:          ${CYAN}tail -f $LOG_DIR/bridge.log${NC}"
-    echo "  Check updates:      ${CYAN}unattended-upgrade --dry-run${NC}"
+    echo -e "  Firewall status:    ${CYAN}ufw status verbose${NC}"
+    echo -e "  Fail2Ban status:    ${CYAN}fail2ban-client status${NC}"
+    echo -e "  View logs:          ${CYAN}tail -f $LOG_DIR/bridge.log${NC}"
+    echo -e "  Check updates:      ${CYAN}unattended-upgrade --dry-run${NC}"
     echo ""
 
     if $LOGGING_CONFIGURED; then
         echo -e "${BOLD}Restart bridge to apply logging changes:${NC}"
-        echo "  ${CYAN}systemctl restart armorclaw-bridge${NC}"
+        echo -e "  ${CYAN}systemctl restart armorclaw-bridge${NC}"
         echo ""
     fi
 
