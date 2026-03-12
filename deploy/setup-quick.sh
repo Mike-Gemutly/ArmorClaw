@@ -959,6 +959,12 @@ EOF
         echo -e "  ${BOLD}Scan this QR code with ArmorChat to connect:${NC}"
         echo ""
 
+        # Install qrencode if not available
+        if ! command -v qrencode &>/dev/null; then
+            print_info "Installing qrencode for QR display..."
+            $SUDO apt-get update -qq && $SUDO apt-get install -y -qq qrencode 2>/dev/null || true
+        fi
+
         # Try to generate QR code with qrencode
         if command -v qrencode &>/dev/null; then
             qrencode -t UTF8 "$provision_url" 2>/dev/null || \
