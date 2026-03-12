@@ -46,6 +46,9 @@ DEFAULT_HARD_STOP="true"
 
 # Track Matrix installation state
 MATRIX_ENABLED="false"
+MATRIX_ADMIN_USER="admin"
+MATRIX_ADMIN_PASSWORD=""
+MATRIX_DOMAIN=""
 LOCKFILE="/tmp/armorclaw-quick.lock"
 
 # Cleanup handler
@@ -301,8 +304,64 @@ is_matrix_running() {
     return 1
 }
 
+create_matrix_admin_user() {
+    local server_name="${1:-localhost}"
+    local admin_user="${2:-admin}"
+    local admin_pass="${3:-}"
+
+    if [[ -z "$admin_pass" ]]; then
+        print_error "No password provided for admin user"
+        return 1
+    fi
+
+    print_info "Creating Matrix admin user: $admin_user..."
+
+    local max_attempts=30
+    local attempt=0
+    while [[ $attempt -lt $max_attempts ]]; do
+        if curl -sf "http://localhost:6167/_matrix/client/versions" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+        ((attempt++)) || true
+    done
+
+    if [[ $attempt -eq $max_attempts ]]; then
+        print_error "Matrix API not responding"
+        return 1
+    fi
+
+    local register_response
+    register_response=$(curl -sf "http://localhost:6167/_matrix/client/v3/register" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "username": "'"${admin_user}"'",
+            "password": "'"${admin_pass}"'",
+            "auth": {"type": "m.login.dummy"}
+        }' 2>/dev/null) || true
+
+    if echo "$register_response" | grep -q '"user_id"'; then
+        print_done "Matrix admin user created: $admin_user"
+        return 0
+    elif echo "$register_response" | grep -q '"errcode".*"M_USER_IN_USE"'; then
+        print_info "Matrix admin user already exists: $admin_user"
+        return 0
+    else
+        print_warning "Could not create Matrix admin user (registration may be disabled)"
+        print_info "Response: ${register_response:-no response}"
+        return 0
+    fi
+}
+
 ensure_matrix() {
     if is_matrix_running; then
+        # Matrix already running - check if we have credentials
+        if [[ -z "$MATRIX_ADMIN_PASSWORD" ]]; then
+            print_info "Matrix already running - generating admin credentials..."
+            MATRIX_ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
+            MATRIX_DOMAIN=$(hostname -I | awk '{print $1}')
+            create_matrix_admin_user "$MATRIX_DOMAIN" "$MATRIX_ADMIN_USER" "$MATRIX_ADMIN_PASSWORD" || true
+        fi
         return 0
     fi
 
@@ -319,6 +378,14 @@ ensure_matrix() {
         return 1
     fi
 
+    # Detect server IP for domain
+    MATRIX_DOMAIN=$(hostname -I | awk '{print $1}')
+    print_info "Server IP: $MATRIX_DOMAIN"
+
+    # Generate admin password
+    MATRIX_ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
+    print_info "Generated admin password"
+
     # Run Conduit container directly (non-interactive)
     local CONDUIT_DATA_DIR="/var/lib/conduit"
     $SUDO mkdir -p "$CONDUIT_DATA_DIR"
@@ -333,7 +400,7 @@ ensure_matrix() {
             -p 6167:6167 \
             -p 8448:8448 \
             -v "$CONDUIT_DATA_DIR:/data" \
-            -e CONDUIT_SERVER_NAME="localhost" \
+            -e CONDUIT_SERVER_NAME="${MATRIX_DOMAIN}" \
             -e CONDUIT_DATABASE_PATH="/data/conduit.db" \
             -e CONDUIT_REGISTRATION_ENABLED="true" \
             matrixconduit/matrix-conduit:latest 2>/dev/null
@@ -349,6 +416,9 @@ ensure_matrix() {
         print_info "Check logs: docker logs armorclaw-conduit"
         return 1
     fi
+
+    # Create admin user
+    create_matrix_admin_user "$MATRIX_DOMAIN" "$MATRIX_ADMIN_USER" "$MATRIX_ADMIN_PASSWORD" || true
 
     # Update bridge config to enable Matrix
     local config_file="$CONFIG_DIR/config.toml"
@@ -1014,17 +1084,46 @@ print_completion() {
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
+    if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
+        echo -e "${BOLD}${CYAN}Element X Connection Details:${NC}"
+        echo ""
+        echo -e "  ${BOLD}Homeserver URL:${NC}"
+        echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:-6167"
+        echo "    https://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
+        echo ""
+        echo -e "  ${BOLD}Username:${NC}"
+        echo "    ${MATRIX_ADMIN_USER}"
+        echo ""
+        echo -e "  ${BOLD}Password:${NC}"
+        echo "    ${MATRIX_ADMIN_PASSWORD}"
+        echo ""
+        echo -e "  ${BOLD}Room to Join:${NC}"
+        echo "    #agents:${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
+        echo ""
+        echo -e "${BOLD}${BLUE}Steps to Connect via Element X:${NC}"
+        echo "  1. Open Element X app"
+        echo "  2. Tap 'Login'"
+        echo "  3. Enter homeserver: http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
+        echo "  4. Enter username: ${MATRIX_ADMIN_USER}"
+        echo "  5. Enter password: (see above)"
+        echo "  6. Join room: #agents:${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
+        echo ""
+        echo -e "${YELLOW}Note: For production, use HTTPS with a valid domain and SSL certificate.${NC}"
+        echo ""
+    fi
+
     echo -e "${BOLD}Quick Start:${NC}"
     echo ""
     if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
-        echo -e "  1. ${CYAN}Connect ArmorChat${NC} (scan QR code above)"
+        echo -e "  1. ${CYAN}Connect Element X${NC} (see credentials above)"
+        echo -e "  2. ${CYAN}Or scan QR${NC} with ArmorChat (if displayed)"
     else
-        echo -e "  1. ${CYAN}Enable Matrix${NC} to get QR connection:"
+        echo -e "  1. ${CYAN}Enable Matrix${NC} to get Element X connection:"
         echo "     sudo ./deploy/setup-matrix.sh"
     fi
-    echo -e "  2. ${CYAN}Add API key${NC}:"
+    echo -e "  3. ${CYAN}Add API key${NC}:"
     echo "     sudo armorclaw-bridge add-key --provider openai --token sk-..."
-    echo -e "  3. ${CYAN}Start an agent${NC}:"
+    echo -e "  4. ${CYAN}Start an agent${NC}:"
     echo "     sudo armorclaw-bridge start --key openai-main"
     echo ""
 
@@ -1037,7 +1136,6 @@ print_completion() {
 
     echo -e "${BOLD}Next Steps:${NC}"
     echo ""
-    echo -e "  ${CYAN}• Enable Matrix:${NC}       ./deploy/setup-matrix.sh"
     echo -e "  ${CYAN}• Harden security:${NC}     ./deploy/armorclaw-harden.sh"
     echo -e "  ${CYAN}• New device QR:${NC}       ./deploy/armorclaw-provision.sh"
     echo -e "  ${CYAN}• Full configuration:${NC}  nano $CONFIG_DIR/config.toml"
@@ -1045,9 +1143,9 @@ print_completion() {
 
     echo -e "${BOLD}Documentation:${NC}"
     echo ""
-    echo "  Quick Start:    docs/guides/setup-guide.md"
-    echo "  Configuration:  docs/guides/configuration.md"
-    echo "  Full Docs:      docs/index.md"
+    echo "  Element X Guide: docs/guides/element-x-quickstart.md"
+    echo "  Configuration:   docs/guides/configuration.md"
+    echo "  Full Docs:       docs/index.md"
     echo ""
 
     if [[ -f "$LOG_FILE" ]]; then
