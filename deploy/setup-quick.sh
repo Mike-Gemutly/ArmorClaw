@@ -439,6 +439,18 @@ check_prerequisites() {
         print_warning "Disk: ${avail_space}MB available (2GB+ recommended)"
     fi
 
+    if ! command -v qrencode &>/dev/null; then
+        print_info "Installing qrencode for QR code display..."
+        $SUDO apt-get update -qq && $SUDO apt-get install -y -qq qrencode 2>/dev/null || true
+        if command -v qrencode &>/dev/null; then
+            print_done "qrencode installed"
+        else
+            print_warning "Could not install qrencode - QR codes will not display"
+        fi
+    else
+        print_done "qrencode available"
+    fi
+
     if [[ $errors -gt 0 ]]; then
         fail "Prerequisites check failed. Fix the issues above and run again."
     fi
