@@ -1088,7 +1088,7 @@ print_completion() {
         echo -e "${BOLD}${CYAN}Element X Connection Details:${NC}"
         echo ""
         echo -e "  ${BOLD}Homeserver URL:${NC}"
-        echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:-6167"
+        echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
         echo "    https://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
         echo ""
         echo -e "  ${BOLD}Username:${NC}"
