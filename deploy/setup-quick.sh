@@ -497,6 +497,20 @@ install_bridge() {
     fi
 
     local go_version=$(go version | awk '{print $3}')
+    local go_major=$(echo "$go_version" | sed 's/go//' | cut -d. -f1)
+    local go_minor=$(echo "$go_version" | sed 's/go//' | cut -d. -f2)
+    
+    # Require Go 1.22+ for CGO/SQLCipher support
+    if [[ "$go_major" -lt 1 ]] || ([[ "$go_major" -eq 1 ]] && [[ "$go_minor" -lt 22 ]]); then
+        print_error "Go version too old: $go_version (requires 1.22+)"
+        print_info "Upgrading Go..."
+        $SUDO rm -rf /usr/local/go 2>/dev/null || true
+        curl -fsSL https://go.dev/dl/go1.22.2.linux-amd64.tar.gz | $SUDO tar -C /usr/local -xzf -
+        export PATH="/usr/local/go/bin:$PATH"
+        go_version=$(go version | awk '{print $3}')
+        print_success "Upgraded to $go_version"
+    fi
+    
     print_done "Dependencies ready (Go: $go_version)"
 
     # Build bridge
