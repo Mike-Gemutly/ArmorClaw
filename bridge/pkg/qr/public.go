@@ -14,6 +14,7 @@ import (
 	"image"
 	"image/png"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -444,6 +445,9 @@ type QRResult struct {
 // ToTerminal returns an ASCII QR code for terminal display
 // using the skip2/go-qrcode library already in use
 func (r *QRResult) ToTerminal() (string, error) {
+	if strings.TrimSpace(r.DeepLink) == "" {
+		return "", fmt.Errorf("deep link is empty")
+	}
 	qrCode, err := qrcode.New(r.DeepLink, qrcode.Medium)
 	if err != nil {
 		return "", err

@@ -37,6 +37,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/notification"
 	"github.com/armorclaw/bridge/pkg/provisioning"
+	"github.com/armorclaw/bridge/pkg/qr"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/armorclaw/bridge/pkg/studio"
@@ -1507,10 +1508,16 @@ func runGenerateQRCommand(cliCfg cliConfig) {
 	fmt.Println("   • Configure your firewall to allow the port")
 	fmt.Println("")
 
-	// Generate QR code ASCII if qrcode library is available
-	// Note: This is a placeholder - for a full implementation, add github.com/skip2/go-qrcode
-	fmt.Println("⚠️  ASCII QR code not available - use the deep link above or generate PNG:")
-	fmt.Printf("   echo '%s' | qrencode -t UTF8\n", deepLinkURL)
+	qrResult := &qr.QRResult{
+		DeepLink: deepLinkURL,
+	}
+	if qrText, err := qrResult.ToTerminal(); err == nil {
+		fmt.Println("")
+		fmt.Println(qrText)
+	} else {
+		fmt.Printf("⚠️  Failed to render terminal QR: %v\n", err)
+		fmt.Printf("   Use deep link: %s\n", deepLinkURL)
+	}
 	fmt.Println("")
 }
 
