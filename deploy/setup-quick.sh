@@ -642,12 +642,12 @@ start_ngrok_tunnel() {
 
     print_info "Detecting ngrok URL..."
 
-    local max_attempts=10
+    local max_attempts=15
     local attempt=1
     local ngrok_url=""
 
     while [[ $attempt -le $max_attempts ]]; do
-        ngrok_url=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.(ngrok\.io|ngrok-free\.app)' | head -1)
+        ngrok_url=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.(ngrok\.io|ngrok-free\.app|ngrok\.app)' | head -1)
         if [[ -n "$ngrok_url" ]]; then
             break
         fi
@@ -658,16 +658,26 @@ start_ngrok_tunnel() {
     echo ""
 
     if [[ -z "$ngrok_url" ]]; then
-        print_error "Could not detect ngrok URL"
+        print_error "Could not detect ngrok URL automatically"
         echo ""
-        echo -e "${YELLOW}ngrok may be starting slowly. Check:${NC}"
-        echo "  Dashboard: http://localhost:4040"
-        echo "  Logs: cat /tmp/ngrok.log"
+        echo -e "${YELLOW}ngrok web interface: http://localhost:4040${NC}"
         echo ""
-        print_info "Once you see the URL, update Matrix manually:"
-        print_info "  1) Copy the HTTPS URL from ngrok (e.g., https://abc123.ngrok-free.app)"
-        print_info "  2) sudo sed -i 's/^server_name = .*/server_name = \"abc123.ngrok-free.app\"/' /etc/armorclaw/conduit.toml"
-        print_info "  3) docker restart armorclaw-conduit"
+        ngrok_url=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null)
+        if [[ -n "$ngrok_url" ]]; then
+            echo -e "${YELLOW}API response:${NC}"
+            echo "$ngrok_url" | head -c 500
+            echo ""
+        fi
+        echo ""
+        print_info "To complete setup manually:"
+        print_info "  1) Open http://localhost:4040 in a browser"
+        print_info "  2) Copy the HTTPS URL (e.g., https://abc-123.ngrok-free.app)"
+        print_info "  3) Run these commands:"
+        echo ""
+        echo "     sudo sed -i 's/^server_name = .*/server_name = \"YOUR-NGROK-URL\"/' /etc/armorclaw/conduit.toml"
+        echo "     docker restart armorclaw-conduit"
+        echo ""
+        print_info "Then connect Element X to: https://YOUR-NGROK-URL"
         return 1
     fi
 
