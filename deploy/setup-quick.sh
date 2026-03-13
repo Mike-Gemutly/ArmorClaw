@@ -608,68 +608,83 @@ start_ngrok_tunnel() {
         sudo apt-get update -qq && sudo apt-get install -y ngrok
     fi
 
-    echo ""
-    echo -e "${YELLOW}Note: ngrok requires a free account.${NC}"
-    echo "  1) Go to https://ngrok.com and sign up"
-    echo "  2) Copy your authtoken from https://dashboard.ngrok.com/get-started/your-authtoken"
-    echo "  3) Run: ngrok config add-authtoken YOUR_TOKEN"
-    echo ""
-    echo -ne "  Already configured ngrok? [y/N]: "
-    prompt_read -r ngrok_ready
-
-    if [[ "$ngrok_ready" != "y" && "$ngrok_ready" != "Y" ]]; then
-        print_info "Configure ngrok first, then run: ngrok http 6167"
-        print_info "Or re-run setup and choose Cloudflare (option 1)"
+    if ! ngrok config check &>/dev/null; then
+        echo ""
+        echo -e "${YELLOW}ngrok requires a free account.${NC}"
+        echo ""
+        echo -e "  ${BOLD}Setup steps:${NC}"
+        echo "  1) Go to https://ngrok.com and sign up (free)"
+        echo "  2) Get authtoken: https://dashboard.ngrok.com/get-started/your-authtoken"
+        echo "  3) Run: ${CYAN}ngrok config add-authtoken YOUR_TOKEN${NC}"
+        echo "  4) Re-run this setup"
+        echo ""
         return 1
     fi
+
+    print_info "ngrok is configured. Starting tunnel..."
 
     if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-tunnel$"; then
         docker rm -f armorclaw-tunnel 2>/dev/null || true
     fi
 
-    docker run -d \
-        --name armorclaw-tunnel \
-        --restart unless-stopped \
-        --net host \
-        --add-host=host.docker.internal:host-gateway \
-        -v ~/.ngrok2:/home/ngrok/.ngrok2 \
-        wernight/ngrok ngrok http host.docker.internal:6167 2>/dev/null || \
-    docker run -d \
-        --name armorclaw-tunnel \
-        --restart unless-stopped \
-        --net host \
-        --add-host=host.docker.internal:host-gateway \
-        ngrok/ngrok:latest http host.docker.internal:6167 2>/dev/null
+    pkill -f "ngrok http" 2>/dev/null || true
+    sleep 1
 
-    if [[ $? -ne 0 ]]; then
-        print_error "Failed to start ngrok container"
-        print_info "Try running ngrok directly: ngrok http 6167"
+    nohup ngrok http 6167 --log=stdout > /tmp/ngrok.log 2>&1 &
+    local ngrok_pid=$!
+    sleep 4
+
+    if ! kill -0 $ngrok_pid 2>/dev/null; then
+        print_error "ngrok failed to start"
+        cat /tmp/ngrok.log 2>/dev/null | tail -10
         return 1
     fi
 
-    print_info "Waiting for ngrok tunnel..."
-    sleep 5
+    print_info "Detecting ngrok URL..."
 
-    local ngrok_url=$(curl -s http://localhost:4040/api/tunnels | grep -oE 'https://[a-z0-9-]+\.ngrok\.io' | head -1)
+    local max_attempts=10
+    local attempt=1
+    local ngrok_url=""
 
-    if [[ -n "$ngrok_url" ]]; then
-        TUNNEL_URL="$ngrok_url"
-        TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
-        print_success "ngrok Tunnel active!"
-        echo ""
-        echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
-        echo ""
-
-        if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
-            print_info "Updating Matrix server_name to tunnel domain..."
-            $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
-            docker restart armorclaw-conduit 2>/dev/null || true
-            sleep 3
+    while [[ $attempt -le $max_attempts ]]; do
+        ngrok_url=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.(ngrok\.io|ngrok-free\.app)' | head -1)
+        if [[ -n "$ngrok_url" ]]; then
+            break
         fi
-    else
-        print_warning "Could not detect ngrok URL"
-        print_info "Check ngrok dashboard: http://localhost:4040"
-        print_info "Or run ngrok directly: ngrok http 6167"
+        sleep 1
+        echo -n "."
+        ((attempt++)) || true
+    done
+    echo ""
+
+    if [[ -z "$ngrok_url" ]]; then
+        print_error "Could not detect ngrok URL"
+        echo ""
+        echo -e "${YELLOW}ngrok may be starting slowly. Check:${NC}"
+        echo "  Dashboard: http://localhost:4040"
+        echo "  Logs: cat /tmp/ngrok.log"
+        echo ""
+        print_info "Once you see the URL, update Matrix manually:"
+        print_info "  1) Copy the HTTPS URL from ngrok (e.g., https://abc123.ngrok-free.app)"
+        print_info "  2) sudo sed -i 's/^server_name = .*/server_name = \"abc123.ngrok-free.app\"/' /etc/armorclaw/conduit.toml"
+        print_info "  3) docker restart armorclaw-conduit"
+        return 1
+    fi
+
+    TUNNEL_URL="$ngrok_url"
+    TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
+
+    print_success "ngrok Tunnel active!"
+    echo ""
+    echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
+    echo ""
+
+    if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
+        print_info "Updating Matrix server_name to tunnel domain..."
+        $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
+        print_info "Restarting Matrix to apply changes..."
+        docker restart armorclaw-conduit 2>/dev/null || true
+        sleep 3
     fi
 }
 
@@ -1356,6 +1371,8 @@ verify_services() {
     local bridge_ok=false
     local matrix_ok=false
     local tunnel_ok=false
+    local tunnel_type=""
+    local tunnel_url=""
     
     echo -e "  ${BOLD}Service${NC}              ${BOLD}Status${NC}         ${BOLD}Details${NC}"
     echo -e "  ─────────────────────────────────────────────────────────────"
@@ -1374,17 +1391,33 @@ verify_services() {
         echo -e "  Matrix (Conduit)      ${RED}● stopped${NC}      docker start armorclaw-conduit"
     fi
     
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^armorclaw-tunnel$"; then
-        local url=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
-        if [[ -n "$url" ]]; then
-            echo -e "  Tunnel (Cloudflare)   ${GREEN}● active${NC}       $url"
+    if pgrep -f "ngrok http" &>/dev/null; then
+        tunnel_url=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.(ngrok\.io|ngrok-free\.app)' | head -1)
+        if [[ -n "$tunnel_url" ]]; then
+            echo -e "  Tunnel (ngrok)        ${GREEN}● active${NC}       $tunnel_url"
             tunnel_ok=true
-            TUNNEL_URL="${TUNNEL_URL:-$url}"
+            tunnel_type="ngrok"
+            TUNNEL_URL="${TUNNEL_URL:-$tunnel_url}"
+        else
+            echo -e "  Tunnel (ngrok)        ${YELLOW}● starting${NC}     waiting for URL..."
+            tunnel_type="ngrok"
+        fi
+    elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^armorclaw-tunnel$"; then
+        tunnel_url=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
+        if [[ -n "$tunnel_url" ]]; then
+            echo -e "  Tunnel (Cloudflare)   ${GREEN}● active${NC}       $tunnel_url"
+            tunnel_ok=true
+            tunnel_type="cloudflare"
+            TUNNEL_URL="${TUNNEL_URL:-$tunnel_url}"
         else
             echo -e "  Tunnel (Cloudflare)   ${YELLOW}● starting${NC}     waiting for URL..."
+            tunnel_type="cloudflare"
         fi
+    elif [[ -n "$TUNNEL_URL" ]]; then
+        echo -e "  Tunnel                ${GREEN}● active${NC}       $TUNNEL_URL"
+        tunnel_ok=true
     else
-        echo -e "  Tunnel (Cloudflare)   ${YELLOW}● not setup${NC}    optional for HTTPS"
+        echo -e "  Tunnel                ${YELLOW}● not setup${NC}    optional for HTTPS"
     fi
     
     echo ""
