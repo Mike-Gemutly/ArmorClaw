@@ -477,9 +477,14 @@ start_cloudflare_tunnel() {
     echo -ne "  Select [1/2]: "
     prompt_read -r tunnel_choice
     
-    if [[ "$tunnel_choice" != "1" ]]; then
+    if [[ "$tunnel_choice" == "2" ]] || [[ -z "$tunnel_choice" ]]; then
         print_info "Skipped. Run later: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167"
         return 0
+    fi
+    
+    if [[ "$tunnel_choice" != "1" ]]; then
+        print_error "Invalid selection"
+        return 1
     fi
     
     print_info "Starting Cloudflare Quick Tunnel..."
@@ -488,36 +493,37 @@ start_cloudflare_tunnel() {
         docker rm -f armorclaw-tunnel 2>/dev/null || true
     fi
     
-    docker run -d \
+    if ! docker run -d \
         --name armorclaw-tunnel \
         --restart unless-stopped \
         --add-host=host.docker.internal:host-gateway \
         cloudflare/cloudflared:latest \
-        tunnel --url http://host.docker.internal:6167 2>/dev/null
+        tunnel --url http://host.docker.internal:6167 2>/dev/null; then
+        print_error "Failed to start tunnel container"
+        return 1
+    fi
     
     print_info "Waiting for tunnel to establish..."
-    sleep 8
+    sleep 10
     
-    TUNNEL_URL=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1)
+    TUNNEL_URL=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
     
     if [[ -n "$TUNNEL_URL" ]]; then
         TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
         
-        $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
-        docker restart armorclaw-conduit 2>/dev/null || true
+        if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
+            $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
+            docker restart armorclaw-conduit 2>/dev/null || true
+            sleep 3
+        fi
         
-        echo ""
         print_success "Cloudflare Tunnel active!"
         echo ""
-        echo -e "  ${BOLD}${GREEN}HTTPS URL for Element X:${NC}"
-        echo "    ${TUNNEL_URL}"
-        echo ""
-        echo -e "  ${BOLD}Username:${NC} ${MATRIX_ADMIN_USER}"
-        echo -e "  ${BOLD}Password:${NC} ${MATRIX_ADMIN_PASSWORD}"
-        echo ""
+        echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
     else
-        print_warning "Could not detect tunnel URL"
+        print_warning "Could not detect tunnel URL (may take longer to start)"
         print_info "Check logs: docker logs armorclaw-tunnel"
+        print_info "Get URL: docker logs armorclaw-tunnel 2>&1 | grep trycloudflare"
     fi
 }
 
@@ -607,6 +613,13 @@ check_prerequisites() {
         print_done "qrencode available"
     fi
 
+    if command -v go &>/dev/null; then
+        local go_ver=$(go version 2>/dev/null | sed 's/go\([0-9.]*\).*/\1/')
+        print_done "Go: $go_ver"
+    else
+        print_info "Go: not installed (will be installed if needed)"
+    fi
+
     if [[ $errors -gt 0 ]]; then
         fail "Prerequisites check failed. Fix the issues above and run again."
     fi
@@ -651,25 +664,20 @@ install_bridge() {
         $SUDO apt-get update -qq
         $SUDO apt-get install -y -qq golang-go git build-essential
     fi
-
-    local go_version=$(go version | awk '{print $3}')
-    local go_major=$(echo "$go_version" | sed 's/go//' | cut -d. -f1)
-    local go_minor=$(echo "$go_version" | sed 's/go//' | cut -d. -f2)
     
-    # Require Go 1.22+ for CGO/SQLCipher support
-    if [[ "$go_major" -lt 1 ]] || ([[ "$go_major" -eq 1 ]] && [[ "$go_minor" -lt 22 ]]); then
-        print_error "Go version too old: $go_version (requires 1.22+)"
-        print_info "Upgrading Go..."
-        $SUDO rm -rf /usr/local/go 2>/dev/null || true
-        curl -fsSL https://go.dev/dl/go1.26.1.linux-amd64.tar.gz | $SUDO tar -C /usr/local -xzf -
-        export PATH="/usr/local/go/bin:$PATH"
-        go_version=$(go version | awk '{print $3}')
-        print_success "Upgraded to $go_version"
+    if command -v go &>/dev/null; then
+        local go_major=$(go version | sed 's/.*go\([0-9]*\)\.\([0-9]*\).*/\1/')
+        local go_minor=$(go version | sed 's/.*go\([0-9]*\)\.\([0-9]*\).*/\2/')
+        
+        if [[ "$go_major" -lt 1 ]] || ([[ "$go_major" -eq 1 ]] && [[ "$go_minor" -lt 22 ]]); then
+            print_info "Upgrading Go (need 1.22+ for CGO/SQLCipher)..."
+            $SUDO rm -rf /usr/local/go 2>/dev/null || true
+            curl -fsSL https://go.dev/dl/go1.26.1.linux-amd64.tar.gz | $SUDO tar -C /usr/local -xzf -
+            export PATH="/usr/local/go/bin:$PATH"
+            print_done "Go upgraded"
+        fi
     fi
-    
-    print_done "Dependencies ready (Go: $go_version)"
 
-    # Build bridge
     print_info "Building bridge from source..."
 
 
@@ -1158,11 +1166,92 @@ EOF
     print_info "Generate new codes anytime with: sudo ./deploy/armorclaw-provision.sh"
 }
 
+generate_element_connection_info() {
+    local tunnel_url="$1"
+    
+    [[ -z "$tunnel_url" ]] && return 0
+    
+    local element_web_login="https://app.element.io/#/login?hs_url=${tunnel_url}"
+    
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}            ${BOLD}Element X / Matrix Connection${NC}                   ${CYAN}║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${BOLD}Element Web Quick Login:${NC}"
+    echo -e "  ${CYAN}$element_web_login${NC}"
+    echo ""
+    
+    if command -v qrencode &>/dev/null; then
+        echo -e "${BOLD}QR for Element Web:${NC}"
+        qrencode -t UTF8 "$element_web_login" 2>/dev/null || \
+        qrencode -t ASCII "$element_web_login" 2>/dev/null || true
+        echo ""
+    fi
+    
+    echo -e "${BOLD}Element X Mobile:${NC}"
+    echo -e "  Homeserver: ${GREEN}${tunnel_url}${NC}"
+    echo -e "  Username:   ${MATRIX_ADMIN_USER}"
+    echo -e "${YELLOW}  (Element X requires manual entry — no QR login)${NC}"
+    echo ""
+}
+
+#=============================================================================
+# Service Verification
+#=============================================================================
+
+verify_services() {
+    print_step "Verifying services..."
+    
+    local bridge_ok=false
+    local matrix_ok=false
+    local tunnel_ok=false
+    
+    if systemctl is-active --quiet armorclaw-bridge 2>/dev/null; then
+        print_done "Bridge: running"
+        bridge_ok=true
+    else
+        print_warning "Bridge: not running"
+    fi
+    
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^armorclaw-conduit$"; then
+        print_done "Matrix (Conduit): running"
+        matrix_ok=true
+    else
+        print_warning "Matrix (Conduit): not running"
+    fi
+    
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^armorclaw-tunnel$"; then
+        local tunnel_status=$(docker logs armorclaw-tunnel 2>&1 | grep -c "trycloudflare\|Registered\|Connection" | tail -1)
+        if [[ -n "$tunnel_status" ]]; then
+            print_done "Tunnel (Cloudflare): active"
+            tunnel_ok=true
+        else
+            print_info "Tunnel (Cloudflare): starting..."
+        fi
+    else
+        print_info "Tunnel (Cloudflare): not configured"
+    fi
+    
+    if $bridge_ok && $matrix_ok; then
+        print_success "All core services running!"
+        return 0
+    elif $bridge_ok; then
+        print_warning "Matrix not running - Element X will not connect"
+        return 1
+    else
+        print_error "Bridge not running - check logs: journalctl -u armorclaw-bridge -n 50"
+        return 2
+    fi
+}
+
 #=============================================================================
 # Completion Message
 #=============================================================================
 
 print_completion() {
+    echo ""
+    verify_services
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║${NC}                 ${BOLD}Setup Complete!${NC}                              ${GREEN}║${NC}"
@@ -1171,47 +1260,21 @@ print_completion() {
     echo ""
 
     if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
-        echo -e "${BOLD}${CYAN}Element X Connection Details:${NC}"
-        echo ""
-        
         if [[ -n "$TUNNEL_URL" ]]; then
-            echo -e "  ${BOLD}${GREEN}Homeserver URL (HTTPS):${NC}"
-            echo "    ${TUNNEL_URL}"
-            echo ""
-            echo -e "  ${BOLD}Username:${NC}"
-            echo "    ${MATRIX_ADMIN_USER}"
-            echo ""
-            echo -e "  ${BOLD}Password:${NC}"
-            echo "    ${MATRIX_ADMIN_PASSWORD}"
-            echo ""
-            echo -e "${BOLD}${BLUE}Steps to Connect via Element X:${NC}"
-            echo "  1. Open Element X app"
-            echo "  2. Tap 'Login'"
-            echo "  3. Enter homeserver: ${TUNNEL_URL}"
-            echo "  4. Enter username: ${MATRIX_ADMIN_USER}"
-            echo "  5. Enter password: (see above)"
-            echo ""
-            echo -e "${GREEN}✓ HTTPS enabled via Cloudflare Tunnel${NC}"
+            generate_element_connection_info "$TUNNEL_URL"
         else
-            echo -e "  ${BOLD}Homeserver URL (HTTP - Testing Only):${NC}"
+            echo -e "${BOLD}${CYAN}Matrix Connection (HTTP - Testing Only):${NC}"
+            echo ""
+            echo -e "  ${BOLD}Homeserver URL:${NC}"
             echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
             echo ""
-            echo -e "  ${BOLD}Username:${NC}"
-            echo "    ${MATRIX_ADMIN_USER}"
-            echo ""
-            echo -e "  ${BOLD}Password:${NC}"
-            echo "    ${MATRIX_ADMIN_PASSWORD}"
-            echo ""
-            echo -e "${BOLD}${BLUE}Steps to Connect:${NC}"
-            echo "  1. Open Element Web: https://develop.element.io"
-            echo "  2. Enter homeserver: http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
-            echo "  3. Accept security warning"
-            echo "  4. Login with credentials above"
+            echo -e "  ${BOLD}Username:${NC} ${MATRIX_ADMIN_USER}"
+            echo -e "  ${BOLD}Password:${NC} ${MATRIX_ADMIN_PASSWORD}"
             echo ""
             echo -e "${YELLOW}Note: Element X mobile requires HTTPS.${NC}"
-            echo -e "${YELLOW}Run: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167${NC}"
+            echo -e "${YELLOW}Start tunnel: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167${NC}"
+            echo ""
         fi
-        echo ""
     fi
 
     echo -e "${BOLD}Quick Start:${NC}"
