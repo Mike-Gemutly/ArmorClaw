@@ -463,15 +463,16 @@ EOF
 }
 
 start_cloudflare_tunnel() {
-    print_step "HTTPS Setup (Cloudflare Tunnel)"
+    print_step "HTTPS Setup (Tunnel)"
 
     echo ""
     echo "  Element X requires HTTPS to connect."
-    echo "  Cloudflare Tunnel provides free, instant HTTPS."
+    echo "  Tunnels provide free, instant HTTPS URLs."
     echo ""
     echo "  Options:"
-    echo "  1) Start Cloudflare Quick Tunnel (Free, instant HTTPS URL)"
-    echo "  2) Skip (configure manually later)"
+    echo "  1) Cloudflare Quick Tunnel (Free, instant)"
+    echo "  2) ngrok Tunnel (Free account needed at ngrok.com)"
+    echo "  3) Skip (configure manually later)"
     echo ""
 
     if $NON_INTERACTIVE; then
@@ -480,12 +481,17 @@ start_cloudflare_tunnel() {
         return 0
     fi
 
-    echo -ne "  Select [1/2]: "
+    echo -ne "  Select [1/2/3]: "
     prompt_read -r tunnel_choice
 
-    if [[ "$tunnel_choice" == "2" ]] || [[ -z "$tunnel_choice" ]]; then
-        print_info "Skipped. Run later: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167"
+    if [[ "$tunnel_choice" == "3" ]] || [[ -z "$tunnel_choice" ]]; then
+        print_info "Skipped. Run later to enable remote Element X access."
         return 0
+    fi
+
+    if [[ "$tunnel_choice" == "2" ]]; then
+        start_ngrok_tunnel
+        return $?
     fi
 
     if [[ "$tunnel_choice" != "1" ]]; then
@@ -493,69 +499,86 @@ start_cloudflare_tunnel() {
         return 1
     fi
 
-    print_info "Starting Cloudflare Quick Tunnel..."
-
     if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-tunnel$"; then
         print_info "Removing existing tunnel container..."
         docker rm -f armorclaw-tunnel 2>/dev/null || true
     fi
 
-    local container_id
-    container_id=$(docker run -d \
-        --name armorclaw-tunnel \
-        --restart unless-stopped \
-        --add-host=host.docker.internal:host-gateway \
-        cloudflare/cloudflared:latest \
-        tunnel --url http://host.docker.internal:6167 2>&1)
+    local max_retries=2
+    local retry=1
 
-    if [[ $? -ne 0 ]]; then
-        print_error "Failed to start tunnel container"
-        print_error "$container_id"
-        print_info "Check Docker is running: docker info"
-        print_info "Pull image manually: docker pull cloudflare/cloudflared:latest"
-        return 1
-    fi
+    while [[ $retry -le $max_retries ]]; do
+        print_info "Starting Cloudflare Quick Tunnel (attempt $retry/$max_retries)..."
 
-    print_info "Waiting for tunnel to establish (up to 30s)..."
+        local container_id
+        container_id=$(docker run -d \
+            --name armorclaw-tunnel \
+            --restart unless-stopped \
+            --add-host=host.docker.internal:host-gateway \
+            cloudflare/cloudflared:latest \
+            tunnel --url http://host.docker.internal:6167 2>&1)
 
-    local max_attempts=15
-    local attempt=1
-    local tunnel_logs=""
-
-    while [[ $attempt -le $max_attempts ]]; do
-        sleep 2
-        tunnel_logs=$(docker logs armorclaw-tunnel 2>&1)
-
-        if echo "$tunnel_logs" | grep -qE "https://[a-z0-9-]+\.trycloudflare\.com"; then
-            TUNNEL_URL=$(echo "$tunnel_logs" | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
-            break
-        fi
-
-        if echo "$tunnel_logs" | grep -qiE "error|failed|unable"; then
-            print_error "Tunnel failed to start"
-            echo ""
-            echo -e "${YELLOW}Tunnel logs:${NC}"
-            echo "$tunnel_logs" | tail -10
-            print_info "Common fixes:"
-            print_info "  - Check internet connectivity"
-            print_info "  - Try again in a few minutes (Cloudflare rate limits)"
-            print_info "  - Use option 2 to skip and configure manually"
+        if [[ $? -ne 0 ]]; then
+            print_error "Failed to start tunnel container"
+            print_error "$container_id"
+            print_info "Check Docker is running: docker info"
             return 1
         fi
 
-        echo -n "."
-        ((attempt++)) || true
+        print_info "Waiting for tunnel to establish (up to 30s)..."
+
+        local max_attempts=15
+        local attempt=1
+        local tunnel_logs=""
+
+        while [[ $attempt -le $max_attempts ]]; do
+            sleep 2
+            tunnel_logs=$(docker logs armorclaw-tunnel 2>&1)
+
+            if echo "$tunnel_logs" | grep -qE "https://[a-z0-9-]+\.trycloudflare\.com"; then
+                TUNNEL_URL=$(echo "$tunnel_logs" | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
+                break
+            fi
+
+            if echo "$tunnel_logs" | grep -qiE "500 Internal Server Error|failed to unmarshal"; then
+                print_warning "Cloudflare service error (500)"
+                docker rm -f armorclaw-tunnel 2>/dev/null || true
+                break
+            fi
+
+            if echo "$tunnel_logs" | grep -qiE "error|failed|unable"; then
+                print_warning "Tunnel error detected"
+                break
+            fi
+
+            echo -n "."
+            ((attempt++)) || true
+        done
+        echo ""
+
+        if [[ -n "$TUNNEL_URL" ]]; then
+            break
+        fi
+
+        if [[ $retry -lt $max_retries ]]; then
+            print_info "Retrying in 5 seconds..."
+            sleep 5
+        fi
+
+        ((retry++)) || true
     done
-    echo ""
 
     if [[ -z "$TUNNEL_URL" ]]; then
-        print_warning "Tunnel URL not detected within 30 seconds"
+        print_error "Cloudflare Tunnel failed after $max_retries attempts"
         echo ""
-        echo -e "${YELLOW}Recent tunnel logs:${NC}"
-        docker logs armorclaw-tunnel 2>&1 | tail -15
+        echo -e "${YELLOW}Cloudflare's free tunnel service may be rate-limiting or experiencing issues.${NC}"
         echo ""
-        print_info "Manual check: docker logs armorclaw-tunnel 2>&1 | grep trycloudflare"
-        print_info "If URL appears later, note it and connect Element X to that address"
+        echo -e "${BOLD}Alternatives:${NC}"
+        echo "  1) Try ngrok (option 2) - requires free account at ngrok.com"
+        echo "  2) Wait 10-15 minutes and re-run setup"
+        echo "  3) Use local network only (HTTP) - Element Web works, mobile needs HTTPS"
+        echo ""
+        print_info "To retry later: docker rm -f armorclaw-tunnel 2>/dev/null; then re-run this script"
         return 1
     fi
 
@@ -573,6 +596,81 @@ start_cloudflare_tunnel() {
     echo ""
     echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
     echo ""
+}
+
+start_ngrok_tunnel() {
+    print_info "Starting ngrok Tunnel..."
+
+    if ! command -v ngrok &>/dev/null; then
+        print_info "ngrok not installed. Installing..."
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt-get update -qq && sudo apt-get install -y ngrok
+    fi
+
+    echo ""
+    echo -e "${YELLOW}Note: ngrok requires a free account.${NC}"
+    echo "  1) Go to https://ngrok.com and sign up"
+    echo "  2) Copy your authtoken from https://dashboard.ngrok.com/get-started/your-authtoken"
+    echo "  3) Run: ngrok config add-authtoken YOUR_TOKEN"
+    echo ""
+    echo -ne "  Already configured ngrok? [y/N]: "
+    prompt_read -r ngrok_ready
+
+    if [[ "$ngrok_ready" != "y" && "$ngrok_ready" != "Y" ]]; then
+        print_info "Configure ngrok first, then run: ngrok http 6167"
+        print_info "Or re-run setup and choose Cloudflare (option 1)"
+        return 1
+    fi
+
+    if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-tunnel$"; then
+        docker rm -f armorclaw-tunnel 2>/dev/null || true
+    fi
+
+    docker run -d \
+        --name armorclaw-tunnel \
+        --restart unless-stopped \
+        --net host \
+        --add-host=host.docker.internal:host-gateway \
+        -v ~/.ngrok2:/home/ngrok/.ngrok2 \
+        wernight/ngrok ngrok http host.docker.internal:6167 2>/dev/null || \
+    docker run -d \
+        --name armorclaw-tunnel \
+        --restart unless-stopped \
+        --net host \
+        --add-host=host.docker.internal:host-gateway \
+        ngrok/ngrok:latest http host.docker.internal:6167 2>/dev/null
+
+    if [[ $? -ne 0 ]]; then
+        print_error "Failed to start ngrok container"
+        print_info "Try running ngrok directly: ngrok http 6167"
+        return 1
+    fi
+
+    print_info "Waiting for ngrok tunnel..."
+    sleep 5
+
+    local ngrok_url=$(curl -s http://localhost:4040/api/tunnels | grep -oE 'https://[a-z0-9-]+\.ngrok\.io' | head -1)
+
+    if [[ -n "$ngrok_url" ]]; then
+        TUNNEL_URL="$ngrok_url"
+        TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
+        print_success "ngrok Tunnel active!"
+        echo ""
+        echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
+        echo ""
+
+        if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
+            print_info "Updating Matrix server_name to tunnel domain..."
+            $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
+            docker restart armorclaw-conduit 2>/dev/null || true
+            sleep 3
+        fi
+    else
+        print_warning "Could not detect ngrok URL"
+        print_info "Check ngrok dashboard: http://localhost:4040"
+        print_info "Or run ngrok directly: ngrok http 6167"
+    fi
 }
 
 #=============================================================================
