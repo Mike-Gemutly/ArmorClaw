@@ -1,9 +1,189 @@
 # ArmorClaw Architecture Review
 
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.8.0
-> **Last Updated:** 2026-03-12
+> **Version:** 4.9.0
+> **Last Updated:** 2026-03-13
 > **Status:** Active Reference
+
+---
+
+## Phase 9: Tunnel Setup & Status Display (2026-03-13)
+
+### Overview
+
+Major improvements to the HTTPS tunnel setup flow for Element X mobile connectivity. Cloudflare Quick Tunnels have been experiencing rate-limiting (HTTP 429/500 errors), so ngrok was added as a fallback option.
+
+### New Features
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **ngrok Tunnel Option** | Alternative to Cloudflare when rate-limited | deploy/setup-quick.sh |
+| **Tunnel Retry Logic** | Cloudflare retries up to 2x on 500 errors | deploy/setup-quick.sh |
+| **Service Status Dashboard** | Table showing Bridge/Matrix/Tunnel status | deploy/setup-quick.sh |
+| **Element X Credentials Box** | Clear display of homeserver URL, username, password | deploy/setup-quick.sh |
+| **Version in Header** | Shows v0.4.1 (from VERSION file) in setup banner | deploy/setup-quick.sh |
+| **Manual Tunnel Instructions** | Step-by-step guide when auto-detection fails | deploy/setup-quick.sh |
+
+### Tunnel Options
+
+The setup now offers three tunnel choices:
+
+```
+  Options:
+  1) Cloudflare Quick Tunnel (Free, instant)
+  2) ngrok Tunnel (Free account needed at ngrok.com)
+  3) Skip (configure manually later)
+```
+
+### Cloudflare Tunnel Improvements
+
+**Retry Logic:**
+- Retries up to 2 times on HTTP 500/Internal Server Error
+- Detects specific error patterns: `500 Internal Server Error`, `failed to unmarshal`
+- Progress dots while waiting (`...........`)
+- Clear error messages with actionable alternatives
+
+**Known Issues:**
+- Cloudflare Quick Tunnel rate-limits IPs (HTTP 429 "Too Many Requests")
+- Service occasionally returns HTML error pages instead of JSON (HTTP 500)
+- Free tunnels have no uptime guarantee
+
+### ngrok Tunnel Implementation
+
+**How it works:**
+1. Checks if ngrok is installed, installs via apt if needed
+2. Verifies ngrok is configured (`ngrok config check`)
+3. Starts ngrok as background process (not Docker container)
+4. Polls `localhost:4040/api/tunnels` for HTTPS URL
+5. Updates Matrix `server_name` to ngrok domain
+6. Restarts Conduit to apply changes
+
+**URL Detection:**
+```bash
+# Supports all ngrok URL formats:
+# - *.ngrok-free.app (current free tier)
+# - *.ngrok.app (newer format)
+# - *.ngrok.io (legacy format)
+ngrok_url=$(curl -s http://localhost:4040/api/tunnels | \
+  grep -oE 'https://[a-zA-Z0-9.-]+\.(ngrok-free\.app|ngrok\.app|ngrok\.io)')
+```
+
+**Manual Setup (if auto-detection fails):**
+```bash
+# 1. Start ngrok
+ngrok http 6167
+
+# 2. Get URL from http://localhost:4040
+# 3. Update Matrix config
+sudo sed -i 's/^server_name = .*/server_name = "YOUR-NGROK-URL"/' /etc/conduit.toml
+docker restart armorclaw-conduit
+```
+
+### Service Status Dashboard
+
+The completion screen now shows a formatted status table:
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║                    SERVICE STATUS                             ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  Service              Status         Details
+  ─────────────────────────────────────────────────────────────
+  Bridge (ArmorClaw)    ● running      port 8443
+  Matrix (Conduit)      ● running      port 6167
+  Tunnel (ngrok)        ● active       https://abc-123.ngrok-free.app
+
+  ✓ All core services running
+```
+
+**Tunnel Detection:**
+- Checks for ngrok process via `pgrep -f "ngrok http"`
+- Checks for Cloudflare container via `docker ps`
+- Extracts tunnel URL and displays in status
+
+### Element X Credentials Display
+
+Clear boxed format for connection info:
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║                  ELEMENT X CREDENTIALS                        ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  Homeserver URL:
+    https://abc-123.ngrok-free.app
+
+  Username:  @admin:abc-123.ngrok-free.app
+  Password:  <generated-password>
+
+  📱 Connect from anywhere via ngrok Tunnel
+```
+
+### Configuration File Paths
+
+| File | Path | Purpose |
+|------|------|---------|
+| Conduit config | `/etc/conduit.toml` | Matrix homeserver config |
+| Bridge config | `/etc/armorclaw/config.toml` | ArmorClaw bridge config |
+| Conduit data | `/var/lib/conduit` | Matrix database |
+
+### Files Modified
+
+```
+deploy/setup-quick.sh  | +200 -80 (ngrok, status, credentials display)
+VERSION                | 1 (0.4.1)
+```
+
+### Commits (2026-03-13)
+
+```
+6d6d51a fix(setup-quick): improve ngrok URL detection with better regex and manual instructions
+41d5024 fix(setup-quick): run ngrok directly instead of Docker, detect both tunnel types
+01808fb fix(setup-quick): add ngrok fallback and retry logic for tunnel setup
+1965c5b fix(setup-quick): improve tunnel setup with retry loop, error handling, and status dashboard
+7c056e6 feat(setup-quick): add version number to header banner
+```
+
+### Known Limitations
+
+1. **Cloudflare Rate Limiting** - Free Quick Tunnels are rate-limited; wait 10-15 minutes if blocked
+2. **ngrok Account Required** - Free account at ngrok.com required for ngrok tunnels
+3. **ngrok Free Tier** - URLs change on restart; paid tier provides static domains
+4. **Config Path** - Conduit config at `/etc/conduit.toml`, not `/etc/armorclaw/conduit.toml`
+
+### Troubleshooting
+
+**Cloudflare tunnel fails (HTTP 429/500):**
+```bash
+# Option 1: Wait and retry
+# Wait 10-15 minutes, then re-run setup
+
+# Option 2: Use ngrok
+ngrok config add-authtoken YOUR_TOKEN
+# Re-run setup, choose option 2
+```
+
+**ngrok URL not detected:**
+```bash
+# Check ngrok is running
+pgrep -f ngrok
+
+# Check ngrok API
+curl http://localhost:4040/api/tunnels
+
+# Manual setup
+ngrok http 6167
+# Copy URL from browser at http://localhost:4040
+sudo sed -i 's/^server_name = .*/server_name = "YOUR-URL"/' /etc/conduit.toml
+docker restart armorclaw-conduit
+```
+
+**Verify tunnel is working:**
+```bash
+curl https://YOUR-TUNNEL-URL/_matrix/client/versions
+# Should return: {"versions":["v1.0",...]}
+```
 
 ---
 
