@@ -1,9 +1,136 @@
 # ArmorClaw Architecture Review
 
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.7.0
-> **Last Updated:** 2026-03-11
+> **Version:** 4.8.0
+> **Last Updated:** 2026-03-12
 > **Status:** Active Reference
+
+---
+
+## Phase 8: Setup UX & Connectivity (2026-03-12)
+
+### New Features
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **Cloudflare Tunnel** | Instant HTTPS for Element X connectivity without domain/SSL | deploy/setup-quick.sh |
+| **Element X Credentials** | Display credentials at install completion | deploy/setup-quick.sh |
+| **Go 1.26.1 Upgrade** | Updated Go version from 1.24 to 1.26.1 | deploy/container-setup.sh |
+| **Go 1.22+ Minimum** | Enforce minimum Go version requirement | deploy/container-setup.sh |
+| **QR Code Auto-Install** | Auto-install qrencode for terminal QR display | deploy/setup-quick.sh |
+| **conduit.toml Creation** | Generate Conduit config file during setup | deploy/setup-quick.sh |
+| **Homeserver URL Fix** | Correct URL format (remove stray dash) | deploy/setup-quick.sh |
+| **ANSI Color Rendering** | Fix -e flag for echo commands | deploy/setup-quick.sh |
+
+### Cloudflare Tunnel Integration
+
+Element X requires HTTPS to connect. The setup now offers an optional Cloudflare Tunnel for instant HTTPS:
+
+```bash
+# Automatic prompt during setup
+? Enable Cloudflare Tunnel for instant HTTPS? (y/n)
+
+# If accepted:
+# - Starts cloudflare/cloudflared:latest container
+# - Detects tunnel URL from container logs
+# - Updates Conduit server_name to match tunnel domain
+# - Displays tunnel URL for Element X connection
+```
+
+**Manual fallback:**
+```bash
+docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest \
+  tunnel --url http://host.docker.internal:6167
+```
+
+### QR Code Generation
+
+| Component | Implementation | Status |
+|-----------|---------------|--------|
+| **Terminal QR** | qrencode ASCII output | ✅ Working |
+| **Config QR** | `armorclaw://config?d=<base64>` | ✅ Working |
+| **Provisioning** | Token-based claim flow | ✅ Working |
+| **Token Expiration** | 10min setup, 24hr config | ✅ Working |
+
+**Two QR Flows:**
+
+1. **Config QR** (bridge/pkg/qr/public.go):
+   - Direct config QR with signed payload
+   - Contains: Matrix homeserver, RPC URL, WebSocket URL, Push Gateway, Server Name
+   - Uses HMAC-SHA256 signing with random 32-byte key
+   - Returns PNG image, deep link, web URL
+
+2. **Provisioning QR** (bridge/pkg/provisioning/):
+   - Token-based claim flow with role assignment
+   - First device claims OWNER role, subsequent get NONE
+   - Roles persisted to `provisioning_roles.json`
+   - Requires `ARMORCLAW_PROVISIONING_SECRET` env var
+
+**QR Generation Flow:**
+1. `bridge/pkg/qr/public.go` - GenerateConfigQR creates signed config
+2. `bridge/pkg/provisioning/` - Token management and claim flow
+3. `bridge/pkg/http/server.go` - HTTP endpoints: `/qr/config`, `/qr/image`
+4. `deploy/setup-quick.sh` - Terminal QR display via qrencode
+
+**Known Limitations:**
+- QRManager tokens are in-memory only (max 10 active)
+- Dual signing keys: QR package uses random keys, provisioning uses env-configured secret
+
+### Installer Status Summary
+
+| Component | Version | Purpose | Status |
+|-----------|---------|---------|--------|
+| install.sh | 1.4.3 | Stage-0 bootstrap, GPG verification | ✅ Production |
+| installer-v5.sh | 5.0.0 | Stage-1 full installer, Docker setup | ✅ Production |
+| setup-quick.sh | 1.0 | Quick setup, Conduit, Cloudflare Tunnel | ✅ Production |
+| container-setup.sh | 0.4.1 | Container setup wizard | ✅ Production |
+
+### Matrix/Conduit Status
+
+| Feature | Implementation | Status |
+|---------|---------------|--------|
+| Auto-install Conduit | `docker run matrixconduit/matrix-conduit` | ✅ Working |
+| conduit.toml generation | Dynamic config creation | ✅ Working |
+| Admin user creation | Shared-secret API | ✅ Working |
+| Bridge user registration | Auto-register on Conduit | ✅ Working |
+| Matrix event bus | Zero-allocation receive path | ✅ Working |
+| Homeserver URL format | `http://IP:6167` or tunnel URL | ✅ Fixed |
+
+### Quicksetup Features
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Non-interactive mode | `--non-interactive` or env vars | ✅ Working |
+| API key env vars | `OPENROUTER_API_KEY`, `ZAI_API_KEY`, `OPEN_AI_KEY` | ✅ Working |
+| Lockfile protection | Prevents parallel installs | ✅ Working |
+| Persistent logging | `/var/log/armorclaw-setup.log` | ✅ Working |
+| Docker Compose detection | `docker compose` vs `docker-compose` | ✅ Working |
+| Idempotent | Safe to re-run | ✅ Working |
+| Cloudflare Tunnel | Optional instant HTTPS | ✅ Working |
+
+**Go TUI Wizard** (bridge/internal/wizard/):
+| File | Purpose |
+|------|---------|
+| wizard.go | Main TUI using charmbracelet/huh (v0.3.6) |
+| quick.go | Two-page form: Provider+Key, Admin+Deploy |
+| catwalk.go | Dynamic provider discovery via localhost:8080 |
+| profile.go | Profile selection (Quick vs Enterprise) |
+
+**Environment Variables for Go Wizard:**
+| Variable | Purpose |
+|----------|---------|
+| `ARMORCLAW_API_KEY` | API key (required for non-interactive) |
+| `ARMORCLAW_PROFILE` | quick/enterprise (default: quick) |
+| `ARMORCLAW_SERVER_NAME` | Server hostname/IP |
+| `ARMORCLAW_ADMIN_PASSWORD` | Admin password (auto-generated if empty) |
+
+### Files Modified
+
+```
+deploy/setup-quick.sh      | 131 + (Cloudflare Tunnel, QR display)
+deploy/container-setup.sh  |  15 + (Go 1.26.1, min version)
+6 files changed, 150 insertions(+), 30 deletions(-)
+```
 
 ---
 
@@ -1258,6 +1385,7 @@ armorclaw container
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 4.8.0 | 2026-03-12 | **Setup UX:** Cloudflare Tunnel for instant HTTPS, Element X credentials display, Go 1.26.1 upgrade, QR auto-install, conduit.toml generation, homeserver URL fix. |
 | 4.7.0 | 2026-03-11 | **Deployment Audit:** Network subnet fixes, test security hardening, STUN/TURN env vars, config placeholder cleanup. |
 | 4.6.0 | 2026-03-11 | **GPG Key Rotation:** New signing key, installer signature fix, binary download disabled until release. |
 | 4.5.0 | 2026-03-10 | **Provider Registry:** Embedded 12+ providers (Zhipu, Moonshot, DeepSeek, Groq). **Matrix Integration:** Auto-detect and install Conduit. **Catwalk:** Dynamic provider/model discovery with `/ai` commands. |
@@ -1270,6 +1398,32 @@ armorclaw container
 ---
 
 ## Recent Reviews
+
+### 2026-03-12 - Setup UX & Connectivity
+
+**Focus Areas:**
+- Element X connectivity (requires HTTPS)
+- Cloudflare Tunnel integration
+- QR code provisioning experience
+- Setup wizard UX improvements
+
+**Improvements Added:**
+1. Cloudflare Tunnel for instant HTTPS (NEW)
+2. Element X credentials at install completion (NEW)
+3. Go 1.26.1 upgrade with 1.22+ minimum enforcement
+4. Auto-install qrencode for terminal QR display
+5. conduit.toml config file generation
+6. Homeserver URL format correction
+
+**Component Status:**
+| Component | Status | Notes |
+|-----------|--------|-------|
+| install.sh | ✅ Production | v1.4.3, GPG verified |
+| installer-v5.sh | ✅ Production | v5.0.0, lockfile protected |
+| setup-quick.sh | ✅ Production | Cloudflare Tunnel, QR display |
+| QR generation | ✅ Working | Dual flow (config + provisioning) |
+| Matrix/Conduit | ✅ Working | Auto-install, config generation |
+| Go TUI Wizard | ✅ Working | Non-interactive mode supported |
 
 ### 2026-03-11 - Deployment Audit
 
