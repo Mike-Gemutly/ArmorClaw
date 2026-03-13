@@ -464,7 +464,7 @@ EOF
 
 start_cloudflare_tunnel() {
     print_step "HTTPS Setup (Cloudflare Tunnel)"
-    
+
     echo ""
     echo "  Element X requires HTTPS to connect."
     echo "  Cloudflare Tunnel provides free, instant HTTPS."
@@ -473,64 +473,106 @@ start_cloudflare_tunnel() {
     echo "  1) Start Cloudflare Quick Tunnel (Free, instant HTTPS URL)"
     echo "  2) Skip (configure manually later)"
     echo ""
-    
+
     if $NON_INTERACTIVE; then
         print_info "Non-interactive mode - skipping tunnel setup"
         print_info "Run manually: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167"
         return 0
     fi
-    
+
     echo -ne "  Select [1/2]: "
     prompt_read -r tunnel_choice
-    
+
     if [[ "$tunnel_choice" == "2" ]] || [[ -z "$tunnel_choice" ]]; then
         print_info "Skipped. Run later: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167"
         return 0
     fi
-    
+
     if [[ "$tunnel_choice" != "1" ]]; then
         print_error "Invalid selection"
         return 1
     fi
-    
+
     print_info "Starting Cloudflare Quick Tunnel..."
-    
+
     if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-tunnel$"; then
+        print_info "Removing existing tunnel container..."
         docker rm -f armorclaw-tunnel 2>/dev/null || true
     fi
-    
-    if ! docker run -d \
+
+    local container_id
+    container_id=$(docker run -d \
         --name armorclaw-tunnel \
         --restart unless-stopped \
         --add-host=host.docker.internal:host-gateway \
         cloudflare/cloudflared:latest \
-        tunnel --url http://host.docker.internal:6167 2>/dev/null; then
+        tunnel --url http://host.docker.internal:6167 2>&1)
+
+    if [[ $? -ne 0 ]]; then
         print_error "Failed to start tunnel container"
+        print_error "$container_id"
+        print_info "Check Docker is running: docker info"
+        print_info "Pull image manually: docker pull cloudflare/cloudflared:latest"
         return 1
     fi
-    
-    print_info "Waiting for tunnel to establish..."
-    sleep 10
-    
-    TUNNEL_URL=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
-    
-    if [[ -n "$TUNNEL_URL" ]]; then
-        TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
-        
-        if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
-            $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
-            docker restart armorclaw-conduit 2>/dev/null || true
-            sleep 3
+
+    print_info "Waiting for tunnel to establish (up to 30s)..."
+
+    local max_attempts=15
+    local attempt=1
+    local tunnel_logs=""
+
+    while [[ $attempt -le $max_attempts ]]; do
+        sleep 2
+        tunnel_logs=$(docker logs armorclaw-tunnel 2>&1)
+
+        if echo "$tunnel_logs" | grep -qE "https://[a-z0-9-]+\.trycloudflare\.com"; then
+            TUNNEL_URL=$(echo "$tunnel_logs" | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
+            break
         fi
-        
-        print_success "Cloudflare Tunnel active!"
+
+        if echo "$tunnel_logs" | grep -qiE "error|failed|unable"; then
+            print_error "Tunnel failed to start"
+            echo ""
+            echo -e "${YELLOW}Tunnel logs:${NC}"
+            echo "$tunnel_logs" | tail -10
+            print_info "Common fixes:"
+            print_info "  - Check internet connectivity"
+            print_info "  - Try again in a few minutes (Cloudflare rate limits)"
+            print_info "  - Use option 2 to skip and configure manually"
+            return 1
+        fi
+
+        echo -n "."
+        ((attempt++)) || true
+    done
+    echo ""
+
+    if [[ -z "$TUNNEL_URL" ]]; then
+        print_warning "Tunnel URL not detected within 30 seconds"
         echo ""
-        echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
-    else
-        print_warning "Could not detect tunnel URL (may take longer to start)"
-        print_info "Check logs: docker logs armorclaw-tunnel"
-        print_info "Get URL: docker logs armorclaw-tunnel 2>&1 | grep trycloudflare"
+        echo -e "${YELLOW}Recent tunnel logs:${NC}"
+        docker logs armorclaw-tunnel 2>&1 | tail -15
+        echo ""
+        print_info "Manual check: docker logs armorclaw-tunnel 2>&1 | grep trycloudflare"
+        print_info "If URL appears later, note it and connect Element X to that address"
+        return 1
     fi
+
+    TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
+
+    if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
+        print_info "Updating Matrix server_name to tunnel domain..."
+        $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
+        print_info "Restarting Matrix to apply changes..."
+        docker restart armorclaw-conduit 2>/dev/null || true
+        sleep 3
+    fi
+
+    print_success "Cloudflare Tunnel active!"
+    echo ""
+    echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
+    echo ""
 }
 
 #=============================================================================
@@ -1207,46 +1249,56 @@ generate_element_connection_info() {
 #=============================================================================
 
 verify_services() {
-    print_step "Verifying services..."
+    echo ""
+    echo -e "${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║                    SERVICE STATUS                             ║${NC}"
+    echo -e "${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
     
     local bridge_ok=false
     local matrix_ok=false
     local tunnel_ok=false
     
+    echo -e "  ${BOLD}Service${NC}              ${BOLD}Status${NC}         ${BOLD}Details${NC}"
+    echo -e "  ─────────────────────────────────────────────────────────────"
+    
     if systemctl is-active --quiet armorclaw-bridge 2>/dev/null; then
-        print_done "Bridge: running"
+        echo -e "  Bridge (ArmorClaw)    ${GREEN}● running${NC}      port 8443"
         bridge_ok=true
     else
-        print_warning "Bridge: not running"
+        echo -e "  Bridge (ArmorClaw)    ${RED}● stopped${NC}      check: journalctl -u armorclaw-bridge"
     fi
     
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^armorclaw-conduit$"; then
-        print_done "Matrix (Conduit): running"
+        echo -e "  Matrix (Conduit)      ${GREEN}● running${NC}      port 6167"
         matrix_ok=true
     else
-        print_warning "Matrix (Conduit): not running"
+        echo -e "  Matrix (Conduit)      ${RED}● stopped${NC}      docker start armorclaw-conduit"
     fi
     
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^armorclaw-tunnel$"; then
-        local tunnel_status=$(docker logs armorclaw-tunnel 2>&1 | grep -c "trycloudflare\|Registered\|Connection" | tail -1)
-        if [[ -n "$tunnel_status" ]]; then
-            print_done "Tunnel (Cloudflare): active"
+        local url=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
+        if [[ -n "$url" ]]; then
+            echo -e "  Tunnel (Cloudflare)   ${GREEN}● active${NC}       $url"
             tunnel_ok=true
+            TUNNEL_URL="${TUNNEL_URL:-$url}"
         else
-            print_info "Tunnel (Cloudflare): starting..."
+            echo -e "  Tunnel (Cloudflare)   ${YELLOW}● starting${NC}     waiting for URL..."
         fi
     else
-        print_info "Tunnel (Cloudflare): not configured"
+        echo -e "  Tunnel (Cloudflare)   ${YELLOW}● not setup${NC}    optional for HTTPS"
     fi
     
+    echo ""
+    
     if $bridge_ok && $matrix_ok; then
-        print_success "All core services running!"
+        echo -e "  ${GREEN}✓ All core services running${NC}"
         return 0
     elif $bridge_ok; then
-        print_warning "Matrix not running - Element X will not connect"
+        echo -e "  ${YELLOW}⚠ Matrix not running - Element X will not connect${NC}"
         return 1
     else
-        print_error "Bridge not running - check logs: journalctl -u armorclaw-bridge -n 50"
+        echo -e "  ${RED}✗ Bridge not running${NC}"
         return 2
     fi
 }
@@ -1256,30 +1308,41 @@ verify_services() {
 #=============================================================================
 
 print_completion() {
-    echo ""
     verify_services
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║${NC}                 ${BOLD}Setup Complete!${NC}                              ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}             ${BOLD}ArmorClaw is ready to use.${NC}                       ${GREEN}║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
 
     if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
+        echo ""
+        echo -e "${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BOLD}║                  ELEMENT X CREDENTIALS                        ║${NC}"
+        echo -e "${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        
         if [[ -n "$TUNNEL_URL" ]]; then
-            generate_element_connection_info "$TUNNEL_URL"
-        else
-            echo -e "${BOLD}${CYAN}Matrix Connection (HTTP - Testing Only):${NC}"
-            echo ""
             echo -e "  ${BOLD}Homeserver URL:${NC}"
-            echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
+            echo -e "    ${CYAN}${TUNNEL_URL}${NC}"
+        else
+            local local_ip=$(hostname -I | awk '{print $1}')
+            echo -e "  ${BOLD}Homeserver URL:${NC}"
+            echo -e "    ${CYAN}http://${MATRIX_DOMAIN:-$local_ip}:6167${NC}"
             echo ""
-            echo -e "  ${BOLD}Username:${NC} ${MATRIX_ADMIN_USER}"
-            echo -e "  ${BOLD}Password:${NC} ${MATRIX_ADMIN_PASSWORD}"
-            echo ""
-            echo -e "${YELLOW}Note: Element X mobile requires HTTPS.${NC}"
-            echo -e "${YELLOW}Start tunnel: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167${NC}"
-            echo ""
+            echo -e "  ${YELLOW}⚠ Element X mobile requires HTTPS${NC}"
+            echo -e "  ${YELLOW}  Run tunnel: docker run -d --name armorclaw-tunnel \\${NC}"
+            echo -e "  ${YELLOW}    cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167${NC}"
+        fi
+        echo ""
+        echo -e "  ${BOLD}Username:${NC}  @${MATRIX_ADMIN_USER}:${TUNNEL_DOMAIN:-${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}}"
+        echo -e "  ${BOLD}Password:${NC}  ${MATRIX_ADMIN_PASSWORD}"
+        echo ""
+        
+        if [[ -n "$TUNNEL_URL" ]]; then
+            echo -e "  ${GREEN}📱 Connect from anywhere via Cloudflare Tunnel${NC}"
+        else
+            echo -e "  ${YELLOW}📱 Local network only - setup tunnel for remote access${NC}"
         fi
     fi
 
