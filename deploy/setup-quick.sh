@@ -198,8 +198,14 @@ download_binary() {
 
 print_header() {
     clear 2>/dev/null || true
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local version_file="$script_dir/../VERSION"
+    local ver="0.4.1"
+    if [[ -f "$version_file" ]]; then
+        ver=$(cat "$version_file" | tr -d '[:space:]')
+    fi
     echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}            ${BOLD}ArmorClaw Quick Setup${NC}                           ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}            ${BOLD}ArmorClaw Quick Setup${NC}  ${YELLOW}v${ver}${NC}                      ${CYAN}║${NC}"
     echo -e "${CYAN}║${NC}            ${BOLD}Express Installation (2-3 min)${NC}                   ${CYAN}║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
