@@ -49,6 +49,7 @@ MATRIX_ENABLED="false"
 MATRIX_ADMIN_USER="admin"
 MATRIX_ADMIN_PASSWORD=""
 MATRIX_DOMAIN=""
+TUNNEL_URL=""
 LOCKFILE="/tmp/armorclaw-quick.lock"
 
 # Cleanup handler
@@ -453,6 +454,71 @@ EOF
 
     print_done "Matrix installed and running"
     return 0
+}
+
+start_cloudflare_tunnel() {
+    print_step "HTTPS Setup (Cloudflare Tunnel)"
+    
+    echo ""
+    echo "  Element X requires HTTPS to connect."
+    echo "  Cloudflare Tunnel provides free, instant HTTPS."
+    echo ""
+    echo "  Options:"
+    echo "  1) Start Cloudflare Quick Tunnel (Free, instant HTTPS URL)"
+    echo "  2) Skip (configure manually later)"
+    echo ""
+    
+    if $NON_INTERACTIVE; then
+        print_info "Non-interactive mode - skipping tunnel setup"
+        print_info "Run manually: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167"
+        return 0
+    fi
+    
+    echo -ne "  Select [1/2]: "
+    prompt_read -r tunnel_choice
+    
+    if [[ "$tunnel_choice" != "1" ]]; then
+        print_info "Skipped. Run later: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167"
+        return 0
+    fi
+    
+    print_info "Starting Cloudflare Quick Tunnel..."
+    
+    if docker ps -a --format '{{.Names}}' | grep -q "^armorclaw-tunnel$"; then
+        docker rm -f armorclaw-tunnel 2>/dev/null || true
+    fi
+    
+    docker run -d \
+        --name armorclaw-tunnel \
+        --restart unless-stopped \
+        --add-host=host.docker.internal:host-gateway \
+        cloudflare/cloudflared:latest \
+        tunnel --url http://host.docker.internal:6167 2>/dev/null
+    
+    print_info "Waiting for tunnel to establish..."
+    sleep 8
+    
+    TUNNEL_URL=$(docker logs armorclaw-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1)
+    
+    if [[ -n "$TUNNEL_URL" ]]; then
+        TUNNEL_DOMAIN=$(echo "$TUNNEL_URL" | sed 's|https://||')
+        
+        $SUDO sed -i "s/^server_name = .*/server_name = \"$TUNNEL_DOMAIN\"/" "$CONDUIT_CONFIG_FILE"
+        docker restart armorclaw-conduit 2>/dev/null || true
+        
+        echo ""
+        print_success "Cloudflare Tunnel active!"
+        echo ""
+        echo -e "  ${BOLD}${GREEN}HTTPS URL for Element X:${NC}"
+        echo "    ${TUNNEL_URL}"
+        echo ""
+        echo -e "  ${BOLD}Username:${NC} ${MATRIX_ADMIN_USER}"
+        echo -e "  ${BOLD}Password:${NC} ${MATRIX_ADMIN_PASSWORD}"
+        echo ""
+    else
+        print_warning "Could not detect tunnel URL"
+        print_info "Check logs: docker logs armorclaw-tunnel"
+    fi
 }
 
 #=============================================================================
@@ -1107,28 +1173,44 @@ print_completion() {
     if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
         echo -e "${BOLD}${CYAN}Element X Connection Details:${NC}"
         echo ""
-        echo -e "  ${BOLD}Homeserver URL:${NC}"
-        echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
-        echo "    https://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
-        echo ""
-        echo -e "  ${BOLD}Username:${NC}"
-        echo "    ${MATRIX_ADMIN_USER}"
-        echo ""
-        echo -e "  ${BOLD}Password:${NC}"
-        echo "    ${MATRIX_ADMIN_PASSWORD}"
-        echo ""
-        echo -e "  ${BOLD}Room to Join:${NC}"
-        echo "    #agents:${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
-        echo ""
-        echo -e "${BOLD}${BLUE}Steps to Connect via Element X:${NC}"
-        echo "  1. Open Element X app"
-        echo "  2. Tap 'Login'"
-        echo "  3. Enter homeserver: http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
-        echo "  4. Enter username: ${MATRIX_ADMIN_USER}"
-        echo "  5. Enter password: (see above)"
-        echo "  6. Join room: #agents:${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}"
-        echo ""
-        echo -e "${YELLOW}Note: For production, use HTTPS with a valid domain and SSL certificate.${NC}"
+        
+        if [[ -n "$TUNNEL_URL" ]]; then
+            echo -e "  ${BOLD}${GREEN}Homeserver URL (HTTPS):${NC}"
+            echo "    ${TUNNEL_URL}"
+            echo ""
+            echo -e "  ${BOLD}Username:${NC}"
+            echo "    ${MATRIX_ADMIN_USER}"
+            echo ""
+            echo -e "  ${BOLD}Password:${NC}"
+            echo "    ${MATRIX_ADMIN_PASSWORD}"
+            echo ""
+            echo -e "${BOLD}${BLUE}Steps to Connect via Element X:${NC}"
+            echo "  1. Open Element X app"
+            echo "  2. Tap 'Login'"
+            echo "  3. Enter homeserver: ${TUNNEL_URL}"
+            echo "  4. Enter username: ${MATRIX_ADMIN_USER}"
+            echo "  5. Enter password: (see above)"
+            echo ""
+            echo -e "${GREEN}✓ HTTPS enabled via Cloudflare Tunnel${NC}"
+        else
+            echo -e "  ${BOLD}Homeserver URL (HTTP - Testing Only):${NC}"
+            echo "    http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
+            echo ""
+            echo -e "  ${BOLD}Username:${NC}"
+            echo "    ${MATRIX_ADMIN_USER}"
+            echo ""
+            echo -e "  ${BOLD}Password:${NC}"
+            echo "    ${MATRIX_ADMIN_PASSWORD}"
+            echo ""
+            echo -e "${BOLD}${BLUE}Steps to Connect:${NC}"
+            echo "  1. Open Element Web: https://develop.element.io"
+            echo "  2. Enter homeserver: http://${MATRIX_DOMAIN:-$(hostname -I | awk '{print $1}')}:6167"
+            echo "  3. Accept security warning"
+            echo "  4. Login with credentials above"
+            echo ""
+            echo -e "${YELLOW}Note: Element X mobile requires HTTPS.${NC}"
+            echo -e "${YELLOW}Run: docker run -d --name armorclaw-tunnel cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:6167${NC}"
+        fi
         echo ""
     fi
 
@@ -1219,7 +1301,10 @@ main() {
     prompt_api_key
     generate_qr_code
 
-    # Print completion
+    if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
+        start_cloudflare_tunnel
+    fi
+
     print_completion
 }
 
