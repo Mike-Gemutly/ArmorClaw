@@ -1,9 +1,187 @@
 # ArmorClaw Architecture Review
 
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.9.0
-> **Last Updated:** 2026-03-13
+> **Version:** 4.10.0
+> **Last Updated:** 2026-03-14
 > **Status:** Active Reference
+
+---
+
+## Phase 10: Infrastructure Hardening (2026-03-14)
+
+### Overview
+
+Implementation of remaining infrastructure recommendations: healthchecks for all Docker services, IPv4 preference in IP detection, build error visibility, and container rollback mechanism.
+
+### New Features
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **Bridge Healthcheck** | Socket-based health check for bridge service | docker-compose-full.yml |
+| **Coturn Healthcheck** | UDP port check for TURN server | docker-compose.matrix.yml |
+| **Certbot Systemd Check** | Script to verify certbot timer status | scripts/certbot-healthcheck.sh |
+| **IPv4 Preference** | Prefer IPv4 in IP detection with IPv6 fallback | docker-compose.matrix.yml, scripts/deploy-infrastructure.sh |
+| **Docker Build Wrapper** | Error visibility with --progress=plain | scripts/docker-build-with-errors.sh |
+| **Container Rollback** | Tag-based rollback mechanism for containers | scripts/container-rollback.sh |
+
+### Healthcheck Implementations
+
+**Bridge Service (docker-compose-full.yml):**
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "test -S /run/armorclaw/bridge.sock || exit 1"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s
+```
+
+**Coturn Service (docker-compose.matrix.yml):**
+```yaml
+healthcheck:
+  test: ["CMD", "nc", "-z", "-u", "localhost", "3478"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+```
+
+**Note:** Bridge uses socket check (no HTTP endpoint). Coturn uses UDP port check on 3478.
+
+### IPv4 Preference Implementation
+
+**Problem:** `api.ipify.org` can return IPv6 on dual-stack systems, causing issues with services expecting IPv4.
+
+**Solution:**
+```bash
+# Prefer IPv4, fallback to IPv6
+EXTERNAL_IP=$(curl -s -4 https://api.ipify.org 2>/dev/null || echo '0.0.0.0')
+if echo "$EXTERNAL_IP" | grep -q ':'; then
+  echo "Warning: Detected IPv6 address, prefer IPv4 but using IPv6 fallback" >&2
+fi
+```
+
+Applied to:
+- `docker-compose.matrix.yml` (coturn entrypoint)
+- `scripts/deploy-infrastructure.sh` (DNS validation)
+
+### Container Rollback Mechanism
+
+**Tag-Based Rollback:**
+```bash
+# Before deploy - tag current as prev
+./scripts/container-rollback.sh tag-current-as-prev
+
+# On failure - rollback to previous
+./scripts/container-rollback.sh rollback all
+
+# Preview without executing
+./scripts/container-rollback.sh rollback all --dry-run
+```
+
+**Supported Services:**
+- armorclaw-bridge
+- armorclaw-matrix
+- armorclaw-coturn
+- armorclaw-sygnal
+- armorclaw-caddy
+
+**Rollback Limitations:**
+- Containers only (no configs or volumes)
+- Manual trigger only (no automatic rollback)
+- Independent per container (no coordination)
+
+### Certbot Healthcheck Script
+
+**Purpose:** Check if certbot systemd timer is active for certificate renewal.
+
+```bash
+./scripts/certbot-healthcheck.sh
+# Exit 0: Timer active
+# Exit 1: Timer inactive
+```
+
+**Checks:**
+- `certbot.timer` (standard)
+- `certbot-renew.timer` (alternative naming)
+
+### Docker Build Error Visibility
+
+**Usage:**
+```bash
+# Auto-detect docker-compose vs docker build
+./scripts/docker-build-with-errors.sh
+
+# Force specific command
+./scripts/docker-build-with-errors.sh --docker-compose
+./scripts/docker-build-with-errors.sh --docker-build
+
+# Quiet mode (errors only)
+./scripts/docker-build-with-errors.sh -q
+```
+
+**Features:**
+- `--progress=plain` for full output
+- Shows last 50 lines on failure
+- Clear error banners with troubleshooting tips
+- Supports docker compose, docker-compose, and docker build
+
+### Files Modified
+
+```
+docker-compose-full.yml           | +6 (bridge healthcheck)
+docker-compose.matrix.yml         | +25 (coturn healthcheck, IPv4 preference)
+scripts/deploy-infrastructure.sh  | +3 (IPv4 preference)
+scripts/certbot-healthcheck.sh    | +40 (new)
+scripts/docker-build-with-errors.sh | +353 (new)
+scripts/container-rollback.sh     | +326 (new)
+```
+
+### Commits (2026-03-14)
+
+```
+96fd460 feat(rollback): add container rollback mechanism
+fc7c60b chore: update boulder.json with session IDs
+835da8a feat(infra): add healthchecks for bridge/coturn, certbot check, IPv4 preference, docker build wrapper
+```
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No bridge HTTP endpoint | ✅ Used socket check |
+| No TURN test credentials | ✅ Simple port check only |
+| No certificate expiry validation | ✅ Timer check only |
+| No build notification/alerting | ✅ Console output only |
+| No config or volume rollback | ✅ Containers only |
+| No changes to existing healthchecks | ✅ Matrix/Sygnal/Nginx untouched |
+
+### Verification Results
+
+| Agent | Result |
+|-------|--------|
+| F1 - Plan Compliance (Oracle) | ✅ APPROVE - Must Have [4/4] \| Must NOT Have [6/6] |
+| F2 - Infrastructure Health | ✅ APPROVE - Healthchecks [4/4] \| Configs [2/2 valid] |
+| F3 - Scope Fidelity (Deep) | ✅ APPROVE - Tasks [6/6 compliant] |
+
+### Quick Reference Commands
+
+```bash
+# Check all healthcheck statuses
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+
+# Verify IPv4 detection
+curl -s -4 https://api.ipify.org
+
+# Check certbot timer
+./scripts/certbot-healthcheck.sh
+
+# Build with error visibility
+./scripts/docker-build-with-errors.sh --docker-compose
+
+# Rollback preview
+./scripts/container-rollback.sh status
+./scripts/container-rollback.sh rollback all --dry-run
+```
 
 ---
 
