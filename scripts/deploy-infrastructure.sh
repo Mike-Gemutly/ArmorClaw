@@ -78,8 +78,9 @@ if [ -z "$TURN_SECRET" ]; then
     echo "Add this to your .env: TURN_SECRET=$TURN_SECRET"
 fi
 
-# Validate domain resolves to this server
-PUBLIC_IP=$(curl -s https://api.ipify.org)
+ # Validate domain resolves to this server
+# Prefer IPv4, fallback to IPv6 with warning
+PUBLIC_IP=$(curl -s -4 https://api.ipify.org 2>/dev/null || { echo -e "${YELLOW}Warning: IPv4 detection failed, trying IPv6...${NC}" >&2; curl -s -6 https://api.ipify.org 2>/dev/null; })
 DOMAIN_IP=$(dig +short $DOMAIN | grep -E '^[0-9.')
 
 if [ "$DOMAIN_IP" != "$PUBLIC_IP" ]; then

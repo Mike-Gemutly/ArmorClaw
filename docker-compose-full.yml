@@ -121,6 +121,12 @@ services:
       - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-bridgepass}
       - ARMORCLAW_PUSH_GATEWAY_URL=http://sygnal:5000/_matrix/push/v1/notify
       - ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/armorclaw/bridge.sock || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         limits:

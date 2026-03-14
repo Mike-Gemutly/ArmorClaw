@@ -30,20 +30,29 @@ services:
       - ${ARMORCLAW_CONFIGS:-./configs}/turnserver.conf:/etc/coturn/turnserver.conf:ro
       - coturn_data:/var/lib/coturn
 
-    # Use shell form so environment variables and commands are expanded
+     # Use shell form so environment variables and commands are expanded
     entrypoint: /bin/sh
     command:
       - -c
       - |
-        EXTERNAL_IP=$${COTURN_EXTERNAL_IP:-$$(curl -s https://api.ipify.org 2>/dev/null || echo '0.0.0.0')}
+        # Prefer IPv4, fallback to IPv6 with warning
+        if [ -z "${COTURN_EXTERNAL_IP}" ]; then
+          echo "Detecting public IP..."
+          EXTERNAL_IP=$(curl -s -4 https://api.ipify.org 2>/dev/null || echo '0.0.0.0')
+          if echo "$EXTERNAL_IP" | grep -q ':'; then
+            echo "Warning: Detected IPv6 address, prefer IPv4 but using IPv6 fallback" >&2
+          fi
+        else
+          EXTERNAL_IP="${COTURN_EXTERNAL_IP}"
+        fi
         exec turnserver \
           --log-file=stdout \
           -n \
           --no-cli \
-          --realm=$${MATRIX_SERVER_NAME:-matrix.armorclaw.com} \
+          --realm=${MATRIX_SERVER_NAME:-matrix.armorclaw.com} \
           --use-auth-secret \
-          --static-auth-secret=$${TURN_SECRET:-change-me-in-production} \
-          --external-ip=$$EXTERNAL_IP
+          --static-auth-secret=${TURN_SECRET:-change-me-in-production} \
+          --external-ip=$EXTERNAL_IP
 
     deploy:
       resources:
@@ -51,6 +60,12 @@ services:
           memory: 100M
         reservations:
           memory: 30M
+
+    healthcheck:
+      test: ["CMD", "nc", "-z", "-u", "localhost", "3478"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ========================================
   # Nginx Reverse Proxy (Matrix Frontend)
