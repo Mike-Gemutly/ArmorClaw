@@ -89,3 +89,20 @@
   - Clearer logic flow
 - **IPv6 fallback**: Still supported, detected via `grep -q ':'`
 - **Validation**: Both YAML and shell syntax verified successfully
+
+## Container Rollback Mechanism
+
+- **File**: scripts/container-rollback.sh (326 lines)
+- **Tag-based approach**: Uses :current and :prev Docker tags
+- **Supported services**: bridge, matrix, coturn, sygnal, caddy
+- **Commands**:
+  - tag-current-as-prev: Tag current images as :prev before deploy
+  - rollback: Restore previous version
+  - status: Show current tag status
+  - help: Comprehensive usage documentation
+- **--dry-run mode**: Preview changes without executing
+- **Logging**: All actions logged to /var/log/armorclaw/rollback.log
+- **Error handling**: Checks docker daemon running, handles missing images gracefully
+- **No config/volume rollback**: Only container images are rolled back
+- **Independent per container**: No coordination across services
+- **Manual trigger only**: No automatic rollback on failure
