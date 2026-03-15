@@ -19,13 +19,13 @@ var metadataEndpoints = map[string]bool{
 // Initialize private network CIDR ranges
 func init() {
 	cidrs := []string{
-		"127.0.0.0/8",     // localhost
-		"10.0.0.0/8",      // private
-		"172.16.0.0/12",   // private
-		"192.168.0.0/16",  // private
-		"169.254.0.0/16",  // link-local
-		"100.64.0.0/10",   // carrier NAT
-		"192.0.0.0/24",    // IANA special purpose
+		"127.0.0.0/8",    // localhost
+		"10.0.0.0/8",     // private
+		"172.16.0.0/12",  // private
+		"192.168.0.0/16", // private
+		"169.254.0.0/16", // link-local
+		"100.64.0.0/10",  // carrier NAT
+		"192.0.0.0/24",   // IANA special purpose
 	}
 
 	for _, cidr := range cidrs {
@@ -36,9 +36,9 @@ func init() {
 
 // SSRFValidator provides SSRF protection
 type SSRFValidator struct {
-	blockPrivateIPs   bool
-	blockMetadata     bool
-	resolveDNSFirst    bool
+	blockPrivateIPs bool
+	blockMetadata   bool
+	resolveDNSFirst bool
 }
 
 // NewSSRFValidator creates a new SSRF validator
@@ -46,7 +46,7 @@ func NewSSRFValidator() *SSRFValidator {
 	return &SSRFValidator{
 		blockPrivateIPs: true,
 		blockMetadata:   true,
-		resolveDNSFirst:  true,
+		resolveDNSFirst: true,
 	}
 }
 
@@ -54,7 +54,7 @@ func NewSSRFValidator() *SSRFValidator {
 func (v *SSRFValidator) ValidateURL(urlStr string) error {
 	// For Phase 1, simplified validation
 	// In production, use proper URL parsing
-	
+
 	// Check if it's an HTTPS URL
 	if !strings.HasPrefix(urlStr, "https://") {
 		return &SSRFError{
@@ -63,7 +63,7 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 			Detail:  urlStr,
 		}
 	}
-	
+
 	// Extract host (simplified)
 	host := v.extractHost(urlStr)
 	if host == "" {
@@ -73,7 +73,7 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 			Detail:  urlStr,
 		}
 	}
-	
+
 	// Check if it's a metadata endpoint
 	if v.blockMetadata && v.isMetadataEndpoint(host) {
 		return &SSRFError{
@@ -82,7 +82,7 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 			Detail:  host,
 		}
 	}
-	
+
 	// Resolve DNS if required
 	if v.resolveDNSFirst {
 		ips, err := net.LookupIP(host)
@@ -93,7 +93,7 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 				Detail:  err.Error(),
 			}
 		}
-		
+
 		// Check each resolved IP
 		for _, ip := range ips {
 			if v.blockPrivateIPs && v.isPrivateIP(ip) {
@@ -105,7 +105,7 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -113,18 +113,18 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 func (v *SSRFValidator) extractHost(urlStr string) string {
 	// Remove https:// prefix
 	urlStr = strings.TrimPrefix(urlStr, "https://")
-	
+
 	// Find first / or : to separate host from path/port
 	parts := strings.SplitN(urlStr, "/", 2)
 	if len(parts) == 0 {
 		return ""
 	}
-	
+
 	host := parts[0]
-	
+
 	// Remove port
 	host = strings.Split(host, ":")[0]
-	
+
 	return host
 }
 
@@ -188,13 +188,13 @@ func FormatSSRFError(err error) string {
 		switch ssrfErr.Type {
 		case "private_ip_blocked":
 			return fmt.Sprintf("⚠️ Request blocked: %s\n\nThe address %s is inside a private network. ArmorClaw blocks internal network requests to prevent SSRF attacks.", ssrfErr.Message, ssrfErr.Detail)
-		
+
 		case "metadata_endpoint_blocked":
 			return fmt.Sprintf("⚠️ Request blocked: %s\n\nCloud metadata endpoint access is blocked for security.", ssrfErr.Message)
-		
+
 		case "scheme_not_allowed":
 			return fmt.Sprintf("⚠️ Request blocked: %s\n\nOnly HTTPS URLs are allowed.", ssrfErr.Message)
-		
+
 		default:
 			return fmt.Sprintf("⚠️ Request blocked: %s", ssrfErr.Message)
 		}

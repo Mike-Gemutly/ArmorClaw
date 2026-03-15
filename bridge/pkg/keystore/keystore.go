@@ -753,6 +753,16 @@ func (ks *Keystore) decrypt(encrypted, nonce []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// Encrypt encrypts data using XChaCha20-Poly1305 AEAD (public wrapper)
+func (ks *Keystore) Encrypt(plaintext []byte) (encrypted, nonce []byte, err error) {
+	return ks.encrypt(plaintext)
+}
+
+// Decrypt decrypts data using XChaCha20-Poly1305 AEAD (public wrapper)
+func (ks *Keystore) Decrypt(encrypted, nonce []byte) ([]byte, error) {
+	return ks.decrypt(encrypted, nonce)
+}
+
 // isValidProvider checks if a provider is valid
 func isValidProvider(p Provider) bool {
 	switch p {

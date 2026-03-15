@@ -12,17 +12,17 @@ import (
 
 // Skill represents a single skill from a SKILL.md file
 type Skill struct {
-	Name         string                           `json:"name"`
-	Description  string                           `json:"description"`
-	Homepage     string                           `json:"homepage"`
-	Domain       string                           `json:"domain"`
-	Risk         string                           `json:"risk"`
-	Command      string                           `json:"command"`
-	Enabled      bool                             `json:"enabled"`
-	Timeout      time.Duration                    `json:"timeout"`
-	Version      string                           `json:"version"`
-	Parameters   map[string]Param                 `json:"parameters"`
-	Metadata     map[string]interface{}           `json:"metadata"`
+	Name          string                                    `json:"name"`
+	Description   string                                    `json:"description"`
+	Homepage      string                                    `json:"homepage"`
+	Domain        string                                    `json:"domain"`
+	Risk          string                                    `json:"risk"`
+	Command       string                                    `json:"command"`
+	Enabled       bool                                      `json:"enabled"`
+	Timeout       time.Duration                             `json:"timeout"`
+	Version       string                                    `json:"version"`
+	Parameters    map[string]Param                          `json:"parameters"`
+	Metadata      map[string]interface{}                    `json:"metadata"`
 	SecurityCheck func(params map[string]interface{}) error `json:"-"`
 }
 
@@ -353,34 +353,34 @@ func parseYAMLFrontmatter(data string, v interface{}) error {
 	// Simplified YAML parsing for Phase 1
 	// Parse basic key: value pairs
 	lines := strings.Split(data, "\n")
-	
+
 	frontmatterMap, ok := v.(*map[string]interface{})
 	if !ok {
 		return fmt.Errorf("expected map[string]interface{}, got %T", v)
 	}
-	
+
 	*frontmatterMap = make(map[string]interface{})
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Parse key: value pairs
 		if strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
 				key := strings.TrimSpace(parts[0])
 				value := strings.TrimSpace(parts[1])
-				
+
 				// Remove quotes if present
 				if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
 					value = strings.Trim(value, "\"")
 				} else if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
 					value = strings.Trim(value, "'")
 				}
-				
+
 				// Handle special cases like metadata
 				if key == "metadata" && strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
 					// For now, just store as string - in Phase 2 we'd parse JSON
@@ -391,6 +391,156 @@ func parseYAMLFrontmatter(data string, v interface{}) error {
 			}
 		}
 	}
-	
+
 	return nil
+}
+
+// RegisterWebDAV registers the WebDAV skill programmatically
+func RegisterWebDAV(r *Registry) {
+	skill := &Skill{
+		Name:        "webdav",
+		Description: "WebDAV protocol operations (list, get, put, delete) for accessing WebDAV servers",
+		Homepage:    "https://tools.ietf.org/html/rfc4918",
+		Domain:      "webdav",
+		Risk:        "medium",
+		Command:     "http",
+		Enabled:     true,
+		Timeout:     60 * time.Second,
+		Version:     "1.0.0",
+		Parameters: map[string]Param{
+			"url": {
+				Type:        "string",
+				Description: "WebDAV server URL (required)",
+				Required:    true,
+			},
+			"operation": {
+				Type:        "string",
+				Description: "Operation: list, get, put, or delete (required)",
+				Required:    true,
+			},
+			"username": {
+				Type:        "string",
+				Description: "Username for authentication (optional)",
+				Required:    false,
+			},
+			"password": {
+				Type:        "string",
+				Description: "Password for authentication (optional)",
+				Required:    false,
+			},
+			"content": {
+				Type:        "array",
+				Description: "Content bytes for PUT operation (required for put)",
+				Required:    false,
+			},
+			"content_length": {
+				Type:        "number",
+				Description: "Content length for PUT operation (required for put)",
+				Required:    false,
+			},
+			"content_type": {
+				Type:        "string",
+				Description: "Content type header for PUT operation (optional)",
+				Required:    false,
+			},
+		},
+		Metadata: map[string]interface{}{
+			"protocol":      "WebDAV",
+			"rfc":           "4918",
+			"methods":       []string{"PROPFIND", "GET", "PUT", "DELETE"},
+			"ssl_required":  true,
+			"auth_methods":  []string{"Basic"},
+			"content_types": []string{"application/xml", "multipart/form-data"},
+		},
+	}
+
+	r.mutex.Lock()
+	r.skills[skill.Name] = skill
+	r.domainIndex[skill.Domain] = append(r.domainIndex[skill.Domain], skill)
+	r.mutex.Unlock()
+}
+
+// RegisterCalendar registers the Calendar skill programmatically
+func RegisterCalendar(r *Registry) {
+	skill := &Skill{
+		Name:        "calendar",
+		Description: "CalDAV-based calendar operations (list, create, get, update, delete events) for accessing calendar servers",
+		Homepage:    "https://tools.ietf.org/html/rfc4791",
+		Domain:      "calendar",
+		Risk:        "medium",
+		Command:     "curl",
+		Enabled:     true,
+		Timeout:     60 * time.Second,
+		Version:     "1.0.0",
+		Parameters: map[string]Param{
+			"operation": {
+				Type:        "string",
+				Description: "Operation: list_calendars, create_event, get_events, get_event, update_event, or delete_event (required)",
+				Required:    true,
+			},
+			"calendar_url": {
+				Type:        "string",
+				Description: "CalDAV server URL (required)",
+				Required:    true,
+			},
+			"username": {
+				Type:        "string",
+				Description: "Username for authentication (optional)",
+				Required:    false,
+			},
+			"password": {
+				Type:        "string",
+				Description: "Password for authentication (optional)",
+				Required:    false,
+			},
+			"title": {
+				Type:        "string",
+				Description: "Event title (required for create_event)",
+				Required:    false,
+			},
+			"description": {
+				Type:        "string",
+				Description: "Event description (optional)",
+				Required:    false,
+			},
+			"location": {
+				Type:        "string",
+				Description: "Event location (optional)",
+				Required:    false,
+			},
+			"attendees": {
+				Type:        "array",
+				Description: "List of attendee email addresses (optional)",
+				Required:    false,
+			},
+			"start_time": {
+				Type:        "string",
+				Description: "Event start time in RFC3339 or '2006-01-02 15:04:05' format (required for create_event/update_event)",
+				Required:    false,
+			},
+			"end_time": {
+				Type:        "string",
+				Description: "Event end time in RFC3339 or '2006-01-02 15:04:05' format (required for create_event/update_event)",
+				Required:    false,
+			},
+			"event_data": {
+				Type:        "object",
+				Description: "Event data object for get_event, update_event, delete_event (required for these operations)",
+				Required:    false,
+			},
+		},
+		Metadata: map[string]interface{}{
+			"protocol":           "CalDAV",
+			"rfc":                "4791",
+			"operations":         []string{"list_calendars", "create_event", "get_events", "get_event", "update_event", "delete_event"},
+			"ssl_required":       true,
+			"auth_methods":       []string{"Basic"},
+			"conflict_detection": true,
+		},
+	}
+
+	r.mutex.Lock()
+	r.skills[skill.Name] = skill
+	r.domainIndex[skill.Domain] = append(r.domainIndex[skill.Domain], skill)
+	r.mutex.Unlock()
 }

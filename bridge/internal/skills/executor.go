@@ -19,17 +19,17 @@ type CommandContext struct {
 
 // SkillResult represents the result of skill execution
 type SkillResult struct {
-	Success   bool                 `json:"success"`
-	Output    interface{}          `json:"output,omitempty"`
-	Error     string               `json:"error,omitempty"`
-	Type      string               `json:"type"` // "data", "error", "timeout"
-	Timestamp time.Time            `json:"timestamp"`
+	Success   bool                   `json:"success"`
+	Output    interface{}            `json:"output,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	Type      string                 `json:"type"` // "data", "error", "timeout"
+	Timestamp time.Time              `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SkillExecutor handles skill execution with full PETG security pipeline
 type SkillExecutor struct {
-	registry        *Registry
+	registry       *Registry
 	router         *Router
 	ssrfValidator  *SSRFValidator
 	allowlist      *AllowlistManager
@@ -39,7 +39,7 @@ type SkillExecutor struct {
 // NewSkillExecutor creates a new skill executor
 func NewSkillExecutor() *SkillExecutor {
 	return &SkillExecutor{
-		registry:        NewRegistry(),
+		registry:       NewRegistry(),
 		router:         NewRouter(),
 		ssrfValidator:  NewSSRFValidator(),
 		allowlist:      NewAllowlistManager(),
@@ -55,7 +55,7 @@ func (se *SkillExecutor) LoadSkills(skillsDir string) error {
 // ExecuteSkill executes a skill with full PETG validation
 func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, params map[string]interface{}) (*SkillResult, error) {
 	startTime := time.Now()
-	
+
 	// Step 1: Validate skill exists
 	skill, exists := se.registry.GetSkill(skillName)
 	if !exists {
@@ -110,7 +110,7 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 		if ctx.Err() == context.DeadlineExceeded {
 			errorType = "timeout"
 		}
-		
+
 		return &SkillResult{
 			Success:   false,
 			Error:     err.Error(),
@@ -136,10 +136,10 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 		Type:      "data",
 		Timestamp: startTime,
 		Metadata: map[string]interface{}{
-			"skill":      skillName,
-			"version":    skill.Version,
-			"duration":   time.Since(startTime).String(),
-			"timeout":    skill.Timeout.String(),
+			"skill":    skillName,
+			"version":  skill.Version,
+			"duration": time.Since(startTime).String(),
+			"timeout":  skill.Timeout.String(),
 		},
 	}, nil
 }
@@ -192,7 +192,7 @@ func (se *SkillExecutor) postExecutionFiltering(skill *Skill, result interface{}
 // extractURLsFromParams extracts URL strings from parameters
 func (se *SkillExecutor) extractURLsFromParams(params map[string]interface{}) []string {
 	var urls []string
-	
+
 	for _, value := range params {
 		switch v := value.(type) {
 		case string:
@@ -207,7 +207,7 @@ func (se *SkillExecutor) extractURLsFromParams(params map[string]interface{}) []
 			}
 		}
 	}
-	
+
 	return urls
 }
 
@@ -225,12 +225,12 @@ func (se *SkillExecutor) checkDangerousPatterns(params map[string]interface{}) e
 			if len(str) > 7 && str[:7] == "file://" {
 				return fmt.Errorf("file:// URLs are not allowed")
 			}
-			
+
 			// Check for ftp:// scheme
 			if len(str) > 6 && str[:6] == "ftp://" {
 				return fmt.Errorf("ftp:// URLs are not allowed")
 			}
-			
+
 			// Check for potential command injection
 			if containsDangerousChars(str) {
 				return fmt.Errorf("potentially dangerous characters detected")
@@ -253,10 +253,10 @@ func containsDangerousChars(str string) bool {
 
 // contains checks if a string contains a substring
 func contains(str, substr string) bool {
-	return len(str) >= len(substr) && (str == substr || 
-		(len(str) > len(substr) && 
-			(str[:len(substr)] == substr || 
-				str[len(str)-len(substr):] == substr || 
+	return len(str) >= len(substr) && (str == substr ||
+		(len(str) > len(substr) &&
+			(str[:len(substr)] == substr ||
+				str[len(str)-len(substr):] == substr ||
 				findSubstring(str, substr))))
 }
 
@@ -273,10 +273,10 @@ func findSubstring(str, substr string) bool {
 // filterSensitiveFields removes sensitive fields from result data
 func (se *SkillExecutor) filterSensitiveFields(data map[string]interface{}) {
 	sensitiveFields := []string{
-		"password", "secret", "token", "key", "api_key", 
+		"password", "secret", "token", "key", "api_key",
 		"private_key", "auth", "credential", "session",
 	}
-	
+
 	for _, field := range sensitiveFields {
 		if _, exists := data[field]; exists {
 			data[field] = "***REDACTED***"
@@ -291,13 +291,13 @@ func (se *SkillExecutor) checkResultSize(result interface{}) error {
 	if err != nil {
 		return nil // If we can't marshal, we can't check size
 	}
-	
+
 	// 10MB limit for results
 	const maxSize = 10 * 1024 * 1024
 	if len(jsonData) > maxSize {
 		return fmt.Errorf("result too large: %d bytes (max %d)", len(jsonData), maxSize)
 	}
-	
+
 	return nil
 }
 
@@ -331,12 +331,12 @@ func (pe *PolicyEnforcer) IsAllowed(skillName string) bool {
 	if pe.blockedSkills[skillName] {
 		return false
 	}
-	
+
 	// If explicitly allowed, allow
 	if pe.allowedSkills[skillName] {
 		return true
 	}
-	
+
 	// For Phase 1, allow all non-blocked skills
 	return !pe.blockedSkills[skillName]
 }
@@ -373,6 +373,8 @@ func (se *SkillExecutor) getHandlerForDomain(domain string) HandlerFunc {
 		return se.handleEmailSkill
 	case "slack":
 		return se.handleSlackSkill
+	case "webdav":
+		return se.handleWebDAVSkill
 	default:
 		return se.handleGeneralSkill
 	}
@@ -455,6 +457,11 @@ func (se *SkillExecutor) handleSlackSkill(ctx context.Context, params map[string
 	return ExecuteSlackMessage(ctx, params)
 }
 
+// handleWebDAVSkill handles WebDAV operations
+func (se *SkillExecutor) handleWebDAVSkill(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	return ExecuteWebDAV(ctx, params)
+}
+
 // handleGeneralSkill handles general/miscellaneous skills
 func (se *SkillExecutor) handleGeneralSkill(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	// For Phase 1, return general response
@@ -517,7 +524,7 @@ func (se *SkillExecutor) GenerateSchema(skill *Skill) interface{} {
 // getParameterSchemas generates JSON schemas for skill parameters
 func (se *SkillExecutor) getParameterSchemas(params map[string]Param) map[string]interface{} {
 	schemas := make(map[string]interface{})
-	
+
 	for name, param := range params {
 		schemas[name] = map[string]interface{}{
 			"type":        se.mapTypeToJSONType(param.Type),
@@ -527,7 +534,7 @@ func (se *SkillExecutor) getParameterSchemas(params map[string]Param) map[string
 			// This would be handled in the main schema's required array
 		}
 	}
-	
+
 	return schemas
 }
 
