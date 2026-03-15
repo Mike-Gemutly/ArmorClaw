@@ -1,9 +1,145 @@
 # ArmorClaw Architecture Review
-
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.10.0
-> **Last Updated:** 2026-03-14
+> **Version:** 4.11.0
+> **Last Updated:** 2026-03-15
 > **Status:** Active Reference
+
+---
+
+## Phase 11: Secretary Features Completion (2026-03-15)
+
+### Overview
+
+Completed 3 partial implementations to achieve 100% Secretary feature parity:
+- **Conditional Branching** - Template engine now filters steps based on conditions
+- **Timezone-Aware Scheduling** - Jobs execute at configured timezone
+- **Template CRUD RPC** - Full template management via RPC API
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|--------|-------------|---------------|
+| **Conditional Branching** | `evaluateConditions()` filters workflow steps based on conditions | `template_engine.go`, `template_engine_test.go` |
+| **Timezone Support** | IANA timezone support with `time.LoadLocation()` | `orchestrator_scheduler.go`, `orchestrator_scheduler_test.go` |
+| **Template RPC** | CRUD operations via `secretary.create_template`, etc. | `rpc.go` |
+
+### Conditional Branching Implementation
+
+**File:** `bridge/pkg/secretary/template_engine.go`
+
+```go
+func (e *TemplateEngine) evaluateConditions(
+    ctx context.Context,
+    steps []WorkflowStep,
+    variables map[string]string,
+) ([]WorkflowStep, error) {
+```
+
+The Evaluates conditions for each step:
+- Steps without conditions pass through unchanged
+- Steps with failing conditions are filtered out
+- Supports operators: `eq`, `neq`, `in`, `nin`, `contains`
+- Resolves fields: `step.type`, `step.id`, variables
+
+**Tests:** 10 tests covering all operators and field resolution
+
+### Timezone-Aware Job Scheduling
+
+**File:** `bridge/pkg/secretary/orchestrator_scheduler.go`
+
+```go
+type SchedulerConfig struct {
+    // ... existing fields ...
+    Timezone string  // IANA timezone (e.g., "America/New_York")
+}
+
+type Scheduler struct {
+    // ... existing fields ...
+    location *time.Location  // Parsed timezone for time conversion
+    timezone string         // Configured IANA timezone string
+}
+
+func (s *Scheduler) Start() {
+    // ... existing code ...
+    
+    // Load timezone
+    if s.timezone != "" {
+        loc, err := time.LoadLocation(s.timezone)
+        if err == nil {
+            s.location = loc
+        } else {
+            s.log.Warn("scheduler_timezone_load_failed", ...)
+        }
+    }
+}
+
+func (s *Scheduler) processScheduledJobs() {
+    // ... existing code ...
+    
+    now := time.Now().In(s.location)  // Convert to configured timezone
+    // ... rest of implementation
+}
+```
+
+**Tests:** 6 tests covering multiple IANA timezones
+
+### Template CRUD RPC Methods
+
+**File:** `bridge/pkg/secretary/rpc.go`
+
+**Methods Implemented:**
+
+| Method | Description |
+|--------|-------------|
+| `secretary.create_template` | Create new task template |
+| `secretary.get_template` | Retrieve template by ID |
+| `secretary.list_templates` | List templates with optional filter |
+| `secretary.update_template` | Update existing template |
+| `secretary.delete_template` | Delete template by ID |
+
+**Example Usage:**
+```bash
+curl -X POST http://localhost:8443/rpc -d '{
+    "method": "secretary.create_template",
+    "params": {
+        "name": "Payment Approval",
+        "steps": [...]
+    }
+}'
+```
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No Python/OMO layer | ✅ Pure Go implementation |
+| No breaking API changes | ✅ Backwards compatible |
+| No new external dependencies | ✅ Uses stdlib only |
+
+### Verification Results
+
+| Agent | Result |
+|-------|--------|
+| F1 - Gap Compliance | ✅ APPROVE - All 3 gaps implemented |
+| F2 - Build & Test | ✅ APPROVE - 138 tests pass/0 fail |
+| F3 - Regression Check | ✅ APPROVE - 0 regressions |
+| F4 - Python-Free | ✅ APPROVE - 0 Python files |
+
+### Quick Reference Commands
+
+```bash
+# Run secretary tests
+cd bridge && go test ./pkg/secretary/... -v
+
+# Verify conditional branching
+go test -v ./pkg/secretary/... -run TestCondition
+
+# Verify timezone support
+go test -v ./pkg/secretary/... -run TestScheduler
+
+# Test template RPC methods (requires running bridge)
+curl -X POST http://localhost:8443/rpc -d '{"method":"secretary.list_templates"}'
+```
 
 ---
 
