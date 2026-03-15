@@ -688,6 +688,10 @@ start_ngrok_tunnel() {
     echo ""
     echo -e "  ${BOLD}${GREEN}Tunnel URL:${NC} ${TUNNEL_URL}"
     echo ""
+    echo -e "  ${YELLOW}⚠ WARNING: ngrok free tier domains change on restart${NC}"
+    echo -e "  ${YELLOW}  Mobile clients (Element X) will need reconfiguration${NC}"
+    echo -e "  ${YELLOW}  For production use, consider Cloudflare or a static domain${NC}"
+    echo ""
 
     if [[ -f "$CONDUIT_CONFIG_FILE" ]]; then
         print_info "Updating Matrix server_name to tunnel domain..."

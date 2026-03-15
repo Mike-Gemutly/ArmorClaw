@@ -263,7 +263,7 @@ func registerAdmin(sharedSecret, password string) (string, error) {
 		}
 
 		var regResp RegisterResponse
-		if err := json.Unmarshal(respBody, ®Resp); err != nil {
+		if err := json.Unmarshal(respBody, &regResp); err != nil {
 			return "", err
 		}
 
