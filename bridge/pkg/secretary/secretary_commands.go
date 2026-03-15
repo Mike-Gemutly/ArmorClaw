@@ -35,6 +35,15 @@ type TrustedWorkflowEngineInterface interface {
 	RevokePolicy(ctx context.Context, id string, revokedBy string, reason string) error
 }
 
+type RolodexServiceInterface interface {
+	CreateContact(ctx context.Context, req *CreateRequest) (*Contact, error)
+	GetContact(ctx context.Context, id string) (*Contact, error)
+	ListContacts(ctx context.Context, filter ContactFilter) ([]Contact, error)
+	UpdateContact(ctx context.Context, req *UpdateRequest) (*Contact, error)
+	DeleteContact(ctx context.Context, id string) error
+	SearchContacts(ctx context.Context, query string) ([]Contact, error)
+}
+
 //=============================================================================
 // Secretary Command Handler
 //=============================================================================
@@ -50,6 +59,7 @@ type SecretaryCommandHandler struct {
 	blindFill      BlindFillExecutorInterface
 	trustEngine    TrustedWorkflowEngineInterface
 	approvalEngine *ApprovalEngineImpl
+	rolodex        RolodexServiceInterface
 }
 
 type SecretaryCommandHandlerConfig struct {
@@ -63,6 +73,7 @@ type SecretaryCommandHandlerConfig struct {
 	BlindFill      BlindFillExecutorInterface
 	TrustEngine    TrustedWorkflowEngineInterface
 	ApprovalEngine *ApprovalEngineImpl
+	Rolodex        RolodexServiceInterface
 }
 
 func NewSecretaryCommandHandler(cfg SecretaryCommandHandlerConfig) *SecretaryCommandHandler {
@@ -81,6 +92,7 @@ func NewSecretaryCommandHandler(cfg SecretaryCommandHandlerConfig) *SecretaryCom
 		blindFill:      cfg.BlindFill,
 		trustEngine:    cfg.TrustEngine,
 		approvalEngine: cfg.ApprovalEngine,
+		rolodex:        cfg.Rolodex,
 	}
 }
 
@@ -171,6 +183,31 @@ func (h *SecretaryCommandHandler) HandleMessage(ctx context.Context, roomID, use
 				}
 			}
 		}
+	case "contact":
+		if len(args) >= 1 {
+			switch args[0] {
+			case "create":
+				return true, h.handleCreateContact(ctx, roomID, userID, args[1:])
+			case "get":
+				if len(args) >= 2 {
+					return true, h.handleGetContact(ctx, roomID, args[1])
+				}
+			case "list":
+				return true, h.handleListContacts(ctx, roomID, args[1:])
+			case "update":
+				if len(args) >= 2 {
+					return true, h.handleUpdateContact(ctx, roomID, userID, args[1:])
+				}
+			case "delete":
+				if len(args) >= 2 {
+					return true, h.handleDeleteContact(ctx, roomID, args[1])
+				}
+			case "search":
+				if len(args) >= 2 {
+					return true, h.handleSearchContacts(ctx, roomID, strings.Join(args[1:], " "))
+				}
+			}
+		}
 	default:
 		return true, h.sendHelp(ctx, roomID)
 	}
@@ -211,6 +248,19 @@ func (h *SecretaryCommandHandler) sendHelp(ctx context.Context, roomID string) e
   ` + h.prefix + `secretary confirm mapping draft_abc123
   ` + h.prefix + `secretary run blindfill template_xyz
   ` + h.prefix + `secretary trust list
+
+**Contacts:**
+` + h.prefix + `secretary contact create <name> [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...] - Create a contact
+` + h.prefix + `secretary contact get <id> - Get a contact by ID
+` + h.prefix + `secretary contact list [name=...] [company=...] [relationship=...] - List contacts with optional filters
+` + h.prefix + `secretary contact update <id> [name=...] [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...] - Update a contact
+` + h.prefix + `secretary contact delete <id> - Delete a contact
+` + h.prefix + `secretary contact search <query> - Search contacts by name or company
+
+**Examples:**
+  ` + h.prefix + `secretary contact create "John Doe" company="Acme Inc" relationship="client" phone="555-1234" email="john@example.com"
+  ` + h.prefix + `secretary contact list company="Acme"
+  ` + h.prefix + `secretary contact search "John"
 `
 	return h.matrix.SendMessage(ctx, roomID, help)
 }
@@ -755,6 +805,241 @@ func (h *SecretaryCommandHandler) handleRevokeTrustPolicy(ctx context.Context, r
 		policyID, userID, reason)
 
 	return h.matrix.SendMessage(ctx, roomID, msg)
+}
+
+func (h *SecretaryCommandHandler) handleCreateContact(ctx context.Context, roomID, userID string, args []string) error {
+	if h.rolodex == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary contact create <name> [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...]")
+	}
+
+	req := &CreateRequest{
+		Name:      args[0],
+		CreatedBy: userID,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := parts[0], parts[1]
+
+		switch key {
+		case "company":
+			req.Company = value
+		case "relationship":
+			req.Relationship = value
+		case "phone":
+			req.Phone = value
+		case "email":
+			req.Email = value
+		case "address":
+			req.Address = value
+		case "notes":
+			req.Notes = value
+		}
+	}
+
+	contact, err := h.rolodex.CreateContact(ctx, req)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create contact: %v", err))
+	}
+
+	msg := fmt.Sprintf("✅ Contact created\n\n**ID:** `%s`\n**Name:** %s\n**Company:** %s\n**Relationship:** %s",
+		contact.ID, contact.Name, contact.Company, contact.Relationship)
+	if contact.Phone != "" {
+		msg += fmt.Sprintf("\n**Phone:** %s", contact.Phone)
+	}
+	if contact.Email != "" {
+		msg += fmt.Sprintf("\n**Email:** %s", contact.Email)
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, msg)
+}
+
+func (h *SecretaryCommandHandler) handleGetContact(ctx context.Context, roomID, contactID string) error {
+	if h.rolodex == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+	}
+
+	contact, err := h.rolodex.GetContact(ctx, contactID)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get contact: %v", err))
+	}
+
+	msg := fmt.Sprintf(`📋 **Contact**
+
+**ID:** %s
+**Name:** %s
+**Company:** %s
+**Relationship:** %s
+**Created:** %s
+`,
+		contact.ID, contact.Name, contact.Company, contact.Relationship,
+		contact.CreatedAt.Format("2006-01-02 15:04"))
+
+	if contact.Phone != "" {
+		msg += fmt.Sprintf("\n**Phone:** %s", contact.Phone)
+	}
+	if contact.Email != "" {
+		msg += fmt.Sprintf("\n**Email:** %s", contact.Email)
+	}
+	if contact.Address != "" {
+		msg += fmt.Sprintf("\n**Address:** %s", contact.Address)
+	}
+	if contact.Notes != "" {
+		msg += fmt.Sprintf("\n**Notes:** %s", contact.Notes)
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, msg)
+}
+
+func (h *SecretaryCommandHandler) handleListContacts(ctx context.Context, roomID string, args []string) error {
+	if h.rolodex == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+	}
+
+	filter := ContactFilter{}
+
+	for _, arg := range args {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := parts[0], parts[1]
+
+		switch key {
+		case "name":
+			filter.Name = value
+		case "company":
+			filter.Company = value
+		case "relationship":
+			filter.Relationship = value
+		}
+	}
+
+	contacts, err := h.rolodex.ListContacts(ctx, filter)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list contacts: %v", err))
+	}
+
+	if len(contacts) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "No contacts found.")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📋 **Contacts** (%d)\n\n", len(contacts)))
+
+	for _, contact := range contacts {
+		sb.WriteString(fmt.Sprintf("**%s** `%s` - %s", contact.Name, contact.ID, contact.Company))
+		if contact.Relationship != "" {
+			sb.WriteString(fmt.Sprintf(" (%s)", contact.Relationship))
+		}
+		sb.WriteString("\n")
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleUpdateContact(ctx context.Context, roomID, userID string, args []string) error {
+	if h.rolodex == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary contact update <id> [name=...] [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...]")
+	}
+
+	contactID := args[0]
+	req := &UpdateRequest{
+		ID:        contactID,
+		UpdatedBy: userID,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := parts[0], parts[1]
+
+		switch key {
+		case "name":
+			req.Name = value
+		case "company":
+			req.Company = value
+		case "relationship":
+			req.Relationship = value
+		case "phone":
+			req.Phone = value
+		case "email":
+			req.Email = value
+		case "address":
+			req.Address = value
+		case "notes":
+			req.Notes = value
+		}
+	}
+
+	contact, err := h.rolodex.UpdateContact(ctx, req)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to update contact: %v", err))
+	}
+
+	msg := fmt.Sprintf("✅ Contact updated\n\n**ID:** `%s`\n**Name:** %s\n**Company:** %s",
+		contact.ID, contact.Name, contact.Company)
+
+	return h.matrix.SendMessage(ctx, roomID, msg)
+}
+
+func (h *SecretaryCommandHandler) handleDeleteContact(ctx context.Context, roomID, contactID string) error {
+	if h.rolodex == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+	}
+
+	if err := h.rolodex.DeleteContact(ctx, contactID); err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete contact: %v", err))
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ Contact deleted\n\n**ID:** `%s`", contactID))
+}
+
+func (h *SecretaryCommandHandler) handleSearchContacts(ctx context.Context, roomID, query string) error {
+	if h.rolodex == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+	}
+
+	contacts, err := h.rolodex.SearchContacts(ctx, query)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to search contacts: %v", err))
+	}
+
+	if len(contacts) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("No contacts found matching: %s", query))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🔍 **Search Results** (%d)\n\n", len(contacts)))
+
+	for _, contact := range contacts {
+		sb.WriteString(fmt.Sprintf("**%s** `%s` - %s", contact.Name, contact.ID, contact.Company))
+		if contact.Relationship != "" {
+			sb.WriteString(fmt.Sprintf(" (%s)", contact.Relationship))
+		}
+		sb.WriteString("\n")
+		if contact.Phone != "" {
+			sb.WriteString(fmt.Sprintf("  Phone: %s\n", contact.Phone))
+		}
+		if contact.Email != "" {
+			sb.WriteString(fmt.Sprintf("  Email: %s\n", contact.Email))
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
 }
 
 func timeNow() time.Time {

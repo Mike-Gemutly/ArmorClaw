@@ -54,6 +54,13 @@ type Store interface {
 	UpdateNotificationChannel(ctx context.Context, channel *NotificationChannel) error
 	DeleteNotificationChannel(ctx context.Context, id string) error
 
+	// Contacts (Rolodex)
+	CreateContact(ctx context.Context, contact *Contact) error
+	GetContact(ctx context.Context, id string) (*Contact, error)
+	ListContacts(ctx context.Context, filter ContactFilter) ([]Contact, error)
+	UpdateContact(ctx context.Context, contact *Contact) error
+	DeleteContact(ctx context.Context, id string) error
+
 	// Close closes the database connection
 	Close() error
 }
@@ -198,12 +205,28 @@ func (s *SQLiteStore) initSchema() error {
 		"    FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE CASCADE" + "\n" +
 		");" + "\n" +
 
+		"-- Contacts (Rolodex)" + "\n" +
+		"CREATE TABLE IF NOT EXISTS contacts (" + "\n" +
+		"    id TEXT PRIMARY KEY," + "\n" +
+		"    name TEXT NOT NULL," + "\n" +
+		"    company TEXT," + "\n" +
+		"    relationship TEXT," + "\n" +
+		"    data_encrypted BLOB NOT NULL," + "\n" +
+		"    data_nonce BLOB NOT NULL," + "\n" +
+		"    created_by TEXT NOT NULL," + "\n" +
+		"    created_at INTEGER NOT NULL," + "\n" +
+		"    updated_at INTEGER NOT NULL" + "\n" +
+		");" + "\n" +
+
 		"CREATE INDEX IF NOT EXISTS idx_templates_active ON task_templates(is_active);" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_workflows_status ON workflows(status);" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_workflows_template ON workflows(template_id);" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_policies_active ON approval_policies(is_active);" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_notification_user ON notification_channels(user_id);" + "\n" +
-		"CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_tasks(next_run);"
+		"CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_tasks(next_run);" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company);" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_contacts_relationship ON contacts(relationship);"
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
@@ -1061,6 +1084,170 @@ func (s *SQLiteStore) DeleteNotificationChannel(ctx context.Context, id string) 
 	}
 
 	s.auditLogger.LogOperation(ctx, "notification_channel_deleted", map[string]interface{}{
+		"id": id,
+	})
+
+	return nil
+}
+
+//=============================================================================
+// Contact CRUD (Rolodex)
+//=============================================================================
+
+// CreateContact stores a new contact
+func (s *SQLiteStore) CreateContact(ctx context.Context, contact *Contact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if contact.EncryptedData == nil || contact.EncryptedNonce == nil {
+		return fmt.Errorf("encrypted data and nonce are required")
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO contacts (id, name, company, relationship, data_encrypted, data_nonce, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, contact.ID, contact.Name, contact.Company, contact.Relationship,
+		contact.EncryptedData, contact.EncryptedNonce, contact.CreatedBy,
+		time.Now().UnixMilli(), time.Now().UnixMilli())
+
+	if err != nil {
+		return fmt.Errorf("failed to create contact: %w", err)
+	}
+
+	s.auditLogger.LogOperation(ctx, "contact_created", map[string]interface{}{
+		"id":         contact.ID,
+		"name":       contact.Name,
+		"created_by": contact.CreatedBy,
+	})
+
+	return nil
+}
+
+// GetContact retrieves a contact by ID
+func (s *SQLiteStore) GetContact(ctx context.Context, id string) (*Contact, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	contact := &Contact{}
+
+	err := s.db.QueryRow(`
+		SELECT id, name, company, relationship, data_encrypted, data_nonce, created_by, created_at, updated_at
+		FROM contacts WHERE id = ?
+	`, id).Scan(&contact.ID, &contact.Name, &contact.Company, &contact.Relationship,
+		&contact.EncryptedData, &contact.EncryptedNonce, &contact.CreatedBy,
+		&contact.CreatedAt, &contact.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("contact not found: %s", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get contact: %w", err)
+	}
+
+	return contact, nil
+}
+
+// ListContacts returns all contacts, optionally filtered
+func (s *SQLiteStore) ListContacts(ctx context.Context, filter ContactFilter) ([]Contact, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, name, company, relationship, data_encrypted, data_nonce, created_by, created_at, updated_at FROM contacts`
+	args := []interface{}{}
+
+	if filter.Name != "" {
+		query += " WHERE name LIKE ?"
+		args = append(args, "%"+filter.Name+"%")
+	}
+
+	if filter.Company != "" {
+		if filter.Name != "" {
+			query += " AND"
+		} else {
+			query += " WHERE"
+		}
+		query += " company LIKE ?"
+		args = append(args, "%"+filter.Company+"%")
+	}
+
+	if filter.Relationship != "" {
+		if filter.Name != "" || filter.Company != "" {
+			query += " AND"
+		} else {
+			query += " WHERE"
+		}
+		query += " relationship = ?"
+		args = append(args, filter.Relationship)
+	}
+
+	query += " ORDER BY name ASC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contacts: %w", err)
+	}
+	defer rows.Close()
+
+	var contacts []Contact
+	for rows.Next() {
+		contact := &Contact{}
+		if err := rows.Scan(&contact.ID, &contact.Name, &contact.Company, &contact.Relationship,
+			&contact.EncryptedData, &contact.EncryptedNonce, &contact.CreatedBy,
+			&contact.CreatedAt, &contact.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan contact: %w", err)
+		}
+
+		contacts = append(contacts, *contact)
+	}
+
+	return contacts, nil
+}
+
+// UpdateContact updates an existing contact
+func (s *SQLiteStore) UpdateContact(ctx context.Context, contact *Contact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if contact.EncryptedData == nil || contact.EncryptedNonce == nil {
+		return fmt.Errorf("encrypted data and nonce are required")
+	}
+
+	result, err := s.db.Exec(`
+		UPDATE contacts
+		SET name = ?, company = ?, relationship = ?, data_encrypted = ?, data_nonce = ?, updated_at = ?
+		WHERE id = ?
+	`, contact.Name, contact.Company, contact.Relationship, contact.EncryptedData,
+		contact.EncryptedNonce, time.Now().UnixMilli(), contact.ID)
+
+	if err != nil {
+		return fmt.Errorf("failed to update contact: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("contact not found: %s", contact.ID)
+	}
+
+	s.auditLogger.LogOperation(ctx, "contact_updated", map[string]interface{}{
+		"id":         contact.ID,
+		"updated_by": contact.CreatedBy,
+	})
+
+	return nil
+}
+
+// DeleteContact removes a contact
+func (s *SQLiteStore) DeleteContact(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`DELETE FROM contacts WHERE id = ?`, id)
+
+	if err != nil {
+		return fmt.Errorf("failed to delete contact: %w", err)
+	}
+
+	s.auditLogger.LogOperation(ctx, "contact_deleted", map[string]interface{}{
 		"id": id,
 	})
 

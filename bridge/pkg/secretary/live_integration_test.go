@@ -350,6 +350,26 @@ func (s *liveTestStore) DeleteNotificationChannel(ctx context.Context, id string
 	return nil
 }
 
+func (s *liveTestStore) CreateContact(ctx context.Context, contact *Contact) error {
+	return nil
+}
+
+func (s *liveTestStore) GetContact(ctx context.Context, id string) (*Contact, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s *liveTestStore) ListContacts(ctx context.Context, filter ContactFilter) ([]Contact, error) {
+	return nil, nil
+}
+
+func (s *liveTestStore) UpdateContact(ctx context.Context, contact *Contact) error {
+	return nil
+}
+
+func (s *liveTestStore) DeleteContact(ctx context.Context, id string) error {
+	return nil
+}
+
 func (s *liveTestStore) Close() error { return nil }
 
 type liveTestBrowserHandler struct{}

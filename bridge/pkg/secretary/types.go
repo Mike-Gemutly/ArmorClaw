@@ -413,6 +413,66 @@ type NotificationDispatcher interface {
 // Helper Functions
 //=============================================================================
 
+//=============================================================================
+// Rolodex Contact Types
+//=============================================================================
+
+// Contact represents a contact in the Rolodex
+type Contact struct {
+	// ID is unique identifier for this contact
+	ID string `json:"id"`
+
+	// Name is the contact's full name (searchable)
+	Name string `json:"name"`
+
+	// Company is the contact's organization (searchable)
+	Company string `json:"company,omitempty"`
+
+	// Relationship describes the relationship (e.g., "client", "vendor", "colleague") (searchable)
+	Relationship string `json:"relationship,omitempty"`
+
+	// EncryptedData contains sensitive contact details (phone, email, address, notes) as encrypted BLOB
+	// This field is stored encrypted in the database
+	EncryptedData []byte `json:"-"` // Never sent over JSON
+
+	// EncryptedNonce is the nonce used for encrypting EncryptedData
+	// This field is stored alongside encrypted data
+	EncryptedNonce []byte `json:"-"` // Never sent over JSON
+
+	// Phone is the contact's phone number (encrypted)
+	Phone string `json:"phone,omitempty"`
+
+	// Email is the contact's email address (encrypted)
+	Email string `json:"email,omitempty"`
+
+	// Address is the contact's physical address (encrypted)
+	Address string `json:"address,omitempty"`
+
+	// Notes contains additional information about the contact (encrypted)
+	Notes string `json:"notes,omitempty"`
+
+	// CreatedBy is Matrix user ID who created this contact
+	CreatedBy string `json:"created_by"`
+
+	// CreatedAt is when this contact was created
+	CreatedAt time.Time `json:"created_at"`
+
+	// UpdatedAt is when this contact was last modified
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ContactFilter filters contact listings
+type ContactFilter struct {
+	// Name filters by name (partial match)
+	Name string
+
+	// Company filters by company (partial match)
+	Company string
+
+	// Relationship filters by relationship (exact match)
+	Relationship string
+}
+
 // timeToMillis converts *time.Time to *int64 (Unix milliseconds) or nil
 func timeToMillis(t *time.Time) *int64 {
 	if t == nil {

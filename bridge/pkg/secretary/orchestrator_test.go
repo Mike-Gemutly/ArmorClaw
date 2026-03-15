@@ -176,6 +176,21 @@ func (s *orchestratorTestStore) UpdateNotificationChannel(ctx context.Context, c
 func (s *orchestratorTestStore) DeleteNotificationChannel(ctx context.Context, id string) error {
 	return nil
 }
+func (s *orchestratorTestStore) CreateContact(ctx context.Context, contact *Contact) error {
+	return nil
+}
+func (s *orchestratorTestStore) GetContact(ctx context.Context, id string) (*Contact, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *orchestratorTestStore) ListContacts(ctx context.Context, filter ContactFilter) ([]Contact, error) {
+	return nil, nil
+}
+func (s *orchestratorTestStore) UpdateContact(ctx context.Context, contact *Contact) error {
+	return nil
+}
+func (s *orchestratorTestStore) DeleteContact(ctx context.Context, id string) error {
+	return nil
+}
 func (s *orchestratorTestStore) Close() error {
 	return nil
 }
