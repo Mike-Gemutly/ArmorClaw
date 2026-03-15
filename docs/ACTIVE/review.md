@@ -4,7 +4,148 @@
 > **Last Updated:** 2026-03-15
 > **Status:** Active Reference
 
----
+
+## Phase 12: Skills System & Approvals (2026-03-15)
+
+### Overview
+
+Completed the remaining 20% of the Skills System and implemented missing Planned Features:
+- **WebDAV Skill** - File operations via WebDAV protocol
+- **Calendar Skill** - CalDAV-based calendar integration
+- **Rolodex Database** - Contact management with encrypted storage
+- **Three-Way Consent** - Matrix room-based approval workflow
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **WebDAV Skill** | Client for list/get/put/delete operations | `bridge/internal/skills/webdav.go` |
+| **Calendar Skill** | CalDAV client for calendar events | `bridge/internal/skills/calendar.go` |
+| **Rolodex Schema** | Contact tables with encryption | `bridge/pkg/secretary/schema.sql` |
+| **Rolodex Service** | CRUD for contacts with Matrix commands | `bridge/pkg/secretary/rolodex.go` |
+| **Three-Way Consent** | Matrix room approval workflow | `bridge/pkg/pii/three_way_consent.go` |
+
+### WebDAV Skill Implementation
+
+**File:** `bridge/internal/skills/webdav.go`
+
+```go
+// WebDAV operations using Go net/http
+type WebDAVParams struct {
+    URL         string `json:"url"`
+    Operation   string `json:"operation"` // list, get, put, delete
+    Username    string `json:"username,omitempty"`
+    Password    string `json:"password,omitempty"`
+    Content     []byte `json:"content,omitempty"`
+    ContentType string `json:"content_type,omitempty"`
+}
+```
+
+**Operations:**
+- `list` - PROPFIND to list directory contents
+- `get` - GET to download file contents
+- `put` - PUT to upload content
+- `delete` - DELETE to remove files
+
+**Security:** SSRF validation on all URLs (blocks private networks)
+
+### Calendar Skill (CalDAV) Implementation
+
+**File:** `bridge/internal/skills/calendar.go`
+
+```go
+// CalDAV operations using github.com/emersion/go-webdav/caldav
+type CalendarParams struct {
+    ServerURL   string `json:"server_url"`
+    Username    string `json:"username"`
+    Password    string `json:"password"`
+    Operation   string `json:"operation"` // list_calendars, create_event, get_events, delete_event
+    CalendarID  string `json:"calendar_id,omitempty"`
+    Event       *CalendarEvent `json:"event,omitempty"`
+}
+```
+
+**Features:**
+- List available calendars
+- Create events with conflict detection
+- Get events by date range
+- Delete events
+
+**Note:** Google Calendar API not implemented (CalDAV only per plan)
+
+### Rolodex Database Schema
+
+**File:** `bridge/pkg/secretary/schema.sql`
+
+**Tables:**
+- `user_contacts` - Contact entries (id, user_id, name, company, title)
+- `contact_details` - Encrypted contact data (BLOB with SQLCipher)
+- `contact_relationships` - User-agent relationships (doctor-patient, lawyer-client)
+
+**Encryption:** Sensitive fields encrypted using SQLCipher with existing keystore patterns
+
+### Three-Way Consent Matrix Integration
+
+**File:** `bridge/pkg/pii/three_way_consent.go`
+
+```go
+type ThreeWayConsentManager struct {
+    rooms       map[string]*ConsentRoom
+    byRoomID    map[string]*ConsentRoom
+    byToken     map[string]*ConsentRoom
+    hitlManager *HITLConsentManager
+    matrix      MatrixAdapter
+}
+```
+
+**Flow:**
+1. Doctor/Agent initiates consent request
+2. Matrix room created with user + agent + bridge participants
+3. User receives room invite with consent request details
+4. User approves/rejects via Matrix reactions or messages
+5. Approval propagates to HITL consent system
+
+**Approval Types:**
+- One-time: Single use, expires after 1 hour
+- Session: Valid for entire interaction
+- Standing: Pre-approved for specific forms
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No external WebDAV services | ✅ Self-hosted only |
+| No Google Calendar API | ✅ CalDAV only |
+| No favorite locations in rolodex | ✅ Not implemented |
+| No automatic approvals | ✅ Manual only |
+| No voice approval workflows | ✅ Not implemented |
+
+### Commits (2026-03-15)
+
+```
+ee027bc feat(skills): register WebDAV and Calendar skills
+e04c4c1 feat(consent): add Three-Way Consent Matrix integration
+9da4d6f feat(secretary): add Rolodex contact management system
+e7586e4 feat(skills): add Calendar skill with CalDAV support
+a9bb248 feat(skills): add WebDAV skill for file operations
+```
+
+### Quick Reference Commands
+
+```bash
+# Test WebDAV skill
+curl -X PROPFIND http://localhost:8080/webdav/
+
+# Test Calendar skill (requires CalDAV server)
+curl -X PROPFIND -u user:pass http://localhost:5232/
+
+# Run secretary tests
+cd bridge && go test ./pkg/secretary/... -v
+
+# Run PII/consent tests
+cd bridge && go test ./pkg/pii/... -v
+```
+
 
 ## Phase 11: Secretary Features Completion (2026-03-15)
 

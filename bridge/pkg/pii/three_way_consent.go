@@ -138,20 +138,27 @@ func (r *ConsentRoom) IsPending() bool {
 
 // ConsentRequestEvent is the content of a consent request Matrix event
 type ConsentRequestEvent struct {
-	RequestID   string   `json:"request_id"`
-	PIIFields   []string `json:"pii_fields"`
-	RequestedBy string   `json:"requested_by"`
-	Subject     string   `json:"subject"`
-	CreatedAt   string   `json:"created_at"`
+	RequestID       string   `json:"request_id"`
+	SkillID         string   `json:"skill_id"`
+	SkillName       string   `json:"skill_name"`
+	ProfileID       string   `json:"profile_id"`
+	RequestedFields []string `json:"requested_fields"`
+	RequiredFields  []string `json:"required_fields"`
+	ApprovalToken   string   `json:"approval_token"`
+	ExpiresAt       string   `json:"expires_at"`
 }
 
 // ConsentResponseEvent is the content of a consent response Matrix event
 type ConsentResponseEvent struct {
-	RequestID   string       `json:"request_id"`
-	Decision    ConsentState `json:"decision"`
-	Responder   string       `json:"responder,omitempty"`
-	RespondedAt string       `json:"responded_at"`
+	RequestID      string       `json:"request_id"`
+	State          ConsentState `json:"state"`
+	ApprovedBy     string       `json:"approved_by,omitempty"`
+	ApprovedFields []string     `json:"approved_fields,omitempty"`
+	RejectedBy     string       `json:"rejected_by,omitempty"`
+	Reason         string       `json:"reason,omitempty"`
+	Timestamp      string       `json:"timestamp"`
 }
+
 
 // MatrixAdapter interface for Matrix operations needed by three-way consent
 type MatrixAdapter interface {
