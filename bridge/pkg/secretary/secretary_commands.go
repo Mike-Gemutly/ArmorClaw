@@ -44,6 +44,14 @@ type RolodexServiceInterface interface {
 	SearchContacts(ctx context.Context, query string) ([]Contact, error)
 }
 
+type WebDAVServiceInterface interface {
+	ExecuteWebDAV(ctx context.Context, params map[string]interface{}) (interface{}, error)
+}
+
+type CalendarServiceInterface interface {
+	ExecuteCalendar(ctx context.Context, params map[string]interface{}) (interface{}, error)
+}
+
 //=============================================================================
 // Secretary Command Handler
 //=============================================================================
@@ -60,6 +68,8 @@ type SecretaryCommandHandler struct {
 	trustEngine    TrustedWorkflowEngineInterface
 	approvalEngine *ApprovalEngineImpl
 	rolodex        RolodexServiceInterface
+	webdav         WebDAVServiceInterface
+	calendar       CalendarServiceInterface
 }
 
 type SecretaryCommandHandlerConfig struct {
@@ -74,6 +84,8 @@ type SecretaryCommandHandlerConfig struct {
 	TrustEngine    TrustedWorkflowEngineInterface
 	ApprovalEngine *ApprovalEngineImpl
 	Rolodex        RolodexServiceInterface
+	WebDAV         WebDAVServiceInterface
+	Calendar       CalendarServiceInterface
 }
 
 func NewSecretaryCommandHandler(cfg SecretaryCommandHandlerConfig) *SecretaryCommandHandler {
@@ -87,12 +99,14 @@ func NewSecretaryCommandHandler(cfg SecretaryCommandHandlerConfig) *SecretaryCom
 		orchestrator:   cfg.Orchestrator,
 		studio:         cfg.Studio,
 		matrix:         cfg.Matrix,
-		prefix:         prefix,
+		prefix:         cfg.Prefix,
 		learnWebsite:   cfg.LearnWebsite,
 		blindFill:      cfg.BlindFill,
 		trustEngine:    cfg.TrustEngine,
 		approvalEngine: cfg.ApprovalEngine,
 		rolodex:        cfg.Rolodex,
+		webdav:         cfg.WebDAV,
+		calendar:       cfg.Calendar,
 	}
 }
 
@@ -208,6 +222,52 @@ func (h *SecretaryCommandHandler) HandleMessage(ctx context.Context, roomID, use
 				}
 			}
 		}
+	case "webdav":
+		if len(args) >= 1 {
+			switch args[0] {
+			case "list":
+				return true, h.handleWebDAVList(ctx, roomID, args[1:])
+			case "get":
+				if len(args) >= 2 {
+					return true, h.handleWebDAVGet(ctx, roomID, args[1:])
+				}
+			case "put":
+				if len(args) >= 2 {
+					return true, h.handleWebDAVPut(ctx, roomID, args[1:])
+				}
+			case "delete":
+				if len(args) >= 2 {
+					return true, h.handleWebDAVDelete(ctx, roomID, args[1:])
+				}
+			}
+		}
+	case "calendar":
+		if len(args) >= 1 {
+			switch args[0] {
+			case "list":
+				return true, h.handleCalendarList(ctx, roomID, args[1:])
+			case "create":
+				if len(args) >= 2 {
+					return true, h.handleCalendarCreate(ctx, roomID, args[1:])
+				}
+			case "get_events":
+				if len(args) >= 2 {
+					return true, h.handleCalendarGetEvents(ctx, roomID, args[1:])
+				}
+			case "get_event":
+				if len(args) >= 2 {
+					return true, h.handleCalendarGetEvent(ctx, roomID, args[1:])
+				}
+			case "update":
+				if len(args) >= 2 {
+					return true, h.handleCalendarUpdate(ctx, roomID, args[1:])
+				}
+			case "delete":
+				if len(args) >= 2 {
+					return true, h.handleCalendarDelete(ctx, roomID, args[1:])
+				}
+			}
+		}
 	default:
 		return true, h.sendHelp(ctx, roomID)
 	}
@@ -261,6 +321,30 @@ func (h *SecretaryCommandHandler) sendHelp(ctx context.Context, roomID string) e
   ` + h.prefix + `secretary contact create "John Doe" company="Acme Inc" relationship="client" phone="555-1234" email="john@example.com"
   ` + h.prefix + `secretary contact list company="Acme"
   ` + h.prefix + `secretary contact search "John"
+
+**WebDAV:**
+` + h.prefix + `secretary webdav list <url> [username=...] [password=...] - List directory contents
+` + h.prefix + `secretary webdav get <url> [username=...] [password=...] - Get file content
+` + h.prefix + `secretary webdav put <url> <content> [username=...] [password=...] [content_type=...] - Upload file
+` + h.prefix + `secretary webdav delete <url> [username=...] [password=...] - Delete file
+
+**Examples:**
+  ` + h.prefix + `secretary webdav list http://localhost:8080/
+  ` + h.prefix + `secretary webdav get http://localhost:8080/test.txt username=user password=pass
+  ` + h.prefix + `secretary webdav put http://localhost:8080/test.txt "Hello World" content_type=text/plain
+
+**Calendar:**
+` + h.prefix + `secretary calendar list <calendar_url> [username=...] [password=...] - List calendars
+` + h.prefix + `secretary calendar create <title> start="YYYY-MM-DDTHH:MM:SSZ" end="YYYY-MM-DDTHH:MM:SSZ" [calendar_url=...] [description=...] [location=...] [attendees=...] - Create event
+` + h.prefix + `secretary calendar get_events <calendar_url> [username=...] [password=...] - Get all events
+` + h.prefix + `secretary calendar get_event <calendar_url> uid=<event_uid> [username=...] [password=...] - Get specific event
+` + h.prefix + `secretary calendar update <calendar_url> uid=<event_uid> [start="..."] [end="..."] [title=...] [description=...] [location=...] - Update event
+` + h.prefix + `secretary calendar delete <calendar_url> uid=<event_uid> [username=...] [password=...] - Delete event
+
+**Examples:**
+  ` + h.prefix + `secretary calendar list http://localhost:8080/calendars/default/
+  ` + h.prefix + `secretary calendar create "Team Meeting" start="2026-03-20T10:00:00Z" end="2026-03-20T11:00:00Z" location="Room 101"
+  ` + h.prefix + `secretary calendar update http://localhost:8080/calendars/default/ uid="cal-12345" start="2026-03-20T12:00:00Z"
 `
 	return h.matrix.SendMessage(ctx, roomID, help)
 }
@@ -1036,6 +1120,573 @@ func (h *SecretaryCommandHandler) handleSearchContacts(ctx context.Context, room
 		}
 		if contact.Email != "" {
 			sb.WriteString(fmt.Sprintf("  Email: %s\n", contact.Email))
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleWebDAVList(ctx context.Context, roomID string, args []string) error {
+	if h.webdav == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav list <url> [username=...] [password=...]")
+	}
+
+	url := args[0]
+	params := map[string]interface{}{
+		"operation": "list",
+		"url":       url,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.webdav.ExecuteWebDAV(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list WebDAV directory: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ WebDAV Directory Listing\n\n")
+	sb.WriteString(fmt.Sprintf("**URL:** %s\n\n", url))
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if entries, ok := resultMap["entries"].([]interface{}); ok && len(entries) > 0 {
+			sb.WriteString(fmt.Sprintf("**%d items:**\n\n", len(entries)))
+			for _, entry := range entries {
+				if entryMap, ok := entry.(map[string]interface{}); ok {
+					name, _ := entryMap["name"].(string)
+					isDir, _ := entryMap["is_directory"].(bool)
+					icon := "📄"
+					if isDir {
+						icon = "📁"
+					}
+					sb.WriteString(fmt.Sprintf("  %s %s\n", icon, name))
+				}
+			}
+		} else {
+			sb.WriteString("**Empty directory**\n")
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleWebDAVGet(ctx context.Context, roomID string, args []string) error {
+	if h.webdav == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav get <url> [username=...] [password=...]")
+	}
+
+	url := args[0]
+	params := map[string]interface{}{
+		"operation": "get",
+		"url":       url,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.webdav.ExecuteWebDAV(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get file from WebDAV: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ File Retrieved\n\n")
+	sb.WriteString(fmt.Sprintf("**URL:** %s\n\n", url))
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if content, ok := resultMap["content"].([]byte); ok {
+			sb.WriteString("**Content:**\n```\n")
+			sb.WriteString(string(content))
+			sb.WriteString("\n```")
+		} else {
+			sb.WriteString("**No content**\n")
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleWebDAVPut(ctx context.Context, roomID string, args []string) error {
+	if h.webdav == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+	}
+
+	if len(args) < 2 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav put <url> <content> [username=...] [password=...] [content_type=...]")
+	}
+
+	url := args[0]
+	content := args[1]
+	params := map[string]interface{}{
+		"operation":      "put",
+		"url":            url,
+		"content":        []byte(content),
+		"content_length": int64(len(content)),
+	}
+
+	for _, arg := range args[2:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			case "content_type":
+				params["content_type"] = value
+			}
+		}
+	}
+
+	result, err := h.webdav.ExecuteWebDAV(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to upload file to WebDAV: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ File Uploaded\n\n")
+	sb.WriteString(fmt.Sprintf("**URL:** %s\n", url))
+	sb.WriteString(fmt.Sprintf("**Size:** %d bytes\n\n", len(content)))
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if newURL, ok := resultMap["new_url"].(string); ok {
+			sb.WriteString(fmt.Sprintf("**New URL:** %s\n", newURL))
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleWebDAVDelete(ctx context.Context, roomID string, args []string) error {
+	if h.webdav == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav delete <url> [username=...] [password=...]")
+	}
+
+	url := args[0]
+	params := map[string]interface{}{
+		"operation": "delete",
+		"url":       url,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	_, err := h.webdav.ExecuteWebDAV(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete file from WebDAV: %v", err))
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ File deleted\n\n**URL:** %s", url))
+}
+
+func (h *SecretaryCommandHandler) handleCalendarList(ctx context.Context, roomID string, args []string) error {
+	if h.calendar == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar list <calendar_url> [username=...] [password=...]")
+	}
+
+	calendarURL := args[0]
+	params := map[string]interface{}{
+		"operation":    "list_calendars",
+		"calendar_url": calendarURL,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.calendar.ExecuteCalendar(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list calendars: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ Calendars Listed\n\n")
+	sb.WriteString(fmt.Sprintf("**Calendar URL:** %s\n\n", calendarURL))
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if events, ok := resultMap["events"].([]interface{}); ok && len(events) > 0 {
+			sb.WriteString(fmt.Sprintf("**%d events found:**\n\n", len(events)))
+			for _, event := range events {
+				if eventMap, ok := event.(map[string]interface{}); ok {
+					id, _ := eventMap["id"].(string)
+					title, _ := eventMap["title"].(string)
+					sb.WriteString(fmt.Sprintf("  • **%s** (%s)\n", title, id))
+				}
+			}
+		} else {
+			sb.WriteString("**No events found**\n")
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleCalendarCreate(ctx context.Context, roomID string, args []string) error {
+	if h.calendar == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+	}
+
+	if len(args) < 4 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar create <title> start=\"<time>\" end=\"<time>\" [calendar_url=...] [username=...] [password=...] [description=...] [location=...] [attendees=...]")
+	}
+
+	title := args[0]
+	params := map[string]interface{}{
+		"operation":    "create_event",
+		"title":        title,
+		"calendar_url": "http://localhost:8080/calendars/default/",
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "start", "start_time":
+				params["start_time"] = value
+			case "end", "end_time":
+				params["end_time"] = value
+			case "calendar_url":
+				params["calendar_url"] = value
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			case "description":
+				params["description"] = value
+			case "location":
+				params["location"] = value
+			case "attendees":
+				attendees := strings.Split(value, ",")
+				params["attendees"] = attendees
+			}
+		}
+	}
+
+	result, err := h.calendar.ExecuteCalendar(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create calendar event: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ Event Created\n\n")
+	sb.WriteString(fmt.Sprintf("**Title:** %s\n", title))
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if eventID, ok := resultMap["event_id"].(string); ok {
+			sb.WriteString(fmt.Sprintf("**Event ID:** %s\n", eventID))
+		}
+		if conflicts, ok := resultMap["conflicts_detected"].(bool); ok && conflicts {
+			sb.WriteString("\n⚠️ **Conflict detected:** There are overlapping events.\n")
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleCalendarGetEvents(ctx context.Context, roomID string, args []string) error {
+	if h.calendar == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar get_events <calendar_url> [username=...] [password=...]")
+	}
+
+	calendarURL := args[0]
+	params := map[string]interface{}{
+		"operation":    "get_events",
+		"calendar_url": calendarURL,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.calendar.ExecuteCalendar(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get calendar events: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ Events Retrieved\n\n")
+	sb.WriteString(fmt.Sprintf("**Calendar URL:** %s\n\n", calendarURL))
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if events, ok := resultMap["events"].([]interface{}); ok && len(events) > 0 {
+			sb.WriteString(fmt.Sprintf("**%d events:**\n\n", len(events)))
+			for _, event := range events {
+				if eventMap, ok := event.(map[string]interface{}); ok {
+					id, _ := eventMap["id"].(string)
+					title, _ := eventMap["title"].(string)
+					startTime, _ := eventMap["start_time"].(string)
+					endTime, _ := eventMap["end_time"].(string)
+					location, _ := eventMap["location"].(string)
+					sb.WriteString(fmt.Sprintf("  • **%s**\n", title))
+					sb.WriteString(fmt.Sprintf("    ID: %s\n", id))
+					if startTime != "" {
+						sb.WriteString(fmt.Sprintf("    Start: %s\n", startTime))
+					}
+					if endTime != "" {
+						sb.WriteString(fmt.Sprintf("    End: %s\n", endTime))
+					}
+					if location != "" {
+						sb.WriteString(fmt.Sprintf("    Location: %s\n", location))
+					}
+					sb.WriteString("\n")
+				}
+			}
+		} else {
+			sb.WriteString("**No events found**\n")
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleCalendarGetEvent(ctx context.Context, roomID string, args []string) error {
+	if h.calendar == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+	}
+
+	if len(args) == 0 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar get_event <calendar_url> uid=<event_uid> [username=...] [password=...]")
+	}
+
+	calendarURL := args[0]
+	params := map[string]interface{}{
+		"operation":    "get_event",
+		"calendar_url": calendarURL,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "uid":
+				params["event_data"] = map[string]interface{}{"uid": value}
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.calendar.ExecuteCalendar(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get event: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ Event Retrieved\n\n")
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if events, ok := resultMap["events"].([]interface{}); ok && len(events) > 0 {
+			if eventMap, ok := events[0].(map[string]interface{}); ok {
+				title, _ := eventMap["title"].(string)
+				startTime, _ := eventMap["start_time"].(string)
+				endTime, _ := eventMap["end_time"].(string)
+				location, _ := eventMap["location"].(string)
+				description, _ := eventMap["description"].(string)
+
+				sb.WriteString(fmt.Sprintf("**Title:** %s\n\n", title))
+				if startTime != "" {
+					sb.WriteString(fmt.Sprintf("**Start:** %s\n", startTime))
+				}
+				if endTime != "" {
+					sb.WriteString(fmt.Sprintf("**End:** %s\n", endTime))
+				}
+				if location != "" {
+					sb.WriteString(fmt.Sprintf("**Location:** %s\n", location))
+				}
+				if description != "" {
+					sb.WriteString(fmt.Sprintf("\n**Description:**\n%s\n", description))
+				}
+			}
+		} else {
+			sb.WriteString("**Event not found**\n")
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleCalendarUpdate(ctx context.Context, roomID string, args []string) error {
+	if h.calendar == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+	}
+
+	if len(args) < 2 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar update <calendar_url> uid=<event_uid> [start=\"...\"] [end=\"...\"] [title=...] [description=...] [location=...] [username=...] [password=...]")
+	}
+
+	calendarURL := args[0]
+	params := map[string]interface{}{
+		"operation":    "update_event",
+		"calendar_url": calendarURL,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "uid":
+				params["event_data"] = map[string]interface{}{"uid": value}
+			case "start", "start_time":
+				params["start_time"] = value
+			case "end", "end_time":
+				params["end_time"] = value
+			case "title":
+				params["title"] = value
+			case "description":
+				params["description"] = value
+			case "location":
+				params["location"] = value
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.calendar.ExecuteCalendar(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to update event: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ Event Updated\n\n")
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if eventID, ok := resultMap["event_id"].(string); ok {
+			sb.WriteString(fmt.Sprintf("**Event ID:** %s\n", eventID))
+		}
+	}
+
+	return h.matrix.SendMessage(ctx, roomID, sb.String())
+}
+
+func (h *SecretaryCommandHandler) handleCalendarDelete(ctx context.Context, roomID string, args []string) error {
+	if h.calendar == nil {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+	}
+
+	if len(args) < 2 {
+		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar delete <calendar_url> uid=<event_uid> [username=...] [password=...]")
+	}
+
+	calendarURL := args[0]
+	params := map[string]interface{}{
+		"operation":    "delete_event",
+		"calendar_url": calendarURL,
+	}
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			switch key {
+			case "uid":
+				params["event_data"] = map[string]interface{}{"uid": value}
+			case "username":
+				params["username"] = value
+			case "password":
+				params["password"] = value
+			}
+		}
+	}
+
+	result, err := h.calendar.ExecuteCalendar(ctx, params)
+	if err != nil {
+		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete event: %v", err))
+	}
+
+	var sb strings.Builder
+	sb.WriteString("✅ Event Deleted\n\n")
+
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if eventID, ok := resultMap["event_id"].(string); ok {
+			sb.WriteString(fmt.Sprintf("**Event ID:** %s\n", eventID))
 		}
 	}
 
