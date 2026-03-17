@@ -36,9 +36,11 @@ import (
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/notification"
+	"github.com/armorclaw/bridge/pkg/providers"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/qr"
 	"github.com/armorclaw/bridge/pkg/rpc"
+	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/turn"
@@ -1787,6 +1789,60 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	log.Println("Keystore initialized with hardware-derived master key")
 
+	// Initialize z.ai provider configuration
+	log.Println("Configuring z.ai provider...")
+	providersDir := "/etc/armorclaw"
+	if err := os.MkdirAll(providersDir, 0755); err != nil {
+		log.Printf("Warning: Failed to create providers directory: %v", err)
+	} else {
+		providersPath := filepath.Join(providersDir, "providers.json")
+		registry, err := providers.LoadRegistry(providersPath)
+		if err != nil {
+			log.Printf("Warning: Failed to load provider registry: %v", err)
+			// Use embedded registry
+			registry = &providers.EmbeddedRegistry
+		}
+
+		// Check if z.ai provider exists with correct endpoint
+		zaiProvider, found := registry.GetProviderByID("zhipu")
+		if !found || zaiProvider.BaseURL != "https://api.z.ai/v1" {
+			log.Println("Updating z.ai provider configuration...")
+			// Create updated registry with z.ai endpoint
+			updatedProviders := []providers.Provider{
+				{ID: "openai", Name: "OpenAI", Protocol: "openai", BaseURL: "https://api.openai.com/v1"},
+				{ID: "anthropic", Name: "Anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
+				{ID: "google", Name: "Google", Protocol: "openai", BaseURL: "https://generativelanguage.googleapis.com/v1"},
+				{ID: "xai", Name: "xAI", Protocol: "openai", BaseURL: "https://api.x.ai/v1"},
+				{ID: "openrouter", Name: "OpenRouter", Protocol: "openai", BaseURL: "https://openrouter.ai/api/v1"},
+				{ID: "zhipu", Name: "Zhipu AI (Z AI)", Protocol: "openai", BaseURL: "https://api.z.ai/v1", Aliases: []string{"zai", "glm"}},
+				{ID: "deepseek", Name: "DeepSeek", Protocol: "openai", BaseURL: "https://api.deepseek.com/v1"},
+				{ID: "moonshot", Name: "Moonshot AI", Protocol: "openai", BaseURL: "https://api.moonshot.ai/v1"},
+				{ID: "nvidia", Name: "NVIDIA NIM", Protocol: "openai", BaseURL: "https://integrate.api.nvidia.com/v1"},
+				{ID: "groq", Name: "Groq", Protocol: "openai", BaseURL: "https://api.groq.com/openai/v1"},
+				{ID: "cloudflare", Name: "Cloudflare", Protocol: "openai", BaseURL: "https://gateway.ai.cloudflare.com/v1"},
+				{ID: "ollama", Name: "Ollama (Local)", Protocol: "openai", BaseURL: "http://localhost:11434/v1"},
+			}
+
+			updatedRegistry := providers.Registry{Providers: updatedProviders}
+			data, err := json.MarshalIndent(updatedRegistry, "", "  ")
+			if err != nil {
+				log.Printf("Warning: Failed to marshal provider registry: %v", err)
+			} else if err := os.WriteFile(providersPath, data, 0644); err != nil {
+				log.Printf("Warning: Failed to write provider registry: %v", err)
+			} else {
+				log.Printf("z.ai provider configured at: %s", providersPath)
+			}
+		} else {
+			log.Println("z.ai provider already configured correctly")
+		}
+	}
+
+	// API keys are read from environment variables at runtime
+	// Set ZAI_API_KEY in your shell profile (.zshrc) before starting the bridge
+	if apiKey := os.Getenv("ZAI_API_KEY"); apiKey != "" {
+		log.Println("ZAI_API_KEY found in environment - will be used for zhipu provider")
+	}
+
 	// Initialize error handling system
 	log.Println("Initializing error handling system...")
 	errorCfg := cfg.ToErrorSystemConfig()
@@ -2167,6 +2223,7 @@ func runBridgeServer(cliCfg cliConfig) {
 		matrixAdapter, err = adapter.New(adapter.Config{
 			HomeserverURL: cfg.Matrix.HomeserverURL,
 			DeviceID:      "armorclaw-bridge",
+			Password:      cfg.Matrix.Password,
 		})
 		if err != nil {
 			log.Printf("Warning: Failed to create matrix adapter: %v", err)
@@ -2306,6 +2363,93 @@ func runBridgeServer(cliCfg cliConfig) {
 		studioService = nil
 	} else {
 		log.Println("Studio service initialized")
+	}
+
+	// Initialize Rolodex service for contact management
+	log.Println("Initializing Rolodex service...")
+	rolodexStore, err := secretary.NewStore(secretary.StoreConfig{
+		Path:   "/var/lib/armorclaw/rolodex.db",
+		Logger: nil,
+	})
+	if err != nil {
+		log.Printf("Warning: Failed to initialize Rolodex store: %v", err)
+		rolodexStore = nil
+	}
+
+	var rolodexService *secretary.RolodexService
+	if rolodexStore != nil {
+		defer rolodexStore.Close()
+		rolodexService, err = secretary.NewRolodexService(secretary.RolodexConfig{
+			Store:    rolodexStore,
+			Keystore: ks,
+			Logger:   nil,
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Rolodex service: %v", err)
+			rolodexService = nil
+		} else {
+			log.Println("Rolodex service initialized")
+		}
+	}
+
+	// Initialize WebDAV service
+	log.Println("Initializing WebDAV service...")
+	webdavService := secretary.NewWebDAVService()
+	log.Println("WebDAV service initialized")
+
+	// Initialize Calendar service
+	log.Println("Initializing Calendar service...")
+	calendarService := secretary.NewCalendarService()
+	log.Println("Calendar service initialized")
+
+	// Initialize Approval Engine
+	// This comment marks the start of the Approval Engine initialization block,
+	// which is a significant initialization step alongside other services.
+	var approvalEngine *secretary.ApprovalEngineImpl
+	if rolodexStore != nil {
+		approvalEngine, err = secretary.NewApprovalEngine(secretary.ApprovalEngineConfig{
+			Store:  rolodexStore,
+			Logger: nil,
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Approval engine: %v", err)
+			approvalEngine = nil
+		} else {
+			log.Println("Approval engine initialized")
+		}
+	}
+
+	// Initialize Trusted Workflow Engine
+	var trustEngine *secretary.TrustedWorkflowEngine
+	if rolodexStore != nil {
+		trustEngine, err = secretary.NewTrustedWorkflowEngine(secretary.TrustedWorkflowConfig{
+			Store:  rolodexStore,
+			Logger: nil,
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Trust engine: %v", err)
+			trustEngine = nil
+		} else {
+			log.Println("Trust engine initialized")
+		}
+	}
+
+	// Wire secretary command handler to Matrix adapter
+	if matrixAdapter != nil {
+		secretaryHandler := secretary.NewSecretaryCommandHandler(secretary.SecretaryCommandHandlerConfig{
+			Store:          nil,
+			Orchestrator:   nil,
+			Studio:         nil,
+			Matrix:         secretary.WrapMatrixAdapter(matrixAdapter),
+			Prefix:         "!",
+			Rolodex:        rolodexService,
+			WebDAV:         webdavService,
+			Calendar:       calendarService,
+			ApprovalEngine: approvalEngine,
+			TrustEngine:    trustEngine,
+		})
+		matrixAdapter.SetStudioCommandHandler(secretaryHandler)
+		log.Println("Secretary command handler wired to Matrix adapter")
 	}
 
 	// Log RPC dependency status

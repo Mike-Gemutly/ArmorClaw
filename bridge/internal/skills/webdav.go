@@ -433,12 +433,16 @@ func ValidateWebDAVParams(params *WebDAVParams) error {
 
 	// Validate operation is one of the supported operations
 	supportedOperations := []string{"list", "get", "put", "delete"}
+	validOperation := false
 	for _, op := range supportedOperations {
 		if params.Operation == op {
+			validOperation = true
 			break
 		}
 	}
-	return fmt.Errorf("operation must be one of: %s", strings.Join(supportedOperations, ", "))
+	if !validOperation {
+		return fmt.Errorf("operation must be one of: %s", strings.Join(supportedOperations, ", "))
+	}
 
 	// For PUT operation, validate content is provided
 	if params.Operation == "put" {

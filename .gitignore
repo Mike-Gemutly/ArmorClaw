@@ -87,7 +87,7 @@ node_modules/
 docker-volumes/
 
 # Claude Code memory (local only)
-C:\Users\Micha\.claude\projects\
+# Windows path removed - causes ripgrep parsing error
 
 # OpenCode agent workspace
 .opencode/
@@ -95,6 +95,10 @@ C:\Users\Micha\.claude\projects\
 # Bridge build artifacts
 bridge/build/
 bridge/armorclaw-bridge
+bridge/bridge
+
+# Sisyphus working files
+.sisyphus/
 
 # Local deployment artifacts
 *.tar.gz

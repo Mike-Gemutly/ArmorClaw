@@ -33,14 +33,16 @@ type EventPublisher interface {
 type MatrixAdapter struct {
 	homeserverURL    string
 	userID           string
+	password         string
 	accessToken      string
-	refreshToken     string // P1-HIGH-1: Refresh token for long-lived sessions
+	refreshToken     string
 	deviceID         string
 	syncToken        string
 	trustedSenders   []string
 	trustedRooms     []string
 	rejectUntrusted  bool
 	httpClient       *http.Client
+	syncClient       *http.Client
 	eventQueue       chan *MatrixEvent
 	mu               sync.RWMutex
 	tokenMutex       sync.Mutex // Prevents race conditions during token refresh
@@ -174,13 +176,17 @@ func New(cfg Config) (*MatrixAdapter, error) {
 	return &MatrixAdapter{
 		homeserverURL:   cfg.HomeserverURL,
 		deviceID:        cfg.DeviceID,
+		password:        cfg.Password,
 		trustedSenders:  cfg.TrustedSenders,
 		trustedRooms:    cfg.TrustedRooms,
 		rejectUntrusted: cfg.RejectUntrusted,
-		refreshToken:    cfg.RefreshToken, // P1-HIGH-1: Initialize refresh token
+		refreshToken:    cfg.RefreshToken,
 		minTrustLevel:   minTrustLevel,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+		},
+		syncClient: &http.Client{
+			Timeout: 90 * time.Second,
 		},
 		eventQueue:  make(chan *MatrixEvent, 100),
 		ctx:         ctx,
@@ -333,6 +339,8 @@ func (m *MatrixAdapter) SendMessage(roomID, message, msgType string) (string, er
 		return "", err
 	}
 
+	fmt.Printf("[matrix] SendMessage: room=%s body=%s\n", roomID, string(body))
+
 	// Generate transaction ID
 	txnID := fmt.Sprintf("m%d", time.Now().UnixNano())
 
@@ -348,7 +356,7 @@ func (m *MatrixAdapter) SendMessage(roomID, message, msgType string) (string, er
 	}
 
 	u.Path = fmt.Sprintf("/_matrix/client/v3/rooms/%s/send/m.room.message/%s",
-		url.PathEscape(roomID), txnID)
+		roomID, txnID)
 
 	req, err := http.NewRequestWithContext(
 		m.ctx,
@@ -412,10 +420,12 @@ func (m *MatrixAdapter) SendMessage(roomID, message, msgType string) (string, er
 
 // Sync performs a long-poll sync with the homeserver
 func (m *MatrixAdapter) Sync(timeout int) error {
+	fmt.Printf("[matrix] Sync: starting sync timeout=%d\n", timeout)
 	matrixTracker.Event("sync", map[string]any{"timeout": timeout})
 
 	// P1-HIGH-1: Ensure token is valid before syncing
 	if err := m.ensureValidToken(); err != nil {
+		fmt.Printf("[matrix] Sync: token validation failed: %v\n", err)
 		err := errsys.NewBuilder("MAT-002").
 			Wrap(fmt.Errorf("token validation failed: %w", err)).
 			WithFunction("Sync").
@@ -491,7 +501,7 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := m.httpClient.Do(req)
+	resp, err := m.syncClient.Do(req)
 	if err != nil {
 		err := errsys.NewBuilder("MAT-003").
 			Wrap(fmt.Errorf("sync request failed: %w", err)).
@@ -505,6 +515,11 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusUnauthorized {
+			m.mu.Lock()
+			m.syncToken = ""
+			m.mu.Unlock()
+		}
 		err := errsys.NewBuilder("MAT-003").
 			Wrap(fmt.Errorf("sync failed: status %d, response: %s", resp.StatusCode, string(body))).
 			WithFunction("Sync").
@@ -524,6 +539,8 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 		matrixTracker.Failure("sync", err, map[string]any{"reason": "decode_failed"})
 		return err
 	}
+
+	fmt.Printf("[matrix] Sync: decoded response next_batch=%s rooms_count=%d\n", syncResp.NextBatch, len(syncResp.Rooms.Join))
 
 	// Process events and queue them
 	eventsProcessed := m.processEvents(&syncResp)
@@ -549,6 +566,7 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 		"events_processed": eventsProcessed,
 		"rooms_active":     len(syncResp.Rooms.Join),
 	})
+	fmt.Printf("[matrix] Sync: complete next_batch=%s events=%d rooms=%d\n", syncResp.NextBatch, eventsProcessed, len(syncResp.Rooms.Join))
 	return nil
 }
 
@@ -556,10 +574,15 @@ func (m *MatrixAdapter) Sync(timeout int) error {
 func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 	processed := 0
 	for roomID, room := range syncResp.Rooms.Join {
+		eventCount := len(room.Timeline.Events)
+		if eventCount > 0 {
+			fmt.Printf("[matrix] processEvents: room=%s event_count=%d\n", roomID, eventCount)
+		}
 		for _, rawEvent := range room.Timeline.Events {
 			processed++
 			var event MatrixEvent
 			if err := json.Unmarshal(rawEvent, &event); err != nil {
+				fmt.Printf("[matrix] processEvents: unmarshal error: %v\n", err)
 				continue
 			}
 
@@ -685,11 +708,14 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 
 				if studioHandler != nil {
 					if body, ok := event.Content["body"].(string); ok {
+						fmt.Printf("[matrix] calling studioHandler: room=%s sender=%s body=%s\n", roomID, event.Sender, body)
 						if studioHandler.HandleMatrixMessage(context.Background(), roomID, event.Sender, event.EventID, body) {
-							// Studio handled the command, skip queuing
+							fmt.Printf("[matrix] event handled by studioHandler: event_id=%s\n", event.EventID)
 							continue
 						}
 					}
+				} else {
+					fmt.Printf("[matrix] WARNING: studioHandler is nil\n")
 				}
 
 				select {
@@ -1417,18 +1443,40 @@ func (m *MatrixAdapter) ensureValidToken() error {
 		// Try to refresh using refresh token if available
 		m.mu.RLock()
 		hasRefreshToken := m.refreshToken != ""
+		password := m.password
+		username := m.userID
 		m.mu.RUnlock()
 
 		if hasRefreshToken {
 			if err := m.RefreshAccessToken(); err != nil {
+				// Refresh failed, try password login as fallback
+				if password != "" && username != "" {
+					if loginErr := m.Login(username, password); loginErr != nil {
+						return errsys.NewBuilder("MAT-002").
+							Wrap(fmt.Errorf("failed to refresh expired token and password login also failed: refresh=%w, login=%w", err, loginErr)).
+							WithFunction("ensureValidToken").
+							Build()
+					}
+					return nil
+				}
 				return errsys.NewBuilder("MAT-002").
 					Wrap(fmt.Errorf("failed to refresh expired token: %w", err)).
 					WithFunction("ensureValidToken").
 					Build()
 			}
 		} else {
+			// No refresh token, try password login
+			if password != "" && username != "" {
+				if err := m.Login(username, password); err != nil {
+					return errsys.NewBuilder("MAT-002").
+						Wrap(fmt.Errorf("access token expired, password login failed: %w", err)).
+						WithFunction("ensureValidToken").
+						Build()
+				}
+				return nil
+			}
 			return errsys.NewBuilder("MAT-002").
-				Wrap(fmt.Errorf("access token expired and no refresh token available")).
+				Wrap(fmt.Errorf("access token expired and no password available for re-login")).
 				WithFunction("ensureValidToken").
 				Build()
 		}

@@ -95,3 +95,53 @@ Six operational gaps were identified during the final status review. All were re
 **Issue:** Three Kotlin screens (`MigrationScreen.kt`, `KeyBackupScreen.kt`, `BridgeVerificationScreen.kt`) gained `BridgeApi` calls with `withContext(Dispatchers.IO)` and `viewModelScope.launch {}`, but the `kotlinx.coroutines.launch` import was never added. `KeyBackupScreen.kt` additionally used `Color(...)` without importing `androidx.compose.ui.graphics.Color`.
 **Fix:** Added missing `launch` import to all three files and `Color` import to `KeyBackupScreen.kt`.
 **Takeaway:** When replacing stub implementations (`delay()`) with real coroutine-based API calls, always audit the import block. The stub may have compiled without coroutine builder imports because `delay()` is a suspend function, but `launch {}` is an extension function that requires an explicit import. Similarly, check for unqualified type references introduced in new code.
+
+## 2026-03-16: E2EE Implementation Research
+
+### Context
+End-to-end encryption (E2EE) for Matrix messages was researched to determine feasibility and effort for implementation.
+
+### Lesson 15: E2EE is a Major Feature, Not a Quick Fix
+**Issue:** E2EE appeared to be a simple "add encryption" task.
+**Reality:** Full E2EE implementation requires:
+- Cryptographic library integration (mautrix-go/crypto)
+- Olm/Megolm session management
+- Device key management and verification
+- Cross-signing support
+- Key backup/restore flows
+- Integration with existing sync flow
+
+**Effort Estimate:**
+- Basic encrypt/decrypt: 2-3 weeks
+- Device verification: 1-2 weeks
+- Cross-signing: 1-2 weeks
+- Key backup/restore: 1 week
+- **Total: 4-8 weeks**
+
+**Recommendation:** Use `maunium.net/go/mautrix/crypto` with pure Go backend (`-tags goolm`) for production.
+
+### Lesson 16: Current System Works Without E2EE
+**Issue:** Concern that messages are sent in plaintext.
+**Reality:**
+- Messages are sent over HTTPS (transport encryption)
+- Device ID `armorclaw-bridge` is hardcoded and persists
+- No session state to manage without E2EE
+- System is production-ready without E2EE
+
+**Takeaway:** E2EE is a **roadmap item**, not a deployment blocker. The current system provides adequate security for most use cases via HTTPS transport encryption.
+
+### Lesson 17: Library Selection Matters
+**Research Findings:**
+| Library | Stars | License | CGO | Status |
+|---------|-------|---------|-----|--------|
+| mautrix-go | 601 | MPL-2.0 | Optional | Active |
+| gomuks | 1609 | AGPL-3.0 | Optional | Active |
+| go-olm | 8 | Apache 2.0 | Yes | Abandoned |
+
+**Recommendation:** Use mautrix-go with goolm backend (pure Go, no CGO). It's mature, actively maintained, and used by production clients like gomuks and mautrix-whatsapp.
+
+### General Takeaways (E2EE)
+- **Research before implementing.** E2EE is complex cryptography — don't rush it.
+- **Transport encryption is sufficient for most use cases.** HTTPS protects data in transit.
+- **Use mature libraries.** Don't roll your own crypto. mautrix-go is battle-tested.
+- **Document roadmap items clearly.** E2EE is a major feature requiring dedicated effort.

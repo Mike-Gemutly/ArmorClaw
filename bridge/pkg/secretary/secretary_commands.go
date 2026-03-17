@@ -10,6 +10,37 @@ import (
 )
 
 //=============================================================================
+// Matrix Adapter Wrapper
+//=============================================================================
+
+type MatrixSender interface {
+	SendMessageWithRetry(roomID, message, msgType string) (string, error)
+	SendFormattedMessage(ctx context.Context, roomID, plainBody, formattedBody string) error
+	ReplyToEvent(ctx context.Context, roomID, eventID, message string) error
+}
+
+type matrixAdapterWrapper struct {
+	inner MatrixSender
+}
+
+func (w *matrixAdapterWrapper) SendMessage(ctx context.Context, roomID, message string) error {
+	_, err := w.inner.SendMessageWithRetry(roomID, message, "m.text")
+	return err
+}
+
+func (w *matrixAdapterWrapper) SendFormattedMessage(ctx context.Context, roomID, plainBody, formattedBody string) error {
+	return w.inner.SendFormattedMessage(ctx, roomID, plainBody, formattedBody)
+}
+
+func (w *matrixAdapterWrapper) ReplyToEvent(ctx context.Context, roomID, eventID, message string) error {
+	return w.inner.ReplyToEvent(ctx, roomID, eventID, message)
+}
+
+func WrapMatrixAdapter(inner MatrixSender) studio.MatrixAdapter {
+	return &matrixAdapterWrapper{inner: inner}
+}
+
+//=============================================================================
 // Interfaces for Testability
 //=============================================================================
 
@@ -108,6 +139,24 @@ func NewSecretaryCommandHandler(cfg SecretaryCommandHandlerConfig) *SecretaryCom
 		webdav:         cfg.WebDAV,
 		calendar:       cfg.Calendar,
 	}
+}
+
+// sendMessage is a nil-safe helper for sending Matrix messages
+func (h *SecretaryCommandHandler) sendMessage(ctx context.Context, roomID, message string) error {
+	if h.matrix == nil {
+		fmt.Printf("[secretary] no matrix adapter: room=%s msg=%s\n", roomID, message)
+		return nil
+	}
+	err := h.matrix.SendMessage(ctx, roomID, message)
+	if err != nil {
+		fmt.Printf("[secretary] SendMessage failed: room=%s err=%v\n", roomID, err)
+	}
+	return err
+}
+
+func (h *SecretaryCommandHandler) HandleMatrixMessage(ctx context.Context, roomID, userID, eventID, text string) bool {
+	handled, _ := h.HandleMessage(ctx, roomID, userID, eventID, text)
+	return handled
 }
 
 // HandleMessage processes Matrix messages for Secretary commands
@@ -346,55 +395,55 @@ func (h *SecretaryCommandHandler) sendHelp(ctx context.Context, roomID string) e
   ` + h.prefix + `secretary calendar create "Team Meeting" start="2026-03-20T10:00:00Z" end="2026-03-20T11:00:00Z" location="Room 101"
   ` + h.prefix + `secretary calendar update http://localhost:8080/calendars/default/ uid="cal-12345" start="2026-03-20T12:00:00Z"
 `
-	return h.matrix.SendMessage(ctx, roomID, help)
+	return h.sendMessage(ctx, roomID, help)
 }
 
 func (h *SecretaryCommandHandler) handleCreateWorkflow(ctx context.Context, roomID, userID string, args []string) error {
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: !secretary create workflow <template_id>")
+		return h.sendMessage(ctx, roomID, "❌ Usage: !secretary create workflow <template_id>")
 	}
 
 	templateID := args[0]
 
 	if h.studio == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Studio integration not configured")
+		return h.sendMessage(ctx, roomID, "❌ Studio integration not configured")
 	}
 
 	workflow, err := h.studio.CreateWorkflowFromTemplate(ctx, templateID, nil, userID)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create workflow: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create workflow: %v", err))
 	}
 
 	msg := fmt.Sprintf("✅ Workflow created\n\nID: `%s`\nStatus: %s", workflow.ID, workflow.Status)
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleStartWorkflow(ctx context.Context, roomID, workflowID string) error {
 	if h.orchestrator == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Orchestrator not configured")
+		return h.sendMessage(ctx, roomID, "❌ Orchestrator not configured")
 	}
 
 	if err := h.orchestrator.StartWorkflow(workflowID); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to start workflow: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to start workflow: %v", err))
 	}
 
 	workflow, _ := h.orchestrator.GetWorkflow(workflowID)
 	msg := fmt.Sprintf("✅ Workflow started\n\nID: `%s`\nStatus: %s", workflowID, workflow.Status)
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleListWorkflows(ctx context.Context, roomID string) error {
 	if h.store == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Store not configured")
+		return h.sendMessage(ctx, roomID, "❌ Store not configured")
 	}
 
 	workflows, err := h.store.ListWorkflows(ctx, WorkflowFilter{})
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list workflows: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list workflows: %v", err))
 	}
 
 	if len(workflows) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "No workflows found.")
+		return h.sendMessage(ctx, roomID, "No workflows found.")
 	}
 
 	var sb strings.Builder
@@ -403,17 +452,17 @@ func (h *SecretaryCommandHandler) handleListWorkflows(ctx context.Context, roomI
 		sb.WriteString(fmt.Sprintf("**%s** `%s` - %s\n\n", wf.Name, wf.ID, wf.Status))
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleWorkflowStatus(ctx context.Context, roomID, workflowID string) error {
 	if h.store == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Store not configured")
+		return h.sendMessage(ctx, roomID, "❌ Store not configured")
 	}
 
 	workflow, err := h.store.GetWorkflow(ctx, workflowID)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Workflow not found: %s", workflowID))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Workflow not found: %s", workflowID))
 	}
 
 	msg := fmt.Sprintf(`📋 Workflow: %s
@@ -423,50 +472,50 @@ Status: %s
 Started: %s
 `, workflow.Name, workflow.ID, workflow.Status, workflow.StartedAt.Format("2006-01-02 15:04"))
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleCancelWorkflow(ctx context.Context, roomID, workflowID string) error {
 	if h.orchestrator != nil {
 		if err := h.orchestrator.CancelWorkflow(workflowID, "cancelled via command"); err != nil {
-			return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to cancel workflow: %v", err))
+			return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to cancel workflow: %v", err))
 		}
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ Workflow `%s` cancelled", workflowID))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("✅ Workflow `%s` cancelled", workflowID))
 	}
 
 	if h.store == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Store not configured")
+		return h.sendMessage(ctx, roomID, "❌ Store not configured")
 	}
 
 	workflow, err := h.store.GetWorkflow(ctx, workflowID)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Workflow not found: %s", workflowID))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Workflow not found: %s", workflowID))
 	}
 
 	if workflow.Status != StatusRunning {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Workflow is not running: %s (status: %s)", workflowID, workflow.Status))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Workflow is not running: %s (status: %s)", workflowID, workflow.Status))
 	}
 
 	workflow.Status = StatusCancelled
 	if err := h.store.UpdateWorkflow(ctx, workflow); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to cancel workflow: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to cancel workflow: %v", err))
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ Workflow `%s` cancelled", workflowID))
+	return h.sendMessage(ctx, roomID, fmt.Sprintf("✅ Workflow `%s` cancelled", workflowID))
 }
 
 func (h *SecretaryCommandHandler) handleListAgents(ctx context.Context, roomID string) error {
 	if h.studio == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Studio integration not configured")
+		return h.sendMessage(ctx, roomID, "❌ Studio integration not configured")
 	}
 
 	agents, err := h.studio.ListSecretaryAgents(ctx)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list agents: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list agents: %v", err))
 	}
 
 	if len(agents) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "No secretary agents running.")
+		return h.sendMessage(ctx, roomID, "No secretary agents running.")
 	}
 
 	var sb strings.Builder
@@ -475,33 +524,33 @@ func (h *SecretaryCommandHandler) handleListAgents(ctx context.Context, roomID s
 		sb.WriteString(fmt.Sprintf("**%s** `%s` - %s\n\n", agent.DefinitionID, agent.ID, agent.Status))
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleDeleteAgent(ctx context.Context, roomID, agentID string) error {
 	if h.studio == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Studio integration not configured")
+		return h.sendMessage(ctx, roomID, "❌ Studio integration not configured")
 	}
 
 	if err := h.studio.DeleteSecretaryAgent(ctx, agentID); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete agent: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete agent: %v", err))
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ Agent `%s` deleted", agentID))
+	return h.sendMessage(ctx, roomID, fmt.Sprintf("✅ Agent `%s` deleted", agentID))
 }
 
 func (h *SecretaryCommandHandler) handleListTemplates(ctx context.Context, roomID string) error {
 	if h.store == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Store not configured")
+		return h.sendMessage(ctx, roomID, "❌ Store not configured")
 	}
 
 	templates, err := h.store.ListTemplates(ctx, TemplateFilter{})
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list templates: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list templates: %v", err))
 	}
 
 	if len(templates) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "No templates found.")
+		return h.sendMessage(ctx, roomID, "No templates found.")
 	}
 
 	var sb strings.Builder
@@ -518,16 +567,16 @@ func (h *SecretaryCommandHandler) handleListTemplates(ctx context.Context, roomI
 		sb.WriteString("\n")
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleLearnWebsite(ctx context.Context, roomID, userID string, args []string) error {
 	if h.learnWebsite == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Learn Website service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Learn Website service not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary learn website <url> [form_selector]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary learn website <url> [form_selector]")
 	}
 
 	targetURL := args[0]
@@ -536,7 +585,7 @@ func (h *SecretaryCommandHandler) handleLearnWebsite(ctx context.Context, roomID
 		formSelector = args[1]
 	}
 
-	h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("🔍 Learning website: %s", targetURL))
+	h.sendMessage(ctx, roomID, fmt.Sprintf("🔍 Learning website: %s", targetURL))
 
 	req := &LearnWebsiteRequest{
 		TargetURL:    targetURL,
@@ -548,7 +597,7 @@ func (h *SecretaryCommandHandler) handleLearnWebsite(ctx context.Context, roomID
 
 	result, err := h.learnWebsite.Learn(ctx, req)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to learn website: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to learn website: %v", err))
 	}
 
 	var sb strings.Builder
@@ -580,23 +629,23 @@ func (h *SecretaryCommandHandler) handleLearnWebsite(ctx context.Context, roomID
 
 	sb.WriteString(fmt.Sprintf("\nTo review and confirm mapping: `%ssecretary review mapping %s`", h.prefix, result.MappingDraft.ID))
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleReviewMapping(ctx context.Context, roomID string, args []string) error {
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary review mapping <draft_id>")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary review mapping <draft_id>")
 	}
 
 	draftID := args[0]
 
 	if h.store == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Store not configured")
+		return h.sendMessage(ctx, roomID, "❌ Store not configured")
 	}
 
 	templates, err := h.store.ListTemplates(ctx, TemplateFilter{})
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to search templates: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to search templates: %v", err))
 	}
 
 	var foundTemplate *TaskTemplate
@@ -608,7 +657,7 @@ func (h *SecretaryCommandHandler) handleReviewMapping(ctx context.Context, roomI
 	}
 
 	if foundTemplate == nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Mapping draft not found: %s", draftID))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Mapping draft not found: %s", draftID))
 	}
 
 	var sb strings.Builder
@@ -635,16 +684,16 @@ func (h *SecretaryCommandHandler) handleReviewMapping(ctx context.Context, roomI
 
 	sb.WriteString(fmt.Sprintf("\nTo confirm: `%ssecretary confirm mapping %s`", h.prefix, draftID))
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleConfirmMapping(ctx context.Context, roomID, userID string, args []string) error {
 	if h.learnWebsite == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Learn Website service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Learn Website service not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary confirm mapping <draft_id> [field1=value1 field2=value2 ...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary confirm mapping <draft_id> [field1=value1 field2=value2 ...]")
 	}
 
 	draftID := args[0]
@@ -657,7 +706,7 @@ func (h *SecretaryCommandHandler) handleConfirmMapping(ctx context.Context, room
 		}
 	}
 
-	h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("⏳ Confirming mapping `%s`...", draftID))
+	h.sendMessage(ctx, roomID, fmt.Sprintf("⏳ Confirming mapping `%s`...", draftID))
 
 	mapping := &ConfirmedMapping{
 		DraftID:       draftID,
@@ -668,22 +717,22 @@ func (h *SecretaryCommandHandler) handleConfirmMapping(ctx context.Context, room
 	}
 
 	if err := h.learnWebsite.ConfirmMapping(ctx, mapping); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to confirm mapping: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to confirm mapping: %v", err))
 	}
 
 	msg := fmt.Sprintf("✅ Mapping confirmed and template created\n\n**Template ID:** `%s`\n**Created by:** %s",
 		draftID, userID)
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleRunBlindFill(ctx context.Context, roomID, userID string, args []string) error {
 	if h.blindFill == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ BlindFill executor not configured")
+		return h.sendMessage(ctx, roomID, "❌ BlindFill executor not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary run blindfill <template_id|workflow_id> [url] [dryrun]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary run blindfill <template_id|workflow_id> [url] [dryrun]")
 	}
 
 	templateID := args[0]
@@ -698,7 +747,7 @@ func (h *SecretaryCommandHandler) handleRunBlindFill(ctx context.Context, roomID
 		}
 	}
 
-	h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("⏳ Starting BlindFill execution for template `%s`...", templateID))
+	h.sendMessage(ctx, roomID, fmt.Sprintf("⏳ Starting BlindFill execution for template `%s`...", templateID))
 
 	req := &BlindFillRequest{
 		TemplateID:      templateID,
@@ -711,7 +760,7 @@ func (h *SecretaryCommandHandler) handleRunBlindFill(ctx context.Context, roomID
 
 	result, err := h.blindFill.Execute(ctx, req)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ BlindFill execution failed: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ BlindFill execution failed: %v", err))
 	}
 
 	var sb strings.Builder
@@ -759,21 +808,21 @@ func (h *SecretaryCommandHandler) handleRunBlindFill(ctx context.Context, roomID
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleListTrustPolicies(ctx context.Context, roomID string) error {
 	if h.trustEngine == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Trust engine not configured")
+		return h.sendMessage(ctx, roomID, "❌ Trust engine not configured")
 	}
 
 	policies, err := h.trustEngine.ListPolicies(ctx, true)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list trust policies: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list trust policies: %v", err))
 	}
 
 	if len(policies) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "No trust policies found.")
+		return h.sendMessage(ctx, roomID, "No trust policies found.")
 	}
 
 	var sb strings.Builder
@@ -813,16 +862,16 @@ func (h *SecretaryCommandHandler) handleListTrustPolicies(ctx context.Context, r
 		sb.WriteString("\n")
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleCreateTrustPolicy(ctx context.Context, roomID, userID string, args []string) error {
 	if h.trustEngine == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Trust engine not configured")
+		return h.sendMessage(ctx, roomID, "❌ Trust engine not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Usage: %ssecretary trust create <name> [template=...] [initiator=...] [expires=...] [max_executions=...]", h.prefix))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Usage: %ssecretary trust create <name> [template=...] [initiator=...] [expires=...] [max_executions=...]", h.prefix))
 	}
 
 	name := args[0]
@@ -857,22 +906,22 @@ func (h *SecretaryCommandHandler) handleCreateTrustPolicy(ctx context.Context, r
 	}
 
 	if err := h.trustEngine.CreatePolicy(ctx, policy); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create trust policy: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create trust policy: %v", err))
 	}
 
 	msg := fmt.Sprintf("✅ Trust policy created\n\n**ID:** `%s`\n**Name:** %s\n**Created by:** %s",
 		policy.ID, policy.Name, userID)
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleRevokeTrustPolicy(ctx context.Context, roomID, userID string, args []string) error {
 	if h.trustEngine == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Trust engine not configured")
+		return h.sendMessage(ctx, roomID, "❌ Trust engine not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary trust revoke <policy_id> [reason]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary trust revoke <policy_id> [reason]")
 	}
 
 	policyID := args[0]
@@ -882,22 +931,22 @@ func (h *SecretaryCommandHandler) handleRevokeTrustPolicy(ctx context.Context, r
 	}
 
 	if err := h.trustEngine.RevokePolicy(ctx, policyID, userID, reason); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to revoke trust policy: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to revoke trust policy: %v", err))
 	}
 
 	msg := fmt.Sprintf("✅ Trust policy revoked\n\n**ID:** `%s`\n**Revoked by:** %s\n**Reason:** %s",
 		policyID, userID, reason)
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleCreateContact(ctx context.Context, roomID, userID string, args []string) error {
 	if h.rolodex == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Rolodex service not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary contact create <name> [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary contact create <name> [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...]")
 	}
 
 	req := &CreateRequest{
@@ -930,7 +979,7 @@ func (h *SecretaryCommandHandler) handleCreateContact(ctx context.Context, roomI
 
 	contact, err := h.rolodex.CreateContact(ctx, req)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create contact: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create contact: %v", err))
 	}
 
 	msg := fmt.Sprintf("✅ Contact created\n\n**ID:** `%s`\n**Name:** %s\n**Company:** %s\n**Relationship:** %s",
@@ -942,17 +991,17 @@ func (h *SecretaryCommandHandler) handleCreateContact(ctx context.Context, roomI
 		msg += fmt.Sprintf("\n**Email:** %s", contact.Email)
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleGetContact(ctx context.Context, roomID, contactID string) error {
 	if h.rolodex == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Rolodex service not configured")
 	}
 
 	contact, err := h.rolodex.GetContact(ctx, contactID)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get contact: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get contact: %v", err))
 	}
 
 	msg := fmt.Sprintf(`📋 **Contact**
@@ -979,12 +1028,12 @@ func (h *SecretaryCommandHandler) handleGetContact(ctx context.Context, roomID, 
 		msg += fmt.Sprintf("\n**Notes:** %s", contact.Notes)
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleListContacts(ctx context.Context, roomID string, args []string) error {
 	if h.rolodex == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Rolodex service not configured")
 	}
 
 	filter := ContactFilter{}
@@ -1008,11 +1057,11 @@ func (h *SecretaryCommandHandler) handleListContacts(ctx context.Context, roomID
 
 	contacts, err := h.rolodex.ListContacts(ctx, filter)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list contacts: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list contacts: %v", err))
 	}
 
 	if len(contacts) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "No contacts found.")
+		return h.sendMessage(ctx, roomID, "No contacts found.")
 	}
 
 	var sb strings.Builder
@@ -1026,16 +1075,16 @@ func (h *SecretaryCommandHandler) handleListContacts(ctx context.Context, roomID
 		sb.WriteString("\n")
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleUpdateContact(ctx context.Context, roomID, userID string, args []string) error {
 	if h.rolodex == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Rolodex service not configured")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary contact update <id> [name=...] [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary contact update <id> [name=...] [company=...] [relationship=...] [phone=...] [email=...] [address=...] [notes=...]")
 	}
 
 	contactID := args[0]
@@ -1071,39 +1120,39 @@ func (h *SecretaryCommandHandler) handleUpdateContact(ctx context.Context, roomI
 
 	contact, err := h.rolodex.UpdateContact(ctx, req)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to update contact: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to update contact: %v", err))
 	}
 
 	msg := fmt.Sprintf("✅ Contact updated\n\n**ID:** `%s`\n**Name:** %s\n**Company:** %s",
 		contact.ID, contact.Name, contact.Company)
 
-	return h.matrix.SendMessage(ctx, roomID, msg)
+	return h.sendMessage(ctx, roomID, msg)
 }
 
 func (h *SecretaryCommandHandler) handleDeleteContact(ctx context.Context, roomID, contactID string) error {
 	if h.rolodex == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Rolodex service not configured")
 	}
 
 	if err := h.rolodex.DeleteContact(ctx, contactID); err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete contact: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete contact: %v", err))
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ Contact deleted\n\n**ID:** `%s`", contactID))
+	return h.sendMessage(ctx, roomID, fmt.Sprintf("✅ Contact deleted\n\n**ID:** `%s`", contactID))
 }
 
 func (h *SecretaryCommandHandler) handleSearchContacts(ctx context.Context, roomID, query string) error {
 	if h.rolodex == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Rolodex service not configured")
+		return h.sendMessage(ctx, roomID, "❌ Rolodex service not configured")
 	}
 
 	contacts, err := h.rolodex.SearchContacts(ctx, query)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to search contacts: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to search contacts: %v", err))
 	}
 
 	if len(contacts) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("No contacts found matching: %s", query))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("No contacts found matching: %s", query))
 	}
 
 	var sb strings.Builder
@@ -1123,16 +1172,16 @@ func (h *SecretaryCommandHandler) handleSearchContacts(ctx context.Context, room
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleWebDAVList(ctx context.Context, roomID string, args []string) error {
 	if h.webdav == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav list <url> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav list <url> [username=...] [password=...]")
 	}
 
 	url := args[0]
@@ -1157,7 +1206,7 @@ func (h *SecretaryCommandHandler) handleWebDAVList(ctx context.Context, roomID s
 
 	result, err := h.webdav.ExecuteWebDAV(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list WebDAV directory: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list WebDAV directory: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1183,16 +1232,16 @@ func (h *SecretaryCommandHandler) handleWebDAVList(ctx context.Context, roomID s
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleWebDAVGet(ctx context.Context, roomID string, args []string) error {
 	if h.webdav == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav get <url> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav get <url> [username=...] [password=...]")
 	}
 
 	url := args[0]
@@ -1217,7 +1266,7 @@ func (h *SecretaryCommandHandler) handleWebDAVGet(ctx context.Context, roomID st
 
 	result, err := h.webdav.ExecuteWebDAV(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get file from WebDAV: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get file from WebDAV: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1234,16 +1283,16 @@ func (h *SecretaryCommandHandler) handleWebDAVGet(ctx context.Context, roomID st
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleWebDAVPut(ctx context.Context, roomID string, args []string) error {
 	if h.webdav == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
 	}
 
 	if len(args) < 2 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav put <url> <content> [username=...] [password=...] [content_type=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav put <url> <content> [username=...] [password=...] [content_type=...]")
 	}
 
 	url := args[0]
@@ -1273,7 +1322,7 @@ func (h *SecretaryCommandHandler) handleWebDAVPut(ctx context.Context, roomID st
 
 	result, err := h.webdav.ExecuteWebDAV(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to upload file to WebDAV: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to upload file to WebDAV: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1287,16 +1336,16 @@ func (h *SecretaryCommandHandler) handleWebDAVPut(ctx context.Context, roomID st
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleWebDAVDelete(ctx context.Context, roomID string, args []string) error {
 	if h.webdav == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ WebDAV service not configured. Check config.toml.")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav delete <url> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary webdav delete <url> [username=...] [password=...]")
 	}
 
 	url := args[0]
@@ -1321,19 +1370,19 @@ func (h *SecretaryCommandHandler) handleWebDAVDelete(ctx context.Context, roomID
 
 	_, err := h.webdav.ExecuteWebDAV(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete file from WebDAV: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete file from WebDAV: %v", err))
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("✅ File deleted\n\n**URL:** %s", url))
+	return h.sendMessage(ctx, roomID, fmt.Sprintf("✅ File deleted\n\n**URL:** %s", url))
 }
 
 func (h *SecretaryCommandHandler) handleCalendarList(ctx context.Context, roomID string, args []string) error {
 	if h.calendar == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar list <calendar_url> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar list <calendar_url> [username=...] [password=...]")
 	}
 
 	calendarURL := args[0]
@@ -1358,7 +1407,7 @@ func (h *SecretaryCommandHandler) handleCalendarList(ctx context.Context, roomID
 
 	result, err := h.calendar.ExecuteCalendar(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list calendars: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to list calendars: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1380,16 +1429,16 @@ func (h *SecretaryCommandHandler) handleCalendarList(ctx context.Context, roomID
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleCalendarCreate(ctx context.Context, roomID string, args []string) error {
 	if h.calendar == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
 	}
 
 	if len(args) < 4 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar create <title> start=\"<time>\" end=\"<time>\" [calendar_url=...] [username=...] [password=...] [description=...] [location=...] [attendees=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar create <title> start=\"<time>\" end=\"<time>\" [calendar_url=...] [username=...] [password=...] [description=...] [location=...] [attendees=...]")
 	}
 
 	title := args[0]
@@ -1428,7 +1477,7 @@ func (h *SecretaryCommandHandler) handleCalendarCreate(ctx context.Context, room
 
 	result, err := h.calendar.ExecuteCalendar(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create calendar event: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to create calendar event: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1444,16 +1493,16 @@ func (h *SecretaryCommandHandler) handleCalendarCreate(ctx context.Context, room
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleCalendarGetEvents(ctx context.Context, roomID string, args []string) error {
 	if h.calendar == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar get_events <calendar_url> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar get_events <calendar_url> [username=...] [password=...]")
 	}
 
 	calendarURL := args[0]
@@ -1478,7 +1527,7 @@ func (h *SecretaryCommandHandler) handleCalendarGetEvents(ctx context.Context, r
 
 	result, err := h.calendar.ExecuteCalendar(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get calendar events: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get calendar events: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1514,16 +1563,16 @@ func (h *SecretaryCommandHandler) handleCalendarGetEvents(ctx context.Context, r
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleCalendarGetEvent(ctx context.Context, roomID string, args []string) error {
 	if h.calendar == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
 	}
 
 	if len(args) == 0 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar get_event <calendar_url> uid=<event_uid> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar get_event <calendar_url> uid=<event_uid> [username=...] [password=...]")
 	}
 
 	calendarURL := args[0]
@@ -1550,7 +1599,7 @@ func (h *SecretaryCommandHandler) handleCalendarGetEvent(ctx context.Context, ro
 
 	result, err := h.calendar.ExecuteCalendar(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get event: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to get event: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1584,16 +1633,16 @@ func (h *SecretaryCommandHandler) handleCalendarGetEvent(ctx context.Context, ro
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleCalendarUpdate(ctx context.Context, roomID string, args []string) error {
 	if h.calendar == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
 	}
 
 	if len(args) < 2 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar update <calendar_url> uid=<event_uid> [start=\"...\"] [end=\"...\"] [title=...] [description=...] [location=...] [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar update <calendar_url> uid=<event_uid> [start=\"...\"] [end=\"...\"] [title=...] [description=...] [location=...] [username=...] [password=...]")
 	}
 
 	calendarURL := args[0]
@@ -1630,7 +1679,7 @@ func (h *SecretaryCommandHandler) handleCalendarUpdate(ctx context.Context, room
 
 	result, err := h.calendar.ExecuteCalendar(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to update event: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to update event: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1642,16 +1691,16 @@ func (h *SecretaryCommandHandler) handleCalendarUpdate(ctx context.Context, room
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func (h *SecretaryCommandHandler) handleCalendarDelete(ctx context.Context, roomID string, args []string) error {
 	if h.calendar == nil {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
+		return h.sendMessage(ctx, roomID, "❌ Calendar service not configured. Check config.toml.")
 	}
 
 	if len(args) < 2 {
-		return h.matrix.SendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar delete <calendar_url> uid=<event_uid> [username=...] [password=...]")
+		return h.sendMessage(ctx, roomID, "❌ Usage: "+h.prefix+"secretary calendar delete <calendar_url> uid=<event_uid> [username=...] [password=...]")
 	}
 
 	calendarURL := args[0]
@@ -1678,7 +1727,7 @@ func (h *SecretaryCommandHandler) handleCalendarDelete(ctx context.Context, room
 
 	result, err := h.calendar.ExecuteCalendar(ctx, params)
 	if err != nil {
-		return h.matrix.SendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete event: %v", err))
+		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to delete event: %v", err))
 	}
 
 	var sb strings.Builder
@@ -1690,7 +1739,7 @@ func (h *SecretaryCommandHandler) handleCalendarDelete(ctx context.Context, room
 		}
 	}
 
-	return h.matrix.SendMessage(ctx, roomID, sb.String())
+	return h.sendMessage(ctx, roomID, sb.String())
 }
 
 func timeNow() time.Time {

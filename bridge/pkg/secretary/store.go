@@ -1129,13 +1129,14 @@ func (s *SQLiteStore) GetContact(ctx context.Context, id string) (*Contact, erro
 	defer s.mu.RUnlock()
 
 	contact := &Contact{}
+	var createdAt, updatedAt int64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, company, relationship, data_encrypted, data_nonce, created_by, created_at, updated_at
 		FROM contacts WHERE id = ?
 	`, id).Scan(&contact.ID, &contact.Name, &contact.Company, &contact.Relationship,
 		&contact.EncryptedData, &contact.EncryptedNonce, &contact.CreatedBy,
-		&contact.CreatedAt, &contact.UpdatedAt)
+		&createdAt, &updatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("contact not found: %s", id)
@@ -1143,6 +1144,9 @@ func (s *SQLiteStore) GetContact(ctx context.Context, id string) (*Contact, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contact: %w", err)
 	}
+
+	contact.CreatedAt = time.UnixMilli(createdAt)
+	contact.UpdatedAt = time.UnixMilli(updatedAt)
 
 	return contact, nil
 }
@@ -1191,11 +1195,14 @@ func (s *SQLiteStore) ListContacts(ctx context.Context, filter ContactFilter) ([
 	var contacts []Contact
 	for rows.Next() {
 		contact := &Contact{}
+		var createdAt, updatedAt int64
 		if err := rows.Scan(&contact.ID, &contact.Name, &contact.Company, &contact.Relationship,
 			&contact.EncryptedData, &contact.EncryptedNonce, &contact.CreatedBy,
-			&contact.CreatedAt, &contact.UpdatedAt); err != nil {
+			&createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan contact: %w", err)
 		}
+		contact.CreatedAt = time.UnixMilli(createdAt)
+		contact.UpdatedAt = time.UnixMilli(updatedAt)
 
 		contacts = append(contacts, *contact)
 	}
