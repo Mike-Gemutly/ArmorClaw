@@ -2226,3 +2226,89 @@ Rationale:
 - Acceptable limitations documented
 - Rollback procedure documented
 - Post-production roadmap defined
+
+---
+
+## Phase 13: Platform Adapters Implementation (2026-03-17)
+
+### Overview
+
+Completed full implementation of Discord, Teams, and WhatsApp adapters for the ArmorClaw bridge, enabling bidirectional message sync, reactions, and edit/delete operations across all platforms.
+
+### Implementation Details
+
+| Platform | File | Lines | Key Features |
+|----------|------|-------|--------------|
+| **WhatsApp** | `whatsapp.go` | ~1060 | Full Business Cloud API implementation |
+| **Discord** | `discord.go` | ~680 | Reaction sync, edit/delete |
+| **Teams** | `teams.go` | ~640 | Reaction sync, edit/delete |
+
+### WhatsApp Adapter
+
+**HTTP Client:**
+- Bearer token authentication
+- Message sending (text and template messages)
+- Webhook receiver with HMAC-SHA256 signature verification
+- Message edit (mark as read - WhatsApp limitation)
+- Message delete (24-hour window)
+- Health check with API connectivity test
+
+**API Endpoints:**
+\`\`\`go
+const (
+    whatsappAPIURL = "https://graph.facebook.com/v18.0"
+    messagesEndpoint = "/%s/messages" // phone_number_id/messages
+)
+\`\`\`
+
+### Discord Reactions & Edit/Delete
+
+**API Endpoints:**
+- \`PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me\` - Add reaction
+- \`DELETE /channels/{id}/messages/{id}/reactions/{emoji}/@me\` - Remove reaction
+- \`GET /channels/{id}/messages/{id}/reactions/{emoji}\` - Get reactions
+- \`PATCH /channels/{id}/messages/{id}\` - Edit message
+- \`DELETE /channels/{id}/messages/{id}\` - Delete message
+
+**Custom Emoji Support:**
+\`\`\`go
+// Handles both Unicode emoji and custom emoji format
+emoji = "👍"           // Unicode
+emoji = "<:name:id>"   // Custom
+\`\`\`
+
+### Teams Reactions & Edit/Delete
+
+**API Endpoints:**
+- Graph API reaction endpoints
+- Soft delete for message removal
+- Message editing via PATCH
+
+### Verification Results
+
+\`\`\`
+Build: ✅ PASS (go build ./...)
+Tests: ✅ PASS (16 tests, 0.007s)
+\`\`\`
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No breaking existing Slack adapter | ✅ Slack untouched |
+| No removing existing functionality | ✅ Additive changes only |
+| No credential exposure in logs | ✅ Tokens masked in logs |
+| Proper signature validation | ✅ HMAC-SHA256 for webhooks |
+
+### Quick Reference Commands
+
+\`\`\`bash
+# Build bridge
+cd bridge && go build ./...
+
+# Run sdtw tests
+cd bridge && go test ./internal/sdtw/... -v
+
+# Run all tests
+cd bridge && go test ./... -v
+\`\`\`

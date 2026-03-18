@@ -39,12 +39,12 @@ type BridgeConfig struct {
 
 // BridgedChannel represents a bridged channel between Matrix and external platform
 type BridgedChannel struct {
-	MatrixRoomID string    `json:"matrix_room_id"`
-	Platform     Platform  `json:"platform"`
-	ChannelID    string    `json:"channel_id"`
-	ChannelName  string    `json:"channel_name"`
-	GhostUsers   []string  `json:"ghost_users"` // Matrix IDs of ghost users in this channel
-	Enabled      bool      `json:"enabled"`
+	MatrixRoomID string   `json:"matrix_room_id"`
+	Platform     Platform `json:"platform"`
+	ChannelID    string   `json:"channel_id"`
+	ChannelName  string   `json:"channel_name"`
+	GhostUsers   []string `json:"ghost_users"` // Matrix IDs of ghost users in this channel
+	Enabled      bool     `json:"enabled"`
 }
 
 // PlatformEventHandler handles events from external platforms
@@ -52,11 +52,11 @@ type PlatformEventHandler func(platform Platform, event sdtw.ExternalEvent)
 
 // BridgeManager coordinates SDTW adapters with the Matrix AppService
 type BridgeManager struct {
-	config    BridgeConfig
-	as        *AppService
-	client    *Client
-	logger    *slog.Logger
-	scrubber  *pii.HIPAAScrubber
+	config   BridgeConfig
+	as       *AppService
+	client   *Client
+	logger   *slog.Logger
+	scrubber *pii.HIPAAScrubber
 
 	// Platform adapters
 	adapters  map[Platform]sdtw.SDTWAdapter
@@ -155,7 +155,7 @@ func (bm *BridgeManager) Stop() error {
 }
 
 // RegisterAdapter registers a platform adapter
-func (bm *BridgeManager) RegisterAdapter(platform Platform, adapter sdtw.SDTWAdapter) error {
+func (bm *BridgeManager) RegisterAdapter(platform Platform, adapter interface{}) error {
 	bm.adapterMu.Lock()
 	defer bm.adapterMu.Unlock()
 
@@ -163,7 +163,12 @@ func (bm *BridgeManager) RegisterAdapter(platform Platform, adapter sdtw.SDTWAda
 		return fmt.Errorf("adapter for %s already registered", platform)
 	}
 
-	bm.adapters[platform] = adapter
+	sdtwAdapter, ok := adapter.(sdtw.SDTWAdapter)
+	if !ok {
+		return fmt.Errorf("adapter for %s does not implement sdtw.SDTWAdapter interface", platform)
+	}
+
+	bm.adapters[platform] = sdtwAdapter
 	bm.logger.Info("adapter_registered", "platform", platform)
 	return nil
 }

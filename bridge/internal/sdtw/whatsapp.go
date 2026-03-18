@@ -2,8 +2,12 @@
 package sdtw
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 )
 
@@ -11,50 +15,52 @@ import (
 // This is a stub implementation for Phase 2
 type WhatsAppAdapter struct {
 	*BaseAdapter
-	phoneNumberID string
+	phoneNumberID     string
 	businessAccountID string
-	initialized bool
+	accessToken       string
+	client            *http.Client
+	initialized       bool
 }
 
 // WhatsAppMessage represents a WhatsApp message payload
 type WhatsAppMessage struct {
-	MessagingProduct string               `json:"messaging_product"`
-	To               string               `json:"to"`
-	Type             string               `json:"type"`
-	Text             *WhatsAppText        `json:"text,omitempty"`
-	Template         *WhatsAppTemplate    `json:"template,omitempty"`
+	MessagingProduct string            `json:"messaging_product"`
+	To               string            `json:"to"`
+	Type             string            `json:"type"`
+	Text             *WhatsAppText     `json:"text,omitempty"`
+	Template         *WhatsAppTemplate `json:"template,omitempty"`
 }
 
 // WhatsAppText represents text content in WhatsApp
 type WhatsAppText struct {
-	Body string `json:"body"`
-	PreviewURL bool `json:"preview_url,omitempty"`
+	Body       string `json:"body"`
+	PreviewURL bool   `json:"preview_url,omitempty"`
 }
 
 // WhatsAppTemplate represents a template message in WhatsApp
 type WhatsAppTemplate struct {
-	Name     string                 `json:"name"`
-	Language map[string]string      `json:"language"`
+	Name       string                      `json:"name"`
+	Language   map[string]string           `json:"language"`
 	Components []WhatsAppTemplateComponent `json:"components,omitempty"`
 }
 
 // WhatsAppTemplateComponent represents a template component
 type WhatsAppTemplateComponent struct {
-	Type       string                 `json:"type"`
+	Type       string                   `json:"type"`
 	Parameters []map[string]interface{} `json:"parameters,omitempty"`
 }
 
 // WhatsAppEvent represents a WhatsApp webhook event
 type WhatsAppEvent struct {
 	Object string `json:"object"`
-	Entry []struct {
-		ID   string `json:"id"`
+	Entry  []struct {
+		ID      string `json:"id"`
 		Changes []struct {
 			Value struct {
 				MessagingProduct string `json:"messaging_product"`
 				Metadata         struct {
 					DisplayPhoneNumber string `json:"display_phone_number"`
-					PhoneNumberID     string `json:"phone_number_id"`
+					PhoneNumberID      string `json:"phone_number_id"`
 				} `json:"metadata"`
 				Messages []struct {
 					From      string `json:"from"`

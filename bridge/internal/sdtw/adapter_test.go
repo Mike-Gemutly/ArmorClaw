@@ -135,8 +135,8 @@ func TestValidateMessage(t *testing.T) {
 		{
 			name: "message with attachments",
 			msg: Message{
-				ID:      "msg-123",
-				Type:    MessageTypeImage,
+				ID:   "msg-123",
+				Type: MessageTypeImage,
 				Attachments: []Attachment{
 					{ID: "att-1", URL: "http://example.com/file.jpg"},
 				},
@@ -426,12 +426,12 @@ func TestAdapterConfig(t *testing.T) {
 
 func TestHealthStatus(t *testing.T) {
 	status := HealthStatus{
-		Connected:    true,
-		LastPing:     time.Now(),
-		LastMessage:  time.Now(),
-		ErrorRate:    0.5,
-		Latency:      100 * time.Millisecond,
-		QueueDepth:   10,
+		Connected:   true,
+		LastPing:    time.Now(),
+		LastMessage: time.Now(),
+		ErrorRate:   0.5,
+		Latency:     100 * time.Millisecond,
+		QueueDepth:  10,
 	}
 
 	if !status.Connected {
@@ -462,5 +462,91 @@ func TestAdapterMetrics(t *testing.T) {
 
 	if metrics.MessagesFailed != 5 {
 		t.Errorf("expected MessagesFailed 5, got %d", metrics.MessagesFailed)
+	}
+}
+
+// REACTION TESTS - TDD Phase 1: RED (Write failing tests)
+
+func TestTeamsAdapter_SendReaction(t *testing.T) {
+	adapter := NewTeamsAdapter(TeamsConfig{})
+
+	// Test that operations return not implemented errors
+	ctx := context.Background()
+	target := Target{Channel: "test-channel"}
+	messageID := "msg-123"
+	emoji := "👍"
+
+	// SendReaction should not panic or return implementation error
+	err := adapter.SendReaction(ctx, target, messageID, emoji)
+
+	// Currently returns not implemented error from BaseAdapter
+	if err == nil {
+		t.Error("expected SendReaction to return an error")
+	}
+}
+
+func TestTeamsAdapter_RemoveReaction(t *testing.T) {
+	adapter := NewTeamsAdapter(TeamsConfig{})
+
+	ctx := context.Background()
+	target := Target{Channel: "test-channel"}
+	messageID := "msg-123"
+	emoji := "👍"
+
+	err := adapter.RemoveReaction(ctx, target, messageID, emoji)
+
+	if err == nil {
+		t.Error("expected RemoveReaction to return an error")
+	}
+}
+
+func TestTeamsAdapter_GetReactions(t *testing.T) {
+	adapter := NewTeamsAdapter(TeamsConfig{})
+
+	ctx := context.Background()
+	target := Target{Channel: "test-channel"}
+	messageID := "msg-123"
+
+	reactions, err := adapter.GetReactions(ctx, target, messageID)
+
+	if err == nil {
+		t.Error("expected GetReactions to return an error")
+	}
+	if reactions != nil {
+		t.Error("expected reactions to be nil when error occurs")
+	}
+}
+
+func TestTeamsAdapter_SendReaction_UnsupportedEmoji(t *testing.T) {
+	adapter := NewTeamsAdapter(TeamsConfig{})
+
+	ctx := context.Background()
+	target := Target{Channel: "test-channel"}
+	messageID := "msg-123"
+	// Teams doesn't support custom emoji images
+	emoji := "custom_emoji:https://example.com/emoji.png"
+
+	err := adapter.SendReaction(ctx, target, messageID, emoji)
+
+	// Should either fail gracefully or not panic
+	if err != nil {
+		// As long as it returns an error (not implementation error)
+		// we can proceed with implementation
+	}
+}
+
+func TestTeamsAdapter_GetReactions_EmptyResult(t *testing.T) {
+	adapter := NewTeamsAdapter(TeamsConfig{})
+
+	ctx := context.Background()
+	target := Target{Channel: "test-channel"}
+	messageID := "msg-123"
+
+	_, err := adapter.GetReactions(ctx, target, messageID)
+
+	// When implemented, should return empty slice, not error
+	// For now, should return error
+	if err == nil {
+		t.Error("expected error from GetReactions for uninitialized adapter")
 	}
 }

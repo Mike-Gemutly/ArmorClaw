@@ -15,31 +15,31 @@ import (
 // DiscordAdapter implements SDTWAdapter for Discord
 type DiscordAdapter struct {
 	*BaseAdapter
-	client     *http.Client
-	botToken   string
-	guildID    string
+	client        *http.Client
+	botToken      string
+	guildID       string
 	commandPrefix string
-	mu         sync.RWMutex
-	running    bool
-	ctx        context.Context
-	cancel     context.CancelFunc
+	mu            sync.RWMutex
+	running       bool
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // DiscordMessage represents a Discord message payload
 type DiscordMessage struct {
-	Content string             `json:"content"`
-	TTS     bool               `json:"tts,omitempty"`
-	Embeds  []DiscordEmbed     `json:"embeds,omitempty"`
+	Content          string                   `json:"content"`
+	TTS              bool                     `json:"tts,omitempty"`
+	Embeds           []DiscordEmbed           `json:"embeds,omitempty"`
 	MessageReference *DiscordMessageReference `json:"message_reference,omitempty"`
 }
 
 // DiscordEmbed represents a rich embed in Discord
 type DiscordEmbed struct {
-	Title       string                 `json:"title,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	URL         string                 `json:"url,omitempty"`
-	Color       int                    `json:"color,omitempty"`
-	Fields      []DiscordEmbedField    `json:"fields,omitempty"`
+	Title       string              `json:"title,omitempty"`
+	Description string              `json:"description,omitempty"`
+	URL         string              `json:"url,omitempty"`
+	Color       int                 `json:"color,omitempty"`
+	Fields      []DiscordEmbedField `json:"fields,omitempty"`
 }
 
 // DiscordEmbedField represents a field in an embed
@@ -63,18 +63,75 @@ type DiscordEvent struct {
 	S  int             `json:"s"`  // Sequence number
 }
 
+// Discord Gateway opcodes (GatewayOp)
+const (
+	GatewayOpDispatch            = 0  // Dispatch
+	GatewayOpHeartbeat           = 1  // Heartbeat
+	GatewayOpIdentify            = 2  // Identify
+	GatewayOpPresence            = 3  // Presence Update
+	GatewayOpVoiceState          = 4  // Voice State Update
+	GatewayOpResume              = 6  // Resume
+	GatewayOpReconnect           = 7  // Reconnect
+	GatewayOpRequestGuildMembers = 8  // Request Guild Members
+	GatewayOpInvalidSession      = 9  // Invalid Session
+	GatewayOpHello               = 10 // Hello
+	GatewayOpHeartbeatACK        = 11 // Heartbeat ACK
+)
+
+// GatewayHello represents Gateway HELLO payload
+type GatewayHello struct {
+	HeartbeatInterval int `json:"heartbeat_interval"`
+}
+
+// GatewayIdentify represents Gateway IDENTIFY payload
+type GatewayIdentify struct {
+	Token      string              `json:"token"`
+	Properties GatewayIdentifyConn `json:"properties"`
+	Intents    int                 `json:"intents"`
+}
+
+// GatewayIdentifyConn represents connection properties for IDENTIFY
+type GatewayIdentifyConn struct {
+	OS      string `json:"os"`
+	Browser string `json:"browser"`
+	Device  string `json:"device"`
+}
+
+// GatewayResume represents Gateway RESUME payload
+type GatewayResume struct {
+	Token     string `json:"token"`
+	SessionID string `json:"session_id"`
+	Seq       int    `json:"seq"`
+}
+
+// GatewayHeartbeat represents Gateway HEARTBEAT payload
+type GatewayHeartbeat struct {
+	Seq int `json:"seq"`
+}
+
+// GatewayReady represents Gateway READY event data
+type GatewayReady struct {
+	Version   int    `json:"v"`
+	SessionID string `json:"session_id"`
+	User      struct {
+		ID            string `json:"id"`
+		Username      string `json:"username"`
+		Discriminator string `json:"discriminator"`
+	} `json:"user"`
+}
+
 // DiscordMessageCreate represents a MESSAGE_CREATE event
 type DiscordMessageCreate struct {
-	ID        string              `json:"id"`
-	ChannelID string              `json:"channel_id"`
-	Author    DiscordUser         `json:"author"`
-	Content   string              `json:"content"`
-	Timestamp string              `json:"timestamp"`
-	Edited    string              `json:"edited_timestamp"`
-	TTS       bool                `json:"tts"`
-	Mentions  []DiscordUser       `json:"mentions"`
-	Embeds    []DiscordEmbed      `json:"embeds"`
-	Attachments []DiscordAttachment `json:"attachments"`
+	ID               string                   `json:"id"`
+	ChannelID        string                   `json:"channel_id"`
+	Author           DiscordUser              `json:"author"`
+	Content          string                   `json:"content"`
+	Timestamp        string                   `json:"timestamp"`
+	Edited           string                   `json:"edited_timestamp"`
+	TTS              bool                     `json:"tts"`
+	Mentions         []DiscordUser            `json:"mentions"`
+	Embeds           []DiscordEmbed           `json:"embeds"`
+	Attachments      []DiscordAttachment      `json:"attachments"`
 	MessageReference *DiscordMessageReference `json:"message_reference,omitempty"`
 }
 
@@ -88,11 +145,11 @@ type DiscordUser struct {
 
 // DiscordAttachment represents a file attachment in Discord
 type DiscordAttachment struct {
-	ID       string `json:"id"`
-	Filename string `json:"filename"`
-	URL      string `json:"url"`
-	ProxyURL string `json:"proxy_url"`
-	Size     int64  `json:"size"`
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	URL         string `json:"url"`
+	ProxyURL    string `json:"proxy_url"`
+	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 }
 
@@ -239,7 +296,7 @@ func (d *DiscordAdapter) SendMessage(ctx context.Context, target Target, msg Mes
 		return &SendResult{
 			Delivered: false,
 			Timestamp: time.Now(),
-			Error: NewAdapterError(ErrRateLimited, rateLimitError.Message, true),
+			Error:     NewAdapterError(ErrRateLimited, rateLimitError.Message, true),
 		}, nil
 	}
 
@@ -441,7 +498,7 @@ func (d *DiscordAdapter) SupportsCapabilities(caps CapabilitySet) bool {
 // GetRateLimitStatus returns current rate limit status
 func (d *DiscordAdapter) GetRateLimitStatus(ctx context.Context) map[string]interface{} {
 	return map[string]interface{}{
-		"global_limit":    50,  // requests per second global
+		"global_limit":      50, // requests per second global
 		"per_channel_limit": 5,  // requests per second per channel
 	}
 }
@@ -565,4 +622,209 @@ func NewDiscordAdapterWithCaps(caps CapabilitySet) *DiscordAdapter {
 		BaseAdapter: NewBaseAdapter("discord", "1.0.0", caps),
 		client:      &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SendReaction adds a reaction to a Discord message
+// Discord API: PUT /channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me
+func (d *DiscordAdapter) SendReaction(ctx context.Context, target Target, messageID string, emoji string) error {
+	if messageID == "" {
+		return NewAdapterError(ErrValidation, "message ID is required", false)
+	}
+
+	// Format emoji - remove <:name:id> format for custom emojis
+	formattedEmoji := formatDiscordEmoji(emoji)
+
+	// Build URL
+	url := fmt.Sprintf("https://discord.com/api/v10/channels/%s/messages/%s/reactions/%s/@me",
+		target.Channel, messageID, formattedEmoji)
+
+	// Create request (PUT method for adding reaction)
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, nil)
+	if err != nil {
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+
+	req.Header.Set("Authorization", "Bot "+d.botToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.RecordError(err)
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	// Handle rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		var rateLimitError struct {
+			Message    string `json:"message"`
+			RetryAfter int    `json:"retry_after"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&rateLimitError); err == nil {
+			return NewAdapterError(ErrRateLimited, rateLimitError.Message, true)
+		}
+		return NewAdapterError(ErrRateLimited, "rate limited", true)
+	}
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		var errorResp struct {
+			Message string `json:"message"`
+			Code    int    `json:"code"`
+		}
+		json.NewDecoder(resp.Body).Decode(&errorResp)
+		d.RecordError(fmt.Errorf("discord API error: %s", errorResp.Message))
+		return NewAdapterError(mapDiscordError(resp.StatusCode, errorResp.Message), errorResp.Message, true)
+	}
+
+	return nil
+}
+
+// RemoveReaction removes a reaction from a Discord message
+// Discord API: DELETE /channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me
+func (d *DiscordAdapter) RemoveReaction(ctx context.Context, target Target, messageID string, emoji string) error {
+	if messageID == "" {
+		return NewAdapterError(ErrValidation, "message ID is required", false)
+	}
+
+	// Format emoji - remove <:name:id> format for custom emojis
+	formattedEmoji := formatDiscordEmoji(emoji)
+
+	// Build URL
+	url := fmt.Sprintf("https://discord.com/api/v10/channels/%s/messages/%s/reactions/%s/@me",
+		target.Channel, messageID, formattedEmoji)
+
+	// Create request (DELETE method for removing reaction)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+
+	req.Header.Set("Authorization", "Bot "+d.botToken)
+
+	// Send request
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.RecordError(err)
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	// Handle rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		var rateLimitError struct {
+			Message    string `json:"message"`
+			RetryAfter int    `json:"retry_after"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&rateLimitError); err == nil {
+			return NewAdapterError(ErrRateLimited, rateLimitError.Message, true)
+		}
+		return NewAdapterError(ErrRateLimited, "rate limited", true)
+	}
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		var errorResp struct {
+			Message string `json:"message"`
+			Code    int    `json:"code"`
+		}
+		json.NewDecoder(resp.Body).Decode(&errorResp)
+		d.RecordError(fmt.Errorf("discord API error: %s", errorResp.Message))
+		return NewAdapterError(mapDiscordError(resp.StatusCode, errorResp.Message), errorResp.Message, true)
+	}
+
+	return nil
+}
+
+// GetReactions retrieves current reactions for a Discord message
+// Discord API: GET /channels/{channel.id}/messages/{message.id}/reactions/{emoji}
+func (d *DiscordAdapter) GetReactions(ctx context.Context, target Target, messageID string) ([]Reaction, error) {
+	if messageID == "" {
+		return nil, NewAdapterError(ErrValidation, "message ID is required", false)
+	}
+
+	// Build URL (without emoji to get all reactions)
+	url := fmt.Sprintf("https://discord.com/api/v10/channels/%s/messages/%s/reactions",
+		target.Channel, messageID)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+
+	req.Header.Set("Authorization", "Bot "+d.botToken)
+
+	// Send request
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.RecordError(err)
+		return nil, NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	// Handle rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		var rateLimitError struct {
+			Message    string `json:"message"`
+			RetryAfter int    `json:"retry_after"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&rateLimitError); err == nil {
+			return nil, NewAdapterError(ErrRateLimited, rateLimitError.Message, true)
+		}
+		return nil, NewAdapterError(ErrRateLimited, "rate limited", true)
+	}
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		var errorResp struct {
+			Message string `json:"message"`
+			Code    int    `json:"code"`
+		}
+		json.NewDecoder(resp.Body).Decode(&errorResp)
+		d.RecordError(fmt.Errorf("discord API error: %s", errorResp.Message))
+		return nil, NewAdapterError(mapDiscordError(resp.StatusCode, errorResp.Message), errorResp.Message, true)
+	}
+
+	// Parse response - Discord returns an array of user objects
+	var users []struct {
+		ID   string `json:"id"`
+		Name string `json:"username"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, NewAdapterError(ErrPlatformError, "failed to parse reactions response", true)
+	}
+
+	// Build reaction list
+	reactions := make([]Reaction, 0, len(users))
+	now := time.Now()
+
+	for _, user := range users {
+		isCustom := strings.HasPrefix(formattedDiscordEmoji, ":")
+		reactions = append(reactions, Reaction{
+			Emoji:     formattedDiscordEmoji,
+			Count:     len(users), // Count per emoji
+			UserIDs:   []string{user.ID},
+			Timestamp: now,
+			IsCustom:  isCustom,
+			CustomURL: "", // Would require additional lookup for emoji URL
+		})
+	}
+
+	return reactions, nil
+}
+
+// formatDiscordEmoji formats emoji for Discord API
+// Handles <:name:id> format by extracting the name
+func formatDiscordEmoji(emoji string) string {
+	// If it's a custom emoji in <:name:id> format, extract just the name
+	if strings.HasPrefix(emoji, ":") && strings.HasSuffix(emoji, ">") {
+		parts := strings.SplitN(emoji[1:len(emoji)-1], ":", 2)
+		if len(parts) == 2 {
+			return parts[0] // Return just the name part
+		}
+	}
+	// For regular emojis, return as-is
+	return emoji
 }

@@ -49,9 +49,11 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 
+	"github.com/armorclaw/bridge/internal/sdtw"
 	"github.com/armorclaw/bridge/internal/skills"
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
+	"github.com/armorclaw/bridge/pkg/appservice"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 
 	"github.com/charmbracelet/huh"
@@ -2275,6 +2277,48 @@ func runBridgeServer(cliCfg cliConfig) {
 		}(shutdownCtx)
 	}
 
+	var bridgeManager *appservice.BridgeManager
+	sdtwAdapters := make(map[appservice.Platform]sdtw.SDTWAdapter)
+
+	if cfg.Matrix.Enabled && matrixAdapter != nil {
+		log.Println("Initializing SDTW platform adapters...")
+
+		log.Println("Initializing Discord adapter...")
+		discordAdapter := sdtw.NewDiscordAdapter()
+		sdtwAdapters[appservice.PlatformDiscord] = discordAdapter
+		log.Println("Discord adapter initialized")
+
+		log.Println("Initializing Teams adapter...")
+		teamsAdapter := sdtw.NewTeamsAdapter(sdtw.TeamsConfig{})
+		sdtwAdapters[appservice.PlatformTeams] = teamsAdapter
+		log.Println("Teams adapter initialized")
+
+		log.Println("Initializing WhatsApp adapter...")
+		whatsappAdapter := sdtw.NewWhatsAppAdapter()
+		sdtwAdapters[appservice.PlatformWhatsApp] = whatsappAdapter
+		log.Println("WhatsApp adapter initialized")
+
+		log.Println("Creating BridgeManager...")
+		bm, err := appservice.NewBridgeManager(appservice.BridgeConfig{
+			AppService: nil, // TODO: Wire AppService when available
+			Client:     nil, // TODO: Wire Matrix client when available
+			Adapters:   sdtwAdapters,
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to create BridgeManager: %v", err)
+		} else {
+			bridgeManager = bm
+
+			for platform, adapter := range sdtwAdapters {
+				if err := bridgeManager.RegisterAdapter(platform, adapter); err != nil {
+					log.Printf("Warning: Failed to register %s adapter: %v", platform, err)
+				} else {
+					log.Printf("Successfully registered %s adapter with BridgeManager", platform)
+				}
+			}
+		}
+	}
+
 	// Initialize RPC server
 	log.Printf("Starting JSON-RPC server on %s", cfg.Server.SocketPath)
 	// Compute data dir for provisioning role persistence
@@ -2462,7 +2506,7 @@ func runBridgeServer(cliCfg cliConfig) {
 		Matrix:          matrixAdapter,
 		AIService:       ai.NewAIService(ks),
 		AIMaxConcurrent: 4,
-		BridgeManager:   nil,
+		BridgeManager:   bridgeManager,
 		BrowserJobs:     browserJobs,
 		Studio:          studioService,
 		AppService:      nil,
