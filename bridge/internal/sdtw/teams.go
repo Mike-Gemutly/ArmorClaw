@@ -578,3 +578,148 @@ func GetDefaultTeamsCapabilities() CapabilitySet {
 		ReadReceipts: true,
 	}
 }
+
+// SendReaction adds a reaction to a Teams message via Graph API
+func (t *TeamsAdapter) SendReaction(ctx context.Context, target Target, messageID string, emoji string) error {
+	if !t.initialized || !t.running {
+		return NewAdapterError(ErrPlatformError, "adapter not running", false)
+	}
+
+	if messageID == "" {
+		return NewAdapterError(ErrValidation, "message ID is required", false)
+	}
+	if emoji == "" {
+		return NewAdapterError(ErrValidation, "emoji is required", false)
+	}
+
+	// Teams only supports Unicode emojis
+	if strings.Contains(emoji, "http") || strings.Contains(emoji, ".png") {
+		return NewAdapterError(ErrValidation, "Teams only supports Unicode emojis", false)
+	}
+
+	if err := t.ensureValidToken(ctx); err != nil {
+		return NewAdapterError(ErrAuthFailed, err.Error(), true)
+	}
+
+	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/messages/%s/reactions", messageID)
+	payload := map[string]interface{}{"@microsoft.graph.tombstone": true}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+t.config.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return NewAdapterError(ErrRateLimited, "rate limited", true)
+	}
+	if resp.StatusCode >= 400 {
+		return NewAdapterError(ErrPlatformError, resp.Status, true)
+	}
+
+	return nil
+}
+
+// RemoveReaction removes a reaction from a Teams message via Graph API
+func (t *TeamsAdapter) RemoveReaction(ctx context.Context, target Target, messageID string, emoji string) error {
+	if !t.initialized || !t.running {
+		return NewAdapterError(ErrPlatformError, "adapter not running", false)
+	}
+
+	if messageID == "" {
+		return NewAdapterError(ErrValidation, "message ID is required", false)
+	}
+	if emoji == "" {
+		return NewAdapterError(ErrValidation, "emoji is required", false)
+	}
+
+	if err := t.ensureValidToken(ctx); err != nil {
+		return NewAdapterError(ErrAuthFailed, err.Error(), true)
+	}
+
+	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/messages/%s/reactions/%s",
+		messageID, url.PathEscape(emoji))
+
+	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	req.Header.Set("Authorization", "Bearer "+t.config.AccessToken)
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return NewAdapterError(ErrRateLimited, "rate limited", true)
+	}
+	if resp.StatusCode >= 400 {
+		return NewAdapterError(ErrPlatformError, resp.Status, true)
+	}
+
+	return nil
+}
+
+// GetReactions retrieves current reactions for a Teams message via Graph API
+func (t *TeamsAdapter) GetReactions(ctx context.Context, target Target, messageID string) ([]Reaction, error) {
+	if !t.initialized || !t.running {
+		return nil, NewAdapterError(ErrPlatformError, "adapter not running", false)
+	}
+
+	if messageID == "" {
+		return nil, NewAdapterError(ErrValidation, "message ID is required", false)
+	}
+
+	if err := t.ensureValidToken(ctx); err != nil {
+		return nil, NewAdapterError(ErrAuthFailed, err.Error(), true)
+	}
+
+	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/messages/%s/reactions", messageID)
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+t.config.AccessToken)
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return nil, NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, NewAdapterError(ErrRateLimited, "rate limited", true)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, NewAdapterError(ErrPlatformError, resp.Status, true)
+	}
+
+	var reactions []struct {
+		Type      string `json:"type"`
+		CreatedBy struct {
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
+		} `json:"createdBy"`
+		CreatedDateTime string `json:"createdDateTime"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&reactions); err != nil {
+		return nil, NewAdapterError(ErrPlatformError, err.Error(), true)
+	}
+
+	result := make([]Reaction, 0, len(reactions))
+	for _, r := range reactions {
+		result = append(result, Reaction{
+			Emoji:     r.Type,
+			Count:     1,
+			UserIDs:   []string{r.CreatedBy.User.ID},
+			Timestamp: time.Now(),
+			IsCustom:  false,
+		})
+	}
+
+	return result, nil
+}
