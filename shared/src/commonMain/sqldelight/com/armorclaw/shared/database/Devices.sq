@@ -1,0 +1,70 @@
+-- ArmorClaw Devices Table
+-- For trust & verification (Epic C)
+
+CREATE TABLE devices (
+    device_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    display_name TEXT,
+    is_verified INTEGER NOT NULL DEFAULT 0,
+    trust_level TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    last_seen_ip TEXT,
+    last_seen_timestamp INTEGER,
+    is_current_device INTEGER NOT NULL DEFAULT 0,
+    -- Public key info
+    curve25519_key TEXT,
+    ed25519_key TEXT,
+    -- Signatures
+    signatures TEXT,
+    -- Cross-signing
+    signed_by TEXT,
+    verified_at INTEGER,
+    PRIMARY KEY (device_id, user_id)
+);
+
+-- Indexes
+CREATE INDEX idx_devices_user_id ON devices(user_id);
+CREATE INDEX idx_devices_trust_level ON devices(trust_level);
+
+-- Select all devices for user
+selectByUserId:
+SELECT * FROM devices WHERE user_id = ? ORDER BY is_current_device DESC, last_seen_timestamp DESC;
+
+-- Select device by ID
+selectById:
+SELECT * FROM devices WHERE device_id = ? AND user_id = ?;
+
+-- Insert device
+insert:
+INSERT OR REPLACE INTO devices (
+    device_id, user_id, display_name, is_verified, trust_level,
+    last_seen_ip, last_seen_timestamp, is_current_device,
+    curve25519_key, ed25519_key, signatures, signed_by, verified_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Update trust level
+updateTrustLevel:
+UPDATE devices SET trust_level = ?, verified_at = ? WHERE device_id = ? AND user_id = ?;
+
+-- Update verification status
+updateVerified:
+UPDATE devices SET is_verified = ?, verified_at = ? WHERE device_id = ? AND user_id = ?;
+
+-- Clear current device flag for user
+clearCurrentDevice:
+UPDATE devices SET is_current_device = 0 WHERE user_id = ?;
+
+-- Mark specific device as current
+setCurrentDevice:
+UPDATE devices SET is_current_device = 1 WHERE device_id = ? AND user_id = ?;
+
+-- Delete device
+deleteById:
+DELETE FROM devices WHERE device_id = ? AND user_id = ?;
+
+-- Get unverified devices
+selectUnverified:
+SELECT * FROM devices WHERE user_id = ? AND trust_level = 'UNVERIFIED';
+
+-- Get devices by trust level
+selectByTrustLevel:
+SELECT * FROM devices WHERE trust_level = ?;

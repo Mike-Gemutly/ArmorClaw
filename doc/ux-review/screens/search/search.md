@@ -1,0 +1,174 @@
+# Search Screen
+
+> **Route:** `search`
+> **File:** `androidApp/src/main/kotlin/com/armorclaw/app/screens/search/SearchScreen.kt`
+> **Category:** Search
+
+## Screenshot
+
+![Search Screen](../../screenshots/search/search.png)
+
+## Layout
+
+```
+┌─────────────────────────────────────┐
+│ ←  ┌─────────────────────────────┐  │  ← Search bar
+│    │ 🔍 Search messages...    ✕ │  │
+│    └─────────────────────────────┘  │
+├─────────────────────────────────────┤
+│                                     │
+│  RECENT SEARCHES                    │
+│  • security setup                   │
+│  • meeting notes                    │
+│  • project alpha                    │
+│                                     │
+│  SEARCH IN                          │
+│  ○ All Chats                        │
+│  ○ Current Chat                     │
+│                                     │
+│  RESULTS                            │
+│  ┌─────────────────────────────┐   │
+│  │ 👤 General                  │   │
+│  │    ...security setup guide  │   │
+│  │    2 days ago               │   │
+│  └─────────────────────────────┘   │
+│  ┌─────────────────────────────┐   │
+│  │ 👤 Team Alpha               │   │
+│  │    ...security setup is done│   │
+│  │    1 week ago               │   │
+│  └─────────────────────────────┘   │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+## UI States
+
+### Empty (No Query)
+
+```
+┌─────────────────────────────────────┐
+│    [Search bar focused]             │
+├─────────────────────────────────────┤
+│                                     │
+│  RECENT SEARCHES                    │
+│  [Recent search items]              │
+│                                     │
+│  SEARCH IN                          │
+│  [Scope options]                    │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+### Searching
+
+```
+┌─────────────────────────────────────┐
+│    [Search bar with query]          │
+├─────────────────────────────────────┤
+│                                     │
+│           ◠ ◠ ◠                     │
+│        Searching...                 │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+### Results
+
+```
+┌─────────────────────────────────────┐
+│    [Search query]                   │
+├─────────────────────────────────────┤
+│                                     │
+│  Found 5 results                    │
+│                                     │
+│  [Result items with highlights]     │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+### No Results
+
+```
+┌─────────────────────────────────────┐
+│    [Search query]                   │
+├─────────────────────────────────────┤
+│                                     │
+│              🔍                     │
+│        No results found             │
+│                                     │
+│  Try different keywords or check    │
+│  your search scope.                 │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+## State Flow
+
+```
+            ┌─────────────┐
+            │    Idle     │
+            └──────┬──────┘
+                   │
+        ┌──────────┼──────────┐
+        ▼                     ▼
+   ┌──────────┐         ┌──────────┐
+   │ Typing   │         │ Recent   │
+   │ Query    │         │ Search   │
+   └────┬─────┘         └──────────┘
+        │
+        ▼
+   ┌──────────┐
+   │Searching │
+   └────┬─────┘
+        │
+   ┌────┴────┐
+   ▼         ▼
+┌──────┐ ┌─────────┐
+│Results│ │No Results│
+└───┬───┘ └─────────┘
+    │
+    ▼
+┌──────────┐
+│ Tap      │
+│ Result   │
+│ → Chat   │
+└──────────┘
+```
+
+## User Flow
+
+1. **User arrives from:** Home screen (search icon)
+2. **User can:**
+   - Enter search query
+   - Select search scope
+   - View recent searches
+   - Tap result to navigate to message
+3. **User navigates to:**
+   - Chat screen (with message highlighted)
+   - Home screen (back)
+
+## Accessibility
+
+- **Content descriptions:**
+  - Search field: "Search messages"
+  - Clear: "Clear search"
+  - Results: "[room name], [message preview], [date]"
+
+- **Touch targets:**
+  - Result items: 48.dp minimum
+
+## Design Tokens
+
+| Token | Value |
+|-------|-------|
+| Search bar | OutlinedTextField |
+| Result card | surfaceVariant |
+| Highlight | primary color |
+
+## Notes
+
+- Full-text search across messages
+- Search scope selection
+- Recent searches saved locally
+- Results highlight matching text
+- Tap result scrolls to message

@@ -1,0 +1,74 @@
+-- ArmorClaw Verification Transactions Table
+-- For tracking verification flows (Epic C)
+
+CREATE TABLE verification_transactions (
+    transaction_id TEXT PRIMARY KEY NOT NULL,
+    other_user_id TEXT NOT NULL,
+    other_device_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    method TEXT NOT NULL DEFAULT 'SAS',
+    started_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    cancellation_reason TEXT,
+    -- SAS/Emoji data
+    emoji_data TEXT,
+    -- Timestamps
+    completed_at INTEGER
+);
+
+-- Indexes
+CREATE INDEX idx_verification_other_user ON verification_transactions(other_user_id);
+CREATE INDEX idx_verification_state ON verification_transactions(state);
+
+-- Select by transaction ID
+selectById:
+SELECT * FROM verification_transactions WHERE transaction_id = ?;
+
+-- Select active transactions
+selectActive:
+SELECT * FROM verification_transactions
+WHERE state IN ('REQUESTED', 'READY', 'EMOJI_CHALLENGE', 'CODE_CHALLENGE', 'VERIFYING')
+ORDER BY started_at DESC;
+
+-- Select by user
+selectByOtherUser:
+SELECT * FROM verification_transactions
+WHERE other_user_id = ?
+ORDER BY started_at DESC;
+
+-- Insert transaction
+insert:
+INSERT OR REPLACE INTO verification_transactions (
+    transaction_id, other_user_id, other_device_id, state, method,
+    started_at, updated_at, cancellation_reason, emoji_data, completed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Update state
+updateState:
+UPDATE verification_transactions SET state = ?, updated_at = ? WHERE transaction_id = ?;
+
+-- Set emoji data
+setEmojiData:
+UPDATE verification_transactions SET emoji_data = ?, state = 'EMOJI_CHALLENGE', updated_at = ? WHERE transaction_id = ?;
+
+-- Complete transaction
+complete:
+UPDATE verification_transactions SET state = 'VERIFIED', completed_at = ?, updated_at = ? WHERE transaction_id = ?;
+
+-- Cancel transaction
+cancel:
+UPDATE verification_transactions SET state = 'CANCELLED', cancellation_reason = ?, updated_at = ? WHERE transaction_id = ?;
+
+-- Fail transaction
+fail:
+UPDATE verification_transactions SET state = 'FAILED', cancellation_reason = ?, updated_at = ? WHERE transaction_id = ?;
+
+-- Delete old completed transactions (cleanup)
+deleteOldCompleted:
+DELETE FROM verification_transactions
+WHERE state IN ('VERIFIED', 'CANCELLED', 'FAILED')
+AND completed_at < ?;
+
+-- Delete transaction
+deleteById:
+DELETE FROM verification_transactions WHERE transaction_id = ?;

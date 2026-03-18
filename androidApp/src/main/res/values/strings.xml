@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ArmorClaw</string>
+
+    <!-- Store Listing Metadata -->
+    <string name="app_short_description">Secure, encrypted messaging with AI agents. Your keys, your data, your control.</string>
+    <string name="app_full_description">
+        ArmorClaw - Secure AI Agent Communication
+
+        🛡️ END-TO-END ENCRYPTED
+        All messages are secured with AES-256-GCM encryption. Only you and your AI agents can read your conversations.
+
+        🔐 ZERO-TRUST SECURITY
+        Your API keys never leave your secure container. Even if an agent is compromised, your data remains protected.
+
+        💬 MATRIX PROTOCOL
+        Built on the decentralized Matrix protocol for reliable, federated messaging. Connect from anywhere.
+
+        📱 BIOMETRIC AUTHENTICATION
+        Secure your app with fingerprint or face recognition. Your messages are protected even if your device is lost.
+
+        🌐 DECENTRALIZED
+        No single point of failure. Your messages are stored on your device and synced across your devices.
+
+        KEY FEATURES:
+        • End-to-end encrypted messaging
+        • AI agent integration
+        • Biometric login
+        • Cross-device sync
+        • File and image sharing
+        • Voice messages
+        • Threaded conversations
+        • Message search
+        • Dark mode support
+
+        PRIVACY FIRST:
+        • No ads
+        • No tracking
+        • No data selling
+        • Open source protocols
+        • You own your data
+    </string>
+
+    <!-- Onboarding -->
+    <string name="welcome_title">Welcome to ArmorClaw</string>
+    <string name="welcome_subtitle">Secure AI agents in your pocket</string>
+    <string name="welcome_get_started">Get Started</string>
+    <string name="welcome_skip">Skip</string>
+
+    <!-- Features -->
+    <string name="feature_security_title">Enterprise Security</string>
+    <string name="feature_security_desc">Your API keys never leave secure container</string>
+    <string name="feature_chat_title">Chat Anywhere</string>
+    <string name="feature_chat_desc">Connect to agents from anywhere with Matrix</string>
+    <string name="feature_trust_title">Zero-Trust</string>
+    <string name="feature_trust_desc">Protected even if agent is compromised</string>
+
+    <!-- Home -->
+    <string name="conversations_title">Conversations</string>
+    <string name="no_conversations_title">No conversations yet</string>
+    <string name="no_conversations_desc">Start chatting with your AI agent</string>
+
+    <!-- Common -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="retry">Retry</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+
+    <!-- Permissions -->
+    <string name="permission_notifications_title">Notifications</string>
+    <string name="permission_notifications_desc">Get notified when agent sends a message</string>
+    <string name="permission_microphone_title">Microphone</string>
+    <string name="permission_microphone_desc">Dictate messages instead of typing</string>
+    <string name="permission_camera_title">Camera</string>
+    <string name="permission_camera_desc">Send images to agents for analysis</string>
+
+    <!-- Sync -->
+    <string name="sync_online">Connected</string>
+    <string name="sync_syncing">Syncing…</string>
+    <string name="sync_offline">You\'re offline</string>
+    <string name="sync_error">Sync failed</string>
+    <string name="sync_retry">Retry</string>
+
+    <!-- Errors -->
+    <string name="error_unknown">Unknown error occurred</string>
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_server">Server error. Please try again later.</string>
+    <string name="error_auth">Authentication failed</string>
+
+    <!-- Content Descriptions for Accessibility -->
+    <string name="cd_app_logo">ArmorClaw secure messaging app logo</string>
+    <string name="cd_encrypted_message">End-to-end encrypted message</string>
+    <string name="cd_send_message">Send message</string>
+    <string name="cd_attach_file">Attach file</string>
+    <string name="cd_voice_message">Record voice message</string>
+    <string name="cd_user_avatar">User avatar</string>
+    <string name="cd_room_avatar">Room avatar</string>
+    <string name="cd_back">Navigate back</string>
+    <string name="cd_settings">Open settings</string>
+    <string name="cd_search">Search messages and rooms</string>
+    <string name="cd_more_options">More options</string>
+    <string name="cd_message_sent">Message sent</string>
+    <string name="cd_message_delivered">Message delivered</string>
+    <string name="cd_message_read">Message read</string>
+    <string name="cd_typing_indicator">Someone is typing</string>
+    <string name="cd_online_status">Online</string>
+    <string name="cd_offline_status">Offline</string>
+    <string name="cd_encryption_verified">Encryption verified</string>
+    <string name="cd_encryption_warning">Encryption warning</string>
+    <string name="cd_verified_badge">Verified user badge</string>
+
+    <!-- Biometric -->
+    <string name="biometric_title">Authenticate</string>
+    <string name="biometric_subtitle">Use your fingerprint or face to unlock ArmorClaw</string>
+    <string name="biometric_negative_button">Use password</string>
+
+    <!-- Notification Channels -->
+    <string name="channel_messages">Messages</string>
+    <string name="channel_messages_description">Notifications for new messages</string>
+    <string name="channel_alerts">Alerts</string>
+    <string name="channel_alerts_description">Security and system alerts</string>
+    <string name="channel_calls">Calls</string>
+    <string name="channel_calls_description">Incoming call notifications</string>
+    <string name="notification_channel_messages">Messages</string>
+    <string name="notification_channel_messages_desc">Notifications for new messages</string>
+    <string name="notification_channel_calls">Calls</string>
+    <string name="notification_channel_calls_desc">Incoming call notifications</string>
+
+    <!-- Data Safety -->
+    <string name="data_safety_encryption">Your messages are end-to-end encrypted with AES-256-GCM</string>
+    <string name="data_safety_no_tracking">We do not track or sell your data</string>
+    <string name="data_safety_your_keys">Your encryption keys never leave your device</string>
+
+    <!-- Support -->
+    <string name="support_email">support@armorclaw.app</string>
+    <string name="privacy_email">privacy@armorclaw.app</string>
+    <string name="website_url">https://armorclaw.app</string>
+    <string name="privacy_policy_url">https://armorclaw.app/privacy</string>
+    <string name="terms_url">https://armorclaw.app/terms</string>
+</resources>

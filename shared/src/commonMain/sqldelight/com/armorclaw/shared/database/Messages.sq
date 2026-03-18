@@ -1,0 +1,143 @@
+-- ArmorClaw Messages Table
+-- Version: 2 (with thread support)
+
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY NOT NULL,
+    event_id TEXT,
+    room_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    formatted_body TEXT,
+    message_type TEXT NOT NULL DEFAULT 'TEXT',
+    timestamp INTEGER NOT NULL,
+    server_timestamp INTEGER,
+    is_outgoing INTEGER NOT NULL DEFAULT 0,
+    sync_status TEXT NOT NULL DEFAULT 'PENDING',
+    edit_count INTEGER NOT NULL DEFAULT 0,
+    reply_to TEXT,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    -- Thread support (Epic A)
+    thread_root_id TEXT,
+    is_thread_reply INTEGER NOT NULL DEFAULT 0,
+    thread_depth INTEGER NOT NULL DEFAULT 0,
+    thread_participants TEXT,
+    -- Reactions stored as JSON
+    reactions TEXT
+);
+
+-- Indexes for common queries
+CREATE INDEX idx_messages_room_id ON messages(room_id);
+CREATE INDEX idx_messages_event_id ON messages(event_id);
+CREATE INDEX idx_messages_sender_id ON messages(sender_id);
+CREATE INDEX idx_messages_timestamp ON messages(timestamp);
+CREATE INDEX idx_messages_thread_root_id ON messages(thread_root_id);
+CREATE INDEX idx_messages_thread_depth ON messages(thread_depth);
+
+-- Get all messages in a room
+selectAllByRoomId:
+SELECT * FROM messages
+WHERE room_id = ?
+AND is_deleted = 0
+ORDER BY timestamp ASC;
+
+-- Get messages with pagination
+selectByRoomIdPaged:
+SELECT * FROM messages
+WHERE room_id = ?
+AND is_deleted = 0
+ORDER BY timestamp DESC
+LIMIT ? OFFSET ?;
+
+-- Get message by ID
+selectById:
+SELECT * FROM messages WHERE id = ?;
+
+-- Get message by event ID
+selectByEventId:
+SELECT * FROM messages WHERE event_id = ?;
+
+-- Insert message
+insert:
+INSERT OR REPLACE INTO messages (
+    id, event_id, room_id, sender_id, content, formatted_body,
+    message_type, timestamp, server_timestamp, is_outgoing,
+    sync_status, edit_count, reply_to, is_deleted,
+    thread_root_id, is_thread_reply, thread_depth, thread_participants, reactions
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Update sync status
+updateSyncStatus:
+UPDATE messages SET sync_status = ?, event_id = ? WHERE id = ?;
+
+-- Mark as deleted
+markDeleted:
+UPDATE messages SET is_deleted = 1 WHERE id = ?;
+
+-- Get thread messages
+selectThreadMessages:
+SELECT * FROM messages
+WHERE thread_root_id = ?
+AND is_deleted = 0
+ORDER BY timestamp ASC
+LIMIT ? OFFSET ?;
+
+-- Get thread root (original message that started thread)
+selectThreadRoot:
+SELECT * FROM messages
+WHERE id = ?
+AND thread_root_id IS NOT NULL
+AND is_thread_reply = 0
+AND is_deleted = 0;
+
+-- Get all thread roots in a room (messages with replies)
+selectThreadRoots:
+SELECT DISTINCT m.* FROM messages m
+WHERE m.room_id = ?
+AND m.is_deleted = 0
+AND EXISTS (
+    SELECT 1 FROM messages r
+    WHERE r.thread_root_id = m.id
+    AND r.is_deleted = 0
+)
+ORDER BY m.timestamp DESC
+LIMIT ?;
+
+-- Count thread replies
+countThreadReplies:
+SELECT COUNT(*) FROM messages
+WHERE thread_root_id = ?
+AND is_thread_reply = 1
+AND is_deleted = 0;
+
+-- Get last thread reply
+selectLastThreadReply:
+SELECT * FROM messages
+WHERE thread_root_id = ?
+AND is_thread_reply = 1
+AND is_deleted = 0
+ORDER BY timestamp DESC
+LIMIT 1;
+
+-- Get pending messages for sync
+selectPendingMessages:
+SELECT * FROM messages
+WHERE sync_status = 'PENDING'
+AND is_outgoing = 1
+ORDER BY timestamp ASC;
+
+-- Update reactions
+updateReactions:
+UPDATE messages SET reactions = ? WHERE id = ?;
+
+-- Search messages (basic text search)
+searchMessages:
+SELECT * FROM messages
+WHERE room_id = ?
+AND content LIKE ?
+AND is_deleted = 0
+ORDER BY timestamp DESC
+LIMIT ?;
+
+-- Delete all messages in a room
+deleteByRoomId:
+DELETE FROM messages WHERE room_id = ?;

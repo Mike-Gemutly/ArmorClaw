@@ -1,0 +1,181 @@
+[versions]
+# Core
+kotlin = "1.9.20"
+android-gradle = "8.2.0"
+
+# Compose
+compose = "1.5.0"
+compose-compiler = "1.5.4"
+activity-compose = "1.8.1"
+lifecycle = "2.6.2"
+navigation = "2.7.5"
+
+# KMP
+kmp = "1.5.11"
+
+# Coroutines
+coroutines = "1.7.3"
+
+# DI
+koin = "3.5.0"
+koin-compose = "3.5.0"
+
+# Network
+ktor = "2.3.5"
+okhttp = "4.12.0"
+
+# Database
+sqldelight = "2.0.0"
+sqlite-jdbc = "3.43.0"
+room = "2.6.1"
+
+# Matrix
+matrix-sdk = "1.6.0"
+matrix-rust-sdk = "0.4.3"
+
+# Security
+biometric = "1.1.0"
+security-crypto = "1.1.0-alpha06"
+play-services-safetynet = "18.0.1"
+sqlcipher = "4.5.6"
+
+# Notifications
+firebase-bom = "32.7.0"
+
+# Crash Reporting
+sentry = "7.6.0"
+sentry-kotlin = "0.11.0"
+
+# Image Loading
+coil = "2.4.0"
+coil-compose = "2.4.0"
+
+# Utilities
+kotlinx-serialization = "1.6.0"
+kotlinx-datetime = "0.5.0"
+kotlinx-collections-immutable = "0.3.6"
+
+# Testing
+junit = "4.13.2"
+mockk = "1.13.8"
+kotlin-test = "1.9.20"
+turbine = "1.0.0"
+robolectric = "4.11.1"
+
+# WorkManager
+work-runtime = "2.9.0"
+
+# Accompanist
+accompanist = "0.32.0"
+
+# Code Quality
+detekt = "1.23.4"
+
+[libraries]
+# Compose
+compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose" }
+compose-ui-util = { module = "androidx.compose.ui:ui-util", version.ref = "compose" }
+compose-material = { module = "androidx.compose.material:material", version.ref = "compose" }
+compose-material3 = { module = "androidx.compose.material3:material3", version = "1.1.2" }
+compose-foundation = { module = "androidx.compose.foundation:foundation", version.ref = "compose" }
+compose-runtime = { module = "androidx.compose.runtime:runtime", version.ref = "compose" }
+compose-animation = { module = "androidx.compose.animation:animation", version.ref = "compose" }
+compose-icons = { module = "androidx.compose.material:material-icons-extended", version.ref = "compose" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+
+# Coroutines
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+
+# Koin
+koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
+koin-android = { module = "io.insert-koin:koin-android", version.ref = "koin" }
+koin-compose = { module = "io.insert-koin:koin-androidx-compose", version.ref = "koin-compose" }
+
+# Ktor
+ktor-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-logging = { module = "io.ktor:ktor-client-logging", version.ref = "ktor" }
+ktor-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+
+# OkHttp
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp" }
+
+# SQLDelight
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+sqldelight-coroutines-extensions = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
+sqldelight-paging-extensions = { module = "app.cash.sqldelight:androidx-paging3-extensions", version.ref = "sqldelight" }
+
+# Room
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+# Serialization
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
+kotlinx-collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinx-collections-immutable" }
+
+# Coil
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil-compose" }
+
+# Biometric
+biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
+
+# Security
+security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
+sqlcipher = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
+sqlite = { module = "androidx.sqlite:sqlite-ktx", version = "2.4.0" }
+
+# Matrix SDK (Rust components for Android)
+# These provide E2EE support via the Matrix Rust SDK
+# NOTE: Matrix Rust SDK is distributed via GitHub releases, not Maven Central
+# See: https://github.com/matrix-org/matrix-rust-sdk/releases
+# For now, we use a placeholder implementation in MatrixClientImpl
+# TODO: Add proper Maven repository when SDK becomes available
+# matrix-sdk-android = { module = "org.matrix.rustcomponents:sdk-android", version.ref = "matrix-rust-sdk" }
+# matrix-crypto-android = { module = "org.matrix.rustcomponents:crypto-android", version.ref = "matrix-rust-sdk" }
+
+# Firebase
+firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebase-bom" }
+firebase-messaging = { module = "com.google.firebase:firebase-messaging-ktx" }
+firebase-crashlytics = { module = "com.google.firebase:firebase-crashlytics-ktx" }
+firebase-analytics = { module = "com.google.firebase:firebase-analytics-ktx" }
+
+# Sentry
+sentry-kotlin = { module = "io.sentry:sentry-kotlin-multiplatform", version.ref = "sentry-kotlin" }
+sentry-compose = { module = "io.sentry:sentry-compose-android", version.ref = "sentry" }
+
+# Testing
+junit = { module = "junit:junit", version.ref = "junit" }
+mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin-test" }
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin-test" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+
+# WorkManager
+work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work-runtime" }
+
+# Accompanist
+accompanist-swiperefresh = { module = "com.google.accompanist:accompanist-swiperefresh", version.ref = "accompanist" }
+accompanist-placeholder = { module = "com.google.accompanist:accompanist-placeholder-material3", version.ref = "accompanist" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "kmp" }
+android-application = { id = "com.android.application", version.ref = "android-gradle" }
+android-library = { id = "com.android.library", version.ref = "android-gradle" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+ksp = { id = "com.google.devtools.ksp", version = "1.9.20-1.0.14" }

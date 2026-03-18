@@ -1,0 +1,336 @@
+package com.armorclaw.shared.platform.matrix
+
+import com.armorclaw.shared.domain.model.Message
+import com.armorclaw.shared.domain.model.Room
+import com.armorclaw.shared.domain.model.RoomType
+import com.armorclaw.shared.domain.model.User
+import com.armorclaw.shared.domain.model.UserPresence
+import com.armorclaw.shared.platform.matrix.event.ArmorClawEventType
+import com.armorclaw.shared.platform.matrix.event.MatrixEvent
+import com.armorclaw.shared.platform.matrix.event.MatrixEventType
+import com.armorclaw.shared.platform.matrix.event.WorkflowStartedEvent
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Tests for MatrixClient interface and implementations
+ *
+ * These tests verify the Matrix SDK integration works correctly
+ * for authentication, messaging, and event handling.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [28])
+class MatrixClientTest {
+
+    private lateinit var client: MatrixClient
+    private val json = Json { ignoreUnknownKeys = true }
+
+    @Before
+    fun setup() {
+        client = MatrixClientPlaceholder()
+    }
+
+    // ========================================================================
+    // Authentication Tests
+    // ========================================================================
+
+    @Test
+    fun `login should return session on success`() = runTest {
+        val result = client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass",
+            deviceId = "TEST_DEVICE"
+        )
+
+        assertTrue("Login should succeed", result.isSuccess)
+        val session = result.getOrThrow()
+        assertEquals("User ID should be correct", "@testuser:matrix.example.com", session.userId)
+        assertEquals("Device ID should match", "TEST_DEVICE", session.deviceId)
+        assertNotNull("Access token should not be null", session.accessToken)
+    }
+
+    @Test
+    fun `login should update isLoggedIn state`() = runTest {
+        assertFalse("Should not be logged in initially", client.isLoggedIn.value)
+
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+
+        assertTrue("Should be logged in after login", client.isLoggedIn.value)
+    }
+
+    @Test
+    fun `login should update currentUser state`() = runTest {
+        assertNull("Current user should be null initially", client.currentUser.value)
+
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+
+        assertNotNull("Current user should not be null after login", client.currentUser.value)
+        assertEquals("Username should match", "@testuser:matrix.example.com", client.currentUser.value?.id)
+    }
+
+    @Test
+    fun `logout should clear session state`() = runTest {
+        // First login
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+        assertTrue("Should be logged in", client.isLoggedIn.value)
+
+        // Then logout
+        val result = client.logout()
+        assertTrue("Logout should succeed", result.isSuccess)
+        assertFalse("Should not be logged in after logout", client.isLoggedIn.value)
+        assertNull("Current user should be null after logout", client.currentUser.value)
+    }
+
+    // ========================================================================
+    // Room Tests
+    // ========================================================================
+
+    @Test
+    fun `createRoom should return room with correct properties`() = runTest {
+        // Login first
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+
+        val result = client.createRoom(
+            name = "Test Room",
+            topic = "Test Topic",
+            isDirect = false,
+            isEncrypted = true
+        )
+
+        assertTrue("Create room should succeed", result.isSuccess)
+        val room = result.getOrThrow()
+        assertEquals("Room name should match", "Test Room", room.name)
+        assertEquals("Room topic should match", "Test Topic", room.topic)
+        assertEquals("Room type should be GROUP", RoomType.GROUP, room.type)
+    }
+
+    @Test
+    fun `createRoom should add room to rooms list`() = runTest {
+        // Login first
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+
+        assertEquals("Should have 0 rooms initially", 0, client.rooms.value.size)
+
+        client.createRoom(name = "Test Room")
+
+        assertEquals("Should have 1 room after creation", 1, client.rooms.value.size)
+        assertEquals("Room name should match", "Test Room", client.rooms.value.first().name)
+    }
+
+    @Test
+    fun `createRoom with isDirect should create DIRECT room type`() = runTest {
+        // Login first
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+
+        val result = client.createRoom(
+            name = "Direct Message",
+            isDirect = true
+        )
+
+        assertTrue("Create room should succeed", result.isSuccess)
+        assertEquals("Room type should be DIRECT", RoomType.DIRECT, result.getOrThrow().type)
+    }
+
+    @Test
+    fun `leaveRoom should remove room from list`() = runTest {
+        // Login and create room
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+        val room = client.createRoom(name = "Test Room").getOrThrow()
+
+        val result = client.leaveRoom(room.id)
+
+        assertTrue("Leave room should succeed", result.isSuccess)
+        assertEquals("Should have 0 rooms after leaving", 0, client.rooms.value.size)
+    }
+
+    // ========================================================================
+    // Message Tests
+    // ========================================================================
+
+    @Test
+    fun `sendTextMessage should return event ID`() = runTest {
+        // Login and create room
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+        val room = client.createRoom(name = "Test Room").getOrThrow()
+
+        val result = client.sendTextMessage(
+            roomId = room.id,
+            text = "Hello, World!"
+        )
+
+        assertTrue("Send message should succeed", result.isSuccess)
+        assertNotNull("Event ID should not be null", result.getOrThrow())
+        assertTrue("Event ID should start with $", result.getOrThrow().startsWith("$"))
+    }
+
+    @Test
+    fun `getMessages should return message batch`() = runTest {
+        // Login and create room
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+        val room = client.createRoom(name = "Test Room").getOrThrow()
+
+        val result = client.getMessages(roomId = room.id, limit = 50)
+
+        assertTrue("Get messages should succeed", result.isSuccess)
+        val batch = result.getOrThrow()
+        assertNotNull("Message list should not be null", batch.messages)
+    }
+
+    // ========================================================================
+    // Sync Tests
+    // ========================================================================
+
+    @Test
+    fun `syncState should be Idle initially`() = runTest {
+        assertEquals("Sync state should be Idle", SyncState.Idle, client.syncState.value)
+    }
+
+    @Test
+    fun `connectionState should be Offline initially`() = runTest {
+        assertEquals("Connection state should be Offline", ConnectionState.Offline, client.connectionState.value)
+    }
+
+    // ========================================================================
+    // Encryption Tests
+    // ========================================================================
+
+    @Test
+    fun `isRoomEncrypted should return false for unencrypted room`() = runTest {
+        // Login and create unencrypted room
+        client.login(
+            homeserver = "https://matrix.example.com",
+            username = "testuser",
+            password = "testpass"
+        )
+        val room = client.createRoom(name = "Test Room", isEncrypted = false).getOrThrow()
+
+        val isEncrypted = client.isRoomEncrypted(room.id)
+
+        assertFalse("Room should not be encrypted", isEncrypted)
+    }
+
+    // ========================================================================
+    // Event Type Tests
+    // ========================================================================
+
+    @Test
+    fun `ArmorClawEventType should identify workflow events`() {
+        assertTrue(
+            "Should identify workflow started event",
+            ArmorClawEventType.isWorkflowEvent(ArmorClawEventType.WORKFLOW_STARTED)
+        )
+        assertTrue(
+            "Should identify workflow step event",
+            ArmorClawEventType.isWorkflowEvent(ArmorClawEventType.WORKFLOW_STEP)
+        )
+        assertTrue(
+            "Should identify workflow completed event",
+            ArmorClawEventType.isWorkflowEvent(ArmorClawEventType.WORKFLOW_COMPLETED)
+        )
+    }
+
+    @Test
+    fun `ArmorClawEventType should identify agent events`() {
+        assertTrue(
+            "Should identify agent task started event",
+            ArmorClawEventType.isAgentEvent(ArmorClawEventType.AGENT_TASK_STARTED)
+        )
+        assertTrue(
+            "Should identify agent task complete event",
+            ArmorClawEventType.isAgentEvent(ArmorClawEventType.AGENT_TASK_COMPLETE)
+        )
+        assertTrue(
+            "Should identify agent thinking event",
+            ArmorClawEventType.isAgentEvent(ArmorClawEventType.AGENT_THINKING)
+        )
+    }
+
+    @Test
+    fun `ArmorClawEventType should identify ArmorClaw events`() {
+        assertTrue(
+            "Should identify workflow event as ArmorClaw event",
+            ArmorClawEventType.isArmorClawEvent(ArmorClawEventType.WORKFLOW_STARTED)
+        )
+        assertTrue(
+            "Should identify agent event as ArmorClaw event",
+            ArmorClawEventType.isArmorClawEvent(ArmorClawEventType.AGENT_TASK_STARTED)
+        )
+        assertTrue(
+            "Should identify budget event as ArmorClaw event",
+            ArmorClawEventType.isArmorClawEvent(ArmorClawEventType.BUDGET_WARNING)
+        )
+        assertFalse(
+            "Should not identify standard Matrix event as ArmorClaw event",
+            ArmorClawEventType.isArmorClawEvent(MatrixEventType.ROOM_MESSAGE)
+        )
+    }
+
+    // ========================================================================
+    // Event Serialization Tests
+    // ========================================================================
+
+    @Test
+    fun `WorkflowStartedEvent should serialize correctly`() {
+        val event = WorkflowStartedEvent(
+            workflowId = "wf_123",
+            workflowType = "document_analysis",
+            initiatedBy = "@user:example.com",
+            timestamp = 1234567890L,
+            parameters = mapOf("document_id" to "doc_456")
+        )
+
+        val jsonString = json.encodeToString(event)
+        assertTrue("Should contain workflow ID", jsonString.contains("wf_123"))
+        assertTrue("Should contain workflow type", jsonString.contains("document_analysis"))
+
+        val decoded = json.decodeFromString<WorkflowStartedEvent>(jsonString)
+        assertEquals("Workflow ID should match", event.workflowId, decoded.workflowId)
+        assertEquals("Workflow type should match", event.workflowType, decoded.workflowType)
+    }
+}

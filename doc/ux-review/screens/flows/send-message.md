@@ -1,0 +1,251 @@
+# Send Message Flow
+
+> **Flow:** Core Messaging
+> **Screens:** 3
+> **Duration:** Instant to 30 seconds
+
+## Overview
+
+The core messaging flow allows users to send encrypted messages to other users in a chat room.
+
+## Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           SEND MESSAGE FLOW                                      │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│   HOME   │────▶│  CHAT    │────▶│  TYPE    │────▶│  SEND    │────▶│ CONFIRM  │
+│  SCREEN  │     │  SCREEN  │     │ MESSAGE  │     │ MESSAGE  │     │ DELIVERY │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘     └──────────┘
+                      │
+                      │
+                      ▼
+               ┌──────────┐
+               │  REPLY   │
+               │  MODE    │
+               └──────────┘
+                      │
+                      ▼
+               ┌──────────┐
+               │  THREAD  │
+               │  VIEW    │
+               └──────────┘
+```
+
+## Step-by-Step Analysis
+
+### Step 1: Home → Chat Room
+
+```
+┌─────────────────────┐                    ┌─────────────────────┐
+│       HOME          │                    │       CHAT          │
+│                     │                    │                     │
+│  ┌───────────────┐  │    Tap room card   │  ← Room Name    ⋮  │
+│  │ 👤 General    │  │ ─────────────────▶ │                     │
+│  │    Hey!    2m │  │                    │  [Message list]     │
+│  │           (3) │  │                    │                     │
+│  └───────────────┘  │                    │  📎 │...│ 🎤  ➤   │
+└─────────────────────┘                    └─────────────────────┘
+```
+
+**Actions:**
+- User taps room card in home screen
+- Chat screen opens with message history
+- Input bar ready for typing
+
+---
+
+### Step 2: Compose Message
+
+```
+┌─────────────────────┐                    ┌─────────────────────┐
+│       CHAT          │                    │       CHAT          │
+│                     │                    │                     │
+│  [Messages...]      │    Type message    │  [Messages...]      │
+│                     │ ─────────────────▶ │                     │
+│                     │                    │                     │
+│  📎 │...│ 🎤       │                    │  📎 │Hello!│ 🎤  ➤ │
+└─────────────────────┘                    └─────────────────────┘
+```
+
+**States:**
+- Empty input: Send button disabled
+- Has text: Send button enabled (purple)
+- Voice active: Mic button red
+
+---
+
+### Step 3: Send Message
+
+```
+┌─────────────────────┐                    ┌─────────────────────┐
+│       CHAT          │                    │       CHAT          │
+│                     │                    │                     │
+│  [Messages...]      │    Tap send or     │  [Messages...]      │
+│                     │    press Enter     │                     │
+│  📎 │Hello!│ 🎤  ➤ │ ─────────────────▶ │       Hello!     ✓  │
+│                     │                    │                     │
+└─────────────────────┘                    │  📎 │...│ 🎤       │
+                                           └─────────────────────┘
+```
+
+**Optimistic Update:**
+- Message appears immediately with single checkmark
+- Input field clears
+- List scrolls to show new message
+
+---
+
+### Step 4: Confirm Delivery
+
+```
+┌─────────────────────┐                    ┌─────────────────────┐
+│       CHAT          │                    │       CHAT          │
+│                     │                    │                     │
+│  [Messages...]      │    Server confirms │  [Messages...]      │
+│       Hello!     ✓  │ ─────────────────▶ │       Hello!    ✓✓  │
+│                     │                    │                     │
+└─────────────────────┘                    └─────────────────────┘
+```
+
+**Delivery States:**
+- ✓ (single) = Sent to server
+- ✓✓ (double) = Delivered to recipient
+- ✓✓ (blue) = Read by recipient
+
+---
+
+## Reply Flow
+
+```
+┌─────────────────────┐
+│       CHAT          │
+│                     │
+│  ┌───────────────┐  │
+│  │ 👤 Alice      │  │
+│  │    Hey!       │  │  ← Long press
+│  └───────────────┘  │
+│                     │
+│         ▼           │
+│  ┌───────────────┐  │
+│  │  Reply        │  │  ← Context menu
+│  │  Copy         │  │
+│  │  React        │  │
+│  │  Forward      │  │
+│  └───────────────┘  │
+│                     │
+│         ▼           │
+│  ┌───────────────┐  │
+│  │ ↩ Replying to │  │  ← Reply preview
+│  │    Alice: Hey!│  │
+│  └───────────────┘  │
+│  📎 │Hi!│ 🎤  ➤    │
+└─────────────────────┘
+```
+
+---
+
+## Thread Flow
+
+```
+┌─────────────────────┐                    ┌─────────────────────┐
+│       CHAT          │                    │      THREAD         │
+│                     │                    │                     │
+│  ┌───────────────┐  │    Tap thread      │  ┌───────────────┐  │
+│  │ 👤 Alice      │  │    indicator       │  │ 👤 Alice      │  │
+│  │    Original   │  │ ─────────────────▶ │  │    Original   │  │
+│  │    💬 3       │  │                    │  └───────────────┘  │
+│  └───────────────┘  │                    │                     │
+│                     │                    │  ┌───────────────┐  │
+│                     │                    │  │ 👤 Bob        │  │
+│                     │                    │  │    Reply 1    │  │
+│                     │                    │  └───────────────┘  │
+│                     │                    │                     │
+│                     │                    │  📎 │...│ 🎤  ➤   │
+└─────────────────────┘                    └─────────────────────┘
+```
+
+---
+
+## State Flow Summary
+
+```
+                    ┌──────────────────────┐
+                    │    MESSAGE STATE     │
+                    └──────────┬───────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+  ┌───────────┐          ┌───────────┐          ┌───────────┐
+  │  COMPOSING│          │  SENDING  │          │   SENT    │
+  │           │          │(optimistic│          │  (server  │
+  │           │          │  update)  │          │  confirm) │
+  └───────────┘          └───────────┘          └─────┬─────┘
+                                                      │
+                                       ┌──────────────┤
+                                       ▼              ▼
+                                ┌───────────┐  ┌───────────┐
+                                │ DELIVERED │  │   ERROR   │
+                                │    ✓✓     │  │   ⚠️      │
+                                └───────────┘  └───────────┘
+                                       │
+                                       ▼
+                                ┌───────────┐
+                                │   READ    │
+                                │   ✓✓blue  │
+                                └───────────┘
+```
+
+## Error Handling
+
+### Network Error
+```
+┌─────────────────────┐
+│       CHAT          │
+│                     │
+│  [Messages...]      │
+│       Hello!    ⚠️  │  ← Error indicator
+│                     │
+│  ⚠️ Message failed  │
+│     [Retry] [Delete]│
+└─────────────────────┘
+```
+
+### Encryption Error
+```
+┌─────────────────────┐
+│  ⚠️ Encryption Error │
+│                     │
+│  Cannot encrypt     │
+│  message. Recipient │
+│  keys unavailable.  │
+│                     │
+│  [Retry] [Cancel]   │
+└─────────────────────┘
+```
+
+## Input Methods
+
+| Method | Action | Result |
+|--------|--------|--------|
+| Tap send button | Send text | Message sent |
+| Press Enter (IME) | Send text | Message sent |
+| Long press mic | Voice input | Transcription |
+| Tap attach | File picker | Media attached |
+
+## Accessibility
+
+- Send button announces enabled/disabled state
+- Delivery status announced to screen readers
+- Error messages clearly communicated
+- Reply context maintained in announcements
+
+## Notes
+
+- E2E encryption transparent to user
+- Optimistic UI for perceived speed
+- Offline queue for reliability
+- Delivery receipts for confirmation
+- Read receipts (optional)

@@ -1,0 +1,618 @@
+package com.armorclaw.shared.platform.matrix
+
+import io.ktor.client.*
+import io.ktor.client.engine.*
+import io.ktor.http.*
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+
+/**
+ * Unit tests for MatrixApiService
+ *
+ * Tests the Matrix Client-Server API HTTP calls using Ktor MockEngine.
+ */
+class MatrixApiServiceTest {
+
+    private lateinit var testDispatcher: TestCoroutineDispatcher
+    private lateinit var json: Json
+    private lateinit var mockEngine: MockEngine
+    private lateinit var apiService: MatrixApiService
+
+    @BeforeTest
+    fun setup() {
+        testDispatcher = StandardTestDispatcher()
+        json = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            encodeDefaults = true
+        }
+        apiService = MatrixApiService(
+            httpClient = HttpClient(mockEngine),
+            json = json
+        )
+    }
+
+    // ========================================================================
+    // Authentication Tests
+    // ========================================================================
+
+    @Test
+    fun `login with valid credentials should return access token`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+           .addHandler { request ->
+                when (request.url.encodedPath.endsWith("/login")) {
+                    val response = LoginResponse(
+                        userId = "@test:matrix.org",
+                        accessToken = "test_access_token",
+                        deviceId = "TESTDEVICE",
+                        refreshToken = "test_refresh_token",
+                        expiresInMs = 3600000
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                )
+            }
+
+        val request = LoginRequest(
+            type = "m.login.password",
+            user = "test",
+            password = "password123",
+            deviceId = "TESTDEVICE"
+        )
+
+        // Execute
+        val result = apiService.login(
+            homeserver = "https://matrix.org",
+            username = "test",
+            password = "password123",
+            deviceId = "TESTDEVICE"
+        )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val loginResponse = result.getOrThrow()
+        assertEquals("@test:matrix.org", loginResponse.userId)
+        assertEquals("test_access_token", loginResponse.accessToken)
+        assertEquals("TESTDEVICE", loginResponse.deviceId)
+        assertEquals("test_refresh_token", loginResponse.refreshToken)
+        assertEquals(3600000, loginResponse.expiresInMs)
+    }
+
+    @Test
+    fun `login with unknown user should return failure`() = testDispatcher.runTest {
+        // Setup mock error response
+        mockEngine = MockEngine.create {
+           .addHandler { request ->
+                when (request.url.encodedPath.endsWith("/login")) {
+                    respond(
+                        status = HttpStatusCode.Forbidden,
+                        contentType = ContentType.Application.Json,
+                        content = """{"errcode":"M_FORBIDDEN","error":"Invalid username or password"}"""
+                    )
+                }
+
+            val request = LoginRequest(
+                type = "m.login.password",
+                user = "unknown",
+                password = "wrongpassword",
+                deviceId = "TESTDEVICE"
+        )
+
+        // Execute
+        val result = apiService.login(
+            homeserver = "https://matrix.org",
+            username = "unknown",
+            password = "wrongpassword",
+            deviceId = "TESTDEVICE"
+        )
+
+        // Verify
+        assertFalse(result.isSuccess)
+        val exception = result.exceptionOrNull()
+        assertTrue(exception is MatrixAuthException)
+        val authException = exception as MatrixAuthException
+        assertEquals("M_FORBIDDEN", authException.errcode)
+    }
+
+    @Test
+    fun `login with rate limit should handle retry-after`() = testDispatcher.runTest {
+        // Setup mock rate limit response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.endsWith("/login")) {
+                    respond(
+                        status = HttpStatusCode.TooManyRequests,
+                        contentType = ContentType.Application.Json,
+                        content = """{"errcode":"M_LIMIT_EXCEEDED","error":"Too many requests","retry_after_ms": 5000}"""
+                    )
+                }
+            val request = LoginRequest(
+                type = "m.login.password",
+                user = "test",
+                password = "password123"
+        )
+
+        // Execute
+        val result = apiService.login(
+            homeserver = "https://matrix.org",
+            username = "test",
+            password = "password123"
+        )
+
+        // Verify
+        assertFalse(result.isSuccess)
+        val exception = result.exceptionOrNull()
+        assertTrue(exception is MatrixRateLimitException)
+        val rateLimitException = exception as MatrixRateLimitException
+        assertEquals(5000, rateLimitException.retryAfterMs)
+    }
+
+    @Test
+    fun `logout should invalidate session`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.endsWith("/logout")) {
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = "{}"
+                    )
+                }
+
+            // First login to get a session
+            val loginResponse = apiService.login(
+                homeserver = "https://matrix.org",
+                username = "test",
+                password = "password123"
+            deviceId = "TESTDEVICE"
+            refreshToken = "refresh_token"
+        )
+
+        // Execute logout
+        val logoutResult = apiService.logout(
+            homeserver = "https://matrix.org",
+            accessToken = "test_access_token"
+        )
+
+        // Verify
+        assertTrue(logoutResult.isSuccess)
+    }
+
+    // ========================================================================
+    // Well-Known Discovery Tests
+    // ========================================================================
+
+    @Test
+    fun `discoverServer should return well-known configuration`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.fullPath.endsWith("/.well-known/matrix/client")) {
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = """{
+                        "m.homeserver": {
+                            "base_url": "https://matrix.example.com"
+                        },
+                        "m.identity_server": {
+                            "base_url": "https://identity.example.com"
+                        }
+                    }"""
+                    )
+                }
+            val result = apiService.discoverServer("example.com")
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val wellKnown = result.getOrThrow()
+        assertEquals("https://matrix.example.com", wellKnown.homeserver?.baseUrl)
+        assertEquals("https://identity.example.com", wellKnown.identityServer?.baseUrl)
+    }
+
+    @Test
+    fun `discoverServer with 404 should use fallback URL`() = testDispatcher.runTest {
+        // Setup mock 404 response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.fullPath.endsWith("/.well-known/matrix/client")) {
+                    respond(
+                        status = HttpStatusCode.NotFound,
+                        contentType = ContentType.Application.Json,
+                        content = ""
+                    )
+                }
+
+            val result = apiService.discoverServer("example.com")
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val wellKnown = result.getOrThrow()
+        // Should fall back to default pattern
+        assertEquals("https://matrix.example.com", wellKnown.homeserver?.baseUrl)
+    }
+
+    // ========================================================================
+    // Room Creation Tests
+    // ========================================================================
+
+    @Test
+    fun `createRoom should return room ID`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.endsWith("/createRoom")) {
+                    val response = CreateRoomResponse(
+                        roomId = "!test_room:matrix.org"
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                }
+            val request = CreateRoomRequest(
+                name = "Test Room",
+                topic = "A test room topic",
+                preset = RoomPreset.PRIVATE_CHAT,
+                isDirect = false
+            )
+
+        // Execute
+        val result = apiService.createRoom(
+            homeserver = "https://matrix.org",
+            accessToken = "test_access_token",
+            request = request
+        )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val createResponse = result.getOrThrow()
+        assertEquals("!test_room:matrix.org", createResponse.roomId)
+    }
+
+    @Test
+    fun `joinRoom should return room ID`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.contains("/join/")) {
+                    val response = JoinRoomResponse(
+                        roomId = "!joined_room:matrix.org"
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                }
+            val result = apiService.joinRoom(
+                homeserver = "https://matrix.org",
+                accessToken = "test_access_token",
+                roomIdOrAlias = "!test_room:matrix.org"
+            )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val joinResponse = result.getOrThrow()
+        assertEquals("!joined_room:matrix.org", joinResponse.roomId)
+    }
+
+    @Test
+    fun `leaveRoom should succeed`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.contains("/leave")) {
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = "{}"
+                    )
+                }
+            val result = apiService.leaveRoom(
+                homeserver = "https://matrix.org",
+                accessToken = "test_access_token",
+                roomId = "!test_room:matrix.org"
+            )
+
+        // Verify
+        assertTrue(result.isSuccess)
+    }
+
+    // ========================================================================
+    // Message Tests
+    // ========================================================================
+
+    @Test
+    fun `sendMessage should return event ID`() = testDispatcher.runTest {
+        // Setup mock response
+        val eventId = "\$event_123456"
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.contains("/send/")) {
+                    val response = SendEventResponse(
+                        eventId = eventId
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                }
+            val content = RoomMessageContent(
+                msgtype = "m.text",
+                body = "Hello World"
+            )
+
+        val result = apiService.sendMessage(
+            homeserver = "https://matrix.org",
+            accessToken = "test_access_token",
+            roomId = "!test_room:matrix.org",
+            eventType = "m.room.message",
+            content = content
+        )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        assertEquals(eventId, result.getOrThrow().eventId)
+    }
+
+    @Test
+    fun `getMessages should return paginated messages`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.contains("/messages")) {
+                    val response = MessagesResponse(
+                        start = "start_token",
+                        end = "end_token",
+                        chunk = listOf(
+                            MatrixEventRaw(
+                                eventId = "\$event1",
+                                type = "m.room.message",
+                                content = JsonObject(mapOf("body" to JsonPrimitive("Hello"))),
+                                sender = "@test:matrix.org",
+                                originServerTs = 1000000
+                            )
+                            MatrixEventRaw(
+                                eventId = "\$event2",
+                                type = "m.room.message",
+                                content = JsonObject(mapOf("body" to JsonPrimitive("World"))),
+                                sender = "@test2:matrix.org",
+                                originServerTs = 100001
+                            )
+                        )
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                }
+            val result = apiService.getMessages(
+                homeserver = "https://matrix.org",
+                accessToken = "test_access_token",
+                roomId = "!test_room:matrix.org",
+                from = "start_token",
+            )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val messagesResponse = result.getOrThrow()
+        assertEquals("start_token", messagesResponse.start)
+        assertEquals("end_token", messagesResponse.end)
+        assertEquals(2, messagesResponse.chunk.size)
+    }
+
+    // ========================================================================
+    // Presence Tests
+    // ========================================================================
+
+    @Test
+    fun `setPresence should succeed`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.contains("/status")) {
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = ""
+                    )
+                }
+            val result = apiService.setPresence(
+                homeserver = "https://matrix.org",
+                accessToken = "test_access_token",
+                presence = "online",
+                statusMsg = "Working"
+            )
+
+        // Verify
+        assertTrue(result.isSuccess)
+    }
+
+    @Test
+    fun `getPresence should return presence status`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+                addHandler { request ->
+                when (request.url.encodedPath.contains("/status/")) {
+                    val response = PresenceResponse(
+                        presence = "online",
+                        statusMsg = "Working",
+                        lastActiveAgo = 60000
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                }
+            val result = apiService.getPresence(
+                homeserver = "https://matrix.org",
+                accessToken = "test_access_token",
+                userId = "@test:matrix.org"
+            )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val presenceResponse = result.getOrThrow()
+        assertEquals("online", presenceResponse.presence)
+        assertEquals("Working", presenceResponse.statusMsg)
+        }
+
+    // ========================================================================
+    // Media Tests
+    // ========================================================================
+
+    @Test
+    fun `uploadMedia should return content URI`() = testDispatcher.runTest {
+        // Setup mock response
+        mockEngine = MockEngine.create {
+            addHandler { request ->
+                when (request.url.encodedPath.endsWith("/upload")) {
+                    val response = MediaUploadResponse(
+                        contentUri = "mxc://matrix.org/abc123"
+                    )
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Application.Json,
+                        content = json.encodeToString(response)
+                    )
+                    headers {
+                    append("Content-Type", "image/png")
+                }
+            }
+
+        val testData = "test image data".toByteArray(Charsets.UTF_8)
+
+        val result = apiService.uploadMedia(
+            homeserver = "https://matrix.org",
+            accessToken = "test_access_token",
+            mimeType = "image/png",
+            data = testData
+        )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val uploadResponse = result.getOrThrow()
+        assertEquals("mxc://matrix.org/abc123", uploadResponse.contentUri)
+    }
+
+    @Test
+    fun `downloadMedia should return media data`() = testDispatcher.runTest {
+        // Setup mock response
+        val testData = "test media data".toByteArray(Charsets.UTF_8)
+        mockEngine = MockEngine.create {
+                addHandler { request ->
+                when (request.url.encodedPath.contains("/download/")) {
+                    respond(
+                        status = HttpStatusCode.OK,
+                        contentType = ContentType.Image.PNG,
+                        content = testData
+                    }
+                    headers {
+                        append("Authorization", "Bearer test_access_token")
+                    }
+                }
+
+            val result = apiService.downloadMedia(
+                homeserver = "https://matrix.org",
+                accessToken = "test_access_token",
+                mxcUrl = "mxc://matrix.org/abc123"
+            )
+
+        // Verify
+        assertTrue(result.isSuccess)
+        val downloadedData = result.getOrThrow()
+        assertContentEquals(testData, downloadedData)
+        assertFalse(testData.contentEquals(downloadedData)
+        }
+    }
+
+    // ========================================================================
+    // Error Response Tests
+    // ========================================================================
+
+    @Test
+    fun `parse error response correctly`() = testDispatcher.runTest {
+        // Setup error response
+        mockEngine = MockEngine.create {
+                addHandler { request ->
+                when (request.url.encodedPath.endsWith("/login")) {
+                    respond(
+                        status = HttpStatusCode.InternalServerError,
+                        contentType = ContentType.Application.Json,
+                        content = """{"errcode":"M_UNKNOWN","error":"Internal server error"}"""
+                    )
+                }
+            val request = LoginRequest(
+                type = "m.login.password",
+                user = "test",
+                password = "password123"
+            deviceId = "TESTDEVICE"
+        )
+
+        // Execute
+        val result = apiService.login(
+            homeserver = "https://matrix.org",
+            username = "test",
+            password = "password123",
+            deviceId = "TESTDEVICE"
+        )
+
+        // Verify
+        assertFalse(result.isSuccess)
+        val exception = result.exceptionOrNull()
+        assertTrue(exception is MatrixApiException)
+        val apiException = exception as MatrixApiException
+        assertEquals("M_UNKNOWN", apiException.errcode)
+        assertEquals(500, apiException.httpStatus)
+    }
+
+    @Test
+    fun `parse rate limit error`() = testDispatcher.runTest {
+        // Setup rate limit response
+        mockEngine = MockEngine.create {
+                addHandler { request ->
+                when (request.url.encodedPath.endsWith("/login")) {
+                    respond(
+                        status = HttpStatusCode.TooManyRequests,
+                        contentType = ContentType.Application.Json,
+                        content = """{"errcode":"M_LIMIT_EXCEEDED","error":"Rate limit exceeded","retry_after_ms": 2000}"""
+                    )
+                }
+            val request = LoginRequest(
+                type = "m.login.password",
+                user = "test",
+                password = "password123"
+            deviceId = "TESTDEVICE"
+        )
+
+        // Execute
+        val result = apiService.login(
+            homeserver = "https://matrix.org",
+            username = "test",
+            password = "password123",
+            deviceId = "TESTDEVICE"
+        )
+
+        // Verify
+        assertFalse(result.isSuccess)
+        val exception = result.exceptionOrNull()
+        assertTrue(exception is MatrixRateLimitException)
+        val rateLimitException = exception as MatrixRateLimitException
+        assertEquals(2000, rateLimitException.retryAfterMs)
+    }
+}

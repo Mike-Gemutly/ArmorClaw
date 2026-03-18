@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ArmorClaw Brand Colors -->
+    <color name="ic_launcher_background">#1B222F</color> <!-- Dark Navy - matches Guardian Claw icon -->
+</resources>

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ArmorClaw Crab Mascot - For splash screens, empty states, about screens -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Main shell body -->
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M48,8C26,8 8,26 8,48C8,70 26,88 48,88C70,88 88,70 88,48C88,26 70,8 48,8Z"/>
+    <!-- Inner shell (navy) -->
+    <path
+        android:fillColor="#0A1428"
+        android:pathData="M48,16C30.3,16 16,30.3 16,48C16,65.7 30.3,80 48,80C65.7,80 80,65.7 80,48C80,30.3 65.7,16 48,16Z"/>
+    <!-- Shell highlight -->
+    <path
+        android:fillColor="#67F5D8"
+        android:pathData="M48,20C32.5,20 20,32.5 20,48C20,63.5 32.5,76 48,76C63.5,76 76,63.5 76,48C76,32.5 63.5,20 48,20ZM48,72C34.7,72 24,61.3 24,48C24,34.7 34.7,24 48,24C61.3,24 72,34.7 72,48C72,61.3 61.3,72 48,72Z"/>
+    <!-- Shell segments -->
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M28,40C28,40 36,28 48,28C60,28 68,40 68,40C68,40 60,32 48,32C36,32 28,40 28,40Z"
+        android:fillAlpha="0.8"/>
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M24,50C24,50 32,38 48,38C64,38 72,50 72,50C72,50 64,42 48,42C32,42 24,50 24,50Z"
+        android:fillAlpha="0.6"/>
+    <!-- Left eye -->
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M34,52C34,52 34,62 42,66C42,66 36,62 36,52C36,52 34,52 34,52Z"/>
+    <path
+        android:fillColor="#0A1428"
+        android:pathData="M36,54C36,58.4 39.6,62 44,62C48.4,62 52,58.4 52,54C52,49.6 48.4,46 44,46C39.6,46 36,49.6 36,54Z"/>
+    <path
+        android:fillColor="#67F5D8"
+        android:pathData="M40,52C40,53.1 40.9,54 42,54C43.1,54 44,53.1 44,52C44,50.9 43.1,50 42,50C40.9,50 40,50.9 40,52Z"/>
+    <!-- Right eye -->
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M62,52C62,52 62,62 54,66C54,66 60,62 60,52C60,52 62,52 62,52Z"/>
+    <path
+        android:fillColor="#0A1428"
+        android:pathData="M60,54C60,58.4 56.4,62 52,62C47.6,62 44,58.4 44,54C44,49.6 47.6,46 52,46C56.4,46 60,49.6 60,54Z"/>
+    <path
+        android:fillColor="#67F5D8"
+        android:pathData="M52,52C52,53.1 52.9,54 54,54C55.1,54 56,53.1 56,52C56,50.9 55.1,50 54,50C52.9,50 52,50.9 52,52Z"/>
+    <!-- Left claw -->
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M16,56C16,56 12,68 20,78C20,78 14,70 18,60C18,60 16,58 16,56Z"/>
+    <!-- Right claw -->
+    <path
+        android:fillColor="#14F0C8"
+        android:pathData="M80,56C80,56 84,68 76,78C76,78 82,70 78,60C78,60 80,58 80,56Z"/>
+</vector>

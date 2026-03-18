@@ -1,0 +1,53 @@
+-- ArmorClaw Sync Metadata Table
+-- For offline sync support
+
+CREATE TABLE sync_metadata (
+    room_id TEXT PRIMARY KEY NOT NULL,
+    last_sync_token TEXT,
+    last_sync_timestamp INTEGER,
+    pending_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0
+);
+
+-- Get sync metadata for room
+selectByRoomId:
+SELECT * FROM sync_metadata WHERE room_id = ?;
+
+-- Insert or update sync metadata
+upsert:
+INSERT OR REPLACE INTO sync_metadata (
+    room_id, last_sync_token, last_sync_timestamp, pending_count, last_error, retry_count
+) VALUES (?, ?, ?, ?, ?, ?);
+
+-- Update sync token
+updateSyncToken:
+UPDATE sync_metadata SET last_sync_token = ?, last_sync_timestamp = ? WHERE room_id = ?;
+
+-- Increment pending count
+incrementPending:
+UPDATE sync_metadata SET pending_count = pending_count + 1 WHERE room_id = ?;
+
+-- Decrement pending count
+decrementPending:
+UPDATE sync_metadata SET pending_count = MAX(0, pending_count - 1) WHERE room_id = ?;
+
+-- Reset pending count
+resetPending:
+UPDATE sync_metadata SET pending_count = 0 WHERE room_id = ?;
+
+-- Set error
+setError:
+UPDATE sync_metadata SET last_error = ?, retry_count = retry_count + 1 WHERE room_id = ?;
+
+-- Clear error
+clearError:
+UPDATE sync_metadata SET last_error = NULL, retry_count = 0 WHERE room_id = ?;
+
+-- Get all rooms with pending messages
+selectPendingRooms:
+SELECT * FROM sync_metadata WHERE pending_count > 0;
+
+-- Delete sync metadata
+deleteByRoomId:
+DELETE FROM sync_metadata WHERE room_id = ?;
