@@ -335,6 +335,106 @@ func (d *DiscordAdapter) SendMessage(ctx context.Context, target Target, msg Mes
 	}, nil
 }
 
+// EditMessage edits an existing message on Discord
+func (d *DiscordAdapter) EditMessage(ctx context.Context, target Target, messageID string, newContent string) error {
+	payload := map[string]interface{}{"content": newContent}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return NewAdapterError(ErrValidation, "failed to marshal edit payload", false)
+	}
+
+	url := fmt.Sprintf("https://discord.com/api/v10/channels/%s/messages/%s", target.Channel, messageID)
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(jsonPayload))
+	if err != nil {
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bot "+d.botToken)
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.RecordError(err)
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return NewAdapterError(ErrPlatformError, "failed to read response", true)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		var rateLimitError struct {
+			Message    string `json:"message"`
+			RetryAfter int    `json:"retry_after"`
+		}
+		json.Unmarshal(body, &rateLimitError)
+		return NewAdapterError(ErrRateLimited, rateLimitError.Message, true)
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResponse struct {
+			Message string `json:"message"`
+			Code    int    `json:"code"`
+		}
+		json.Unmarshal(body, &errResponse)
+		errorMsg := errResponse.Message
+		if errorMsg == "" {
+			errorMsg = "unknown error"
+		}
+		d.RecordError(fmt.Errorf("discord API error: %s", errorMsg))
+		return NewAdapterError(mapDiscordError(resp.StatusCode, errorMsg), errorMsg, true)
+	}
+
+	return nil
+}
+
+// DeleteMessage deletes a message from Discord
+func (d *DiscordAdapter) DeleteMessage(ctx context.Context, target Target, messageID string) error {
+	url := fmt.Sprintf("https://discord.com/api/v10/channels/%s/messages/%s", target.Channel, messageID)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+
+	req.Header.Set("Authorization", "Bot "+d.botToken)
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.RecordError(err)
+		return NewAdapterError(ErrNetworkError, err.Error(), true)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		var rateLimitError struct {
+			Message    string `json:"message"`
+			RetryAfter int    `json:"retry_after"`
+		}
+		body, _ := io.ReadAll(resp.Body)
+		json.Unmarshal(body, &rateLimitError)
+		return NewAdapterError(ErrRateLimited, rateLimitError.Message, true)
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResponse struct {
+			Message string `json:"message"`
+			Code    int    `json:"code"`
+		}
+		body, _ := io.ReadAll(resp.Body)
+		json.Unmarshal(body, &errResponse)
+		errorMsg := errResponse.Message
+		if errorMsg == "" {
+			errorMsg = "unknown error"
+		}
+		d.RecordError(fmt.Errorf("discord API error: %s", errorMsg))
+		return NewAdapterError(mapDiscordError(resp.StatusCode, errorMsg), errorMsg, true)
+	}
+
+	return nil
+}
+
 // ReceiveEvent handles an incoming Discord event
 func (d *DiscordAdapter) ReceiveEvent(event ExternalEvent) error {
 	if event.Platform != d.Platform() {
@@ -799,6 +899,7 @@ func (d *DiscordAdapter) GetReactions(ctx context.Context, target Target, messag
 	// Build reaction list
 	reactions := make([]Reaction, 0, len(users))
 	now := time.Now()
+	formattedDiscordEmoji := formatDiscordEmoji(emoji)
 
 	for _, user := range users {
 		isCustom := strings.HasPrefix(formattedDiscordEmoji, ":")
