@@ -2312,3 +2312,29 @@ cd bridge && go test ./internal/sdtw/... -v
 # Run all tests
 cd bridge && go test ./... -v
 \`\`\`
+
+---
+
+## Phase 13.1: Platform Adapters Bug Fixes (2026-03-18)
+
+### Overview
+
+Fixed syntax errors in discord.go caused by duplicate/orphaned code blocks after previous edits.
+
+### Issues Fixed
+
+| Issue | File | Fix |
+|-------|------|-----|
+| Duplicate return statement | discord.go:916 | Removed orphaned `return reactions, nil` and `}` |
+| Missing import for strings | discord.go:4 | Added `"strings"` import |
+
+### Verification Results
+
+```
+Build: ✅ PASS (go build ./...)
+Tests: ✅ PASS (28/31 core tests,         WhatsApp API tests fail without valid credentials (expected)
+```
+
+### Files Modified
+
+- `bridge/internal/sdtw/discord.go` - Removed orphaned code,EOF

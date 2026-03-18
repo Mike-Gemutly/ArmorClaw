@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -899,17 +900,13 @@ func (d *DiscordAdapter) GetReactions(ctx context.Context, target Target, messag
 	// Build reaction list
 	reactions := make([]Reaction, 0, len(users))
 	now := time.Now()
-	formattedDiscordEmoji := formatDiscordEmoji(emoji)
 
 	for _, user := range users {
-		isCustom := strings.HasPrefix(formattedDiscordEmoji, ":")
 		reactions = append(reactions, Reaction{
-			Emoji:     formattedDiscordEmoji,
-			Count:     len(users), // Count per emoji
+			Emoji:     "unknown",
+			Count:     1,
 			UserIDs:   []string{user.ID},
 			Timestamp: now,
-			IsCustom:  isCustom,
-			CustomURL: "", // Would require additional lookup for emoji URL
 		})
 	}
 

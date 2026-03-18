@@ -12,7 +12,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,17 +41,17 @@ type TeamsConfig struct {
 	TenantID     string `json:"tenant_id"`
 
 	// Bot configuration
-	BotID       string `json:"bot_id"`
-	BotName     string `json:"bot_name"`
-	ServiceURL  string `json:"service_url"`
+	BotID      string `json:"bot_id"`
+	BotName    string `json:"bot_name"`
+	ServiceURL string `json:"service_url"`
 
 	// OAuth tokens (obtained via OAuth flow)
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
 	TokenExpiry  time.Time `json:"token_expiry"`
 
 	// Webhook configuration
-	WebhookURL   string `json:"webhook_url"`
+	WebhookURL    string `json:"webhook_url"`
 	WebhookSecret string `json:"webhook_secret"`
 
 	// Feature flags
@@ -102,18 +104,18 @@ type TeamsActivity struct {
 
 // TeamsConversation represents a conversation in Teams
 type TeamsConversation struct {
-	ID        string `json:"id"`
-	Name      string `json:"name,omitempty"`
-	IsGroup   bool   `json:"isGroup,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name,omitempty"`
+	IsGroup          bool   `json:"isGroup,omitempty"`
 	ConversationType string `json:"conversationType,omitempty"`
-	TenantID  string `json:"tenantId,omitempty"`
+	TenantID         string `json:"tenantId,omitempty"`
 }
 
 // TeamsEntity represents an entity in a Teams message
 type TeamsEntity struct {
-	Type     string `json:"type"`
+	Type      string    `json:"type"`
 	Mentioned TeamsUser `json:"mentioned,omitempty"`
-	Text     string `json:"text,omitempty"`
+	Text      string    `json:"text,omitempty"`
 }
 
 // TokenResponse represents Azure AD token response
