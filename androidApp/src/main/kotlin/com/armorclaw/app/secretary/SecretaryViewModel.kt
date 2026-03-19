@@ -1,36 +1,42 @@
 package com.armorclaw.app.secretary
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModel.viewModelScope
+import androidx.lifecycle.viewModelScope
 import com.armorclaw.shared.domain.model.Message
-import com.armorclaw.shared.secretary.*
 import com.armorclaw.shared.platform.matrix.MatrixSyncManager
-import kotlinx.coroutines.flow.StateIn
-import kotlinx.coroutines.flow.collectLatest
+import com.armorclaw.shared.platform.matrix.MatrixSyncEvent
+import com.armorclaw.shared.secretary.*
+import com.armorclaw.shared.platform.logging.AppLogger
+import com.armorclaw.shared.platform.logging.LogTag
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import org.koin.core.component.inject
-import org.koin.core.component.KoinComponent
 import kotlin.math.max
 
 /**
- * Secretary ViewModel - Phase 1 Foundation
+ * Secretary ViewModel - Phase 1 Foundation + Phase 2 Briefing
  *
  * Core orchestration layer for the Secretary system.
  * Observes MatrixSyncManager for real-time events and manages proactive cards.
  *
  * Phase 1 scope: Matrix event observation + proactive card display only.
+ * Phase 2 scope: Briefing engine + context provider integration.
+ *
  * Does NOT include:
  *   - Bridge RPC execution (added in Phase 5)
  *   - Privacy guard policies (added in Phase 4)
- *   - Briefing/Review engines (added in Phase 2)
- *   - Context providers (added in Phase 2)
  *   - Calendar/sensor integration
  *   - Voice surfaces
  */
 class SecretaryViewModel(
     private val matrixSyncManager: MatrixSyncManager,
-    private val logger: AppLogger
+    private val briefingEngine: SecretaryBriefingEngine,
+    private val contextProvider: SecretaryContextProvider
 ) : ViewModel() {
+
+    private val logger = AppLogger.create(LogTag.ViewModel.Secretary)
 
     // State
     private val _state = MutableStateFlow<SecretaryState>(SecretaryState.Idle)
@@ -41,8 +47,8 @@ class SecretaryViewModel(
     val cards = _cards.asStateFlow()
 
     init {
-        // Start observing Matrix events
         observeMatrixEvents()
+        startBriefingScheduler()
     }
 
     /**
@@ -56,6 +62,53 @@ class SecretaryViewModel(
                 handleMatrixEvent(event)
             }
         }
+    }
+
+    private fun startBriefingScheduler() {
+        viewModelScope.launch {
+            checkBriefings()
+
+            while (true) {
+                delay(15 * 60 * 1000L)
+                checkBriefings()
+            }
+        }
+    }
+
+    private suspend fun checkBriefings() {
+        val currentTime = System.currentTimeMillis()
+        val context = contextProvider.gatherContext()
+
+        val morningResult = briefingEngine.generateMorningBriefing(currentTime, context)
+        if (morningResult != null) {
+            addBriefingCard(morningResult, SecretaryCardReason.MORNING_BRIEFING)
+            contextProvider.updateMorningBriefingDate(currentTime)
+        }
+
+        val eveningResult = briefingEngine.generateEveningReview(currentTime, context)
+        if (eveningResult != null) {
+            addBriefingCard(eveningResult, SecretaryCardReason.EVENING_REVIEW)
+            contextProvider.updateEveningReviewDate(currentTime)
+        }
+    }
+
+    private fun addBriefingCard(result: BriefingResult, reason: SecretaryCardReason) {
+        val cardId = when (reason) {
+            SecretaryCardReason.MORNING_BRIEFING -> "morning-${System.currentTimeMillis()}"
+            SecretaryCardReason.EVENING_REVIEW -> "evening-${System.currentTimeMillis()}"
+            else -> "briefing-${System.currentTimeMillis()}"
+        }
+
+        val card = ProactiveCard(
+            id = cardId,
+            title = result.title,
+            description = result.description,
+            priority = SecretaryPriority.NORMAL,
+            reason = reason,
+            primaryAction = result.primaryAction
+        )
+
+        addCard(card)
     }
 
     /**
@@ -72,32 +125,18 @@ class SecretaryViewModel(
     private fun handleMatrixEvent(event: Any) {
         when (event) {
             is MatrixSyncEvent.MessageReceived -> {
-                // Check if message should trigger proactive card
-                val message = event.content
-                
-                // Simple urgent keyword detection
-                val hasUrgentKeyword = message.body.contains("urgent", ignoreCase = true) ||
-                                     message.body.contains("asap", ignoreCase = true)
-                
-                // TODO: Check for VIP sender in Phase 3 (Context & Triage)
-                // Phase 1: Simple rule only
-                
-                if (hasUrgentKeyword) {
-                    addUrgentCard(message)
-                }
             }
             
             is MatrixSyncEvent.TypingNotification -> {
-                // Update typing indicator if we have one (future feature)
-                logger.debug("Typing notification from: ${event.senderId}")
+                logger.logDebug("Typing notification from: ${event.userIds}")
             }
-            
+
             is MatrixSyncEvent.PresenceUpdate -> {
-                logger.debug("Presence update: ${event.userId} is now ${event.status}")
+                logger.logDebug("Presence update received")
             }
-            
+
             else -> {
-                logger.debug("Unhandled Matrix event: $event")
+                logger.logDebug("Unhandled Matrix event: $event")
             }
         }
     }
@@ -112,12 +151,12 @@ class SecretaryViewModel(
         val card = ProactiveCard(
             id = "urgent-${message.id}",
             title = "Urgent Message",
-            description = message.body.substring(0, minOf(100, message.body.length)),
+            description = message.content.body.substring(0, minOf(100, message.content.body.length)),
             priority = SecretaryPriority.HIGH,
             reason = SecretaryCardReason.URGENT_KEYWORD,
             primaryAction = SecretaryAction.Local(LocalSecretaryAction.NAV_CHAT)
         )
-        
+
         addCard(card)
     }
 
@@ -128,26 +167,14 @@ class SecretaryViewModel(
     private fun addCard(card: ProactiveCard) {
         viewModelScope.launch {
             val currentCards = _cards.value.toMutableList()
-            
-            // Remove duplicate cards by ID
-            currentCards.removeAll { existingCard ->
-                existingCard.id == card.id
-            }
-            
+
+            currentCards.removeAll { it.id == card.id }
             currentCards.add(card)
             _cards.value = currentCards.toList()
-            
-            // Update state
-            val currentCards = _cards.value
-            when {
-                currentCards.isEmpty() -> {
-                    // State remains Idle if no cards
-                    _state.value = SecretaryState.Idle
-                }
-                else -> {
-                    // Show cards to user
-                    _state.value = SecretaryState.Proposing(currentCards)
-                }
+
+            when (_cards.value.isEmpty()) {
+                true -> _state.value = SecretaryState.Idle
+                false -> _state.value = SecretaryState.Proposing(_cards.value)
             }
         }
     }
@@ -176,25 +203,23 @@ class SecretaryViewModel(
         }
     }
 
-    /**
-     * Handle primary action on a proactive card.
-     * Phase 1: Only local navigation actions.
-     */
     fun onPrimaryAction(cardId: String, action: SecretaryAction) {
         when (action) {
-            LocalSecretaryAction.NAV_CHAT -> {
-                // Navigate to chat (handled by Navigation component)
-                logger.info("Navigate to chat for card: $cardId")
-            }
-            LocalSecretaryAction.DISMISS_CARD -> {
-                dismissCard(cardId)
-            }
-            LocalSecretaryAction.SNOOZE_CARD -> {
-                // Snooze implementation added in Phase 3 (Context & Triage)
-                logger.info("Snooze card: $cardId (not yet implemented in Phase 1)")
-            }
-            else -> {
-                logger.warning("Unknown local action: $action")
+            is SecretaryAction.Local -> {
+                when (action.action) {
+                    LocalSecretaryAction.NAV_CHAT -> {
+                        logger.logInfo("Navigate to chat for card: $cardId")
+                    }
+                    LocalSecretaryAction.OPEN_MESSAGE -> {
+                        logger.logInfo("Open message for card: $cardId")
+                    }
+                    LocalSecretaryAction.DISMISS_CARD -> {
+                        dismissCard(cardId)
+                    }
+                    LocalSecretaryAction.SNOOZE_CARD -> {
+                        logger.logInfo("Snooze card: $cardId (not yet implemented in Phase 1)")
+                    }
+                }
             }
         }
     }

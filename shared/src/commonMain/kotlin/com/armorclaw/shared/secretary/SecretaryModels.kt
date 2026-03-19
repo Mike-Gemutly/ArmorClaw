@@ -13,17 +13,20 @@ enum class SecretaryPriority {
 }
 
 /**
- * Sealed interface for all Secretary actions.
+ * Sealed class for all Secretary actions.
  * Local actions are handled entirely within the app.
  * Bridge-backed actions require external server execution.
  */
-sealed interface SecretaryAction {
+@Serializable
+sealed class SecretaryAction {
+    @Serializable
     data class Local(val action: LocalSecretaryAction) : SecretaryAction()
 }
 
 /**
  * Local Secretary actions that don't require Bridge RPC calls.
  */
+@Serializable
 enum class LocalSecretaryAction {
     NAV_CHAT,
     OPEN_MESSAGE,
@@ -36,7 +39,9 @@ enum class LocalSecretaryAction {
  */
 enum class SecretaryCardReason {
     URGENT_KEYWORD,
-    VIP_SENDER
+    VIP_SENDER,
+    MORNING_BRIEFING,
+    EVENING_REVIEW
 }
 
 /**

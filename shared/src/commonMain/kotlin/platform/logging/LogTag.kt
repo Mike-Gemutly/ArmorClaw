@@ -90,6 +90,7 @@ open class LogTag(
         object Splash : LogTag("VM", "Splash")
         object Room : LogTag("VM", "Room")
         object DeviceList : LogTag("VM", "DeviceList")
+        object Secretary : LogTag("VM", "Secretary")
     }
 
     // ==================== DOMAIN CATEGORY ====================

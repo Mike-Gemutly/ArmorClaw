@@ -1,8 +1,11 @@
 {
   "active_plan": "/home/mink/src/ArmorChat/.sisyphus/plans/secretary-implementation.md",
-  "started_at": "2026-03-19T22:40:55.495Z",
+  "started_at": "2026-03-19T23:27:49.188Z",
   "session_ids": [
-    "ses_3021e47aaffe9m7cETZvstOhtM"
+    "ses_3021e47aaffe9m7cETZvstOhtM",
+    "ses_2f790dfd6ffeHgT2JuH0m6Z0qq",
+    "ses_2f78dc918ffeIa0saCX1CIr3HT",
+    "ses_2f78b3fa6ffeydTYhdImz3j5YH"
   ],
   "plan_name": "secretary-implementation",
   "agent": "atlas"
