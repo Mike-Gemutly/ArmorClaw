@@ -52,8 +52,7 @@
 23. [Pre-Production Checklist](#23-pre-production-checklist)
 24. [Production Release Fixes](#24-production-release-fixes-2026-03-18)
 25. [Remaining Work for Production](#25-remaining-work-for-production)
-24. [Production Release Fixes](#24-production-release-fixes-2026-03-18)
-25. [Remaining Work for Production](#25-remaining-work-for-production)
+26. [Complete Component Inventory](#26-complete-component-inventory)
 
 ---
 
@@ -6026,4 +6025,324 @@ Host `play-store/privacy-policy.md` at a public URL (GitHub Pages, Netlify, etc.
 
 ---
 
-*ArmorChat is production-ready. Complete visual assets and submit to Play Store.*
+## 26. Complete Component Inventory
+
+### 26.1 Screens (54 Total)
+
+#### Authentication (4 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| LoginScreen | `auth/LoginScreen.kt` | `/login` | User login with email/password |
+| RegistrationScreen | `auth/RegistrationScreen.kt` | `/register` | New user registration |
+| ForgotPasswordScreen | `auth/ForgotPasswordScreen.kt` | `/forgot-password` | Password recovery flow |
+| KeyRecoveryScreen | `auth/KeyRecoveryScreen.kt` | `/key-recovery` | Encryption key recovery |
+
+#### Onboarding (11 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| WelcomeScreen | `onboarding/WelcomeScreen.kt` | `/welcome` | Initial welcome/intro |
+| SetupModeSelectionScreen | `onboarding/SetupModeSelectionScreen.kt` | `/setup-mode` | Choose setup type |
+| ConnectServerScreen | `onboarding/ConnectServerScreen.kt` | `/connect` | Server connection setup |
+| PermissionsScreen | `onboarding/PermissionsScreen.kt` | `/permissions` | Request app permissions |
+| SecurityExplanationScreen | `onboarding/SecurityExplanationScreen.kt` | `/security-explanation` | Explain security features |
+| CompletionScreen | `onboarding/CompletionScreen.kt` | `/completion` | Setup complete confirmation |
+| ExpressSetupCompleteScreen | `onboarding/ExpressSetupCompleteScreen.kt` | `/express-complete` | Express setup done |
+| KeyBackupSetupScreen | `onboarding/KeyBackupSetupScreen.kt` | `/key-backup-setup` | Key backup configuration |
+| MigrationScreen | `onboarding/MigrationScreen.kt` | `/migration` | Data migration helper |
+| QRScanScreen | `onboarding/QRScanScreen.kt` | `/qr-scan` | QR code scanner |
+| TutorialScreen | `onboarding/TutorialScreen.kt` | `/tutorial` | Interactive tutorial |
+
+#### Core (3 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| SplashScreen | `splash/SplashScreen.kt` | `/splash` | App initialization |
+| HomeScreen | `home/HomeScreen.kt` | `/home` | Main room list dashboard |
+| SearchScreen | `search/SearchScreen.kt` | `/search` | Global search |
+
+#### Chat (2 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| ChatScreen | (via ChatViewModel) | `/chat/{roomId}` | Main chat conversation |
+| ThreadViewScreen | `chat/ThreadViewScreen.kt` | `/thread/{messageId}` | Thread replies view |
+
+#### Profile (6 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| ProfileScreen | `profile/ProfileScreen.kt` | `/profile` | User profile display |
+| UserProfileScreen | `profile/UserProfileScreen.kt` | `/user/{userId}` | Other user's profile |
+| EditBioScreen | `profile/EditBioScreen.kt` | `/edit-bio` | Edit bio/status |
+| ChangePasswordScreen | `profile/ChangePasswordScreen.kt` | `/change-password` | Password change |
+| ChangePhoneNumberScreen | `profile/ChangePhoneNumberScreen.kt` | `/change-phone` | Phone number change |
+| DeleteAccountScreen | `profile/DeleteAccountScreen.kt` | `/delete-account` | Account deletion |
+| SharedRoomsScreen | `profile/SharedRoomsScreen.kt` | `/shared-rooms` | Shared rooms list |
+
+#### Settings (16 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| SettingsScreen | `settings/SettingsScreen.kt` | `/settings` | Settings hub |
+| SecuritySettingsScreen | `settings/SecuritySettingsScreen.kt` | `/security-settings` | Security options |
+| NotificationSettingsScreen | `settings/NotificationSettingsScreen.kt` | `/notification-settings` | Push notification config |
+| AppearanceSettingsScreen | `settings/AppearanceSettingsScreen.kt` | `/appearance` | Theme/font settings |
+| PrivacyPolicyScreen | `settings/PrivacyPolicyScreen.kt` | `/privacy-policy` | Privacy policy display |
+| TermsOfServiceScreen | `settings/TermsOfServiceScreen.kt` | `/terms-of-service` | ToS display |
+| AboutScreen | `settings/AboutScreen.kt` | `/about` | App info/version |
+| MyDataScreen | `settings/MyDataScreen.kt` | `/my-data` | Data export/management |
+| DataSafetyScreen | `settings/DataSafetyScreen.kt` | `/data-safety` | Data safety info |
+| OpenSourceLicensesScreen | `settings/OpenSourceLicensesScreen.kt` | `/licenses` | OSS licenses |
+| ReportBugScreen | `settings/ReportBugScreen.kt` | `/report-bug` | Bug report form |
+| ServerConnectionScreen | `settings/ServerConnectionScreen.kt` | `/server-connection` | Server config |
+| InviteScreen | `settings/InviteScreen.kt` | `/invite` | Invite users |
+| InviteManagementScreen | `settings/InviteManagementScreen.kt` | `/invite-management` | Manage invites |
+| DeviceListScreen | `settings/DeviceListScreen.kt` | `/devices` | List active devices |
+| AddDeviceScreen | `settings/AddDeviceScreen.kt` | `/add-device` | Add new device |
+| DevMenuScreen | `settings/DevMenuScreen.kt` | `/dev-menu` | Developer options |
+
+#### Rooms (3 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| RoomManagementScreen | `room/RoomManagementScreen.kt` | `/room-management` | Create/manage rooms |
+| RoomDetailsScreen | `room/RoomDetailsScreen.kt` | `/room-details/{roomId}` | Room info/members |
+| RoomSettingsScreen | `room/RoomSettingsScreen.kt` | `/room-settings/{roomId}` | Room configuration |
+
+#### Calls (2 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| ActiveCallScreen | `call/ActiveCallScreen.kt` | `/call/{callId}` | Active voice/video call |
+| IncomingCallDialog | `call/IncomingCallDialog.kt` | (overlay) | Incoming call UI |
+
+#### Media (2 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| ImageViewerScreen | `media/ImageViewerScreen.kt` | `/image-viewer` | Fullscreen image viewer |
+| FilePreviewScreen | `media/FilePreviewScreen.kt` | `/file-preview` | Document preview |
+
+#### Keystore/Vault (2 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| UnsealScreen | `keystore/UnsealScreen.kt` | `/keystore` | Unlock encrypted vault |
+| VaultScreen | `vault/VaultScreen.kt` | `/vault` | Encrypted data vault |
+
+#### Agent/Studio (2 screens)
+| Screen | File | Route | Purpose |
+|--------|------|-------|---------|
+| AgentStudioScreen | `studio/AgentStudioScreen.kt` | `/agent-studio` | Agent workflow builder |
+| EmojiVerificationScreen | `settings/EmojiVerificationScreen.kt` | `/emoji-verification` | Device verification |
+
+---
+
+### 26.2 ViewModels (10 Total)
+
+| ViewModel | File | State Class | Key Functions |
+|-----------|------|-------------|---------------|
+| SplashViewModel | `viewmodels/SplashViewModel.kt` | `SplashState` | `checkSession()`, `initialize()` |
+| WelcomeViewModel | `viewmodels/WelcomeViewModel.kt` | `WelcomeState` | `startSetup()` |
+| SetupViewModel | `viewmodels/SetupViewModel.kt` | `SetupUiState` | `connect()`, `validateServer()` |
+| HomeViewModel | `viewmodels/HomeViewModel.kt` | `HomeState` | `loadRooms()`, `selectRoom()` |
+| ChatViewModel | `viewmodels/ChatViewModel.kt` | `ChatState` | `sendMessage()`, `loadMessages()`, `addReaction()` |
+| ProfileViewModel | `viewmodels/ProfileViewModel.kt` | `ProfileState` | `loadProfile()`, `updateProfile()` |
+| SettingsViewModel | `viewmodels/SettingsViewModel.kt` | `SettingsUiState` | `loadSettings()`, `updateSetting()` |
+| InviteViewModel | `viewmodels/InviteViewModel.kt` | `InviteState` | `createInvite()`, `loadInvites()` |
+| UnsealViewModel | `viewmodels/UnsealViewModel.kt` | `UnsealState` | `unseal()`, `seal()` |
+| SyncStatusViewModel | `viewmodels/SyncStatusViewModel.kt` | `SyncStatusState` | `observeSyncStatus()` |
+
+---
+
+### 26.3 UI Components (8 files)
+
+| Component | File | Category | Purpose |
+|-----------|------|----------|---------|
+| ArmorClawButton | `components/atom/ArmorClawButton.kt` | Atom | Primary/styled button |
+| DeepLinkConfirmationDialog | `components/DeepLinkConfirmationDialog.kt` | Molecule | Confirm deep link actions |
+| ErrorRecoveryBanner | `components/error/ErrorRecoveryBanner.kt` | Organism | Error display with retry |
+| OfflineIndicator | `components/offline/OfflineIndicator.kt` | Organism | Offline status banner |
+| ConnectionErrorBanner | `components/sync/ConnectionErrorBanner.kt` | Organism | Connection error display |
+| SyncComponents | `components/sync/SyncComponents.kt` | Molecule | Sync status widgets |
+| SyncStatusBar | `components/sync/SyncStatusBar.kt` | Organism | Sync progress bar |
+| SyncStatusWrapper | `components/sync/SyncStatusWrapper.kt` | Organism | Wraps content with sync UI |
+
+#### Chat Components (11 files in `screens/chat/components/`)
+| Component | File | Purpose |
+|-----------|------|---------|
+| MessageBubble | `MessageBubble.kt` | Individual message display |
+| MessageList | `MessageList.kt` | Scrollable message list |
+| ReplyPreview | `ReplyPreview.kt` | Reply-to message preview |
+| SearchBar | `SearchBar.kt` | Message search input |
+| TypingIndicator | `TypingIndicator.kt` | "Typing..." animation |
+| ThreadIndicator | `ThreadIndicator.kt` | Thread reply count badge |
+| ThreadBadge | `ThreadBadge.kt` | Thread info badge |
+| EncryptionStatus | `EncryptionStatus.kt` | E2EE status indicator |
+| ReactionDisplay | `ReactionDisplay.kt` | Show message reactions |
+| ReactionPicker | `ReactionPicker.kt` | Reaction selection UI |
+| ReactionPickerOverlay | `ReactionPickerOverlay.kt` | Fullscreen reaction picker |
+
+---
+
+### 26.4 Repositories (12 Interfaces, 3 Implementations)
+
+#### Repository Interfaces (shared module)
+| Repository | File | Key Functions |
+|------------|------|---------------|
+| AuthRepository | `domain/repository/AuthRepository.kt` | `login()`, `logout()`, `register()`, `isLoggedIn()` |
+| UserRepository | `domain/repository/UserRepository.kt` | `getUser()`, `updateProfile()`, `searchUsers()` |
+| RoomRepository | `domain/repository/RoomRepository.kt` | `getRooms()`, `createRoom()`, `joinRoom()`, `leaveRoom()` |
+| MessageRepository | `domain/repository/MessageRepository.kt` | `getMessages()`, `sendMessage()`, `editMessage()`, `deleteMessage()` |
+| ThreadRepository | `domain/repository/ThreadRepository.kt` | `getThread()`, `getReplies()` |
+| CallRepository | `domain/repository/CallRepository.kt` | `startCall()`, `endCall()`, `acceptCall()` |
+| NotificationRepository | `domain/repository/NotificationRepository.kt` | `registerPush()`, `unregisterPush()` |
+| SyncRepository | `domain/repository/SyncRepository.kt` | `sync()`, `observeSyncState()` |
+| VerificationRepository | `domain/repository/VerificationRepository.kt` | `verifyDevice()`, `startVerification()` |
+| AgentRepository | `domain/repository/AgentRepository.kt` | `getAgents()`, `executeAgentAction()` |
+| AgentFlowRepository | `domain/repository/AgentFlowRepository.kt` | `getWorkflow()`, `executeWorkflow()` |
+| WorkflowRepository | `domain/repository/WorkflowRepository.kt` | `getWorkflows()`, `createWorkflow()` |
+
+#### Repository Implementations (androidApp)
+| Implementation | Interface | Notes |
+|----------------|-----------|-------|
+| MessageRepositoryImpl | MessageRepository | SQLDelight + Matrix SDK |
+| RoomRepositoryImpl | RoomRepository | SQLDelight + Matrix SDK |
+| AgentFlowRepositoryImpl | AgentFlowRepository | Bridge RPC client |
+
+---
+
+### 26.5 Domain Models (22 Total)
+
+| Model | File | Purpose |
+|-------|------|---------|
+| User | `domain/model/User.kt` | User profile data |
+| Room | `domain/model/Room.kt` | Chat room info |
+| Message | `domain/model/Message.kt` | Chat message |
+| UnifiedMessage | `domain/model/UnifiedMessage.kt` | Cross-platform message |
+| Call | `domain/model/Call.kt` | Voice/video call |
+| Notification | `domain/model/Notification.kt` | Push notification |
+| SyncState | `domain/model/SyncState.kt` | Sync status |
+| Trust | `domain/model/Trust.kt` | Trust level enum |
+| KeystoreStatus | `domain/model/KeystoreStatus.kt` | Vault status |
+| KeystoreUnseal | `domain/model/KeystoreUnse.kt` | Vault unlock result |
+| AppResult | `domain/model/AppResult.kt` | Result wrapper (Success/Error/Loading) |
+| ArmorClawErrorCode | `domain/model/ArmorClawErrorCode.kt` | Error codes enum |
+| ActivityEvent | `domain/model/ActivityEvent.kt` | Activity log event |
+| AgentEvent | `domain/model/AgentEvent.kt` | Agent action event |
+| AgentStatusEvent | `domain/model/AgentStatusEvent.kt` | Agent status change |
+| AgentStatusHistory | `domain/model/AgentStatusHistory.kt` | Status history log |
+| AgentWorkflowState | `domain/model/AgentWorkflowState.kt` | Workflow state |
+| AttentionItem | `domain/model/AttentionItem.kt` | Needs-attention item |
+| BrowserEvents | `domain/model/BrowserEvents.kt` | Browser automation events |
+| OperationContext | `domain/model/OperationContext.kt` | Operation metadata |
+| PiiAccessRequest | `domain/model/PiiAccessRequest.kt` | PII access request |
+| SystemAlert | `domain/model/SystemAlert.kt` | System alert model |
+
+---
+
+### 26.6 Platform Services
+
+| Service | File | Purpose |
+|---------|------|---------|
+| BiometricAuth | `platform/biometric/BiometricAuth.android.kt` | Fingerprint/Face auth |
+| SecureClipboard | `platform/clipboard/SecureClipboard.android.kt` | Auto-clearing clipboard |
+| NetworkMonitor | `platform/network/NetworkMonitor.android.kt` | Connectivity monitoring |
+| NotificationManager | `platform/notification/NotificationManager.android.kt` | Push notifications |
+| CertificatePinner | `platform/CertificatePinner.kt` | TLS pinning |
+| CrashReporter | `platform/CrashReporter.kt` | Sentry integration |
+| Analytics | `platform/Analytics.kt` | Firebase analytics |
+| TextToSpeech | `platform/tts/TextToSpeech.android.kt` | TTS for accessibility |
+| VoiceCallManager | `platform/voice/VoiceCallManager.android.kt` | VoIP calls |
+
+---
+
+### 26.7 Navigation Routes (47 Total)
+
+```kotlin
+object AppNavigation {
+    // Onboarding
+    const val SPLASH = "splash"
+    const val WELCOME = "welcome"
+    const val CONNECT = "connect"
+    const val PERMISSIONS = "permissions"
+    const val COMPLETION = "completion"
+    const val KEY_BACKUP_SETUP = "key-backup-setup"
+    const val MIGRATION = "migration"
+    const val TUTORIAL = "tutorial"
+    
+    // Auth
+    const val LOGIN = "login"
+    const val FORGOT_PASSWORD = "forgot-password"
+    const val KEY_RECOVERY = "key-recovery"
+    const val REGISTRATION = "register"
+    
+    // Main
+    const val HOME = "home"
+    const val PROFILE = "profile"
+    const val SETTINGS = "settings"
+    const val SEARCH = "search"
+    
+    // Chat
+    const val CHAT = "chat/{roomId}"
+    const val THREAD = "thread/{messageId}"
+    
+    // Rooms
+    const val ROOM_MANAGEMENT = "room-management"
+    const val ROOM_DETAILS = "room-details/{roomId}"
+    const val ROOM_SETTINGS = "room-settings/{roomId}"
+    
+    // Profile
+    const val USER_PROFILE = "user/{userId}"
+    const val CHANGE_PASSWORD = "change-password"
+    const val CHANGE_PHONE = "change-phone"
+    const val EDIT_BIO = "edit-bio"
+    const val DELETE_ACCOUNT = "delete-account"
+    const val SHARED_ROOMS = "shared-rooms"
+    
+    // Settings
+    const val SECURITY_SETTINGS = "security-settings"
+    const val NOTIFICATION_SETTINGS = "notification-settings"
+    const val APPEARANCE = "appearance"
+    const val PRIVACY_POLICY = "privacy-policy"
+    const val MY_DATA = "my-data"
+    const val DATA_SAFETY = "data-safety"
+    const val ABOUT = "about"
+    const val LICENSES = "licenses"
+    const val TERMS_OF_SERVICE = "terms-of-service"
+    const val REPORT_BUG = "report-bug"
+    const val INVITE = "invite"
+    const val SERVER_CONNECTION = "server-connection"
+    const val DEVICES = "devices"
+    const val ADD_DEVICE = "add-device"
+    
+    // Advanced
+    const val AGENT_MANAGEMENT = "agent-management"
+    const val HITL_APPROVALS = "hitl-approvals"
+    const val VAULT = "vault"
+    const val AGENT_STUDIO = "agent-studio"
+    const val KEYSTORE = "keystore"
+    
+    // Media
+    const val IMAGE_VIEWER = "image-viewer"
+    const val FILE_PREVIEW = "file-preview"
+    
+    // Calls
+    const val ACTIVE_CALL = "call/{callId}"
+}
+```
+
+---
+
+## 27. Feature Completeness Matrix
+
+| Feature Category | Screens | ViewModels | Repositories | Status |
+|-----------------|---------|------------|--------------|--------|
+| Authentication | 4 | 2 | AuthRepository | ✅ Complete |
+| Onboarding | 11 | 2 | - | ✅ Complete |
+| Chat/Messaging | 2 | 1 | MessageRepository, ThreadRepository | ✅ Complete |
+| Rooms | 3 | 1 | RoomRepository | ✅ Complete |
+| Profile | 6 | 1 | UserRepository | ✅ Complete |
+| Settings | 16 | 1 | - | ✅ Complete |
+| Calls | 2 | - | CallRepository | ✅ Complete |
+| Search | 1 | - | - | ✅ Complete |
+| Vault/Keystore | 2 | 1 | - | ✅ Complete |
+| Agent Studio | 1 | - | AgentFlowRepository | ✅ Complete |
+| Sync/Offline | - | 1 | SyncRepository | ✅ Complete |
+| Notifications | - | - | NotificationRepository | ✅ Complete |
+
+---
+
+*ArmorChat - Complete Component Inventory. All 54 screens, 10 ViewModels, 12 repositories, 22 domain models documented.*
