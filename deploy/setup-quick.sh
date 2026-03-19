@@ -6,6 +6,32 @@
 #
 # Usage: sudo ./deploy/setup-quick.sh [--non-interactive]
 
+# Handle --help and --version flags early (before any checks)
+case "${1:-}" in
+    --help|-h)
+        echo "ArmorClaw Quick Setup - Express Installation"
+        echo ""
+        echo "Usage: setup-quick.sh [OPTIONS]"
+        echo ""
+        echo "Options:"
+        echo "  --non-interactive, -y  Run without prompts (use defaults)"
+        echo "  --help, -h             Show this help message"
+        echo "  --version, -v          Show version"
+        echo ""
+        echo "Environment Variables:"
+        echo "  OPENROUTER_API_KEY     OpenRouter API key (recommended)"
+        echo "  OPEN_AI_KEY            OpenAI API key"
+        echo "  ZAI_API_KEY            xAI (Grok) API key"
+        echo "  ARMORCLAW_SERVER_NAME  Server hostname or IP"
+        echo ""
+        exit 0
+        ;;
+    --version|-v)
+        echo "ArmorClaw Quick Setup v0.4.1"
+        exit 0
+        ;;
+esac
+
 set -euo pipefail
 
 # Colors for output
