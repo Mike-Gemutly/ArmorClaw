@@ -4,17 +4,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_BIN="${SCRIPT_DIR}/../bridge/build/armorclaw-bridge"
 SOCKET_PATH="/tmp/bridge-test-$$.sock"
+KEYSTORE_DIR="/tmp/armorclaw-keystore-$$"
+CONFIG_FILE="/tmp/armorclaw-config-$$.toml"
 BRIDGE_PID=""
 FAILED=0
 
+# Cleanup function
 cleanup() {
     if [[ -n "$BRIDGE_PID" ]]; then
         kill "$BRIDGE_PID" 2>/dev/null || true
         wait "$BRIDGE_PID" 2>/dev/null || true
     fi
-    rm -f "$SOCKET_PATH" 2>/dev/null || true
+    rm -f "$SOCKET_PATH" "$CONFIG_FILE" 2>/dev/null || true
+    rm -rf "$KEYSTORE_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+mkdir -p "$KEYSTORE_DIR"
+
+cat > "$CONFIG_FILE" << EOF
+[keystore]
+path = "$KEYSTORE_DIR"
+
+[server]
+socket_path = "$SOCKET_PATH"
+EOF
 
 if ! command -v socat &>/dev/null; then
     echo "❌ socat not installed. Install with: apt-get install socat"
@@ -28,8 +42,7 @@ if [[ ! -x "$BRIDGE_BIN" ]]; then
 fi
 
 echo "Starting bridge..."
-ARMORCLAW_SOCKET_PATH="$SOCKET_PATH" \
-    "$BRIDGE_BIN" &
+"$BRIDGE_BIN" --config "$CONFIG_FILE" &
 BRIDGE_PID=$!
 
 echo "Waiting for socket..."
