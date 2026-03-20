@@ -18,8 +18,10 @@
     "ses_2f616f7d1ffeZRg2f28Pq23Jck",
     "ses_2f61459cbffebqRCeFKUPvBIED",
     "ses_2f613b79bffeWvl3m2hZI8OErL",
-    "ses_2f6145748ffeJ5c6CV7RMiAL6t"
+    "ses_2f6145748ffeJ5c6CV7RMiAL6t",
+    "ses_2f395dc65ffeADGYVQHyS085jP"
   ],
   "plan_name": "vps-testing-zai-deployment",
-  "agent": "atlas"
+  "agent": "atlas",
+  "status": "blocked-awaiting-user-ssh-fix"
 }
