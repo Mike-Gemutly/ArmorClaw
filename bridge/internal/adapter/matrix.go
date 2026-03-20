@@ -200,8 +200,11 @@ func (m *MatrixAdapter) Login(username, password string) error {
 	matrixTracker.Event("login", map[string]any{"user": username})
 
 	payload := map[string]interface{}{
-		"type":      "m.login.password",
-		"user":      username,
+		"type": "m.login.password",
+		"identifier": map[string]string{
+			"type": "m.id.user",
+			"user": username,
+		},
 		"password":  password,
 		"device_id": m.deviceID,
 	}
