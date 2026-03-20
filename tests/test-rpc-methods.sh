@@ -24,7 +24,7 @@ mkdir -p "$KEYSTORE_DIR"
 
 cat > "$CONFIG_FILE" << EOF
 [keystore]
-path = "$KEYSTORE_DIR"
+db_path = "$KEYSTORE_DIR/keystore.db"
 
 [server]
 socket_path = "$SOCKET_PATH"
