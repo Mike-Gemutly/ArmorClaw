@@ -1,24 +1,10 @@
 {
-  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/infra-recommendations.md",
-  "started_at": "2026-03-14T20:24:31.872Z",
+  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/matrix-login-fix.md",
+  "started_at": "2026-03-19T23:20:18.596Z",
   "session_ids": [
-    "ses_3120c2485ffexkcLgWCSYTkfKV",
-    "ses_311f9cf02ffe7inGhJ4p81XcmS",
-    "ses_311f9ceb3ffe6WFqT037ILa3Y0",
-    "ses_311f9ce8cffeLPAPFlV47iWXRH"
-    "ses_311f9cf02ffe7inGhJ4p81XcmS"
-    "ses_3120c2485ffexkcLgWCSYTkfKV"
-    "ses_311f9ce8cffeLPAPFlV47iWXRH"
-    "ses_311f9cf02ffe7inGhJ4p81XcmS"
-    "ses_311f9ce8cffeLPAPFlV47iWXRH"
-    "ses_311f9cf02ffe7inGhJ4p81XcmS",
-    "ses_3120c2485ffexkcLgWCSYTkfKV"
-    "ses_3120c2485ffexkcLgWCSYTkfKV"
-    "ses_3120c2485ffexkcLgWCSYTkfKV",
-    "ses_3120c2485ffexkcLgWCSYTkfKV",
     "ses_3120c2485ffexkcLgWCSYTkfKV"
   ],
-  "plan_name": "infra-recommendations",
+  "plan_name": "matrix-login-fix",
   "agent": "atlas",
   "worktree_path": "/home/mink/src/armorclaw-omo"
 }

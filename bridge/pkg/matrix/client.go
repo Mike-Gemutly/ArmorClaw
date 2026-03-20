@@ -76,10 +76,13 @@ func New(cfg Config) (*Client, error) {
 // Login authenticates with the Matrix homeserver
 func (c *Client) Login(ctx context.Context, username, password string) error {
 	// Implement password-based login using the Matrix Client API
-	// POST /_matrix/client/r0/login
-	payload := map[string]string{
+	// POST /_matrix/client/v3/login
+	payload := map[string]interface{
 		"type": "m.login.password",
-		"user": username,
+		"identifier": map[string]string{
+			"type": "m.id.user",
+			"user": username,
+		},
 		"password": password,
 	}
 
@@ -88,7 +91,7 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 		return fmt.Errorf("failed to marshal login request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/_matrix/client/r0/login", c.homeserver)
+	url := fmt.Sprintf("%s/_matrix/client/v3/login", c.homeserver)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
