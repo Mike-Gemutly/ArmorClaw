@@ -22,13 +22,13 @@ var (
 
 // Client represents a Matrix client with E2EE support
 type Client struct {
-	homeserver   string
+	homeserver  string
 	accessToken string
-	userID       string
-	deviceID     string
-	roomID       string
-	dbPath       string
-	httpClient   *http.Client
+	userID      string
+	deviceID    string
+	roomID      string
+	dbPath      string
+	httpClient  *http.Client
 }
 
 // Config holds Matrix client configuration
@@ -62,11 +62,11 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		homeserver:   cfg.HomeserverURL,
+		homeserver:  cfg.HomeserverURL,
 		accessToken: cfg.AccessToken,
-		deviceID:     cfg.DeviceID,
-		roomID:       cfg.RoomID,
-		dbPath:       cfg.StorePath,
+		deviceID:    cfg.DeviceID,
+		roomID:      cfg.RoomID,
+		dbPath:      cfg.StorePath,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -77,7 +77,7 @@ func New(cfg Config) (*Client, error) {
 func (c *Client) Login(ctx context.Context, username, password string) error {
 	// Implement password-based login using the Matrix Client API
 	// POST /_matrix/client/v3/login
-	payload := map[string]interface{
+	payload := map[string]interface{}{
 		"type": "m.login.password",
 		"identifier": map[string]string{
 			"type": "m.id.user",
@@ -113,8 +113,8 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 
 	var result struct {
 		AccessToken string `json:"access_token"`
-		UserID       string `json:"user_id"`
-		DeviceID     string `json:"device_id"`
+		UserID      string `json:"user_id"`
+		DeviceID    string `json:"device_id"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -217,8 +217,8 @@ func (c *Client) GetMessages(ctx context.Context, limit int) ([]MessageEvent, er
 
 	var result struct {
 		Chunk []MessageEvent `json:"chunk"`
-		Start string          `json:"start"`
-		End   string          `json:"end"`
+		Start string         `json:"start"`
+		End   string         `json:"end"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -286,7 +286,7 @@ type StateFilter struct {
 
 // SyncResponse represents a /sync response
 type SyncResponse struct {
-	NextBatch string                    `json:"next_batch"`
+	NextBatch string                     `json:"next_batch"`
 	Rooms     map[string]json.RawMessage `json:"rooms,omitempty"`
 }
 
