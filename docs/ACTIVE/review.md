@@ -1019,9 +1019,9 @@ tests/matrix-test-server/conduit.toml   | 17 + (security hardening)
 | Provisioning QR generated | ✅ Pass | QR code generation works |
 | !status works | ✅ Pass | Via matrix.status RPC |
 | Normal AI chat works | ✅ Pass | Env var support for API keys |
-| Agent Studio works | ✅ Pass | studio.stats returns 8 skills, 10 PII fields |
+| Agent Studio works | ✅ Pass | studio.stats returns 8 skills, 19+ PII fields |
 | Browser subsystem works | ✅ Pass | browser.list returns 0 jobs (healthy) |
-| MCP/skills system works | ✅ Pass | 17 SKILL.md files created |
+| MCP/skills system works | ✅ Pass | 60 total SKILL.md files (21 browser + 51 container + 6 extensions) |
 
 ### Key Updates (v0.5.3)
 
