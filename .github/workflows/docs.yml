@@ -1,0 +1,47 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'configs/providers.json'
+      - 'bridge/pkg/providers/**/*.go'
+      - 'bridge/internal/wizard/quick.go'
+      - 'bridge/internal/wizard/catwalk.go'
+      - 'bridge/cmd/gen-models/**'
+  pull_request:
+    paths:
+      - 'configs/providers.json'
+      - 'bridge/pkg/providers/**/*.go'
+      - 'bridge/internal/wizard/quick.go'
+      - 'bridge/internal/wizard/catwalk.go'
+      - 'bridge/cmd/gen-models/**'
+  workflow_dispatch:
+
+jobs:
+  verify-model-docs:
+    name: Verify Model Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bridge/go.mod'
+          cache: true
+
+      - name: Generate model docs
+        run: |
+          cd bridge
+          go run ./cmd/gen-models --output ../docs/reference/models.md
+
+      - name: Check for drift
+        run: |
+          if git diff --exit-code docs/reference/models.md; then
+            echo "Model docs up to date"
+          else
+            echo "::warning::Model docs out of date. Run: cd bridge && go run ./cmd/gen-models"
+            echo ""
+            echo "Diff:"
+            git diff docs/reference/models.md
+          fi
