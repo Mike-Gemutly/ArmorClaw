@@ -121,6 +121,10 @@ services:
       - ARMORCLAW_MATRIX_PASSWORD=${MATRIX_BRIDGE_PASSWORD:-bridgepass}
       - ARMORCLAW_PUSH_GATEWAY_URL=http://sygnal:5000/_matrix/push/v1/notify
       - ARMORCLAW_API_KEY=${ARMORCLAW_API_KEY:-}
+      # ARMORCLAW_KEYSTORE_SECRET: Base64-encoded 32-byte keystore master key
+      # If set, this key will be used instead of hardware-derived entropy
+      # Generate with: openssl rand -base64 32
+      - ARMORCLAW_KEYSTORE_SECRET=${ARMORCLAW_KEYSTORE_SECRET:-}
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/armorclaw/bridge.sock || exit 1"]
       interval: 30s

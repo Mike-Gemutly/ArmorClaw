@@ -145,7 +145,63 @@ COPY deploy/rename-admin.sh /opt/armorclaw/
 COPY deploy/bootstrap-admin.py /opt/armorclaw/bootstrap-admin.py
 COPY deploy/setup-quick.sh /opt/armorclaw/quickstart.sh
 
-RUN chmod +x /opt/armorclaw/*.sh && \
+# Copy Go binary for keystore key generation
+COPY --from=bridge-builder /usr/local/go/bin/go /usr/local/bin/go
+COPY --from=bridge-builder /usr/local/go /usr/local/go
+
+# Create keystore key generation script
+RUN cat > /opt/armorclaw/generate-keystore-key.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Check if keystore key is already provided via env var or file
+if [ -n "$ARMORCLAW_KEYSTORE_SECRET" ]; then
+    echo "[Keystore] ARMORCLAW_KEYSTORE_SECRET already set, using provided key"
+    export ARMORCLAW_KEYSTORE_SECRET
+    return 0
+fi
+
+# Check if key file exists (persisted from previous run)
+KEY_FILE="/opt/armorclaw/keystore.key"
+if [ -f "$KEY_FILE" ]; then
+    echo "[Keystore] Using existing keystore key from $KEY_FILE"
+    export ARMORCLAW_KEYSTORE_SECRET=$(cat "$KEY_FILE")
+    return 0
+fi
+
+# Generate new 32-byte random key using Go
+echo "[Keystore] ARMORCLAW_KEYSTORE_SECRET not set, generating new keystore key..."
+
+KEY=$(go run - << 'GOEOF'
+package main
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "os"
+)
+func main() {
+    b := make([]byte, 32)
+    if _, err := rand.Read(b); err != nil {
+        fmt.Fprintln(os.Stderr, "Error generating random bytes:", err)
+        os.Exit(1)
+    }
+    fmt.Println(base64.StdEncoding.EncodeToString(b))
+}
+GOEOF
+)
+
+# Write to file with restricted permissions
+echo "$KEY" > "$KEY_FILE"
+chmod 0600 "$KEY_FILE"
+
+# Export for bridge to use
+export ARMORCLAW_KEYSTORE_SECRET="$KEY"
+echo "[Keystore] Generated and persisted keystore key to $KEY_FILE"
+EOF
+
+RUN chmod +x /opt/armorclaw/generate-keystore-key.sh && \
+    chmod +x /opt/armorclaw/*.sh && \
     ln -sf /opt/armorclaw/view-setup-log.sh /usr/local/bin/view-setup-log && \
     ln -sf /opt/armorclaw/rename-admin.sh /usr/local/bin/rename-admin
 
@@ -170,4 +226,15 @@ VOLUME ["/etc/armorclaw", "/var/lib/armorclaw", "/run/armorclaw", "/var/log/armo
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD echo '{"jsonrpc":"2.0","id":1,"method":"matrix.status"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null | grep -q '"result"' || exit 1
 
-ENTRYPOINT ["/opt/armorclaw/quickstart.sh"]
+# Entry wrapper: generate keystore key before main entrypoint
+RUN cat > /opt/armorclaw/entrypoint-wrapper.sh << 'EOF'
+#!/bin/bash
+# Source keystore key generation (persists key to keystore.key)
+source /opt/armorclaw/generate-keystore-key.sh
+# Run main entrypoint
+exec /opt/armorclaw/quickstart.sh "$@"
+EOF
+
+RUN chmod +x /opt/armorclaw/entrypoint-wrapper.sh
+
+ENTRYPOINT ["/opt/armorclaw/entrypoint-wrapper.sh"]

@@ -65,6 +65,7 @@ const (
 	ProviderOpenRouter Provider = "openrouter"
 	ProviderGoogle     Provider = "google"
 	ProviderXAI        Provider = "xai"
+	ProviderZhipu      Provider = "zhipu"
 )
 
 // Credential represents an encrypted API credential
@@ -127,12 +128,12 @@ func New(cfg Config) (*Keystore, error) {
 		return nil, fmt.Errorf("failed to initialize salt: %w", err)
 	}
 
-	// Derive master key from hardware entropy + salt
+	// Derive master key from explicit secret source or hardware entropy + salt
 	if cfg.MasterKey == nil {
 		var err error
-		cfg.MasterKey, err = ks.deriveHardwareKey()
+		cfg.MasterKey, err = ks.deriveMasterKey()
 		if err != nil {
-			return nil, fmt.Errorf("failed to derive hardware key: %w", err)
+			return nil, fmt.Errorf("failed to derive master key: %w", err)
 		}
 	}
 
@@ -180,6 +181,103 @@ func (ks *Keystore) deriveHardwareKey() ([]byte, error) {
 	key := pbkdf2.Key(entropy, ks.salt, pbkdf2Iterations, keyLength, sha512.New)
 
 	return key, nil
+}
+
+// deriveMasterKey derives the master key using an explicit secret source hierarchy
+// Priority: 1) Env var ARMORCLAW_KEYSTORE_SECRET, 2) Secret file keystore.key, 3) Container-persisted key, 4) Hardware-derived key
+func (ks *Keystore) deriveMasterKey() ([]byte, error) {
+	// Priority 1: Explicit env var
+	if secret := os.Getenv("ARMORCLAW_KEYSTORE_SECRET"); secret != "" {
+		decoded, err := base64.StdEncoding.DecodeString(secret)
+		if err != nil {
+			return nil, fmt.Errorf("ARMORCLAW_KEYSTORE_SECRET is not valid base64: %w", err)
+		}
+		if len(decoded) != 32 {
+			return nil, fmt.Errorf("ARMORCLAW_KEYSTORE_SECRET must be 32 bytes, got %d", len(decoded))
+		}
+		return decoded[:32], nil
+	}
+
+	// Priority 2: Explicit secret file
+	keyPath := ks.dbPath + ".key"
+	if data, err := os.ReadFile(keyPath); err == nil {
+		if key, err := base64.StdEncoding.DecodeString(string(data)); err == nil {
+			if len(key) == 32 {
+				return key, nil
+			}
+		}
+	}
+
+	// Priority 3: Container detection - only use hardware key when NOT in container
+	if ks.isContainerized() {
+		key := make([]byte, 32)
+		if _, err := io.ReadFull(cryptorand.Reader, key); err != nil {
+			return nil, fmt.Errorf("failed to generate container key: %w", err)
+		}
+		encoded := base64.StdEncoding.EncodeToString(key)
+		if err := os.WriteFile(keyPath, []byte(encoded), 0600); err != nil {
+			return nil, fmt.Errorf("failed to persist key: %w", err)
+		}
+		return key, nil
+	}
+
+	// Priority 4: Native host mode - use hardware-derived key
+	return ks.deriveHardwareKey()
+}
+
+// isContainerized checks if bridge is running in a container environment
+func (ks *Keystore) isContainerized() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		return strings.Contains(string(data), "docker") ||
+			strings.Contains(string(data), "kubepods")
+	}
+	return false
+}
+
+// verifyKeyWorks verifies that existing DB can be opened with current key
+func (ks *Keystore) verifyKeyWorks() error {
+	if _, err := os.Stat(ks.dbPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	testKey := hex.EncodeToString(ks.masterKey)
+	testDSN := fmt.Sprintf(
+		"file:%s?_pragma_key=x'%s'&_pragma_cipher_page_size=%d&_pragma_kdf_iter=%d&_pragma_cipher_hmac_algorithm=%s&_pragma_cipher_kdf_algorithm=%s&_foreign_keys=ON",
+		ks.dbPath,
+		testKey,
+		cipherPageSize,
+		cipherKdfIter,
+		cipherHmacAlg,
+		cipherKdfAlgorithm,
+	)
+
+	testDB, err := sql.Open("sqlite3", testDSN)
+	if err != nil {
+		return fmt.Errorf("cannot verify database integrity: %w", err)
+	}
+	defer testDB.Close()
+
+	if err := testDB.Ping(); err != nil {
+		return fmt.Errorf("KEY MISMATCH: Database exists but cannot be decrypted with current key\n"+
+			"This is NOT corruption - your data is encrypted with a different key.\n"+
+			"Possible causes:\n"+
+			"  1. Container restart changed hardware-derived key\n"+
+			"  2. ARMORCLAW_KEYSTORE_SECRET changed\n"+
+			"  3. Database moved from different machine\n"+
+			"  4. keystore.key file changed\n\n"+
+			"To fix:\n"+
+			"  1. Provide original key via ARMORCLAW_KEYSTORE_SECRET\n"+
+			"  2. For containers: restore /etc/armorclaw/keystore.key from backup\n"+
+			"  3. Accept data loss: delete database file and restart\n"+
+			"Database path: %s\n"+
+			"Salt path: %s",
+			ks.dbPath, ks.dbPath+".salt")
+	}
+
+	return nil
 }
 
 // collectEntropy gathers entropy from hardware-specific sources
@@ -340,6 +438,11 @@ func (ks *Keystore) Open() error {
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	if err := ks.verifyKeyWorks(); err != nil {
+		db.Close()
+		return err
 	}
 
 	// Initialize schema
@@ -1142,7 +1245,9 @@ func (ks *Keystore) RetrieveProfile(id string) (*UserProfileData, error) {
 	go func() {
 		ks.mu.Lock()
 		defer ks.mu.Unlock()
-		ks.db.Exec("UPDATE user_profiles SET last_accessed = ? WHERE id = ?", time.Now().Unix(), id)
+		if ks.db != nil {
+			ks.db.Exec("UPDATE user_profiles SET last_accessed = ? WHERE id = ?", time.Now().Unix(), id)
+		}
 	}()
 
 	// Log successful access
