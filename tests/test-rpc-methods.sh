@@ -88,7 +88,7 @@ test_method() {
         return 1
     fi
     
-    if echo "$result" | grep -q "$expected"; then
+    if echo "$result" | tr -d '\n' | grep -q "$expected"; then
         echo "✅ PASSED: $method"
         return 0
     else
@@ -111,7 +111,7 @@ echo ""
 echo "Testing error handling..."
 
 # Invalid method should return error code -32601
-test_method "invalid.method" '"code":-32601' || ((FAILED++)) || true
+test_method "invalid.method" '"code": -32601' || ((FAILED++)) || true
 
 # Summary
 echo ""

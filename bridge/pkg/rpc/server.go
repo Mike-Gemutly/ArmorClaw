@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -248,10 +249,24 @@ func errorResponse(id interface{}, code int, msg string) *Response {
 	}
 }
 
+// isInterfaceNil checks if an interface is truly nil.
+// In Go, an interface with a nil concrete value is NOT nil.
+// This helper handles that case by using reflection.
+func isInterfaceNil(i interface{}) bool {
+	if i == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(i); v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return v.IsNil()
+	}
+	return false
+}
+
 // Matrix Handlers
 
 func (s *Server) handleMatrixStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.matrix == nil {
+	if isInterfaceNil(s.matrix) {
 		return MatrixHealthResult{
 			Enabled:   false,
 			Connected: false,
