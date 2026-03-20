@@ -1,9 +1,160 @@
 # ArmorClaw Architecture Review
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.11.0
-> **Last Updated:** 2026-03-15
+> **Version:** 4.12.0
+> **Last Updated:** 2026-03-20
 > **Status:** Active Reference
 
+
+## Phase 13: Model Documentation Generator (2026-03-20)
+
+### Overview
+
+Implemented automated model documentation generation from the embedded provider registry with optional Catwalk enrichment. The generator creates `docs/reference/models.md` with all provider and model information, and runs in CI to detect documentation drift.
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **Shared Models Package** | Extracted `fallbackModels` map to reusable package | `bridge/pkg/providers/models.go` |
+| **Generator CLI** | CLI tool to generate markdown from registry | `bridge/cmd/gen-models/` |
+| **CI Workflow** | Automated doc verification on provider changes | `.github/workflows/docs.yml` |
+| **Generated Docs** | All providers/models in markdown tables | `docs/reference/models.md` |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      gen-models CLI                              │
+├─────────────────────────────────────────────────────────────────┤
+│  1. LoadEmbeddedProviders()  ←  configs/providers.json          │
+│  2. LoadFallbackModels()     ←  pkg/providers/models.go         │
+│  3. TryCatwalkEnrichment()   ←  optional, if --catwalk-url set  │
+│  4. RenderMarkdown()         ←  template                        │
+│  5. WriteFile()              ←  docs/reference/models.md        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Source Priority:**
+1. Embedded registry (deterministic, always available)
+2. Catwalk enrichment (optional, for richer data when available)
+
+### Shared Models Package
+
+**File:** `bridge/pkg/providers/models.go`
+
+```go
+type ModelInfo struct {
+    ID          string `json:"id"`
+    Name        string `json:"name"`
+    ContextSize int    `json:"context_size,omitempty"`
+}
+
+var FallbackModels = map[string][]ModelInfo{
+    "openai": {
+        {ID: "gpt-4o", Name: "GPT-4o", ContextSize: 128000},
+        {ID: "gpt-4o-mini", Name: "GPT-4o Mini", ContextSize: 128000},
+        // ...
+    },
+    // 12 providers total
+}
+
+func GetModels(providerID string) []ModelInfo
+```
+
+This replaces the duplicate `fallbackModels` map that was in `quick.go`.
+
+### CI Integration
+
+**File:** `.github/workflows/docs.yml`
+
+```yaml
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'configs/providers.json'
+      - 'bridge/pkg/providers/**/*.go'
+      - 'bridge/internal/wizard/quick.go'
+  pull_request: ...
+
+jobs:
+  verify-model-docs:
+    steps:
+      - name: Generate model docs
+        run: cd bridge && go run ./cmd/gen-models --output ../docs/reference/models.md
+      - name: Check for drift
+        run: git diff --exit-code docs/reference/models.md
+```
+
+**Key Design:**
+- Runs on changes to provider/model source files
+- No Catwalk dependency in CI (deterministic)
+- Warning only on drift, not failure
+- Separate from dockerhub.yml
+
+### Generated Output Format
+
+```markdown
+# AI Provider Models
+
+> Generated from embedded provider registry.
+> Last updated: 2026-03-20T06:34:12Z
+
+## Providers
+
+| ID | Name | Protocol | Aliases |
+|----|------|----------|---------|
+| openai | OpenAI | openai | - |
+| zhipu | Zhipu AI (Z AI) | openai | zai, glm |
+
+## Models by Provider
+
+### OpenAI
+
+| Model ID | Display Name | Context |
+|----------|--------------|---------|
+| gpt-4o | GPT-4o | 128000 |
+```
+
+### Commits (2026-03-20)
+
+```
+dd16c49 feat(ci): add docs workflow and fix gen-models CLI
+cc8b7a8 docs: add link to generated model docs
+df7d1ac feat(gen-models): add generator package with tests
+8156e2f refactor(wizard): use shared fallbackModels from providers package
+b1fa0f0 feat(providers): extract fallbackModels to shared package
+6dcdfe5 docs: add model docs generator design and implementation plan
+```
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No Catwalk dependency in CI | ✅ Embedded registry only |
+| Separate from dockerhub.yml | ✅ New docs.yml workflow |
+| No auto-commit on drift | ✅ Warning only |
+| Reuse existing code | ✅ Uses catwalk.go + providers.json |
+
+### Quick Reference Commands
+
+```bash
+# Generate model docs
+cd bridge && go run ./cmd/gen-models
+
+# Generate with Catwalk enrichment
+cd bridge && go run ./cmd/gen-models --catwalk-url http://localhost:8080
+
+# Run generator tests
+cd bridge && go test ./cmd/gen-models/... -v
+
+# Verify docs are current
+git diff docs/reference/models.md
+```
+
+---
 
 ## Phase 12: Skills System & Approvals (2026-03-15)
 
