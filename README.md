@@ -269,6 +269,8 @@ bash tests/integration/test-installer-hardening.sh
 
 ## Supported AI Providers (v4.5.0+)
 
+> **Full model list**: See [docs/reference/models.md](docs/reference/models.md) for all available models per provider.
+
 ArmorClaw now uses a **Provider Registry** pattern. The installer provides a selection menu, and the Bridge resolves aliases (like `zai` or `glm`) automatically.
 
 ### Included in Registry:
