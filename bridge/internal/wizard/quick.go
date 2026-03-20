@@ -19,19 +19,6 @@ type apiProviderOption struct {
 	BaseURL string
 }
 
-// fallbackModels provides static model lists when Catwalk is unavailable.
-var fallbackModels = map[string][]string{
-	"openai":     {"gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"},
-	"anthropic":  {"claude-3-opus", "claude-3-sonnet", "claude-3-haiku"},
-	"google":     {"gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"},
-	"xai":        {"grok-2", "grok-2-vision", "grok-beta"},
-	"zhipu":      {"glm-4", "glm-4v", "glm-4-flash", "glm-3-turbo"},
-	"deepseek":   {"deepseek-chat", "deepseek-coder"},
-	"moonshot":   {"moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
-	"groq":       {"llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"},
-	"openrouter": {"openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-pro-1.5"},
-}
-
 // getProviderOptions returns provider options, loading from Catwalk or registry.
 func getProviderOptions() ([]apiProviderOption, bool) {
 	catwalk := NewCatwalkClient("http://localhost:8080")
@@ -93,9 +80,13 @@ func getModelOptions(providerKey string) []string {
 	}
 
 	// Fallback to static list
-	if models, ok := fallbackModels[providerKey]; ok {
+	if models := providers.GetModels(providerKey); len(models) > 0 {
 		fmt.Println("  [Wizard] Using default model list for provider:", providerKey)
-		return models
+		result := make([]string, len(models))
+		for i, m := range models {
+			result[i] = m.ID
+		}
+		return result
 	}
 
 	// No models known - return generic default
