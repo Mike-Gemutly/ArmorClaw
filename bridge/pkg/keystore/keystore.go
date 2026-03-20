@@ -766,7 +766,7 @@ func (ks *Keystore) Decrypt(encrypted, nonce []byte) ([]byte, error) {
 // isValidProvider checks if a provider is valid
 func isValidProvider(p Provider) bool {
 	switch p {
-	case ProviderOpenAI, ProviderAnthropic, ProviderOpenRouter, ProviderGoogle, ProviderXAI:
+	case ProviderOpenAI, ProviderAnthropic, ProviderOpenRouter, ProviderGoogle, ProviderXAI, ProviderZhipu:
 		return true
 	default:
 		return false
