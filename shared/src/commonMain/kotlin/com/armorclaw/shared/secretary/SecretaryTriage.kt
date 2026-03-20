@@ -1,43 +1,42 @@
 package com.armorclaw.shared.secretary
 
 data class TriageInput(
+    val mode: SecretaryMode,
     val messageContent: String,
     val isVipSender: Boolean,
     val isCalendarLinked: Boolean
 )
 
 data class TriageResult(
-    val priority: SecretaryPriority,
-    val score: Int
+    val score: Int,
+    val priority: SecretaryPriority
 )
 
-/**
- * SecretaryTriage determines the priority level of messages based on multiple factors:
- * - Urgent keywords in message content
- * - VIP sender status
- * - Calendar-linked thread status
- *
- * The scoring is deterministic: same input always produces same output.
- */
 class SecretaryTriage {
 
-    private val urgentKeywords = mapOf(
-        "urgent" to 2,
-        "asap" to 2,
-        "emergency" to 3
-    )
+    private val urgentKeywords = listOf("urgent", "asap", "emergency")
 
     fun score(input: TriageInput): TriageResult {
         val score = calculateScore(input)
         val priority = scoreToPriority(score)
 
         return TriageResult(
-            priority = priority,
-            score = score
+            score = score,
+            priority = priority
         )
     }
 
     private fun calculateScore(input: TriageInput): Int {
+        val baseScore = calculateBaseScore(input)
+
+        return when (input.mode) {
+            SecretaryMode.FOCUS, SecretaryMode.SLEEP -> 0
+            SecretaryMode.MEETING -> maxOf(0, baseScore - 1)
+            SecretaryMode.NORMAL -> baseScore
+        }
+    }
+
+    private fun calculateBaseScore(input: TriageInput): Int {
         var score = 0
 
         score += keywordScore(input.messageContent)
@@ -49,17 +48,19 @@ class SecretaryTriage {
 
     private fun keywordScore(messageContent: String): Int {
         val lowerContent = messageContent.lowercase()
-        return urgentKeywords
-            .filter { (keyword, _) -> lowerContent.contains(keyword) }
-            .values
-            .sum()
+        return if (urgentKeywords.any { keyword -> lowerContent.contains(keyword) }) {
+            2
+        } else {
+            0
+        }
     }
 
     private fun scoreToPriority(score: Int): SecretaryPriority {
         return when {
+            score == 0 -> SecretaryPriority.LOW
+            score in 1..2 -> SecretaryPriority.HIGH
             score >= 3 -> SecretaryPriority.CRITICAL
-            score >= 1 -> SecretaryPriority.HIGH
-            else -> SecretaryPriority.NORMAL
+            else -> SecretaryPriority.LOW
         }
     }
 }

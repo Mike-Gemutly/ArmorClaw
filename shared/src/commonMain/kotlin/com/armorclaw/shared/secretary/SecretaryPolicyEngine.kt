@@ -1,12 +1,5 @@
 package com.armorclaw.shared.secretary
 
-enum class SecretaryMode {
-    MEETING,
-    FOCUS,
-    SLEEP,
-    NORMAL
-}
-
 data class PolicyContext(
     val mode: SecretaryMode,
     val whitelist: List<String> = emptyList()

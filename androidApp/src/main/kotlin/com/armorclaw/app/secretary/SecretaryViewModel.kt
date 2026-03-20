@@ -16,13 +16,14 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 
 /**
- * Secretary ViewModel - Phase 1 Foundation + Phase 2 Briefing
+ * Secretary ViewModel - Phase 1 Foundation + Phase 2 Briefing + Phase 3 Engines
  *
  * Core orchestration layer for the Secretary system.
  * Observes MatrixSyncManager for real-time events and manages proactive cards.
  *
  * Phase 1 scope: Matrix event observation + proactive card display only.
  * Phase 2 scope: Briefing engine + context provider integration.
+ * Phase 3 scope: Policy engine, triage, follow-up integration.
  *
  * Does NOT include:
  *   - Bridge RPC execution (added in Phase 5)
@@ -33,7 +34,10 @@ import kotlin.math.max
 class SecretaryViewModel(
     private val matrixSyncManager: MatrixSyncManager,
     private val briefingEngine: SecretaryBriefingEngine,
-    private val contextProvider: SecretaryContextProvider
+    private val contextProvider: SecretaryContextProvider,
+    private val policyEngine: SecretaryPolicyEngine,
+    private val triage: SecretaryTriage,
+    private val followUp: SecretaryFollowUp
 ) : ViewModel() {
 
     private val logger = AppLogger.create(LogTag.ViewModel.Secretary)
@@ -49,6 +53,7 @@ class SecretaryViewModel(
     init {
         observeMatrixEvents()
         startBriefingScheduler()
+        startFollowUpScheduler()
     }
 
     /**
@@ -75,6 +80,17 @@ class SecretaryViewModel(
         }
     }
 
+    private fun startFollowUpScheduler() {
+        viewModelScope.launch {
+            checkFollowUps()
+
+            while (true) {
+                delay(24 * 60 * 60 * 1000L)
+                checkFollowUps()
+            }
+        }
+    }
+
     private suspend fun checkBriefings() {
         val currentTime = System.currentTimeMillis()
         val context = contextProvider.gatherContext()
@@ -89,6 +105,31 @@ class SecretaryViewModel(
         if (eveningResult != null) {
             addBriefingCard(eveningResult, SecretaryCardReason.EVENING_REVIEW)
             contextProvider.updateEveningReviewDate(currentTime)
+        }
+    }
+
+    private suspend fun checkFollowUps() {
+        val currentTime = System.currentTimeMillis()
+
+        val followUpContext = FollowUpContext(
+            threads = emptyList(),
+            currentTime = currentTime,
+            followUpThresholdMs = 48 * 60 * 60 * 1000L
+        )
+
+        val followUpResult = followUp.detectStaleThreads(followUpContext)
+
+        followUpResult.followUps.forEach { followUpItem ->
+            val card = ProactiveCard(
+                id = "followup-${followUpItem.threadId}-${System.currentTimeMillis()}",
+                title = "Follow-up needed",
+                description = followUpItem.recommendedAction,
+                priority = SecretaryPriority.NORMAL,
+                reason = SecretaryCardReason.VIP_SENDER,
+                primaryAction = SecretaryAction.Local(LocalSecretaryAction.NAV_CHAT)
+            )
+
+            addCard(card)
         }
     }
 
@@ -125,8 +166,9 @@ class SecretaryViewModel(
     private fun handleMatrixEvent(event: Any) {
         when (event) {
             is MatrixSyncEvent.MessageReceived -> {
+                handleIncomingMessage(event)
             }
-            
+
             is MatrixSyncEvent.TypingNotification -> {
                 logger.logDebug("Typing notification from: ${event.userIds}")
             }
@@ -137,6 +179,44 @@ class SecretaryViewModel(
 
             else -> {
                 logger.logDebug("Unhandled Matrix event: $event")
+            }
+        }
+    }
+
+    private fun handleIncomingMessage(event: MatrixSyncEvent.MessageReceived) {
+        val messageContent = event.event.content?.toString() ?: ""
+        val triageInput = TriageInput(
+            mode = SecretaryMode.NORMAL,
+            messageContent = messageContent,
+            isVipSender = false,
+            isCalendarLinked = false
+        )
+
+        val triageResult = triage.score(triageInput)
+
+        if (triageResult.priority == SecretaryPriority.HIGH || triageResult.priority == SecretaryPriority.CRITICAL) {
+            val card = ProactiveCard(
+                id = "urgent-${event.event.eventId}-${System.currentTimeMillis()}",
+                title = when (triageResult.priority) {
+                    SecretaryPriority.CRITICAL -> "Critical Message"
+                    SecretaryPriority.HIGH -> "Important Message"
+                    else -> "Message"
+                },
+                description = messageContent.take(100),
+                priority = triageResult.priority,
+                reason = SecretaryCardReason.URGENT_KEYWORD,
+                primaryAction = SecretaryAction.Local(LocalSecretaryAction.OPEN_MESSAGE)
+            )
+
+            val policyDecision = policyEngine.evaluateCard(card, PolicyContext(
+                mode = SecretaryMode.NORMAL,
+                whitelist = emptyList()
+            ))
+
+            if (!policyDecision.shouldSuppress) {
+                addCard(card)
+            } else {
+                logger.logDebug("Card suppressed: ${policyDecision.suppressionReason}")
             }
         }
     }
