@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'bridge/go.mod'
-          cache: true
+          cache-dependency-path: 'bridge/go.sum'
 
       - name: Go vet RPC packages
         run: cd bridge && go vet ./pkg/rpc/... ./internal/adapter/...
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'bridge/go.mod'
-          cache: true
+          cache-dependency-path: 'bridge/go.sum'
 
       - name: Run RPC unit tests
         run: |
@@ -69,7 +69,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'bridge/go.mod'
-          cache: true
+          cache-dependency-path: 'bridge/go.sum'
 
       - name: Install socat
         run: sudo apt-get install -y socat
