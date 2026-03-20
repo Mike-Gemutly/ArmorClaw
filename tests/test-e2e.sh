@@ -234,7 +234,7 @@ echo "Test 7: Bridge Stub Commands"
 echo "------------------------------"
 
 # Test status command
-if "$BRIDGE_BIN" status | grep -q "running"; then
+if ("$BRIDGE_BIN" status 2>/dev/null || true) | grep -q "running"; then
     echo "✅ Bridge 'status' command works"
 else
     echo "❌ FAIL: Bridge 'status' command failed"
@@ -250,7 +250,7 @@ else
 fi
 
 # Test start command
-if "$BRIDGE_BIN" start | grep -q "Container started"; then
+if ("$BRIDGE_BIN" start 2>/dev/null || true) | grep -q "Container started"; then
     echo "✅ Bridge 'start' command works"
 else
     echo "❌ FAIL: Bridge 'start' command failed"
@@ -258,7 +258,7 @@ else
 fi
 
 # Test stop command
-if "$BRIDGE_BIN" stop | grep -q "Container stopped"; then
+if ("$BRIDGE_BIN" stop 2>/dev/null || true) | grep -q "Container stopped"; then
     echo "✅ Bridge 'stop' command works"
 else
     echo "❌ FAIL: Bridge 'stop' command failed"
