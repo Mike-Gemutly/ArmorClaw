@@ -46,7 +46,9 @@ if [[ ! -x "$BRIDGE_BIN" ]]; then
 fi
 
 echo "Starting bridge..."
-ARMORCLAW_SKIP_DOCKER_CHECK=1 "$BRIDGE_BIN" --config "$CONFIG_FILE" &
+ARMORCLAW_ERRORS_STORE_PATH="$KEYSTORE_DIR/errors.db" \
+ARMORCLAW_SKIP_DOCKER_CHECK=1 \
+"$BRIDGE_BIN" --config "$CONFIG_FILE" &
 BRIDGE_PID=$!
 
 echo "Waiting for socket..."
