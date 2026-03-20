@@ -78,7 +78,7 @@ jobs:
       - name: Build bridge with SQLCipher
         env:
           CGO_ENABLED: 1
-          CGO_CFLAGS: "-I/usr/include/sqlcipher"
+          CGO_CFLAGS: "-I/usr/include"
           CGO_LDFLAGS: "-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
         run: |
           cd bridge
