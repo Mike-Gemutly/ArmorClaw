@@ -62,7 +62,6 @@ jobs:
     name: RPC Integration Tests
     needs: rpc-unit-tests
     runs-on: ubuntu-latest
-    continue-on-error: true  # Non-blocking: unit tests are the gate
     steps:
       - uses: actions/checkout@v4
 
@@ -71,8 +70,19 @@ jobs:
           go-version-file: 'bridge/go.mod'
           cache-dependency-path: 'bridge/go.sum'
 
-      - name: Install socat
-        run: sudo apt-get install -y socat
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y socat libsqlcipher-dev
+
+      - name: Build bridge with SQLCipher
+        env:
+          CGO_ENABLED: 1
+          CGO_CFLAGS: "-I/usr/include/sqlcipher"
+          CGO_LDFLAGS: "-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
+        run: |
+          cd bridge
+          go build -o build/armorclaw-bridge ./cmd/bridge
 
       - name: Run integration tests
         run: |
@@ -90,7 +100,7 @@ jobs:
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [rpc-unit-tests]  # Only unit tests are blocking
+    needs: [rpc-unit-tests, rpc-integ-tests]
     
     permissions:
       contents: read
