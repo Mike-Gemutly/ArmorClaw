@@ -1733,12 +1733,17 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	// Pre-flight checks
 	// Check Docker availability before initializing services
-	log.Println("Checking Docker availability...")
-	if !docker.IsAvailable() {
-		log.Fatalf("Docker is not available or not running. " +
-			"Please start Docker and ensure the daemon is accessible.")
+	// Skip check if ARMORCLAW_SKIP_DOCKER_CHECK is set (for testing)
+	if os.Getenv("ARMORCLAW_SKIP_DOCKER_CHECK") == "" {
+		log.Println("Checking Docker availability...")
+		if !docker.IsAvailable() {
+			log.Fatalf("Docker is not available or not running. " +
+				"Please start Docker and ensure the daemon is accessible.")
+		}
+		log.Println("Docker is available")
+	} else {
+		log.Println("Skipping Docker availability check (ARMORCLAW_SKIP_DOCKER_CHECK set)")
 	}
-	log.Println("Docker is available")
 
 	// Ensure base runtime directory exists (cross-platform safe)
 	runtimeDir := filepath.Dir(cfg.Server.SocketPath)

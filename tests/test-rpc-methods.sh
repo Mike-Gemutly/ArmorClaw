@@ -28,6 +28,10 @@ db_path = "$KEYSTORE_DIR/keystore.db"
 
 [server]
 socket_path = "$SOCKET_PATH"
+
+[error_system]
+enabled = false
+store_enabled = false
 EOF
 
 if ! command -v socat &>/dev/null; then
@@ -42,7 +46,7 @@ if [[ ! -x "$BRIDGE_BIN" ]]; then
 fi
 
 echo "Starting bridge..."
-"$BRIDGE_BIN" --config "$CONFIG_FILE" &
+ARMORCLAW_SKIP_DOCKER_CHECK=1 "$BRIDGE_BIN" --config "$CONFIG_FILE" &
 BRIDGE_PID=$!
 
 echo "Waiting for socket..."
