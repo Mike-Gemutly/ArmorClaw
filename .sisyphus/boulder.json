@@ -1,10 +1,18 @@
 {
-  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/matrix-login-fix.md",
-  "started_at": "2026-03-19T23:20:18.596Z",
+  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/vps-testing-zai-deployment.md",
+  "started_at": "2026-03-20T02:04:48.566Z",
   "session_ids": [
-    "ses_3120c2485ffexkcLgWCSYTkfKV"
+    "ses_3120c2485ffexkcLgWCSYTkfKV",
+    "ses_2f6d2373fffeKgltoHxUqzaW1S",
+    "ses_2f6ac19acffeimx7mzE58Pl12Q",
+    "ses_2f6ac202cffe13GK66Rfp3WR2x",
+    "ses_2f6ac208dffe5QYUPKHgwPv8bb",
+    "ses_2f676385cffeJguXrBZLt2gYvn",
+    "ses_2f674828affeIDWiGTSQ258rUh",
+    "ses_2f66f551dffeBaG7CDRXLzBSn3",
+    "ses_2f66dc357ffe7ki6DQq6UeM0gq",
+    "ses_2f66b96b5ffeEseA7LPGwiseWO"
   ],
-  "plan_name": "matrix-login-fix",
-  "agent": "atlas",
-  "worktree_path": "/home/mink/src/armorclaw-omo"
+  "plan_name": "vps-testing-zai-deployment",
+  "agent": "atlas"
 }

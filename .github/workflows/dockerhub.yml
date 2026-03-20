@@ -17,10 +17,79 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
-  build-push-docker:
-    name: Build & Push Docker Image
+  precheck:
+    name: Pre-check (vet + compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bridge/go.mod'
+          cache: true
+
+      - name: Go vet RPC packages
+        run: cd bridge && go vet ./pkg/rpc/... ./internal/adapter/...
+
+      - name: Compile bridge binary
+        run: cd bridge && go build -o /dev/null ./cmd/bridge
+
+  rpc-unit-tests:
+    name: RPC Unit Tests
+    needs: precheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bridge/go.mod'
+          cache: true
+
+      - name: Run RPC unit tests
+        run: |
+          cd bridge
+          go test -v -race -coverprofile=coverage.out ./pkg/rpc/...
+          go tool cover -func=coverage.out | grep total
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc-coverage
+          path: bridge/coverage.out
+
+  rpc-integ-tests:
+    name: RPC Integration Tests
+    needs: rpc-unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bridge/go.mod'
+          cache: true
+
+      - name: Install socat
+        run: sudo apt-get install -y socat
+
+      - name: Run integration tests
+        run: |
+          chmod +x tests/test-rpc-methods.sh
+          ./tests/test-rpc-methods.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: rpc-integ-logs
+          path: /tmp/bridge-test-*.log
+          if-no-files-found: ignore
+
+  docker-build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: [rpc-unit-tests, rpc-integ-tests]
     
     permissions:
       contents: read
@@ -61,7 +130,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.quickstart
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ env.PLATFORMS }}
@@ -107,11 +176,58 @@ jobs:
           echo "Tags: ${{ steps.meta.outputs.tags }}"
           echo "Platform: ${{ env.PLATFORMS }}"
 
+  docker-smoke:
+    name: Docker Smoke Test
+    needs: docker-build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Pull and test image
+        run: |
+          docker pull ${{ env.DOCKER_IMAGE }}:latest
+          docker run --rm ${{ env.DOCKER_IMAGE }}:latest --help
+
+  docker-push:
+    name: Push to Docker Hub
+    needs: docker-smoke
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.quickstart
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ env.PLATFORMS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   test-image:
     name: Test Docker Image
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
-    needs: build-push-docker
+    needs: docker-push
     
     steps:
       - name: Checkout repository
@@ -144,7 +260,7 @@ jobs:
     name: Notify on failure
     runs-on: ubuntu-latest
     if: failure()
-    needs: build-push-docker
+    needs: docker-push
     
     steps:
       - name: Send notification

@@ -614,6 +614,36 @@ bash -n deploy/install.sh deploy/setup-matrix.sh deploy/quickstart-entrypoint.sh
 bash tests/integration/test-installer-hardening.sh
 ```
 
+### RPC Test Coverage
+
+The bridge includes comprehensive RPC tests to catch issues before Docker builds:
+
+**Unit Tests** (`bridge/pkg/rpc/*_test.go`):
+- Method registration coverage (catches missing handlers)
+- Matrix v3 login format validation
+- Handler response structure tests
+
+**Integration Tests** (`tests/test-rpc-methods.sh`):
+- Socket communication validation
+- Critical method availability
+- Error handling verification
+
+Run locally:
+```bash
+# Unit tests
+cd bridge && go test -v ./pkg/rpc/...
+
+# Integration tests (requires socat)
+./tests/test-rpc-methods.sh
+```
+
+CI Pipeline:
+```
+precheck → rpc-unit-tests → rpc-integ-tests → docker-build → docker-smoke → docker-push
+```
+
+All RPC tests must pass before Docker images are built and pushed to Docker Hub.
+
 ---
 
 ## Build from Source

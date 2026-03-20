@@ -251,23 +251,23 @@ func errorResponse(id interface{}, code int, msg string) *Response {
 // Matrix Handlers
 
 func (s *Server) handleMatrixStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	matrix, ok := s.matrix.(*adapter.MatrixAdapter)
-	if !ok || matrix == nil {
-		return nil, &ErrorObj{
-			Code:    InternalError,
-			Message: "matrix adapter not configured",
-		}
+	if s.matrix == nil {
+		return MatrixHealthResult{
+			Enabled:   false,
+			Connected: false,
+			Error:     "matrix adapter not configured",
+		}, nil
 	}
 
 	result := MatrixHealthResult{
 		Enabled:    true,
 		Connected:  true,
-		LoggedIn:   matrix.IsLoggedIn(),
-		Homeserver: matrix.GetHomeserver(),
-		UserID:     matrix.GetUserID(),
+		LoggedIn:   s.matrix.IsLoggedIn(),
+		Homeserver: s.matrix.GetHomeserver(),
+		UserID:     s.matrix.GetUserID(),
 	}
 
-	if !matrix.IsLoggedIn() {
+	if !s.matrix.IsLoggedIn() {
 		result.Error = "not logged in"
 	}
 
