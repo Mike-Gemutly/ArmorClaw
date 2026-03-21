@@ -136,20 +136,50 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image
+      - name: Build multi-platform image for distribution
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.quickstart
+          platforms: ${{ env.PLATFORMS }}
           push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.PLATFORMS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
+
+      - name: Build single-platform image for smoke test
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.quickstart
+          platforms: linux/amd64
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+
+      - name: Run smoke test
+        run: |
+          IMAGE_TAG="${{ steps.meta.outputs.tags }}"
+          echo "Running smoke test on $IMAGE_TAG"
+          docker run -d --name smoke-test "$IMAGE_TAG"
+          sleep 10
+          
+          # Check if container is still running
+          if [ "$(docker inspect -f '{{.State.Running}}' smoke-test)" != "true" ]; then
+            echo "Container failed to stay running"
+            docker logs smoke-test
+            exit 1
+          fi
+          
+          docker logs smoke-test
+
+      - name: Cleanup smoke test
+        if: always()
+        run: docker rm -f smoke-test || true
 
       - name: Scan image for vulnerabilities
         if: github.event_name != 'pull_request'
@@ -187,21 +217,9 @@ jobs:
           echo "Tags: ${{ steps.meta.outputs.tags }}"
           echo "Platform: ${{ env.PLATFORMS }}"
 
-  docker-smoke:
-    name: Docker Smoke Test
-    needs: docker-build
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    steps:
-      - name: Test locally built image
-        run: |
-          # Use the locally built image (from docker-build step), not Docker Hub
-          # The image was built with tags from steps.meta.outputs.tags
-          docker run --rm ${{ env.DOCKER_IMAGE }}:latest --help
-
   docker-push:
     name: Push to Docker Hub
-    needs: docker-smoke
+    needs: docker-build
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     steps:
