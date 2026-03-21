@@ -214,6 +214,12 @@ RUN cat > /opt/armorclaw/entrypoint-wrapper.sh << 'EOF'
 #!/bin/bash
 # Source keystore key generation (persists key to keystore.key)
 source /opt/armorclaw/generate-keystore-key.sh
+
+# Detect CI environment and run non-interactively
+if [ "${GITHUB_ACTIONS:-false}" = "true" ] || [ "${CI:-false}" = "true" ] || [ "${ARMORCLAW_SKIP_DOCKER_CHECK:-false}" = "true" ]; then
+    exec /opt/armorclaw/quickstart.sh --non-interactive "$@"
+fi
+
 # Run main entrypoint
 exec /opt/armorclaw/quickstart.sh "$@"
 EOF
