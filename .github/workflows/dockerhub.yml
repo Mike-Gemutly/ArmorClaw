@@ -163,7 +163,8 @@ jobs:
 
       - name: Run smoke test
         run: |
-          IMAGE_TAG="${{ steps.meta.outputs.tags }}"
+          # Use :latest tag directly (meta.outputs.tags may be multi-line)
+          IMAGE_TAG="${{ env.DOCKER_IMAGE }}:latest"
           echo "Running smoke test on $IMAGE_TAG"
           docker run -d --name smoke-test "$IMAGE_TAG"
           sleep 10
