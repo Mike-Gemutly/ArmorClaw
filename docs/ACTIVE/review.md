@@ -1,9 +1,148 @@
 # ArmorClaw Architecture Review
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.14.0
+> **Version:** 4.15.0
 > **Last Updated:** 2026-03-21
 > **Status:** Active Reference
 
+
+## Phase 16: CI Smoke Test & Keygen Fix (2026-03-21)
+
+### Overview
+
+Fixed two critical CI pipeline issues: (1) Docker smoke test was pulling old images from Docker Hub instead of testing locally built images, and (2) simplified keystore key generation by replacing Go heredoc with openssl command.
+
+### Root Cause Analysis
+
+| Issue | Root Cause | Solution |
+|-------|------------|----------|
+| **Smoke test failure** | Separate CI jobs run on different runners with independent Docker daemons | Move smoke test into build job, use `load: true` |
+| **Go keygen complexity** | 19-line Go heredoc for simple random key generation | Replace with 1-line `openssl rand -base64 32` |
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **Single-platform build** | Added `load: true` build for smoke testing | `.github/workflows/dockerhub.yml` |
+| **Smoke test in build job** | Run smoke test immediately after single-platform build | `.github/workflows/dockerhub.yml` |
+| **Removed docker-smoke job** | Separate job no longer needed | `.github/workflows/dockerhub.yml` |
+| **Updated dependencies** | `docker-push` now depends on `docker-build` | `.github/workflows/dockerhub.yml` |
+| **OpenSSL keygen** | Simplified from 19 lines to 1 line | `Dockerfile.quickstart` |
+
+### Dockerfile.quickstart Change
+
+**Before (19 lines):**
+```bash
+KEY=$(go run - << 'GOEOF'
+package main
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "os"
+)
+func main() {
+    b := make([]byte, 32)
+    if _, err := rand.Read(b); err != nil {
+        fmt.Fprintln(os.Stderr, "Error generating random bytes:", err)
+        os.Exit(1)
+    }
+    fmt.Println(base64.StdEncoding.EncodeToString(b))
+}
+GOEOF
+)
+```
+
+**After (1 line):**
+```bash
+KEY=$(openssl rand -base64 32)
+```
+
+**Benefits:**
+- Simpler code - 1 line instead of ~20
+- No dependency on Go runtime for key generation
+- openssl is already available in the container
+- Produces identical output format (base64-encoded 32 bytes)
+
+### Workflow Structure After Fix
+
+```yaml
+docker-build:
+  steps:
+    # ... checkout, setup, login, metadata ...
+    
+    # Step 1: Multi-platform build (for distribution)
+    - name: Build multi-platform image for distribution
+      platforms: linux/amd64,linux/arm64
+      push: false
+    
+    # Step 2: Single-platform build (for smoke test)
+    - name: Build single-platform image for smoke test
+      platforms: linux/amd64
+      load: true  # ← Makes image available locally
+    
+    # Step 3: Smoke test
+    - name: Run smoke test
+      run: |
+        docker run -d --name smoke-test "$IMAGE_TAG"
+        sleep 10
+        # Check if container is still running
+        if [ "$(docker inspect -f '{{.State.Running}}' smoke-test)" != "true" ]; then
+          docker logs smoke-test
+          exit 1
+        fi
+    
+    # Step 4: Cleanup
+    - name: Cleanup smoke test
+      if: always()
+      run: docker rm -f smoke-test || true
+    
+    # ... trivy scan, summary, etc ...
+
+docker-push:
+  needs: docker-build  # ← Changed from docker-smoke
+```
+
+### Files Modified
+
+```
+Dockerfile.quickstart              | +2, -19 (openssl keygen)
+.github/workflows/dockerhub.yml    | +33, -15 (smoke test in build job)
+```
+
+### Commits (2026-03-21)
+
+```
+70e246f fix(ci): run smoke test in same job as build
+5dce850 fix(ci): use locally built image for smoke test
+1583872 fix(docker): replace Go keygen with openssl rand
+```
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No breaking API changes | ✅ Internal CI only |
+| No new external dependencies | ✅ openssl already installed |
+| CI reliability improved | ✅ Smoke test now tests correct image |
+| Simpler codebase | ✅ 19 lines → 1 line |
+
+### Quick Reference Commands
+
+```bash
+# Verify openssl command in Dockerfile
+grep -n "openssl rand -base64 32" Dockerfile.quickstart
+
+# Verify docker-smoke job removed
+grep -c "docker-smoke:" .github/workflows/dockerhub.yml || echo "0"
+
+# Verify load: true in workflow
+grep -n "load: true" .github/workflows/dockerhub.yml
+
+# Test keygen locally
+openssl rand -base64 32
+```
+
+---
 
 ## Phase 14: CI Pipeline Hardening (2026-03-20)
 
