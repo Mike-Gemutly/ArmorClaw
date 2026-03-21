@@ -163,10 +163,9 @@ jobs:
 
       - name: Run smoke test
         run: |
-          # Use :latest tag directly (meta.outputs.tags may be multi-line)
           IMAGE_TAG="${{ env.DOCKER_IMAGE }}:latest"
           echo "Running smoke test on $IMAGE_TAG"
-          docker run -d --name smoke-test "$IMAGE_TAG"
+          docker run -d --name smoke-test -e ARMORCLAW_SKIP_DOCKER_CHECK=true "$IMAGE_TAG"
           sleep 10
           
           # Check if container is still running

@@ -770,8 +770,9 @@ check_prerequisites() {
         ((errors++)) || true
     fi
 
-    # Check Docker
-    if command -v docker &>/dev/null; then
+    if [[ "${ARMORCLAW_SKIP_DOCKER_CHECK:-}" == "true" ]]; then
+        print_info "Docker check skipped (ARMORCLAW_SKIP_DOCKER_CHECK=true)"
+    elif command -v docker &>/dev/null; then
         if docker info &>/dev/null; then
             print_done "Docker: $(docker --version | awk '{print $3}' | tr -d ',')"
         else
