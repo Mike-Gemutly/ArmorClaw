@@ -1614,7 +1614,7 @@ main() {
 
     if $CI_MODE; then
         print_success "CI smoke test passed - basic setup complete"
-        exit 0
+        exec tail -f /dev/null
     fi
 
     # Step 9: Matrix Server (auto-install in quickstart)
