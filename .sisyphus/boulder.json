@@ -1,27 +1,15 @@
 {
-  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/vps-testing-zai-deployment.md",
-  "started_at": "2026-03-20T02:04:48.566Z",
+  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/keystore-persistence-fix.md",
+  "started_at": "2026-03-20T23:46:23.033Z",
   "session_ids": [
-    "ses_3120c2485ffexkcLgWCSYTkfKV",
-    "ses_2f6d2373fffeKgltoHxUqzaW1S",
-    "ses_2f6ac19acffeimx7mzE58Pl12Q",
-    "ses_2f6ac202cffe13GK66Rfp3WR2x",
-    "ses_2f6ac208dffe5QYUPKHgwPv8bb",
-    "ses_2f676385cffeJguXrBZLt2gYvn",
-    "ses_2f674828affeIDWiGTSQ258rUh",
-    "ses_2f66f551dffeBaG7CDRXLzBSn3",
-    "ses_2f66dc357ffe7ki6DQq6UeM0gq",
-    "ses_2f66b96b5ffeEseA7LPGwiseWO",
-    "ses_2f62e4fa6ffelIhNGd8GVjekhs",
-    "ses_2f62e4e03ffewURXHLNoaGb5pU",
-    "ses_2f62e4ecbffemf3roetj0z2JQF",
-    "ses_2f616f7d1ffeZRg2f28Pq23Jck",
-    "ses_2f61459cbffebqRCeFKUPvBIED",
-    "ses_2f613b79bffeWvl3m2hZI8OErL",
-    "ses_2f6145748ffeJ5c6CV7RMiAL6t",
-    "ses_2f395dc65ffeADGYVQHyS085jP"
+    "ses_2f299b20dffeDE0qXx3VuXF3jA",
+    "ses_2f25ac832ffexoG3LIc4x4S1EU",
+    "ses_2f258abecffez6PLlNDCBnSv2i",
+    "ses_2f2559247ffexQFomxPY5Pm56C",
+    "ses_2f2516605ffeaIBxEsACQHVMPk",
+    "ses_2f2514d39ffeCKrt4m4P9qz3dk",
+    "ses_2f2514d86ffezoM92ylBQumP7k"
   ],
-  "plan_name": "vps-testing-zai-deployment",
-  "agent": "atlas",
-  "status": "blocked-awaiting-user-ssh-fix"
+  "plan_name": "keystore-persistence-fix",
+  "agent": "atlas"
 }

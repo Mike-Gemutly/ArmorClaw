@@ -169,27 +169,10 @@ if [ -f "$KEY_FILE" ]; then
     return 0
 fi
 
-# Generate new 32-byte random key using Go
+# Generate new 32-byte random key using openssl
 echo "[Keystore] ARMORCLAW_KEYSTORE_SECRET not set, generating new keystore key..."
 
-KEY=$(go run - << 'GOEOF'
-package main
-import (
-    "crypto/rand"
-    "encoding/base64"
-    "fmt"
-    "os"
-)
-func main() {
-    b := make([]byte, 32)
-    if _, err := rand.Read(b); err != nil {
-        fmt.Fprintln(os.Stderr, "Error generating random bytes:", err)
-        os.Exit(1)
-    }
-    fmt.Println(base64.StdEncoding.EncodeToString(b))
-}
-GOEOF
-)
+KEY=$(openssl rand -base64 32)
 
 # Write to file with restricted permissions
 echo "$KEY" > "$KEY_FILE"
