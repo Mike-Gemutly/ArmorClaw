@@ -128,11 +128,11 @@ func NewChallengeManager(cfg ChallengeManagerConfig) (*ChallengeManager, error) 
 	}
 
 	return &ChallengeManager{
-		challenges:      make(map[string]*Challenge),
+		challenges:       make(map[string]*Challenge),
 		serverPrivateKey: privateKey,
 		serverPublicKey:  publicKey,
-		ttl:             cfg.TTL,
-		registeredKeys:  make(map[string]ed25519.PublicKey),
+		ttl:              cfg.TTL,
+		registeredKeys:   make(map[string]ed25519.PublicKey),
 	}, nil
 }
 
@@ -156,15 +156,15 @@ func (cm *ChallengeManager) GenerateChallenge(agentID, reason string, fields []s
 
 	now := time.Now()
 	challenge := &Challenge{
-		ID:             challengeID,
-		Nonce:          nonce,
+		ID:              challengeID,
+		Nonce:           nonce,
 		ServerPublicKey: cm.serverPublicKey,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(cm.ttl),
-		AgentID:        agentID,
-		Reason:         reason,
-		Fields:         fields,
-		Used:           false,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(cm.ttl),
+		AgentID:         agentID,
+		Reason:          reason,
+		Fields:          fields,
+		Used:            false,
 	}
 
 	cm.challenges[challengeID] = challenge
@@ -318,39 +318,39 @@ func equalPublicKeys(a, b ed25519.PublicKey) bool {
 // ToMatrixEvent converts a challenge to a Matrix event for mobile notification
 func (c *Challenge) ToMatrixEvent() map[string]interface{} {
 	return map[string]interface{}{
-		"type":             "com.armorclaw.keystore.unseal_challenge",
-		"challenge_id":     c.ID,
-		"nonce":            base64.RawURLEncoding.EncodeToString(c.Nonce),
+		"type":              "com.armorclaw.keystore.unseal_challenge",
+		"challenge_id":      c.ID,
+		"nonce":             base64.RawURLEncoding.EncodeToString(c.Nonce),
 		"server_public_key": base64.RawURLEncoding.EncodeToString(c.ServerPublicKey),
-		"agent_id":         c.AgentID,
-		"reason":           c.Reason,
-		"fields":           c.Fields,
-		"expires_at":       c.ExpiresAt.UnixMilli(),
+		"agent_id":          c.AgentID,
+		"reason":            c.Reason,
+		"fields":            c.Fields,
+		"expires_at":        c.ExpiresAt.UnixMilli(),
 	}
 }
 
 // MarshalJSON implements json.Marshaler for Challenge
 func (c *Challenge) MarshalJSON() ([]byte, error) {
 	type Alias struct {
-		ID               string   `json:"id"`
-		Nonce            string   `json:"nonce"`
-		ServerPublicKey  string   `json:"server_public_key"`
-		CreatedAt        int64    `json:"created_at"`
-		ExpiresAt        int64    `json:"expires_at"`
-		AgentID          string   `json:"agent_id"`
-		Reason           string   `json:"reason"`
-		Fields           []string `json:"fields,omitempty"`
+		ID              string   `json:"id"`
+		Nonce           string   `json:"nonce"`
+		ServerPublicKey string   `json:"server_public_key"`
+		CreatedAt       int64    `json:"created_at"`
+		ExpiresAt       int64    `json:"expires_at"`
+		AgentID         string   `json:"agent_id"`
+		Reason          string   `json:"reason"`
+		Fields          []string `json:"fields,omitempty"`
 	}
 
 	return json.Marshal(&Alias{
-		ID:               c.ID,
-		Nonce:            base64.RawURLEncoding.EncodeToString(c.Nonce),
-		ServerPublicKey:  base64.RawURLEncoding.EncodeToString(c.ServerPublicKey),
-		CreatedAt:        c.CreatedAt.Unix(),
-		ExpiresAt:        c.ExpiresAt.Unix(),
-		AgentID:          c.AgentID,
-		Reason:           c.Reason,
-		Fields:           c.Fields,
+		ID:              c.ID,
+		Nonce:           base64.RawURLEncoding.EncodeToString(c.Nonce),
+		ServerPublicKey: base64.RawURLEncoding.EncodeToString(c.ServerPublicKey),
+		CreatedAt:       c.CreatedAt.Unix(),
+		ExpiresAt:       c.ExpiresAt.Unix(),
+		AgentID:         c.AgentID,
+		Reason:          c.Reason,
+		Fields:          c.Fields,
 	})
 }
 

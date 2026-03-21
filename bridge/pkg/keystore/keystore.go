@@ -62,8 +62,14 @@ type Provider string
 const (
 	ProviderOpenAI     Provider = "openai"
 	ProviderAnthropic  Provider = "anthropic"
-	ProviderOpenRouter Provider = "openrouter"
+	ProviderCloudflare Provider = "cloudflare"
+	ProviderDeepSeek   Provider = "deepseek"
 	ProviderGoogle     Provider = "google"
+	ProviderGroq       Provider = "groq"
+	ProviderMoonshot   Provider = "moonshot"
+	ProviderNvidia     Provider = "nvidia"
+	ProviderOllama     Provider = "ollama"
+	ProviderOpenRouter Provider = "openrouter"
 	ProviderXAI        Provider = "xai"
 	ProviderZhipu      Provider = "zhipu"
 )
@@ -869,7 +875,7 @@ func (ks *Keystore) Decrypt(encrypted, nonce []byte) ([]byte, error) {
 // isValidProvider checks if a provider is valid
 func isValidProvider(p Provider) bool {
 	switch p {
-	case ProviderOpenAI, ProviderAnthropic, ProviderOpenRouter, ProviderGoogle, ProviderXAI, ProviderZhipu:
+	case ProviderOpenAI, ProviderAnthropic, ProviderCloudflare, ProviderDeepSeek, ProviderGoogle, ProviderGroq, ProviderMoonshot, ProviderNvidia, ProviderOllama, ProviderOpenRouter, ProviderXAI, ProviderZhipu:
 		return true
 	default:
 		return false

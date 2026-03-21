@@ -18,11 +18,11 @@ import (
 
 // Key derivation errors
 var (
-	ErrInvalidKeyLength    = errors.New("invalid key length")
-	ErrInvalidSaltLength   = errors.New("invalid salt length")
-	ErrInvalidWrappedKey   = errors.New("invalid wrapped key")
-	ErrDecryptionFailed    = errors.New("decryption failed - wrong password or corrupted data")
-	ErrInvalidKeyParams    = errors.New("invalid key derivation parameters")
+	ErrInvalidKeyLength  = errors.New("invalid key length")
+	ErrInvalidSaltLength = errors.New("invalid salt length")
+	ErrInvalidWrappedKey = errors.New("invalid wrapped key")
+	ErrDecryptionFailed  = errors.New("decryption failed - wrong password or corrupted data")
+	ErrInvalidKeyParams  = errors.New("invalid key derivation parameters")
 )
 
 // DefaultKeyDerivationParams provides secure defaults for Argon2id

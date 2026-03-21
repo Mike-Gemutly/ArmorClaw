@@ -17,11 +17,11 @@ import (
 
 // Sealed state errors
 var (
-	ErrKeystoreSealed      = errors.New("keystore is sealed - unseal required")
-	ErrInvalidUnsealToken  = errors.New("invalid unseal token")
-	ErrUnsealExpired       = errors.New("unseal token has expired")
-	ErrSessionNotFound      = errors.New("session not found")
-	ErrAgentNotAuthorized   = errors.New("agent not authorized for this session")
+	ErrKeystoreSealed     = errors.New("keystore is sealed - unseal required")
+	ErrInvalidUnsealToken = errors.New("invalid unseal token")
+	ErrUnsealExpired      = errors.New("unseal token has expired")
+	ErrSessionNotFound    = errors.New("session not found")
+	ErrAgentNotAuthorized = errors.New("agent not authorized for this session")
 )
 
 // UnsealPolicy defines how the keystore can be unsealed
@@ -40,15 +40,15 @@ const (
 
 // SealedSession represents an unsealed session with an expiration
 type SealedSession struct {
-	ID           string    `json:"id"`
-	AgentID      string    `json:"agent_id"`
-	UnsealedAt   time.Time `json:"unsealed_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	ID           string       `json:"id"`
+	AgentID      string       `json:"agent_id"`
+	UnsealedAt   time.Time    `json:"unsealed_at"`
+	ExpiresAt    time.Time    `json:"expires_at"`
 	UnsealPolicy UnsealPolicy `json:"unseal_policy"`
-	ApprovedBy   string    `json:"approved_by,omitempty"` // Matrix user ID who approved
-	DeviceID     string    `json:"device_id,omitempty"`   // Mobile device that approved
-	Operations   int       `json:"operations"`            // Number of operations performed
-	LastAccess   time.Time `json:"last_access"`
+	ApprovedBy   string       `json:"approved_by,omitempty"` // Matrix user ID who approved
+	DeviceID     string       `json:"device_id,omitempty"`   // Mobile device that approved
+	Operations   int          `json:"operations"`            // Number of operations performed
+	LastAccess   time.Time    `json:"last_access"`
 }
 
 // SealedStatus represents the current sealed state
@@ -62,34 +62,34 @@ type SealedStatus struct {
 
 // PendingUnsealRequest represents a pending unseal request awaiting approval
 type PendingUnsealRequest struct {
-	ID          string      `json:"id"`
-	AgentID     string      `json:"agent_id"`
-	RequestedAt time.Time   `json:"requested_at"`
-	ExpiresAt   time.Time   `json:"expires_at"`
+	ID          string       `json:"id"`
+	AgentID     string       `json:"agent_id"`
+	RequestedAt time.Time    `json:"requested_at"`
+	ExpiresAt   time.Time    `json:"expires_at"`
 	Policy      UnsealPolicy `json:"policy"`
-	Reason      string      `json:"reason"`
-	Fields      []string    `json:"fields,omitempty"` // Fields being requested
-	TaskID      string      `json:"task_id,omitempty"`
-	ChallengeID string      `json:"challenge_id,omitempty"` // For challenge-response policy
+	Reason      string       `json:"reason"`
+	Fields      []string     `json:"fields,omitempty"` // Fields being requested
+	TaskID      string       `json:"task_id,omitempty"`
+	ChallengeID string       `json:"challenge_id,omitempty"` // For challenge-response policy
 }
 
 // SealedKeystore wraps a Keystore with sealed/unsealed state management
 type SealedKeystore struct {
-	base            *Keystore
-	mu              sync.RWMutex
-	sessions        map[string]*SealedSession     // session_id -> session
-	agentSession    map[string]string             // agent_id -> session_id
-	pending         map[string]*PendingUnsealRequest // request_id -> request
-	defaultTTL      time.Duration
-	policy          UnsealPolicy
-	challengeMgr    *ChallengeManager // Challenge manager for challenge-response policy
+	base         *Keystore
+	mu           sync.RWMutex
+	sessions     map[string]*SealedSession        // session_id -> session
+	agentSession map[string]string                // agent_id -> session_id
+	pending      map[string]*PendingUnsealRequest // request_id -> request
+	defaultTTL   time.Duration
+	policy       UnsealPolicy
+	challengeMgr *ChallengeManager // Challenge manager for challenge-response policy
 }
 
 // SealedKeystoreConfig holds configuration for the sealed keystore
 type SealedKeystoreConfig struct {
 	BaseKeystore *Keystore
-	DefaultTTL   time.Duration   // Default unseal duration (default: 5 minutes)
-	Policy       UnsealPolicy    // Default unseal policy
+	DefaultTTL   time.Duration // Default unseal duration (default: 5 minutes)
+	Policy       UnsealPolicy  // Default unseal policy
 }
 
 // NewSealedKeystore creates a new sealed keystore wrapper
@@ -623,12 +623,12 @@ func (sk *SealedKeystore) GetPolicy() UnsealPolicy {
 // ToMatrixEvent converts a pending unseal request to a Matrix event for mobile notification
 func (r *PendingUnsealRequest) ToMatrixEvent() map[string]interface{} {
 	return map[string]interface{}{
-		"type":      "com.armorclaw.sealed_keystore.unseal_request",
-		"request_id": r.ID,
-		"agent_id":   r.AgentID,
-		"reason":     r.Reason,
-		"fields":     r.Fields,
-		"task_id":    r.TaskID,
+		"type":         "com.armorclaw.sealed_keystore.unseal_request",
+		"request_id":   r.ID,
+		"agent_id":     r.AgentID,
+		"reason":       r.Reason,
+		"fields":       r.Fields,
+		"task_id":      r.TaskID,
 		"requested_at": r.RequestedAt.UnixMilli(),
 		"expires_at":   r.ExpiresAt.UnixMilli(),
 	}

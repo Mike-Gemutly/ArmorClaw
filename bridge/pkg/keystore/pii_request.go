@@ -75,14 +75,14 @@ type PIIRequest struct {
 	ExpiresAt time.Time `json:"expires_at"`
 
 	// Approval details (set when approved)
-	ApprovedAt    *time.Time `json:"approved_at,omitempty"`
-	ApprovedBy    string     `json:"approved_by,omitempty"`
-	ApprovedFields []string  `json:"approved_fields,omitempty"`
+	ApprovedAt     *time.Time `json:"approved_at,omitempty"`
+	ApprovedBy     string     `json:"approved_by,omitempty"`
+	ApprovedFields []string   `json:"approved_fields,omitempty"`
 
 	// Denial details (set when denied)
-	DeniedAt    *time.Time `json:"denied_at,omitempty"`
-	DeniedBy    string     `json:"denied_by,omitempty"`
-	DenyReason  string     `json:"deny_reason,omitempty"`
+	DeniedAt   *time.Time `json:"denied_at,omitempty"`
+	DeniedBy   string     `json:"denied_by,omitempty"`
+	DenyReason string     `json:"deny_reason,omitempty"`
 
 	// Fulfilled details (set when data delivered)
 	FulfilledAt *time.Time `json:"fulfilled_at,omitempty"`
@@ -126,16 +126,16 @@ func (r *PIIRequest) ToMatrixEvent() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"request_id":      r.ID,
-		"agent_id":        r.AgentID,
-		"skill_id":        r.SkillID,
-		"skill_name":      r.SkillName,
-		"profile_id":      r.ProfileID,
+		"request_id":       r.ID,
+		"agent_id":         r.AgentID,
+		"skill_id":         r.SkillID,
+		"skill_name":       r.SkillName,
+		"profile_id":       r.ProfileID,
 		"requested_fields": fields,
-		"context":         r.Context,
-		"status":          string(r.Status),
-		"created_at":      r.CreatedAt.UnixMilli(),
-		"expires_at":      r.ExpiresAt.UnixMilli(),
+		"context":          r.Context,
+		"status":           string(r.Status),
+		"created_at":       r.CreatedAt.UnixMilli(),
+		"expires_at":       r.ExpiresAt.UnixMilli(),
 	}
 }
 
@@ -147,10 +147,10 @@ type PIIRequestManager struct {
 	counter  int64 // Counter for unique ID generation
 
 	// Callbacks for integration
-	onRequestCreated   func(ctx context.Context, req *PIIRequest) error
-	onRequestApproved  func(ctx context.Context, req *PIIRequest) error
-	onRequestDenied    func(ctx context.Context, req *PIIRequest) error
-	onRequestExpired   func(ctx context.Context, req *PIIRequest) error
+	onRequestCreated  func(ctx context.Context, req *PIIRequest) error
+	onRequestApproved func(ctx context.Context, req *PIIRequest) error
+	onRequestDenied   func(ctx context.Context, req *PIIRequest) error
+	onRequestExpired  func(ctx context.Context, req *PIIRequest) error
 }
 
 // PIIRequestManagerConfig holds configuration for the manager
@@ -532,11 +532,11 @@ func (r *PIIRequest) MarshalJSON() ([]byte, error) {
 	type Alias PIIRequest
 	return json.Marshal(&struct {
 		*Alias
-		CreatedAt    int64  `json:"created_at"`
-		ExpiresAt    int64  `json:"expires_at"`
-		ApprovedAt   *int64 `json:"approved_at,omitempty"`
-		DeniedAt     *int64 `json:"denied_at,omitempty"`
-		FulfilledAt  *int64 `json:"fulfilled_at,omitempty"`
+		CreatedAt   int64  `json:"created_at"`
+		ExpiresAt   int64  `json:"expires_at"`
+		ApprovedAt  *int64 `json:"approved_at,omitempty"`
+		DeniedAt    *int64 `json:"denied_at,omitempty"`
+		FulfilledAt *int64 `json:"fulfilled_at,omitempty"`
 	}{
 		Alias:       (*Alias)(r),
 		CreatedAt:   r.CreatedAt.UnixMilli(),
