@@ -1062,6 +1062,11 @@ init_keystore() {
 setup_systemd() {
     print_step "Setting up systemd service..."
 
+    if [[ "${ARMORCLAW_SKIP_SYSTEMD:-}" == "true" ]] || ! command -v systemctl &>/dev/null; then
+        print_info "Systemd setup skipped (ARMORCLAW_SKIP_SYSTEMD=${ARMORCLAW_SKIP_SYSTEMD:-false}, systemctl=$(command -v systemctl || echo 'not found'))"
+        return 0
+    fi
+
     local service_file="/etc/systemd/system/armorclaw-bridge.service"
 
     $SUDO tee "$service_file" > /dev/null <<EOF
@@ -1115,7 +1120,25 @@ EOF
 start_bridge() {
     print_step "Starting bridge..."
 
-    # Start service
+    if [[ "${ARMORCLAW_SKIP_SYSTEMD:-}" == "true" ]] || ! command -v systemctl &>/dev/null; then
+        print_info "Systemd start skipped (ARMORCLAW_SKIP_SYSTEMD=${ARMORCLAW_SKIP_SYSTEMD:-false})"
+        if [[ -x "$INSTALL_DIR/armorclaw-bridge" ]]; then
+            print_info "Starting bridge directly..."
+            $INSTALL_DIR/armorclaw-bridge -config $CONFIG_DIR/config.toml &
+            local wait_count=0
+            while [[ ! -S "$SOCKET_PATH" ]] && [[ $wait_count -lt 30 ]]; do
+                sleep 0.5
+                ((wait_count++)) || true
+            done
+            if [[ -S "$SOCKET_PATH" ]]; then
+                print_done "Bridge socket ready: $SOCKET_PATH"
+            else
+                print_warning "Bridge socket not ready after 15s"
+            fi
+        fi
+        return 0
+    fi
+
     if $SUDO systemctl start armorclaw-bridge; then
         print_done "Bridge service started"
     else
