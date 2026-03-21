@@ -193,9 +193,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     steps:
-      - name: Pull and test image
+      - name: Test locally built image
         run: |
-          docker pull ${{ env.DOCKER_IMAGE }}:latest
+          # Use the locally built image (from docker-build step), not Docker Hub
+          # The image was built with tags from steps.meta.outputs.tags
           docker run --rm ${{ env.DOCKER_IMAGE }}:latest --help
 
   docker-push:
