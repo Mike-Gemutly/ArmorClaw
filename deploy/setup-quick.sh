@@ -60,6 +60,13 @@ if [[ "${1:-}" == "--non-interactive" || "${1:-}" == "-y" ]]; then
     NON_INTERACTIVE=true
 fi
 
+# CI mode detection (for smoke tests)
+CI_MODE=false
+if [[ "${GITHUB_ACTIONS:-false}" == "true" ]] || [[ "${CI:-false}" == "true" ]] || [[ "${ARMORCLAW_SKIP_DOCKER_CHECK:-false}" == "true" ]]; then
+    CI_MODE=true
+    NON_INTERACTIVE=true
+fi
+
 # Prefer binary distribution (disabled until release is created)
 USE_BINARY="${USE_BINARY:-false}"
 
@@ -1604,6 +1611,11 @@ main() {
     setup_systemd
     start_bridge
     verify_health
+
+    if $CI_MODE; then
+        print_success "CI smoke test passed - basic setup complete"
+        exit 0
+    fi
 
     # Step 9: Matrix Server (auto-install in quickstart)
     print_step "Matrix Server"
