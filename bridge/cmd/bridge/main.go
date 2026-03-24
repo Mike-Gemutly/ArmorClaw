@@ -91,6 +91,7 @@ type cliConfig struct {
 	version          bool
 	help             bool
 	migrateKeystore  bool
+	readminReason    string
 	// Quick-start command flags
 	addKeyProvider    string
 	addKeyToken       string
@@ -145,6 +146,11 @@ func main() {
 
 	if cliCfg.command == "completion" {
 		runCompletionCommand(cliCfg)
+		return
+	}
+
+	if cliCfg.command == "readmin" {
+		runReadminCommand(cliCfg)
 		return
 	}
 
@@ -229,9 +235,15 @@ func runValidateCommand(cliCfg cliConfig) {
 		log.Fatalf("Configuration validation failed: %v", err)
 	}
 	log.Printf("✓ Configuration is valid!")
-	log.Printf("  Socket: %s", cfg.Server.SocketPath)
-	log.Printf("  Keystore: %s", cfg.Keystore.DBPath)
-	log.Printf("  Matrix: %v", cfg.Matrix.Enabled)
+	log.Printf(" Socket: %s", cfg.Server.SocketPath)
+}
+
+// runReadminCommand initiates admin reset mode
+func runReadminCommand(cliCfg cliConfig) {
+	// For now, just log the reason. Full implementation will be added in later tasks.
+	log.Printf("Initiating readmin mode with reason: %s\n", cliCfg.readminReason)
+	log.Println("Note: ReadminManager will be implemented in subsequent tasks")
+	log.Println("This is a placeholder until InitiateReadmin() is implemented")
 }
 
 // runSetupCommand runs the interactive setup wizard using Huh? TUI forms.
@@ -1802,7 +1814,7 @@ func runBridgeServer(cliCfg cliConfig) {
 			log.Fatalf("Failed to migrate keystore: %v", err)
 		}
 		log.Println("✓ Keystore migration completed successfully")
-		log.Println("  Key persisted to file: %s.key", cfg.Keystore.DBPath)
+		log.Println("  Key persisted to file: %s", cfg.Keystore.DBPath)
 		log.Println("  You can now restart without --migrate-keystore flag")
 	}
 
@@ -2768,6 +2780,7 @@ func parseFlags() cliConfig {
 	flag.BoolVar(&cfg.version, "version", false, "Print version and exit")
 	flag.BoolVar(&cfg.help, "help", false, "Show help message")
 	flag.BoolVar(&cfg.migrateKeystore, "migrate-keystore", false, "Migrate from hardware-derived key to file-persisted key")
+	flag.StringVar(&cfg.readminReason, "reason", "", "Reason for entering readmin mode")
 
 	// Quick-start command flags
 	flag.StringVar(&cfg.addKeyProvider, "p", "", "Provider for add-key (short for --provider)")

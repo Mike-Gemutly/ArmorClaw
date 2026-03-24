@@ -637,6 +637,43 @@ func (ks *Keystore) initSchema(db *sql.DB) error {
 	return err
 }
 
+// WipeAllData removes all data from the keystore (secrets, devices, profiles, hardening state)
+// This is a destructive operation that should only be called during readmin process
+func (ks *Keystore) WipeAllData() error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	if !ks.isOpen {
+		return errors.New("keystore is not open")
+	}
+
+	// Start transaction
+	tx, err := ks.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+		tx.Commit()
+	}()
+
+	// Delete from all data tables
+	// We clear: secrets, profiles, devices, matrix_refresh_tokens, hardening_state
+	tables := []string{"secrets", "profiles", "devices", "matrix_refresh_tokens", "hardening_state"}
+
+	for _, table := range tables {
+		_, err := ks.db.Exec("DELETE FROM "+table+" WHERE user_id = ?", ks.userID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Close closes the keystore database
 func (ks *Keystore) Close() error {
 	ks.mu.Lock()
