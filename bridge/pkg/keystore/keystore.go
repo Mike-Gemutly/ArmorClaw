@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/audit"
+	"github.com/armorclaw/bridge/pkg/logger"
 	_ "github.com/mutecomm/go-sqlcipher/v4"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/pbkdf2"
@@ -233,14 +234,85 @@ func (ks *Keystore) deriveMasterKey() ([]byte, error) {
 
 // isContainerized checks if bridge is running in a container environment
 func (ks *Keystore) isContainerized() bool {
+	// Priority 1: Docker detection
 	if _, err := os.Stat("/.dockerenv"); err == nil {
+		logger.Global().Info("container detected", "type", "docker", "indicator", "/.dockerenv")
 		return true
 	}
+	// Priority 1.1: Check /proc/1/cgroup for docker or kubepods
 	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
-		return strings.Contains(string(data), "docker") ||
-			strings.Contains(string(data), "kubepods")
+		cgroupContent := string(data)
+		if strings.Contains(cgroupContent, "docker") || strings.Contains(cgroupContent, "kubepods") {
+			containerType := "docker"
+			if strings.Contains(cgroupContent, "kubepods") {
+				containerType = "kubernetes"
+			}
+			logger.Global().Info("container detected", "type", containerType, "indicator", "/proc/1/cgroup")
+			return true
+		}
 	}
+	// Priority 2: systemd-nspawn detection
+	// Check /run/systemd/container (contains the container type)
+	if data, err := os.ReadFile("/run/systemd/container"); err == nil {
+		if strings.Contains(string(data), "nspawn") {
+			logger.Global().Info("container detected", "type", "systemd-nspawn", "indicator", "/run/systemd/container")
+			return true
+		}
+	}
+	// Check /.containerenv for nspawn indicator
+	if data, err := os.ReadFile("/.containerenv"); err == nil {
+		if strings.Contains(string(data), "nspawn") {
+			logger.Global().Info("container detected", "type", "systemd-nspawn", "indicator", "/.containerenv")
+			return true
+		}
+	}
+	// Priority 3: Podman detection
+	if _, err := os.Stat("/run/podman/podman.pid"); err == nil {
+		logger.Global().Info("container detected", "type", "podman", "indicator", "/run/podman/podman.pid")
+		return true
+	}
+	if _, err := os.Stat(".podmanenv"); err == nil {
+		logger.Global().Info("container detected", "type", "podman", "indicator", ".podmanenv")
+		return true
+	}
+	// Priority 4: ECS/Fargate detection
+	if os.Getenv("ECS_CONTAINER_METADATA_URI") != "" {
+		logger.Global().Info("container detected", "type", "ecs", "indicator", "ECS_CONTAINER_METADATA_URI")
+		return true
+	}
+	if os.Getenv("AWS_EXECUTION_ENV") != "" {
+		logger.Global().Info("container detected", "type", "ecs", "indicator", "AWS_EXECUTION_ENV")
+		return true
+	}
+	// No container detected
 	return false
+}
+
+// MigrateToPersistedKey migrates from hardware-derived key to file-persisted key
+// This allows moving a keystore between different servers or after container restarts
+func (ks *Keystore) MigrateToPersistedKey() error {
+	currentKey, err := ks.deriveHardwareKey()
+	if err != nil {
+		return fmt.Errorf("failed to derive hardware key: %w", err)
+	}
+
+	// Verify DB opens with current key (ensures we have the right key before proceeding)
+	// We do this by temporarily replacing masterKey and calling verifyKeyWorks
+	originalMasterKey := ks.masterKey
+	ks.masterKey = currentKey
+	defer func() { ks.masterKey = originalMasterKey }()
+
+	if err := ks.verifyKeyWorks(); err != nil {
+		return fmt.Errorf("cannot verify database with hardware-derived key: %w", err)
+	}
+
+	keyPath := ks.dbPath + ".key"
+	encoded := base64.StdEncoding.EncodeToString(currentKey)
+	if err := os.WriteFile(keyPath, []byte(encoded), 0600); err != nil {
+		return fmt.Errorf("failed to persist key to %s: %w", keyPath, err)
+	}
+
+	return nil
 }
 
 // verifyKeyWorks verifies that existing DB can be opened with current key
@@ -269,15 +341,20 @@ func (ks *Keystore) verifyKeyWorks() error {
 	if err := testDB.Ping(); err != nil {
 		return fmt.Errorf("KEY MISMATCH: Database exists but cannot be decrypted with current key\n"+
 			"This is NOT corruption - your data is encrypted with a different key.\n"+
+			"\n"+
 			"Possible causes:\n"+
 			"  1. Container restart changed hardware-derived key\n"+
 			"  2. ARMORCLAW_KEYSTORE_SECRET changed\n"+
 			"  3. Database moved from different machine\n"+
 			"  4. keystore.key file changed\n\n"+
 			"To fix:\n"+
-			"  1. Provide original key via ARMORCLAW_KEYSTORE_SECRET\n"+
-			"  2. For containers: restore /etc/armorclaw/keystore.key from backup\n"+
-			"  3. Accept data loss: delete database file and restart\n"+
+			"  1. Ensure /var/lib/armorclaw is persisted as Docker volume\n"+
+			"  2. Set ARMORCLAW_KEYSTORE_SECRET environment variable\n"+
+			"  3. For container restarts, use --migrate-keystore flag\n"+
+			"  4. Restore /etc/armorclaw/keystore.key from backup\n"+
+			"  5. Accept data loss: delete database file and restart\n"+
+			"\n"+
+			"Troubleshooting: https://github.com/Gemutly/ArmorClaw/blob/main/docs/guides/keystore.md\n"+
 			"Database path: %s\n"+
 			"Salt path: %s",
 			ks.dbPath, ks.dbPath+".salt")
@@ -443,6 +520,29 @@ func (ks *Keystore) Open() error {
 	// Test connection and verify encryption
 	if err := db.Ping(); err != nil {
 		db.Close()
+		// If database file exists but cannot be read, it's likely a key mismatch
+		if _, statErr := os.Stat(ks.dbPath); statErr == nil {
+			return fmt.Errorf("KEY MISMATCH: Database exists but cannot be decrypted with current key\n"+
+				"This is NOT corruption - your data is encrypted with a different key.\n"+
+				"\n"+
+				"Possible causes:\n"+
+				"  1. Container restart changed hardware-derived key\n"+
+				"  2. ARMORCLAW_KEYSTORE_SECRET changed\n"+
+				"  3. Database moved from different machine\n"+
+				"  4. keystore.key file changed\n\n"+
+				"To fix:\n"+
+				"  1. Ensure /var/lib/armorclaw is persisted as Docker volume\n"+
+				"  2. Set ARMORCLAW_KEYSTORE_SECRET environment variable\n"+
+				"  3. For container restarts, use --migrate-keystore flag\n"+
+				"  4. Restore /etc/armorclaw/keystore.key from backup\n"+
+				"  5. Accept data loss: delete database file and restart\n"+
+				"\n"+
+				"Troubleshooting: https://github.com/Gemutly/ArmorClaw/blob/main/docs/guides/keystore.md\n"+
+				"Database path: %s\n"+
+				"Salt path: %s\n\n"+
+				"Original error: %w",
+				ks.dbPath, ks.dbPath+".salt", err)
+		}
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -133,6 +134,7 @@ type Server struct {
 	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
+	heartbeats      sync.Map
 }
 
 type Config struct {
@@ -790,6 +792,7 @@ func (s *Server) registerHandlers() {
 		"hardening.status":          s.handleHardeningStatus,
 		"hardening.ack":             s.handleHardeningAck,
 		"hardening.rotate_password": s.handleHardeningRotatePassword,
+		"mobile.heartbeat":          s.handleMobileHeartbeat,
 	}
 
 	s.handlers = h
@@ -837,6 +840,19 @@ func (s *Server) handleHardeningRotatePassword(ctx context.Context, req *Request
 // GetMatrixAdapter returns the Matrix adapter for external integration
 func (s *Server) GetMatrixAdapter() MatrixAdapter {
 	return s.matrix
+}
+
+// GetLastHeartbeat returns the last heartbeat timestamp for a user
+func (s *Server) GetLastHeartbeat(userID string) time.Time {
+	if userID == "" {
+		return time.Time{}
+	}
+	if val, ok := s.heartbeats.Load(userID); ok {
+		if ts, ok := val.(time.Time); ok {
+			return ts
+		}
+	}
+	return time.Time{}
 }
 
 func (s *Server) Run(socketPath string) error {

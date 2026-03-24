@@ -6,11 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/armorclaw/bridge/pkg/appservice"
 )
-
-
 
 // handleBridgeStart starts the bridge manager (AppService mode)
 func (s *Server) handleBridgeStart(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
@@ -38,14 +37,14 @@ func (s *Server) handleBridgeStart(ctx context.Context, req *Request) (interface
 func (s *Server) handleBridgeStop(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	if s.bridgeMgr == nil {
 		return nil, &ErrorObj{
-			Code: InternalError,
+			Code:    InternalError,
 			Message: "Bridge manager not configured",
 		}
 	}
 
 	if err := s.bridgeMgr.Stop(); err != nil {
 		return nil, &ErrorObj{
-			Code: InternalError,
+			Code:    InternalError,
 			Message: "Bridge manager not configured",
 		}
 	}
@@ -60,7 +59,7 @@ func (s *Server) handleBridgeStop(ctx context.Context, req *Request) (interface{
 func (s *Server) handleBridgeStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var stats map[string]interface{}
 
-if s.bridgeMgr == nil {
+	if s.bridgeMgr == nil {
 		stats = map[string]interface{}{
 			"enabled": false,
 			"status":  "not_configured",
@@ -91,7 +90,7 @@ if s.bridgeMgr == nil {
 func (s *Server) handleBridgeChannel(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	if s.bridgeMgr == nil {
 		return nil, &ErrorObj{
-			Code: InternalError,
+			Code:    InternalError,
 			Message: "Bridge manager not configured",
 		}
 	}
@@ -102,48 +101,48 @@ func (s *Server) handleBridgeChannel(ctx context.Context, req *Request) (interfa
 		ChannelID    string `json:"channel_id"`
 	}
 
-if len(req.Params) == 0 {
+	if len(req.Params) == 0 {
 		return nil, &ErrorObj{
-			Code: InvalidParams,
+			Code:    InvalidParams,
 			Message: "matrix_room_id, platform, and channel_id are required",
 		}
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &ErrorObj{
-			Code: InvalidParams,
+			Code:    InvalidParams,
 			Message: err.Error(),
 		}
 	}
 
-if params.MatrixRoomID == "" || params.Platform == "" || params.ChannelID == "" {
+	if params.MatrixRoomID == "" || params.Platform == "" || params.ChannelID == "" {
 		return nil, &ErrorObj{
-			Code: InvalidParams,
+			Code:    InvalidParams,
 			Message: "matrix_room_id, platform, and channel_id are required",
 		}
 	}
 
-platform := appservice.Platform(params.Platform)
+	platform := appservice.Platform(params.Platform)
 	if err := s.bridgeMgr.BridgeChannel(params.MatrixRoomID, platform, params.ChannelID); err != nil {
 		return nil, &ErrorObj{
-			Code: InternalError,
+			Code:    InternalError,
 			Message: "Bridge manager not configured",
 		}
 	}
 
 	return map[string]interface{}{
-		"status":        "bridged",
-		"matrix_room":   params.MatrixRoomID,
-		"platform":      params.Platform,
-		"channel_id":    params.ChannelID,
+		"status":      "bridged",
+		"matrix_room": params.MatrixRoomID,
+		"platform":    params.Platform,
+		"channel_id":  params.ChannelID,
 	}, nil
 }
 
 // handleUnbridgeChannel removes a bridge
 func (s *Server) handleUnbridgeChannel(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-if s.bridgeMgr == nil {
+	if s.bridgeMgr == nil {
 		return nil, &ErrorObj{
-			Code: InternalError,
+			Code:    InternalError,
 			Message: "Bridge manager not configured",
 		}
 	}
@@ -153,31 +152,31 @@ if s.bridgeMgr == nil {
 		ChannelID string `json:"channel_id"`
 	}
 
-if len(req.Params) == 0 {
+	if len(req.Params) == 0 {
 		return nil, &ErrorObj{
-			Code: InvalidParams,
+			Code:    InvalidParams,
 			Message: "platform and channel_id are required",
 		}
 	}
 
-if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &ErrorObj{
-			Code: InvalidParams,
+			Code:    InvalidParams,
 			Message: err.Error(),
 		}
 	}
 
 	if params.Platform == "" || params.ChannelID == "" {
 		return nil, &ErrorObj{
-			Code: InvalidParams,
+			Code:    InvalidParams,
 			Message: "platform and channel_id are required",
 		}
 	}
 
-platform := appservice.Platform(params.Platform)
+	platform := appservice.Platform(params.Platform)
 	if err := s.bridgeMgr.UnbridgeChannel(platform, params.ChannelID); err != nil {
 		return nil, &ErrorObj{
-			Code: InternalError,
+			Code:    InternalError,
 			Message: fmt.Sprintf("failed to unbridge channel: %s", err.Error()),
 		}
 	}
@@ -191,7 +190,7 @@ platform := appservice.Platform(params.Platform)
 
 // handleListBridgedChannels lists all bridged channels
 func (s *Server) handleListBridgedChannels(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-if s.bridgeMgr == nil {
+	if s.bridgeMgr == nil {
 		return map[string]interface{}{
 			"channels": []*appservice.BridgedChannel{},
 			"count":    0,
@@ -203,12 +202,12 @@ if s.bridgeMgr == nil {
 	return map[string]interface{}{
 		"channels": channels,
 		"count":    len(channels),
-}, nil
+	}, nil
 }
 
 // handleGhostUserList lists registered ghost users
 func (s *Server) handleGhostUserList(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-if s.appService == nil {
+	if s.appService == nil {
 		return map[string]interface{}{
 			"ghost_users": []interface{}{},
 			"count":       0,
@@ -226,7 +225,7 @@ if s.appService == nil {
 
 // handleAppServiceStatus returns AppService status
 func (s *Server) handleAppServiceStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-if s.appService == nil {
+	if s.appService == nil {
 		return map[string]interface{}{
 			"enabled": false,
 			"status":  "not_configured",
@@ -236,12 +235,40 @@ if s.appService == nil {
 	stats := s.appService.GetStats()
 
 	return map[string]interface{}{
-		"enabled":         true,
-		"status":          "running",
-		"id":              stats["id"],
-		"homeserver":      stats["homeserver"],
-		"ghost_users":     stats["ghost_users"],
-		"event_buffer":    stats["event_buffer"],
+		"enabled":          true,
+		"status":           "running",
+		"id":               stats["id"],
+		"homeserver":       stats["homeserver"],
+		"ghost_users":      stats["ghost_users"],
+		"event_buffer":     stats["event_buffer"],
 		"events_processed": stats["events_processed"],
+	}, nil
+}
+
+func (s *Server) handleMobileHeartbeat(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		UserID string `json:"user_id"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: err.Error(),
+		}
+	}
+
+	if params.UserID == "" {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "user_id is required",
+		}
+	}
+
+	now := time.Now()
+	s.heartbeats.Store(params.UserID, now)
+
+	return map[string]interface{}{
+		"timestamp": now.UnixNano(),
+		"user_id":   params.UserID,
 	}, nil
 }

@@ -128,6 +128,11 @@ type ServerConfig struct {
 
 	// Daemonize runs the server as a background daemon
 	Daemonize bool `toml:"daemonize" env:"ARMORCLAW_DAEMONIZE"`
+
+	// Auth specifies the authentication mode for RPC calls
+	// Valid values: "token" (Matrix token-based authentication)
+	// Deprecated: "none" is not allowed for production deployments
+	Auth string `toml:"auth" env:"ARMORCLAW_AUTH"`
 }
 
 // KeystoreConfig holds keystore-specific configuration
@@ -770,6 +775,7 @@ func DefaultConfig() *Config {
 			SocketPath: filepath.Join(os.TempDir(), "armorclaw", "bridge.sock"),
 			PidFile:    filepath.Join(os.TempDir(), "armorclaw", "bridge.pid"),
 			Daemonize:  false,
+			Auth:       "token",
 		},
 		Keystore: KeystoreConfig{
 			DBPath:    "/var/lib/armorclaw/keystore.db",
@@ -967,6 +973,19 @@ func (c *Config) Validate() error {
 	// Validate server configuration
 	if c.Server.SocketPath == "" {
 		return fmt.Errorf("%w: server.socket_path is required", ErrInvalidConfig)
+	}
+
+	// Validate authentication mode
+	if c.Server.Auth == "" {
+		c.Server.Auth = "token"
+	}
+
+	validAuthModes := map[string]bool{
+		"token": true,
+	}
+
+	if !validAuthModes[c.Server.Auth] {
+		return fmt.Errorf("%w: server.auth must be 'token', got '%s'. auth: none is deprecated and not allowed for production", ErrInvalidConfig, c.Server.Auth)
 	}
 
 	// Validate socket directory exists or can be created

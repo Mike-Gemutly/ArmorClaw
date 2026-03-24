@@ -49,6 +49,11 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	if cfg.Server.Auth == "none" {
+		log := logger.Global().WithComponent("config")
+		log.Warn("WARNING: auth: none is deprecated and will be removed in future versions. Use token-based authentication for production deployments")
+	}
+
 	// Apply environment variable overrides
 	if err := applyEnvOverrides(cfg); err != nil {
 		return nil, fmt.Errorf("failed to apply environment overrides: %w", err)

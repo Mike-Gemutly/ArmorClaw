@@ -1,15 +1,9 @@
 {
-  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/keystore-persistence-fix.md",
-  "started_at": "2026-03-20T23:46:23.033Z",
+  "active_plan": "/home/mink/src/armorclaw-omo/.sisyphus/plans/readmin-feature.md",
+  "started_at": "2026-03-24T21:59:38.496Z",
   "session_ids": [
-    "ses_2f299b20dffeDE0qXx3VuXF3jA",
-    "ses_2f25ac832ffexoG3LIc4x4S1EU",
-    "ses_2f258abecffez6PLlNDCBnSv2i",
-    "ses_2f2559247ffexQFomxPY5Pm56C",
-    "ses_2f2516605ffeaIBxEsACQHVMPk",
-    "ses_2f2514d39ffeCKrt4m4P9qz3dk",
-    "ses_2f2514d86ffezoM92ylBQumP7k"
+    "ses_2e2896408ffexp17iMoLP8WbO2"
   ],
-  "plan_name": "keystore-persistence-fix",
+  "plan_name": "readmin-feature",
   "agent": "atlas"
 }

@@ -90,6 +90,7 @@ type cliConfig struct {
 	verbose          bool
 	version          bool
 	help             bool
+	migrateKeystore  bool
 	// Quick-start command flags
 	addKeyProvider    string
 	addKeyToken       string
@@ -1795,6 +1796,16 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 	defer ks.Close()
 
+	if cliCfg.migrateKeystore {
+		log.Println("Migrating keystore from hardware-derived key to file-persisted key...")
+		if err := ks.MigrateToPersistedKey(); err != nil {
+			log.Fatalf("Failed to migrate keystore: %v", err)
+		}
+		log.Println("✓ Keystore migration completed successfully")
+		log.Println("  Key persisted to file: %s.key", cfg.Keystore.DBPath)
+		log.Println("  You can now restart without --migrate-keystore flag")
+	}
+
 	log.Println("Keystore initialized with hardware-derived master key")
 
 	// Initialize z.ai provider configuration
@@ -2756,6 +2767,7 @@ func parseFlags() cliConfig {
 	flag.BoolVar(&cfg.verbose, "v", false, "Verbose logging (sets log level to debug)")
 	flag.BoolVar(&cfg.version, "version", false, "Print version and exit")
 	flag.BoolVar(&cfg.help, "help", false, "Show help message")
+	flag.BoolVar(&cfg.migrateKeystore, "migrate-keystore", false, "Migrate from hardware-derived key to file-persisted key")
 
 	// Quick-start command flags
 	flag.StringVar(&cfg.addKeyProvider, "p", "", "Provider for add-key (short for --provider)")

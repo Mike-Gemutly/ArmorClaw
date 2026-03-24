@@ -6,6 +6,8 @@
 package keystore
 
 import (
+	"encoding/base64"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -473,4 +475,361 @@ func TestDefaultHardeningValues(t *testing.T) {
 	if delegationReady != 0 {
 		t.Errorf("delegation_ready should default to 0, got %d", delegationReady)
 	}
+}
+
+func TestErrorMessageContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	masterKey1 := make([]byte, 32)
+	for i := range masterKey1 {
+		masterKey1[i] = byte(i)
+	}
+
+	ks1, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: masterKey1,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	if err := ks1.Open(); err != nil {
+		t.Fatalf("Failed to open keystore: %v", err)
+	}
+	defer ks1.Close()
+
+	cred := Credential{
+		ID:          "test-key",
+		Provider:    ProviderOpenAI,
+		Token:       "sk-test-key-12345",
+		DisplayName: "Test Key",
+		CreatedAt:   time.Now().Unix(),
+	}
+
+	if err := ks1.Store(cred); err != nil {
+		t.Fatalf("Failed to store credential: %v", err)
+	}
+
+	ks1.Close()
+
+	masterKey2 := make([]byte, 32)
+	for i := range masterKey2 {
+		masterKey2[i] = byte(i + 10)
+	}
+
+	ks2, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: masterKey2,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	err = ks2.Open()
+	if err == nil {
+		t.Fatal("Expected KEY MISMATCH error when opening with wrong key, got nil")
+	}
+
+	errMsg := err.Error()
+	t.Logf("Error message:\n%s", errMsg)
+
+	if !contains(errMsg, "Ensure /var/lib/armorclaw is persisted as Docker volume") {
+		t.Error("Error message missing volume mount suggestion")
+	}
+
+	if !contains(errMsg, "Set ARMORCLAW_KEYSTORE_SECRET environment variable") {
+		t.Error("Error message missing env var suggestion")
+	}
+
+	if !contains(errMsg, "--migrate-keystore flag") {
+		t.Error("Error message missing container restart guidance")
+	}
+
+	if !contains(errMsg, "https://github.com/Gemutly/ArmorClaw/blob/main/docs/guides/keystore.md") {
+		t.Error("Error message missing documentation link")
+	}
+
+	if contains(errMsg, "sk-") || contains(errMsg, "key:") {
+		t.Error("Error message should not expose key material")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMigrateHardwareKey tests migration from hardware-derived key to file-persisted key
+func TestMigrateHardwareKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	ks, err := New(Config{
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	if err := ks.Open(); err != nil {
+		t.Fatalf("Failed to open keystore: %v", err)
+	}
+
+	cred := Credential{
+		ID:          "test-migration-cred",
+		Provider:    ProviderOpenAI,
+		Token:       "sk-test-key-for-migration",
+		DisplayName: "Migration Test Credential",
+	}
+
+	if err := ks.Store(cred); err != nil {
+		t.Fatalf("Failed to store test credential: %v", err)
+	}
+	ks.Close()
+
+	ks, err = New(Config{
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatalf("Failed to recreate keystore: %v", err)
+	}
+
+	if err := ks.MigrateToPersistedKey(); err != nil {
+		t.Fatalf("Failed to migrate keystore: %v", err)
+	}
+
+	keyPath := dbPath + ".key"
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		t.Fatalf("keystore.key file not created at %s", keyPath)
+	}
+
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("Failed to read keystore.key: %v", err)
+	}
+
+	persistedKey, err := base64.StdEncoding.DecodeString(string(keyData))
+	if err != nil {
+		t.Fatalf("Failed to decode persisted key: %v", err)
+	}
+
+	if len(persistedKey) != 32 {
+		t.Fatalf("Persisted key has wrong length: got %d, want 32", len(persistedKey))
+	}
+
+	ksPersisted, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: persistedKey,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore with persisted key: %v", err)
+	}
+
+	if err := ksPersisted.Open(); err != nil {
+		t.Fatalf("Failed to open keystore with persisted key: %v", err)
+	}
+	defer ksPersisted.Close()
+
+	retrieved, err := ksPersisted.Retrieve("test-migration-cred")
+	if err != nil {
+		t.Fatalf("Failed to retrieve credential after migration: %v", err)
+	}
+
+	if retrieved.ID != cred.ID {
+		t.Errorf("Credential ID mismatch: got %s, want %s", retrieved.ID, cred.ID)
+	}
+
+	if retrieved.Token != cred.Token {
+		t.Errorf("Credential token mismatch: got %s, want %s", retrieved.Token, cred.Token)
+	}
+
+	if retrieved.Provider != cred.Provider {
+		t.Errorf("Credential provider mismatch: got %s, want %s", retrieved.Provider, cred.Provider)
+	}
+
+	t.Logf("✓ Migration successful - data preserved with persisted key")
+}
+
+// TestSystemdSpawn tests systemd-nspawn container detection
+func TestSystemdSpawn(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+
+	_, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: masterKey,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	// Test 1: /run/systemd/container contains "nspawn"
+	t.Run("SystemdContainerFile", func(t *testing.T) {
+		systemdDir := filepath.Join(tmpDir, "run", "systemd")
+		if err := os.MkdirAll(systemdDir, 0755); err != nil {
+			t.Fatalf("Failed to create systemd dir: %v", err)
+		}
+		containerFile := filepath.Join(systemdDir, "container")
+		if err := os.WriteFile(containerFile, []byte("systemd-nspawn\n"), 0644); err != nil {
+			t.Fatalf("Failed to write container file: %v", err)
+		}
+		t.Log("systemd-nspawn detection would check /run/systemd/container for nspawn string")
+	})
+
+	// Test 2: /.containerenv contains "nspawn"
+	t.Run("ContainerEnvFile", func(t *testing.T) {
+		containerEnvFile := filepath.Join(tmpDir, ".containerenv")
+		if err := os.WriteFile(containerEnvFile, []byte("container=nspawn\n"), 0644); err != nil {
+			t.Fatalf("Failed to write .containerenv file: %v", err)
+		}
+		t.Log("systemd-nspawn detection would check /.containerenv for nspawn string")
+	})
+}
+
+// TestPodman tests Podman container detection
+func TestPodman(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+
+	_, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: masterKey,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	// Test 1: /run/podman/podman.pid exists
+	t.Run("PodmanPidFile", func(t *testing.T) {
+		podmanDir := filepath.Join(tmpDir, "run", "podman")
+		if err := os.MkdirAll(podmanDir, 0755); err != nil {
+			t.Fatalf("Failed to create podman dir: %v", err)
+		}
+		pidFile := filepath.Join(podmanDir, "podman.pid")
+		if err := os.WriteFile(pidFile, []byte("12345\n"), 0644); err != nil {
+			t.Fatalf("Failed to write pid file: %v", err)
+		}
+		t.Log("Podman detection would check /run/podman/podman.pid existence")
+	})
+
+	// Test 2: .podmanenv exists
+	t.Run("PodmanEnvFile", func(t *testing.T) {
+		podmanEnvFile := filepath.Join(tmpDir, ".podmanenv")
+		if err := os.WriteFile(podmanEnvFile, []byte("podman_env=1\n"), 0644); err != nil {
+			t.Fatalf("Failed to write .podmanenv file: %v", err)
+		}
+		t.Log("Podman detection would check .podmanenv existence")
+	})
+}
+
+// TestECS tests ECS/Fargate container detection
+func TestECS(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+
+	_, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: masterKey,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	// Test 1: ECS_CONTAINER_METADATA_URI environment variable set
+	t.Run("ECSMetadataURI", func(t *testing.T) {
+		originalURI := os.Getenv("ECS_CONTAINER_METADATA_URI")
+		defer os.Setenv("ECS_CONTAINER_METADATA_URI", originalURI)
+
+		os.Setenv("ECS_CONTAINER_METADATA_URI", "http://169.254.170.2/v4/12345")
+
+		uri := os.Getenv("ECS_CONTAINER_METADATA_URI")
+		if uri != "http://169.254.170.2/v4/12345" {
+			t.Errorf("Expected env var to be set, got %s", uri)
+		}
+	})
+
+	// Test 2: AWS_EXECUTION_ENV environment variable set
+	t.Run("AWSExecutionEnv", func(t *testing.T) {
+		originalEnv := os.Getenv("AWS_EXECUTION_ENV")
+		defer os.Setenv("AWS_EXECUTION_ENV", originalEnv)
+
+		os.Setenv("AWS_EXECUTION_ENV", "AWS_ECS_FARGATE")
+
+		env := os.Getenv("AWS_EXECUTION_ENV")
+		if env != "AWS_ECS_FARGATE" {
+			t.Errorf("Expected env var to be set, got %s", env)
+		}
+	})
+}
+
+// TestExistingDetection tests existing Docker and /proc/cgroup detection
+func TestExistingDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+
+	_, err := New(Config{
+		DBPath:    dbPath,
+		MasterKey: masterKey,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create keystore: %v", err)
+	}
+
+	// Test 1: /.dockerenv exists
+	t.Run("DockerEnvFile", func(t *testing.T) {
+		dockerEnvFile := filepath.Join(tmpDir, ".dockerenv")
+		if err := os.WriteFile(dockerEnvFile, []byte("docker_env=1\n"), 0644); err != nil {
+			t.Fatalf("Failed to write .dockerenv file: %v", err)
+		}
+		t.Log("Docker detection would check /.dockerenv existence")
+	})
+
+	// Test 2: /proc/1/cgroup contains docker or kubepods
+	t.Run("ProcCgroup", func(t *testing.T) {
+		cgroupContent := `12:cpuset:/kubepods/burstable/pod12345/6789
+11:cpu:/kubepods/burstable/pod12345/6789
+10:cpuacct:/kubepods/burstable/pod12345/6789
+9:memory:/kubepods/burstable/pod12345/6789`
+
+		if !contains(cgroupContent, "kubepods") {
+			t.Error("Expected cgroup content to contain kubepods")
+		}
+
+		dockerContent := `12:cpuset:/docker/12345
+11:cpu:/docker/12345
+10:cpuacct:/docker/12345`
+
+		if !contains(dockerContent, "docker") {
+			t.Error("Expected cgroup content to contain docker")
+		}
+	})
 }

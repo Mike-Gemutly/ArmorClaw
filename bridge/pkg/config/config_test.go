@@ -133,3 +133,33 @@ func TestToBudgetConfig(t *testing.T) {
 		t.Errorf("Expected 1 provider cost, got %d", len(budgetCfg.ProviderCosts))
 	}
 }
+
+func TestRejectAuthNone(t *testing.T) {
+	cfg := DefaultConfig()
+
+	cfg.Server.Auth = "none"
+	if err := cfg.Validate(); err == nil {
+		t.Error("Expected validation error for auth = 'none'")
+	}
+}
+
+func TestAcceptTokenAuth(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Auth = "token"
+
+	tmpDir := t.TempDir()
+	cfg.Server.SocketPath = tmpDir + "/bridge.sock"
+	cfg.Keystore.DBPath = tmpDir + "/keystore.db"
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Expected no validation error for auth = 'token', got: %v", err)
+	}
+}
+
+func TestDefaultAuthIsToken(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.Server.Auth != "token" {
+		t.Errorf("Expected default auth to be 'token', got: %s", cfg.Server.Auth)
+	}
+}

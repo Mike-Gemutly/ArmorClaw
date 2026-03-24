@@ -263,7 +263,7 @@ func (s *KeystoreHardeningStore) AckStep(userID string, step HardeningStep) erro
 		return fmt.Errorf("unknown hardening step: %s", step)
 	}
 
-	_, err := s.db.Exec(`
+	result, err := s.db.Exec(`
 		UPDATE hardening_state
 		SET `+columnName+` = 1, updated_at = ?
 		WHERE user_id = ?
@@ -273,7 +273,34 @@ func (s *KeystoreHardeningStore) AckStep(userID string, step HardeningStep) erro
 		return fmt.Errorf("failed to update step: %w", err)
 	}
 
-	// Fetch all mandatory steps to recompute delegation_ready
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		now := time.Now().Unix()
+		_, err = s.db.Exec(`
+			INSERT INTO hardening_state
+			(user_id, password_rotated, bootstrap_wiped, device_verified,
+			 recovery_backed_up, biometrics_enabled, delegation_ready,
+			 created_at, updated_at)
+			VALUES (?, 0, 0, 0, 0, 0, 0, ?, ?)
+		`, userID, now, now)
+		if err != nil {
+			return fmt.Errorf("failed to initialize hardening state for new user: %w", err)
+		}
+
+		_, err = s.db.Exec(`
+			UPDATE hardening_state
+			SET `+columnName+` = 1, updated_at = ?
+			WHERE user_id = ?
+		`, time.Now().Unix(), userID)
+		if err != nil {
+			return fmt.Errorf("failed to update step after initialization: %w", err)
+		}
+	}
+
 	var passwordRotated, bootstrapWiped, deviceVerified, recoveryBackedUp int
 	err = s.db.QueryRow(`
 		SELECT password_rotated, bootstrap_wiped, device_verified, recovery_backed_up
@@ -285,7 +312,6 @@ func (s *KeystoreHardeningStore) AckStep(userID string, step HardeningStep) erro
 		return fmt.Errorf("failed to fetch steps for recomputation: %w", err)
 	}
 
-	// Recompute delegation_ready (true only if all mandatory steps are complete)
 	delegationReady := 0
 	if passwordRotated == 1 && bootstrapWiped == 1 && deviceVerified == 1 && recoveryBackedUp == 1 {
 		delegationReady = 1
