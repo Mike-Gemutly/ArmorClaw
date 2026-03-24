@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -9,6 +11,7 @@ func TestMethodRegistration(t *testing.T) {
 		"matrix.status",
 		"matrix.login",
 		"matrix.send",
+		"matrix.join_room",
 		"ai.chat",
 	}
 
@@ -34,6 +37,7 @@ func TestMethodRegistrationCompleteness(t *testing.T) {
 		"matrix.status",
 		"matrix.login",
 		"matrix.send",
+		"matrix.join_room",
 	}
 
 	server := &Server{}
@@ -45,5 +49,33 @@ func TestMethodRegistrationCompleteness(t *testing.T) {
 				t.Errorf("expected method %q not registered in handlers map", method)
 			}
 		})
+	}
+}
+
+func TestMatrixJoinRoomMissingRoomID(t *testing.T) {
+	server := &Server{}
+	server.registerHandlers()
+
+	handler := server.handlers["matrix.join_room"]
+	if handler == nil {
+		t.Fatalf("matrix.join_room handler not registered")
+	}
+
+	// Test with empty room_id
+	req := &Request{
+		Params: json.RawMessage(`{"via_servers": [], "reason": "test"}`),
+	}
+
+	_, errObj := handler(context.Background(), req)
+	if errObj == nil {
+		t.Error("expected error for missing room_id, got nil")
+	}
+
+	if errObj.Code != InvalidParams {
+		t.Errorf("expected InvalidParams code, got %d", errObj.Code)
+	}
+
+	if errObj.Message != "room_id is required" {
+		t.Errorf("expected 'room_id is required' message, got '%s'", errObj.Message)
 	}
 }

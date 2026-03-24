@@ -24,6 +24,10 @@ func (m *mockMatrixAdapter) Login(username, password string) error {
 	return m.loginError
 }
 
+func (m *mockMatrixAdapter) JoinRoom(ctx context.Context, roomIDOrAlias string, viaServers []string, reason string) (string, error) {
+	return roomIDOrAlias, nil
+}
+
 func (m *mockMatrixAdapter) GetUserID() string {
 	return m.userID
 }

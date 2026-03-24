@@ -99,6 +99,7 @@ type MatrixAdapter interface {
 	SendMessage(roomID, message, msgType string) (string, error)
 	SendEvent(roomID, eventType string, content []byte) error
 	Login(username, password string) error
+	JoinRoom(ctx context.Context, roomIDOrAlias string, viaServers []string, reason string) (string, error)
 	GetUserID() string
 	IsLoggedIn() bool
 	GetHomeserver() string
@@ -394,6 +395,47 @@ func (s *Server) handleMatrixReceive(ctx context.Context, req *Request) (interfa
 
 	// Fallback to polling old event queue
 	return s.handleMatrixReceivePolling(ctx, req, &params, matrix)
+}
+
+// handleMatrixJoinRoom joins an existing Matrix room
+func (s *Server) handleMatrixJoinRoom(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		RoomID     string   `json:"room_id"`
+		ViaServers []string `json:"via_servers"`
+		Reason     string   `json:"reason"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "failed to parse params",
+		}
+	}
+
+	if params.RoomID == "" {
+		return nil, &ErrorObj{
+			Code:    InvalidParams,
+			Message: "room_id is required",
+		}
+	}
+
+	matrix := s.GetMatrixAdapter()
+	if matrix == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "matrix adapter not configured",
+		}
+	}
+
+	joinedRoom, err := matrix.JoinRoom(ctx, params.RoomID, params.ViaServers, params.Reason)
+	if err != nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: err.Error(),
+		}
+	}
+
+	return map[string]string{"room_id": joinedRoom}, nil
 }
 
 func (s *Server) handleMatrixReceiveWithEventBus(ctx context.Context, req *Request, params *struct {
@@ -733,6 +775,7 @@ func (s *Server) registerHandlers() {
 		"matrix.login":             s.handleMatrixLogin,
 		"matrix.send":              s.handleMatrixSend,
 		"matrix.receive":           s.handleMatrixReceive,
+		"matrix.join_room":         s.handleMatrixJoinRoom,
 		"events.replay":            s.handleEventsReplay,
 		"events.stream":            s.handleEventsStream,
 		"studio.deploy":            s.handleStudio,
