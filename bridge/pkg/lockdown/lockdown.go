@@ -27,6 +27,8 @@ const (
 	ModeHardening Mode = "hardening"
 	// ModeOperational is the final state - configured and running
 	ModeOperational Mode = "operational"
+	// ModeReadmin is when admin resets and reconfigures
+	ModeReadmin Mode = "readmin"
 )
 
 // State represents the complete lockdown state
@@ -43,18 +45,18 @@ type State struct {
 	AdminClaimedAt   time.Time `json:"admin_claimed_at,omitempty"`
 
 	// Device information
-	SingleDeviceMode bool     `json:"single_device_mode"`
+	SingleDeviceMode  bool     `json:"single_device_mode"`
 	AuthorizedDevices []string `json:"authorized_devices,omitempty"`
 
 	// Communication restrictions
 	AllowedCommunication []string `json:"allowed_communication"`
 
 	// Setup progress
-	SetupComplete         bool   `json:"setup_complete"`
-	SecurityConfigured    bool   `json:"security_configured"`
-	KeystoreInitialized   bool   `json:"keystore_initialized"`
-	SecretsInjected       bool   `json:"secrets_injected"`
-	HardeningComplete     bool   `json:"hardening_complete"`
+	SetupComplete       bool `json:"setup_complete"`
+	SecurityConfigured  bool `json:"security_configured"`
+	KeystoreInitialized bool `json:"keystore_initialized"`
+	SecretsInjected     bool `json:"secrets_injected"`
+	HardeningComplete   bool `json:"hardening_complete"`
 
 	// Timestamps
 	StartedAt     time.Time `json:"started_at"`
@@ -79,11 +81,11 @@ type Manager struct {
 func NewManager(cfg Config) (*Manager, error) {
 	m := &Manager{
 		state: &State{
-			Mode:                ModeLockdown,
-			SingleDeviceMode:    true,
+			Mode:                 ModeLockdown,
+			SingleDeviceMode:     true,
 			AllowedCommunication: []string{"unix"},
-			StartedAt:           time.Now(),
-			stateFile:           cfg.StateFile,
+			StartedAt:            time.Now(),
+			stateFile:            cfg.StateFile,
 		},
 	}
 
@@ -143,7 +145,8 @@ func (m *Manager) CanTransition(target Mode) error {
 		ModeBonding:     {ModeLockdown, ModeConfiguring},
 		ModeConfiguring: {ModeBonding, ModeHardening},
 		ModeHardening:   {ModeConfiguring, ModeOperational},
-		ModeOperational: {}, // No transitions from operational
+		ModeOperational: {ModeReadmin},     // Can enter readmin from operational
+		ModeReadmin:     {ModeConfiguring}, // Exit readmin to configuring
 	}
 
 	allowed, exists := validTransitions[current]
@@ -182,6 +185,9 @@ func (m *Manager) Transition(target Mode) error {
 		if m.state.OperationalAt.IsZero() {
 			m.state.OperationalAt = time.Now()
 		}
+	case ModeReadmin:
+		// Clear operational status when entering readmin
+		m.state.SetupComplete = false
 	}
 
 	return m.save()
@@ -328,18 +334,18 @@ func (m *Manager) save() error {
 func (m *Manager) Status() map[string]interface{} {
 	state := m.GetState()
 	return map[string]interface{}{
-		"mode":                 state.Mode,
-		"admin_established":    state.AdminEstablished,
-		"single_device_mode":   state.SingleDeviceMode,
+		"mode":                  state.Mode,
+		"admin_established":     state.AdminEstablished,
+		"single_device_mode":    state.SingleDeviceMode,
 		"allowed_communication": state.AllowedCommunication,
-		"setup_complete":       state.SetupComplete,
-		"security_configured":  state.SecurityConfigured,
-		"keystore_initialized": state.KeystoreInitialized,
-		"secrets_injected":     state.SecretsInjected,
-		"hardening_complete":   state.HardeningComplete,
-		"started_at":           state.StartedAt,
-		"configured_at":        state.ConfiguredAt,
-		"operational_at":       state.OperationalAt,
+		"setup_complete":        state.SetupComplete,
+		"security_configured":   state.SecurityConfigured,
+		"keystore_initialized":  state.KeystoreInitialized,
+		"secrets_injected":      state.SecretsInjected,
+		"hardening_complete":    state.HardeningComplete,
+		"started_at":            state.StartedAt,
+		"configured_at":         state.ConfiguredAt,
+		"operational_at":        state.OperationalAt,
 	}
 }
 
@@ -402,6 +408,16 @@ func (m *Manager) ValidateForOperational() error {
 	}
 
 	return nil
+}
+
+// EnterReadmin transitions from operational to readmin mode
+func (m *Manager) EnterReadmin() error {
+	return m.Transition(ModeReadmin)
+}
+
+// ExitReadmin exits readmin mode and returns to configuring
+func (m *Manager) ExitReadmin() error {
+	return m.Transition(ModeConfiguring)
 }
 
 // Context returns a context with lockdown state values
