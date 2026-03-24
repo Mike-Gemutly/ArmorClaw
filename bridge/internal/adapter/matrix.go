@@ -1861,6 +1861,109 @@ func (m *MatrixAdapter) GetEventBus() *events.MatrixEventBus {
 	return m.eventBus
 }
 
+// ChangePassword changes the user's password via Matrix API
+func (m *MatrixAdapter) ChangePassword(ctx context.Context, newPassword string, logoutDevices bool) error {
+	matrixTracker.Event("change_password", nil)
+
+	// Ensure token is valid before password change
+	if err := m.ensureValidToken(); err != nil {
+		err := errsys.NewBuilder("MAT-002").
+			Wrap(fmt.Errorf("token validation failed: %w", err)).
+			WithFunction("ChangePassword").
+			Build()
+		matrixTracker.Failure("change_password", err, map[string]any{"reason": "token_validation_failed"})
+		return err
+	}
+
+	m.mu.RLock()
+	token := m.accessToken
+	m.mu.RUnlock()
+
+	if token == "" {
+		err := errsys.NewBuilder("MAT-002").
+			Wrap(fmt.Errorf("not logged in")).
+			WithFunction("ChangePassword").
+			Build()
+		matrixTracker.Failure("change_password", err, map[string]any{"reason": "not_authenticated"})
+		return err
+	}
+
+	payload := map[string]interface{}{
+		"new_password":   newPassword,
+		"logout_devices": logoutDevices,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		err := errsys.NewBuilder("MAT-002").
+			Wrap(fmt.Errorf("failed to marshal password change request: %w", err)).
+			WithFunction("ChangePassword").
+			Build()
+		matrixTracker.Failure("change_password", err, map[string]any{"reason": "marshal_failed"})
+		return err
+	}
+
+	url := m.homeserverURL + "/_matrix/client/v3/account/password"
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		url,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		err := errsys.NewBuilder("MAT-001").
+			Wrap(fmt.Errorf("failed to create password change request: %w", err)).
+			WithFunction("ChangePassword").
+			Build()
+		matrixTracker.Failure("change_password", err, map[string]any{"reason": "request_create_failed"})
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		err := errsys.NewBuilder("MAT-001").
+			Wrap(fmt.Errorf("password change request failed: %w", err)).
+			WithFunction("ChangePassword").
+			Build()
+		matrixTracker.Failure("change_password", err, map[string]any{"reason": "request_failed"})
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		var matrixErr MatrixError
+		if err := json.Unmarshal(body, &matrixErr); err != nil {
+			matrixErr = MatrixError{Error: string(body)}
+		}
+
+		var builder *errsys.ErrorBuilder
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			builder = errsys.NewBuilder("MAT-002").
+				Wrap(fmt.Errorf("unauthorized: %s", matrixErr.Error)).
+				WithFunction("ChangePassword")
+		case http.StatusBadRequest:
+			builder = errsys.NewBuilder("MAT-002").
+				Wrap(fmt.Errorf("bad request: %s", matrixErr.Error)).
+				WithFunction("ChangePassword")
+		default:
+			builder = errsys.NewBuilder("MAT-001").
+				Wrap(fmt.Errorf("password change failed: status %d, error: %s", resp.StatusCode, matrixErr.Error)).
+				WithFunction("ChangePassword")
+		}
+		matrixTracker.Failure("change_password", builder.Build(), map[string]any{"reason": "api_failed", "status": resp.StatusCode})
+		return builder.Build()
+	}
+
+	matrixTracker.Success("change_password", nil)
+	return nil
+}
+
 // SendFormattedMessage sends a message with HTML formatting
 func (m *MatrixAdapter) SendFormattedMessage(ctx context.Context, roomID, plainBody, formattedBody string) error {
 	payload := map[string]interface{}{

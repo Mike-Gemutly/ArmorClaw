@@ -517,6 +517,18 @@ func (ks *Keystore) initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_profile_type ON user_profiles(profile_type);
 	CREATE INDEX IF NOT EXISTS idx_profile_default ON user_profiles(is_default);
 
+	CREATE TABLE IF NOT EXISTS hardening_state (
+		user_id TEXT PRIMARY KEY,
+		password_rotated INTEGER DEFAULT 0,
+		bootstrap_wiped INTEGER DEFAULT 0,
+		device_verified INTEGER DEFAULT 0,
+		recovery_backed_up INTEGER DEFAULT 0,
+		biometrics_enabled INTEGER DEFAULT 0,
+		delegation_ready INTEGER DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+
 	INSERT OR IGNORE INTO metadata (key, value) VALUES ('version', '1');
 	INSERT OR IGNORE INTO metadata (key, value) VALUES ('created_at', ?);
 	`

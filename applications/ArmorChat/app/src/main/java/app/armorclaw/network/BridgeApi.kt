@@ -129,6 +129,19 @@ class BridgeApi(private val baseUrl: String = "http://localhost:8080/api") {
         val expires_at: String?
     )
 
+    @Serializable
+    data class HardeningStatus(
+        val user_id: String,
+        val password_rotated: Boolean,
+        val bootstrap_wiped: Boolean,
+        val device_verified: Boolean,
+        val recovery_backed_up: Boolean,
+        val biometrics_enabled: Boolean,
+        val delegation_ready: Boolean,
+        val created_at: String,
+        val updated_at: String
+    )
+
     //endregion
 
     //region API Methods
@@ -476,6 +489,31 @@ class BridgeApi(private val baseUrl: String = "http://localhost:8080/api") {
             "device_id" to deviceId,
             "token" to token
         ))
+    }
+
+    //endregion
+
+    //region Hardening Methods
+
+    /**
+     * Get hardening status
+     */
+    fun getHardeningStatus(): Result<HardeningStatus> {
+        return rpc("hardening.status")
+    }
+
+    /**
+     * Acknowledge hardening step completion
+     */
+    fun acknowledgeHardeningStep(step: String): Result<HardeningStatus> {
+        return rpc("hardening.ack", mapOf("step" to step))
+    }
+
+    /**
+     * Rotate bootstrap password
+     */
+    fun rotateBootstrapPassword(newPassword: String): Result<Map<String, Boolean>> {
+        return rpc("hardening.rotate_password", mapOf("new_password" to newPassword))
     }
 
     //endregion

@@ -26,6 +26,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/studio"
+	"github.com/armorclaw/bridge/pkg/trust"
 )
 
 const (
@@ -131,6 +132,7 @@ type Server struct {
 	skillMgr        SkillManager
 	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
+	hardeningStore  trust.Store
 }
 
 type Config struct {
@@ -146,6 +148,7 @@ type Config struct {
 	ProvisioningMgr ProvisioningManager
 	SkillManager    SkillManager
 	EventBus        *eventbus.EventBus
+	HardeningStore  trust.Store
 }
 
 func New(cfg Config) (*Server, error) {
@@ -167,6 +170,7 @@ func New(cfg Config) (*Server, error) {
 		skillMgr:        cfg.SkillManager,
 		eventBus:        cfg.EventBus,
 		handlers:        make(map[string]HandlerFunc, 32),
+		hardeningStore:  cfg.HardeningStore,
 	}
 
 	s.registerHandlers()
@@ -728,64 +732,106 @@ func randomString(n int) string {
 
 func (s *Server) registerHandlers() {
 	h := map[string]HandlerFunc{
-		"ai.chat":                  s.handleAIChat,
-		"browser.navigate":         s.handleBrowserNavigate,
-		"browser.fill":             s.handleBrowserFill,
-		"browser.click":            s.handleBrowserClick,
-		"browser.status":           s.handleBrowserStatus,
-		"browser.wait_for_element": s.handleBrowserWaitForElement,
-		"browser.wait_for_captcha": s.handleBrowserWaitForCaptcha,
-		"browser.wait_for_2fa":     s.handleBrowserWaitFor2FA,
-		"browser.complete":         s.handleBrowserComplete,
-		"browser.fail":             s.handleBrowserFail,
-		"browser.list":             s.handleBrowserList,
-		"browser.cancel":           s.handleBrowserCancel,
-		"bridge.start":             s.handleBridgeStart,
-		"bridge.stop":              s.handleBridgeStop,
-		"bridge.status":            s.handleBridgeStatus,
-		"bridge.channel":           s.handleBridgeChannel,
-		"bridge.unchannel":         s.handleUnbridgeChannel,
-		"bridge.list":              s.handleListBridgedChannels,
-		"bridge.ghost_list":        s.handleGhostUserList,
-		"bridge.appservice_status": s.handleAppServiceStatus,
-		"pii.request":              s.handlePIIRequest,
-		"pii.approve":              s.handlePIIApprove,
-		"pii.deny":                 s.handlePIIDeny,
-		"pii.status":               s.handlePIIStatus,
-		"pii.list_pending":         s.handlePIIListPending,
-		"pii.stats":                s.handlePIIStats,
-		"pii.cancel":               s.handlePIICancel,
-		"pii.fulfill":              s.handlePIIFulfill,
-		"pii.wait_for_approval":    s.handlePIIWaitForApproval,
-		"skills.execute":           s.handleSkillsExecute,
-		"skills.list":              s.handleSkillsList,
-		"skills.get_schema":        s.handleSkillsGetSchema,
-		"skills.allow":             s.handleSkillsAllow,
-		"skills.block":             s.handleSkillsBlock,
-		"skills.allowlist_add":     s.handleSkillsAllowlistAdd,
-		"skills.allowlist_remove":  s.handleSkillsAllowlistRemove,
-		"skills.allowlist_list":    s.handleSkillsAllowlistList,
-		"skills.web_search":        s.handleSkillsWebSearch,
-		"skills.web_extract":       s.handleSkillsWebExtract,
-		"skills.email_send":        s.handleSkillsEmailSend,
-		"skills.slack_message":     s.handleSkillsSlackMessage,
-		"skills.file_read":         s.handleSkillsFileRead,
-		"skills.data_analyze":      s.handleSkillsDataAnalyze,
-		"matrix.status":            s.handleMatrixStatus,
-		"matrix.login":             s.handleMatrixLogin,
-		"matrix.send":              s.handleMatrixSend,
-		"matrix.receive":           s.handleMatrixReceive,
-		"matrix.join_room":         s.handleMatrixJoinRoom,
-		"events.replay":            s.handleEventsReplay,
-		"events.stream":            s.handleEventsStream,
-		"studio.deploy":            s.handleStudio,
-		"studio.stats":             s.handleStudioStats,
-		"store_key":                s.handleStoreKey,
-		"provisioning.start":       s.handleProvisioningStart,
-		"provisioning.claim":       s.handleProvisioningClaim,
+		"ai.chat":                   s.handleAIChat,
+		"browser.navigate":          s.handleBrowserNavigate,
+		"browser.fill":              s.handleBrowserFill,
+		"browser.click":             s.handleBrowserClick,
+		"browser.status":            s.handleBrowserStatus,
+		"browser.wait_for_element":  s.handleBrowserWaitForElement,
+		"browser.wait_for_captcha":  s.handleBrowserWaitForCaptcha,
+		"browser.wait_for_2fa":      s.handleBrowserWaitFor2FA,
+		"browser.complete":          s.handleBrowserComplete,
+		"browser.fail":              s.handleBrowserFail,
+		"browser.list":              s.handleBrowserList,
+		"browser.cancel":            s.handleBrowserCancel,
+		"bridge.start":              s.handleBridgeStart,
+		"bridge.stop":               s.handleBridgeStop,
+		"bridge.status":             s.handleBridgeStatus,
+		"bridge.channel":            s.handleBridgeChannel,
+		"bridge.unchannel":          s.handleUnbridgeChannel,
+		"bridge.list":               s.handleListBridgedChannels,
+		"bridge.ghost_list":         s.handleGhostUserList,
+		"bridge.appservice_status":  s.handleAppServiceStatus,
+		"pii.request":               s.handlePIIRequest,
+		"pii.approve":               s.handlePIIApprove,
+		"pii.deny":                  s.handlePIIDeny,
+		"pii.status":                s.handlePIIStatus,
+		"pii.list_pending":          s.handlePIIListPending,
+		"pii.stats":                 s.handlePIIStats,
+		"pii.cancel":                s.handlePIICancel,
+		"pii.fulfill":               s.handlePIIFulfill,
+		"pii.wait_for_approval":     s.handlePIIWaitForApproval,
+		"skills.execute":            s.handleSkillsExecute,
+		"skills.list":               s.handleSkillsList,
+		"skills.get_schema":         s.handleSkillsGetSchema,
+		"skills.allow":              s.handleSkillsAllow,
+		"skills.block":              s.handleSkillsBlock,
+		"skills.allowlist_add":      s.handleSkillsAllowlistAdd,
+		"skills.allowlist_remove":   s.handleSkillsAllowlistRemove,
+		"skills.allowlist_list":     s.handleSkillsAllowlistList,
+		"skills.web_search":         s.handleSkillsWebSearch,
+		"skills.web_extract":        s.handleSkillsWebExtract,
+		"skills.email_send":         s.handleSkillsEmailSend,
+		"skills.slack_message":      s.handleSkillsSlackMessage,
+		"skills.file_read":          s.handleSkillsFileRead,
+		"skills.data_analyze":       s.handleSkillsDataAnalyze,
+		"matrix.status":             s.handleMatrixStatus,
+		"matrix.login":              s.handleMatrixLogin,
+		"matrix.send":               s.handleMatrixSend,
+		"matrix.receive":            s.handleMatrixReceive,
+		"matrix.join_room":          s.handleMatrixJoinRoom,
+		"events.replay":             s.handleEventsReplay,
+		"events.stream":             s.handleEventsStream,
+		"studio.deploy":             s.handleStudio,
+		"studio.stats":              s.handleStudioStats,
+		"store_key":                 s.handleStoreKey,
+		"provisioning.start":        s.handleProvisioningStart,
+		"provisioning.claim":        s.handleProvisioningClaim,
+		"hardening.status":          s.handleHardeningStatus,
+		"hardening.ack":             s.handleHardeningAck,
+		"hardening.rotate_password": s.handleHardeningRotatePassword,
 	}
 
 	s.handlers = h
+}
+
+func (s *Server) handleHardeningStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	matrixAdapter, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrixAdapter == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Matrix adapter not configured",
+		}
+	}
+
+	hardeningHandler := NewHardeningHandler(s.hardeningStore, matrixAdapter, "/var/lib/armorclaw/.admin_password")
+	return hardeningHandler.handleHardeningStatus(ctx, req)
+}
+
+func (s *Server) handleHardeningAck(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	matrixAdapter, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrixAdapter == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Matrix adapter not configured",
+		}
+	}
+
+	hardeningHandler := NewHardeningHandler(s.hardeningStore, matrixAdapter, "/var/lib/armorclaw/.admin_password")
+	return hardeningHandler.handleHardeningAck(ctx, req)
+}
+
+func (s *Server) handleHardeningRotatePassword(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	matrixAdapter, ok := s.matrix.(*adapter.MatrixAdapter)
+	if !ok || matrixAdapter == nil {
+		return nil, &ErrorObj{
+			Code:    InternalError,
+			Message: "Matrix adapter not configured",
+		}
+	}
+
+	hardeningHandler := NewHardeningHandler(s.hardeningStore, matrixAdapter, "/var/lib/armorclaw/.admin_password")
+	return hardeningHandler.handleHardeningRotatePassword(ctx, req)
 }
 
 // GetMatrixAdapter returns the Matrix adapter for external integration
