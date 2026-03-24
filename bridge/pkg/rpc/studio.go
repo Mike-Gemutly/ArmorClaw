@@ -3,9 +3,23 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/armorclaw/bridge/pkg/studio"
 )
+
+func requiresDelegationGate(method string) bool {
+	switch method {
+	case "studio.create_agent",
+		"studio.update_agent",
+		"studio.delete_agent",
+		"studio.spawn_agent",
+		"studio.stop_instance":
+		return true
+	default:
+		return false
+	}
+}
 
 // handleStudio routes all studio.* methods to the Agent Studio integration
 func (s *Server) handleStudio(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
@@ -14,6 +28,19 @@ func (s *Server) handleStudio(ctx context.Context, req *Request) (interface{}, *
 		return nil, &ErrorObj{
 			Code:    MethodNotFound,
 			Message: "Agent Studio not initialized",
+		}
+	}
+
+	if requiresDelegationGate(req.Method) {
+		// Extract userID from request params (from Matrix user_id field)
+		userID := extractUserIDFromParams(req.Params)
+		if userID != "" {
+			if err := RequireDelegationReady(s.hardeningStore, userID); err != nil {
+				return nil, &ErrorObj{
+					Code:    InternalError,
+					Message: err.Error(),
+				}
+			}
 		}
 	}
 
@@ -53,5 +80,21 @@ func StudioMethodList() []string {
 
 // IsStudioMethod checks if a method is a studio method
 func IsStudioMethod(method string) bool {
-	return studio.IsStudioMethod(method)
+	return len(method) > 7 && method[:7] == "studio."
+}
+
+// extractUserIDFromParams attempts to extract the user ID from request params
+// In the Matrix integration, the user_id is passed in the request params
+func extractUserIDFromParams(params json.RawMessage) string {
+	if len(params) == 0 {
+		return ""
+	}
+
+	var p struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return ""
+	}
+	return p.UserID
 }

@@ -43,6 +43,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/armorclaw/bridge/pkg/studio"
+	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
 
 	"github.com/docker/docker/api/types"
@@ -2505,6 +2506,10 @@ func runBridgeServer(cliCfg cliConfig) {
 	log.Printf("RPC dependencies: studio=%v, provisioning=%v, skills=%v",
 		studioService != nil, provisioningMgr != nil, skillMgr != nil)
 
+	// Initialize hardening store
+	hardeningStore := trust.NewKeystoreHardeningStore(ks.GetDB())
+	log.Println("Hardening store initialized")
+
 	server, err := rpc.New(rpc.Config{
 		SocketPath:      cfg.Server.SocketPath,
 		Keystore:        ks,
@@ -2518,6 +2523,7 @@ func runBridgeServer(cliCfg cliConfig) {
 		ProvisioningMgr: provisioningMgr,
 		SkillManager:    skillMgr,
 		EventBus:        eventBus,
+		HardeningStore:  hardeningStore,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
