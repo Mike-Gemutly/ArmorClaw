@@ -1,9 +1,87 @@
 # ArmorClaw Architecture Review
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.15.0
-> **Last Updated:** 2026-03-21
+> **Version:** 4.16.0
+> **Last Updated:** 2026-03-26
 > **Status:** Active Reference
 
+
+## Phase 17: Voice Backend AI Pipeline (2026-03-26)
+
+### Overview
+
+Completed the Voice Backend AI Pipeline remediation: created missing service layer files, resolved import cycle via interface decoupling, and fixed critical build issues.
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **TTS Service** | Synthesizer interface + TTSService wrapper | `bridge/pkg/voice/tts_service.go` |
+| **VAD Service** | SpeechDetector interface + VADService wrapper | `bridge/pkg/voice/vad_service.go` |
+| **E2E Test Harness** | 6 E2E tests with select/time.After deadlock prevention | `bridge/pkg/voice/e2e_test.go` |
+| **Interfaces Package** | Shared types (TranscriptionResult, SynthesisResult, VADResult) | `bridge/pkg/interfaces/voice.go` |
+| **Import Cycle Fix** | Removed unused adapter import from readmin.go | `bridge/pkg/lockdown/readmin.go` |
+| **Keystore Fix** | WipeAllData fixed to work without non-existent userID | `bridge/pkg/keystore/keystore.go` |
+
+### Import Cycle Resolution
+
+**Problem:** Circular dependency prevented build:
+```
+pkg/voice → internal/adapter → pkg/lockdown → internal/adapter
+```
+
+**Root Cause:** `pkg/lockdown/readmin.go` imported `internal/adapter` but never used it.
+
+**Solution:**
+1. Removed unused `internal/adapter` import from `readmin.go`
+2. Created `bridge/pkg/interfaces/` package for shared types
+3. Updated voice services to import result types from interfaces
+
+### Files Modified
+
+```
+bridge/pkg/interfaces/doc.go        |  8 + (new)
+bridge/pkg/interfaces/voice.go      | 55 + (new)
+bridge/pkg/voice/stt_service.go     |  4 + (import interfaces)
+bridge/pkg/voice/tts_service.go     |  5 + (import interfaces)
+bridge/pkg/voice/vad_service.go     |  5 + (import interfaces)
+bridge/pkg/voice/e2e_test.go        | 200 + (new)
+bridge/pkg/voice/tts_service_test.go| 100 + (new)
+bridge/pkg/voice/vad_service_test.go| 100 + (new)
+bridge/pkg/lockdown/readmin.go      | 70 + (cleaned, removed unused import)
+bridge/pkg/keystore/keystore.go     |  2 + (fix WipeAllData)
+```
+
+### Commits (2026-03-26)
+
+```
+83aa914 fix(voice): break import cycle via interfaces package
+ab160e3 feat(voice): add TTS/VAD service wrappers and E2E test harness
+4f7ec27 feat(voice): add STT service layer
+```
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No breaking API changes | ✅ Interfaces are additive |
+| No new external dependencies | ✅ Uses stdlib only |
+| Build passes | ✅ `go build ./...` succeeds |
+| Import cycle resolved | ✅ No circular dependencies |
+
+### Quick Reference Commands
+
+```bash
+# Verify build
+cd bridge && go build ./...
+
+# Run voice tests
+cd bridge && go test ./pkg/voice/... -v
+
+# Check for import cycles
+go list -f '{{.ImportPath}}: {{.Imports}}' ./... | grep -E "voice|lockdown|adapter"
+```
+
+---
 
 ## Phase 16: CI Smoke Test & Keygen Fix (2026-03-21)
 
