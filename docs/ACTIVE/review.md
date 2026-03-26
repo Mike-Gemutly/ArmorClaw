@@ -68,17 +68,182 @@ ab160e3 feat(voice): add TTS/VAD service wrappers and E2E test harness
 | Build passes | ✅ `go build ./...` succeeds |
 | Import cycle resolved | ✅ No circular dependencies |
 
-### Quick Reference Commands
+## User Stories & Use Cases
+
+> **Purpose**: Comprehensive user journey documentation from installation to production use
+> **Audience**: QA testers, developers, and users
+
+---
+
+### US-1: First-Time VPS Setup
+
+**As a** new VPS user, I want to set up ArmorClaw on my VPS to run AI agents 24/7 for personal task automation.
+
+**Acceptance Criteria:**
+- [ ] Installer script runs without errors
+- [ ] GPG signature verifies successfully
+- [ ] Docker daemon running
+- [ ] Container starts within 60s
+- [ ] QR code displayed in terminal
+- [ ] Can re-run installer idempotently
+
+**Test Commands:**
+```bash
+# Happy path
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# Verify installation
+ls -la deploy/install.sh
+grep -q "GPG signature"
+```
+
+### US-2: API Key Setup
+
+**As a** developer, I want to configure an AI provider without hardcoding credentials.
+
+**Acceptance Criteria:**
+- [ ] Environment variable set (e.g., `export OPENROUTER_API_KEY=sk-xxx`)
+- [ ] Run installer
+- [ ] Provider configured successfully
+- [ ] API key stored in environment (not persisted to disk)
+- [ ] Can switch providers via Matrix commands
+
+### US-3: Admin User Creation
+
+**As a** VPS owner, I want to create an admin account for ArmorClaw with secure credentials.
+
+**Acceptance Criteria:**
+- [ ] Admin user can log into Element X or ArmorChat
+- [ ] Credentials displayed ON screen once
+- [ ] Password file created for later cleanup
+- [ ] Bridge RPC responds to `!status` command
+
+### US-4: Create First Agent
+
+**As a** user, I want to create an AI agent for personal task automation.
+
+**Acceptance Criteria:**
+- [ ] Agent created with selected skills
+- [ ] Agent spawns successfully in isolated container
+- [ ] User can monitor agent progress
+- [ ] Agent stops cleanly when requested
+- [ ] Resource limits enforced
+
+### US-5: Voice Call with AI Transcription
+
+**As a** user, I want to make a voice call through ArmorClaw and have the AI transcribe the conversation.
+
+**Acceptance Criteria:**
+- [ ] Voice call connects successfully
+- [ ] Audio quality acceptable
+- [ ] Speech detected correctly
+- [ ] Transcription accurate
+- [ ] Response synthesized clearly
+
+### US-6: Browser Automation with PII
+
+**As a** user, I want the agent to fill out a web form with my credit card information without exposing the actual card number.
+
+**Acceptance Criteria:**
+- [ ] Credit card stored in encrypted keystore
+- [ ] Agent has PII access permission
+- [ ] Browser automation service running
+- [ ] Agent navigates to airline website
+- [ ] Agent requests PII via BlindFill
+- [ ] Bridge injects credit card into browser
+- [ ] Agent never sees the number
+- [ ] Browser fills form with injected value
+
+### US-7: Calendar Management
+
+**As a** user, I want to manage my calendar through ArmorClaw without sharing credentials with third-party services.
+
+**Acceptance Criteria:**
+- [ ] Events created successfully
+- [ ] Event appears in user's calendar
+- [ ] Agent confirms event creation
+
+### US-8: File Management (WebDAV)
+
+**As a** user, I want to manage files on my WebDAV server through ArmorClaw.
+
+**Acceptance Criteria:**
+- [ ] Files uploaded successfully
+- [ ] File listing works correctly
+- [ ] Files downloaded successfully
+- [ ] SSRF protection blocks malicious URLs
+
+### US-9: Contact Management (Rolodex)
+
+**As a** user, I want to manage my contacts through ArmorClaw.
+
+**Acceptance Criteria:**
+- [ ] Contacts created successfully
+- [ ] Contacts searchable
+- [ ] Contact updates work correctly
+- [ ] Contact data encrypted at rest
+
+### US-10: Mobile App Connection (ArmorChat)
+
+**As a** ArmorChat user, I want to connect to my ArmorClaw instance from my mobile device.
+
+**Acceptance Criteria:**
+- [ ] QR code scans successfully
+- [ ] ArmorChat extracts configuration
+- [ ] ArmorChat connects to Matrix server
+- [ ] Push notifications work correctly
+
+### US-11: Three-Way Consent (PII Approval)
+
+**As a** user, I want to approve PII access requests from third parties securely.
+
+**Acceptance Criteria:**
+- [ ] Matrix room created for consent
+- [ ] All parties invited
+- [ ] User approves via Matrix reaction
+- [ ] Approval propagates to HITL system
+
+---
+
+## Test Coverage Matrix
+
+| User Story | Unit Tests | E2E Tests | Status |
+|------------|-------------|-----------|--------|
+| US-1: Installation | - | - | ⚠️ NEEDED |
+| US-2: API Key Setup | providers_test.go | - | ⚠️ NEEDED |
+| US-3: Admin User | keystore_test.go | - | ⚠️ NEEDED |
+| US-4: Create Agent | studio_test.go | - | ✅ EXISTS |
+| US-5: Voice Call | voice_test.go | ✅ EXISTS | ✅ EXISTS |
+| US-6: Browser/PII | browser_test.go | - | ✅ EXISTS |
+| US-7: Calendar | calendar_test.go | - | ⚠️ NEEDED |
+| US-8: WebDAV | webdav_test.go | - | ⚠️ NEEDED |
+| US-9: Contacts | rolodex_test.go | - | ⚠️ NEEDED |
+| US-10: Mobile App | - | - | ⚠️ NEEDED |
+| US-11: Three-Way Consent | consent_test.go | - | ⚠️ NEEDED |
+
+---
+
+## Critical Test Gaps
+
+1. **Installation** - No automated tests exist
+2. **API Key Setup** - Critical for AI functionality
+3. **Admin User Creation** - Security critical
+4. **Voice Pipeline E2E** - New feature, needs Docker sidecars
+5. **Web Form Fill with PII** - PII security critical
+
+---
+
+## Quick Reference Commands
 
 ```bash
-# Verify build
-cd bridge && go build ./...
+# Run voice unit tests
+cd bridge && go test ./pkg/voice/... -v -short
 
-# Run voice tests
-cd bridge && go test ./pkg/voice/... -v
+# Run E2E tests (requires Docker sidecars)
+ARMORCLAW_E2E=1 go test ./pkg/voice/... -v -run TestE2E
 
-# Check for import cycles
-go list -f '{{.ImportPath}}: {{.Imports}}' ./... | grep -E "voice|lockdown|adapter"
+# Run all bridge tests
+cd bridge && go test ./... -short
 ```
 
 ---

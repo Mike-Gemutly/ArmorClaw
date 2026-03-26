@@ -4,6 +4,7 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -53,3 +54,9 @@ type VADResult struct {
 	Timestamp      time.Time
 	Latency        time.Duration
 }
+
+// Voice processing errors
+var (
+	// ErrEmptyAudioData is returned when audio data is empty
+	ErrEmptyAudioData = errors.New("empty audio data")
+)

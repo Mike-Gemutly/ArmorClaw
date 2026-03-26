@@ -5,12 +5,14 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/interfaces"
 )
 
 func TestSTTService_Transcribe_Success(t *testing.T) {
 	mockClient := &MockSTTClient{
-		transcribeFunc: func(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
-			return &TranscriptionResult{
+		transcribeFunc: func(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
+			return &interfaces.TranscriptionResult{
 				Text:       "hello world",
 				Confidence: 0.95,
 				Duration:   1 * time.Second,
@@ -59,12 +61,12 @@ func TestSTTService_Transcribe_Success(t *testing.T) {
 
 func TestSTTService_Transcribe_ContextCancellation(t *testing.T) {
 	mockClient := &MockSTTClient{
-		transcribeFunc: func(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+		transcribeFunc: func(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(10 * time.Second):
-				return &TranscriptionResult{}, nil
+				return &interfaces.TranscriptionResult{}, nil
 			}
 		},
 	}
@@ -89,11 +91,11 @@ func TestSTTService_Transcribe_ContextCancellation(t *testing.T) {
 
 func TestSTTService_Transcribe_EmptyAudio(t *testing.T) {
 	mockClient := &MockSTTClient{
-		transcribeFunc: func(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+		transcribeFunc: func(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
 			if len(audioData) == 0 {
-				return nil, ErrEmptyAudioData
+				return nil, interfaces.ErrEmptyAudioData
 			}
-			return &TranscriptionResult{}, nil
+			return &interfaces.TranscriptionResult{}, nil
 		},
 	}
 
@@ -108,14 +110,14 @@ func TestSTTService_Transcribe_EmptyAudio(t *testing.T) {
 		t.Fatal("expected error for empty audio, got nil")
 	}
 
-	if err != ErrEmptyAudioData {
-		t.Errorf("expected ErrEmptyAudioData, got %v", err)
+	if err != interfaces.ErrEmptyAudioData {
+		t.Errorf("expected interfaces.ErrEmptyAudioData, got %v", err)
 	}
 }
 
 func TestSTTService_Transcribe_ServiceUnavailable(t *testing.T) {
 	mockClient := &MockSTTClient{
-		transcribeFunc: func(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+		transcribeFunc: func(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
 			return nil, errors.New("service unavailable")
 		},
 	}
@@ -138,7 +140,7 @@ func TestSTTService_Transcribe_ServiceUnavailable(t *testing.T) {
 
 func TestSTTService_Transcribe_RetryExhaustion(t *testing.T) {
 	mockClient := &MockSTTClient{
-		transcribeFunc: func(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+		transcribeFunc: func(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
 			return nil, errors.New("temporary error")
 		},
 	}
@@ -160,10 +162,10 @@ func TestSTTService_Transcribe_RetryExhaustion(t *testing.T) {
 }
 
 type MockSTTClient struct {
-	transcribeFunc func(ctx context.Context, audioData []byte) (*TranscriptionResult, error)
+	transcribeFunc func(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error)
 }
 
-func (m *MockSTTClient) Transcribe(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+func (m *MockSTTClient) Transcribe(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
 	result, err := m.transcribeFunc(ctx, audioData)
 	if err == nil {
 		for i := range audioData {
