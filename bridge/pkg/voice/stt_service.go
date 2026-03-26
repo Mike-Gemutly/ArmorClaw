@@ -3,11 +3,12 @@ package voice
 import (
 	"context"
 
+	"github.com/armorclaw/bridge/pkg/interfaces"
 	"log/slog"
 )
 
 type Transcriber interface {
-	Transcribe(ctx context.Context, audioData []byte) (*TranscriptionResult, error)
+	Transcribe(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error)
 }
 
 type STTService struct {
@@ -22,7 +23,7 @@ func NewSTTService(client Transcriber) *STTService {
 	}
 }
 
-func (s *STTService) Transcribe(ctx context.Context, audioData []byte) (*TranscriptionResult, error) {
+func (s *STTService) Transcribe(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error) {
 	result, err := s.client.Transcribe(ctx, audioData)
 	if err != nil {
 		return nil, err
