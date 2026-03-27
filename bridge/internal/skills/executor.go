@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/interfaces"
 )
 
 // CommandContext manages execution context for skills
@@ -34,16 +36,25 @@ type SkillExecutor struct {
 	ssrfValidator  *SSRFValidator
 	allowlist      *AllowlistManager
 	policyEnforcer *PolicyEnforcer
+	skillGate      interfaces.SkillGate
 }
 
-// NewSkillExecutor creates a new skill executor
+type SkillExecutorConfig struct {
+	SkillGate interfaces.SkillGate
+}
+
 func NewSkillExecutor() *SkillExecutor {
+	return NewSkillExecutorWithConfig(SkillExecutorConfig{})
+}
+
+func NewSkillExecutorWithConfig(cfg SkillExecutorConfig) *SkillExecutor {
 	return &SkillExecutor{
 		registry:       NewRegistry(),
 		router:         NewRouter(),
 		ssrfValidator:  NewSSRFValidator(),
 		allowlist:      NewAllowlistManager(),
 		policyEnforcer: NewPolicyEnforcer(),
+		skillGate:      cfg.SkillGate,
 	}
 }
 
@@ -56,7 +67,6 @@ func (se *SkillExecutor) LoadSkills(skillsDir string) error {
 func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, params map[string]interface{}) (*SkillResult, error) {
 	startTime := time.Now()
 
-	// Step 1: Validate skill exists
 	skill, exists := se.registry.GetSkill(skillName)
 	if !exists {
 		return &SkillResult{
@@ -67,7 +77,19 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 		}, fmt.Errorf("skill not found: %s", skillName)
 	}
 
-	// Step 2: Policy validation
+	if se.skillGate != nil {
+		call := &interfaces.ToolCall{ToolName: skillName, Arguments: params}
+		_, err := se.skillGate.InterceptToolCall(ctx, call)
+		if err != nil {
+			return &SkillResult{
+				Success:   false,
+				Error:     fmt.Sprintf("PII interception failed: %s", err.Error()),
+				Type:      "error",
+				Timestamp: startTime,
+			}, err
+		}
+	}
+
 	if !se.policyEnforcer.IsAllowed(skillName) {
 		return &SkillResult{
 			Success:   false,

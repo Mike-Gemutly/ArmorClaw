@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/governor"
+	"github.com/armorclaw/bridge/pkg/interfaces"
 )
 
 type CircuitState int
@@ -143,27 +146,41 @@ type Gateway struct {
 	ssrfChecker    *SSRFChecker
 	sanitizer      *Sanitizer
 	outputFilter   *OutputFilter
+	skillGate      interfaces.SkillGate // Added
 }
 
 type GatewayConfig struct {
 	CircuitBreaker *CircuitBreaker
+	SkillGate      interfaces.SkillGate // Added
 }
 
 func NewGateway(cfg GatewayConfig) *Gateway {
 	if cfg.CircuitBreaker == nil {
-		cfg.CircuitBreaker = NewCircuitBreaker(CircuitBreakerConfig{
-			Name: "petg",
-		})
+		cfg.CircuitBreaker = NewCircuitBreaker(CircuitBreakerConfig{Name: "petg"})
+	}
+	if cfg.SkillGate == nil {
+		cfg.SkillGate = governor.NewGovernor(nil, nil)
 	}
 	return &Gateway{
 		circuitBreaker: cfg.CircuitBreaker,
 		ssrfChecker:    NewSSRFChecker(),
 		sanitizer:      NewSanitizer(),
 		outputFilter:   NewOutputFilter(),
+		skillGate:      cfg.SkillGate,
 	}
 }
 
 func (g *Gateway) ValidateToolCall(ctx context.Context, toolName string, args map[string]interface{}) error {
+	// Step 1: PII interception via SkillGate (Governor's Shield)
+	if g.skillGate != nil {
+		call := &interfaces.ToolCall{ToolName: toolName, Arguments: args}
+		_, err := g.skillGate.InterceptToolCall(ctx, call)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Step 2: Sanitization and SSRF check with circuit breaker
 	return g.circuitBreaker.Execute(func() error {
 		if err := g.sanitizer.Sanitize(args); err != nil {
 			return err

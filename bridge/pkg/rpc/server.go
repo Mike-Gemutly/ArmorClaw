@@ -24,6 +24,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/appservice"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/eventlog"
+	"github.com/armorclaw/bridge/pkg/interfaces"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/studio"
@@ -131,6 +132,7 @@ type Server struct {
 	appService      AppService
 	provisioningMgr ProvisioningManager
 	skillMgr        SkillManager
+	skillGate       interfaces.SkillGate
 	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
@@ -149,6 +151,7 @@ type Config struct {
 	AppService      AppService
 	ProvisioningMgr ProvisioningManager
 	SkillManager    SkillManager
+	SkillGate       interfaces.SkillGate
 	EventBus        *eventbus.EventBus
 	HardeningStore  trust.Store
 }
@@ -170,6 +173,7 @@ func New(cfg Config) (*Server, error) {
 		appService:      cfg.AppService,
 		provisioningMgr: cfg.ProvisioningMgr,
 		skillMgr:        cfg.SkillManager,
+		skillGate:       cfg.SkillGate,
 		eventBus:        cfg.EventBus,
 		handlers:        make(map[string]HandlerFunc, 32),
 		hardeningStore:  cfg.HardeningStore,

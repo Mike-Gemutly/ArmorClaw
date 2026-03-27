@@ -4,7 +4,7 @@ package governor
 import (
 	"sync"
 
-	"github.com/armorclaw/bridge/pkg/agent"
+	"github.com/armorclaw/bridge/pkg/interfaces"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/pii"
 )
@@ -12,10 +12,10 @@ import (
 // Governor is the main PII interception engine that implements SkillGate interface
 // It uses the scrubber to detect and redact PII from AI tool calls and prompts
 type Governor struct {
-	scrubber *pii.Scrubber     // PII detection and redaction engine
-	logger   *logger.Logger    // Structured logger for events and violations
-	config   *Config           // Governor configuration settings
-	mapping  *agent.PIIMapping // PII placeholder to original value mapping
+	scrubber *pii.Scrubber          // PII detection and redaction engine
+	logger   *logger.Logger         // Structured logger for events and violations
+	config   *Config                // Governor configuration settings
+	mapping  *interfaces.PIIMapping // PII placeholder to original value mapping
 
 	// Internal state
 	mu sync.RWMutex // Protects concurrent access
@@ -63,11 +63,11 @@ type ViolationSummary struct {
 
 // ScrubbingResult contains the result of scrubbing a text or tool call
 type ScrubbingResult struct {
-	Original   string            // Original text
-	Scrubbed   string            // Redacted text
-	Violations []pii.Redaction   // List of PII violations found
-	Summary    *ViolationSummary // Aggregated summary
-	Mapping    *agent.PIIMapping // Shadow mapping (if enabled)
+	Original   string                 // Original text
+	Scrubbed   string                 // Redacted text
+	Violations []pii.Redaction        // List of PII violations found
+	Summary    *ViolationSummary      // Aggregated summary
+	Mapping    *interfaces.PIIMapping // Shadow mapping (if enabled)
 }
 
 // GovernorStats tracks statistics about Governor operations
