@@ -1,9 +1,196 @@
 # ArmorClaw Architecture Review
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.16.0
-> **Last Updated:** 2026-03-26
+> **Version:** 4.17.0
+> **Last Updated:** 2026-03-27
 > **Status:** Active Reference
 
+
+## Phase 18: Governor-Shield PII Interception (2026-03-27)
+
+### Overview
+
+Implemented the Governor's Shield - PII interception layer (SkillGate) for AI tool calls. The SkillGate intercepts all tool calls before the LLM sees user input, scrubbing PII and blocking violations. Also fixed a critical WipeAllData bug.
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **SkillGate Interface** | `InterceptToolCall(ctx, ToolCall)` for PII interception | `bridge/pkg/interfaces/skillgate.go` |
+| **DefaultSkillGate** | Governor implementation with PII scrubber integration | `bridge/pkg/governor/skillgate.go` |
+| **PETG Gateway Wiring** | `ValidateToolCall` calls SkillGate before SSRF check | `bridge/internal/petg/gateway.go` |
+| **SkillExecutor Wiring** | `ExecuteSkill` wraps with PII interception | `bridge/internal/skills/executor.go` |
+| **RPC Server Wiring** | Config and Server structs include skillGate | `bridge/pkg/rpc/server.go` |
+| **WipeAllData Fix** | Corrected table names (secrets → credentials) | `bridge/pkg/keystore/keystore.go` |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI Tool Call Pipeline                         │
+├─────────────────────────────────────────────────────────────────┤
+│  1. User Request                                                 │
+│  2. SkillExecutor.ExecuteSkill()                                │
+│     ├─ SkillGate.InterceptToolCall()  ← PII interception        │
+│     │  ├─ Detect PII in arguments                               │
+│     │  ├─ Redact with shadow mapping                            │
+│     │  └─ Return error on violation                             │
+│     ├─ Policy validation                                         │
+│     ├─ Schema validation                                         │
+│     └─ Pre-execution checks (SSRF, etc.)                        │
+│  3. Handler execution                                            │
+│  4. Post-execution filtering                                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### SkillGate Interface
+
+**File:** `bridge/pkg/interfaces/skillgate.go`
+
+```go
+type SkillGate interface {
+    InterceptToolCall(ctx context.Context, call *ToolCall) (*ToolCall, error)
+}
+
+type ToolCall struct {
+    ToolName string                 `json:"tool_name"`
+    Arguments map[string]interface{} `json:"arguments"`
+}
+
+type PIIMapping struct {
+    OriginalArgs map[string]interface{}
+    RedactedArgs map[string]interface{}
+    Placeholders map[string]string // shadow → original
+}
+```
+
+### Governor Implementation
+
+**File:** `bridge/pkg/governor/skillgate.go`
+
+The Governor implements SkillGate using the existing PII scrubber:
+
+```go
+func (g *Governor) InterceptToolCall(ctx context.Context, call *interfaces.ToolCall) (*interfaces.ToolCall, error) {
+    // 1. Scrub arguments for PII
+    scrubbed := g.scrubber.ScrubMap(call.Arguments)
+    
+    // 2. Build shadow mapping for potential restoration
+    mapping := &interfaces.PIIMapping{
+        OriginalArgs: call.Arguments,
+        RedactedArgs: scrubbed.Clean,
+        Placeholders: scrubbed.Placeholders,
+    }
+    
+    // 3. Return redacted call or error on violation
+    if g.config.StrictMode && len(scrubbed.Violations) > 0 {
+        return nil, &PIIViolationError{Violations: scrubbed.Violations}
+    }
+    
+    return &interfaces.ToolCall{
+        ToolName: call.ToolName,
+        Arguments: scrubbed.Clean,
+    }, nil
+}
+```
+
+### Integration Points
+
+**PETG Gateway (`internal/petg/gateway.go`):**
+```go
+func (g *Gateway) ValidateToolCall(ctx context.Context, toolName string, args map[string]interface{}) error {
+    // PII interception via SkillGate (Governor's Shield)
+    if g.skillGate != nil {
+        call := &interfaces.ToolCall{ToolName: toolName, Arguments: args}
+        _, err := g.skillGate.InterceptToolCall(ctx, call)
+        if err != nil {
+            return err
+        }
+    }
+    // Sanitization and SSRF check with circuit breaker
+    return g.circuitBreaker.Execute(func() error { ... })
+}
+```
+
+**SkillExecutor (`internal/skills/executor.go`):**
+```go
+func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, params map[string]interface{}) (*SkillResult, error) {
+    // ... skill exists check ...
+    
+    // PII interception before policy validation
+    if se.skillGate != nil {
+        call := &interfaces.ToolCall{ToolName: skillName, Arguments: params}
+        _, err := se.skillGate.InterceptToolCall(ctx, call)
+        if err != nil {
+            return &SkillResult{...}, err
+        }
+    }
+    
+    // ... policy/schema validation, execution ...
+}
+```
+
+**RPC Server (`pkg/rpc/server.go`):**
+```go
+type Config struct {
+    // ... existing fields ...
+    SkillGate interfaces.SkillGate
+}
+
+type Server struct {
+    // ... existing fields ...
+    skillGate interfaces.SkillGate
+}
+```
+
+### WipeAllData Bug Fix
+
+**Problem:** `WipeAllData()` referenced non-existent table names:
+- `secrets` → should be `credentials`
+- `profiles` → should be `user_profiles`
+- `devices` → should be `hardware_binding`
+
+**Fix:** Updated table list to match actual schema:
+```go
+tables := []string{"credentials", "user_profiles", "hardware_binding", "matrix_refresh_tokens", "hardening_state"}
+```
+
+### Commits (2026-03-27)
+
+```
+a4e1d63 fix(keystore): correct table names in WipeAllData
+b7e21ff feat(governor): wire SkillGate into PETG Gateway, SkillExecutor, and RPC Server
+73e3c86 test(keystore): add WipeAllData user isolation test
+1ba7054 feat(governor): implement DefaultSkillGate with PII interception
+db10dcf feat(interfaces): add SkillGate interface for PII interception
+```
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| PII patterns not duplicated | ✅ Reuses pkg/pii/scrubber.go |
+| No logging of raw PII | ✅ Only masked snippets in logs |
+| InterceptToolCall before LLM | ✅ Called in ExecuteSkill before execution |
+| PIIViolation returns 403 | ✅ Error propagates as forbidden |
+| WipeAllData test passes | ✅ TestWipeAllData_SystemWide passes |
+
+### Quick Reference Commands
+
+```bash
+# Run governor tests
+cd bridge && go test -v ./pkg/governor/... ./pkg/interfaces/...
+
+# Run keystore tests including WipeAllData
+cd bridge && go test -v -run "TestWipeAllData" ./pkg/keystore/...
+
+# Verify build
+cd bridge && go build ./...
+
+# Full bridge tests
+cd bridge && go test ./pkg/keystore/... ./internal/petg/... ./internal/skills/... ./pkg/governor/...
+```
+
+---
 
 ## Phase 17: Voice Backend AI Pipeline (2026-03-26)
 
