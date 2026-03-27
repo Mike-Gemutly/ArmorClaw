@@ -663,7 +663,7 @@ func (ks *Keystore) WipeAllData() error {
 	// Delete from all data tables
 	// We clear: secrets, profiles, devices, matrix_refresh_tokens, hardening_state
 	// Note: This is a destructive system-wide operation for admin reset
-	tables := []string{"secrets", "profiles", "devices", "matrix_refresh_tokens", "hardening_state"}
+	tables := []string{"credentials", "user_profiles", "hardware_binding", "matrix_refresh_tokens", "hardening_state"}
 
 	for _, table := range tables {
 		_, err := ks.db.Exec("DELETE FROM " + table)

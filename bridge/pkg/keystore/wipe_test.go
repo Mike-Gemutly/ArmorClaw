@@ -9,7 +9,6 @@
 package keystore_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
