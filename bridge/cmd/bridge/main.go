@@ -2586,9 +2586,8 @@ func runBridgeServer(cliCfg cliConfig) {
 	// Create shutdown context early for components that need it
 	// Initialize mDNS discovery server
 	var discoveryServer *discovery.Server
+	var httpDiscoveryServer *discovery.HTTPServer
 	if cfg.Discovery.Enabled {
-		log.Println("Starting mDNS discovery server...")
-
 		// Use Matrix homeserver from discovery config, or fall back to Matrix config
 		matrixHS := cfg.Discovery.MatrixHomeserver
 		if matrixHS == "" {
@@ -2598,10 +2597,35 @@ func runBridgeServer(cliCfg cliConfig) {
 		// Derive push gateway if not set
 		pushGW := cfg.Discovery.PushGateway
 		if pushGW == "" && matrixHS != "" {
-			// Derive from API URL
 			pushGW = strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify"
 		}
 
+		// Start HTTP discovery server (listens on port 8080)
+		log.Println("Starting HTTP discovery server...")
+		httpDiscoveryServer, err = discovery.NewHTTPServer(discovery.HTTPServerConfig{
+			Port:             cfg.Discovery.Port,
+			TLS:              cfg.Discovery.TLS,
+			InstanceName:     cfg.Discovery.InstanceName,
+			MatrixHomeserver: matrixHS,
+			PushGateway:      pushGW,
+			APIPath:          cfg.Discovery.APIPath,
+			WSPath:           cfg.Discovery.WSPath,
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to create HTTP discovery server: %v", err)
+		} else if err := httpDiscoveryServer.Start(shutdownCtx); err != nil {
+			log.Printf("Warning: Failed to start HTTP discovery server: %v", err)
+			httpDiscoveryServer = nil
+		} else {
+			protocol := "http"
+			if cfg.Discovery.TLS {
+				protocol = "https"
+			}
+			log.Printf("HTTP discovery: %s://0.0.0.0:%d/api/discovery", protocol, cfg.Discovery.Port)
+		}
+
+		// Start mDNS discovery server (broadcasts on local network)
+		log.Println("Starting mDNS discovery server...")
 		discoveryConfig := discovery.ServerConfig{
 			InstanceName:     cfg.Discovery.InstanceName,
 			Port:             cfg.Discovery.Port,
@@ -2627,7 +2651,6 @@ func runBridgeServer(cliCfg cliConfig) {
 			} else {
 				info := discoveryServer.Info()
 				log.Printf("mDNS discovery started: %s._armorclaw._tcp.local.", info.Name)
-				log.Printf("Advertising: %s://%s:%d", map[bool]string{true: "https", false: "http"}[cfg.Discovery.TLS], info.Host, info.Port)
 				if matrixHS != "" {
 					log.Printf("Matrix homeserver: %s", matrixHS)
 				}
@@ -2651,6 +2674,18 @@ func runBridgeServer(cliCfg cliConfig) {
 	go func() {
 		<-sigCh
 		log.Println("\nShutting down...")
+
+		// Stop HTTP discovery server
+		if httpDiscoveryServer != nil {
+			log.Println("Stopping HTTP discovery server...")
+			httpDiscoveryServer.Stop()
+		}
+
+		// Stop mDNS discovery server
+		if discoveryServer != nil {
+			log.Println("Stopping mDNS discovery server...")
+			discoveryServer.Stop()
+		}
 
 		// Stop mDNS discovery server
 		if discoveryServer != nil {
