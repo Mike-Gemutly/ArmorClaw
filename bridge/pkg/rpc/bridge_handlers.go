@@ -13,7 +13,7 @@ import (
 
 // handleBridgeStart starts the bridge manager (AppService mode)
 func (s *Server) handleBridgeStart(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.bridgeMgr == nil {
+	if isInterfaceNil(s.bridgeMgr) {
 		return nil, &ErrorObj{
 			Code:    InternalError,
 			Message: "Bridge manager not configured",
@@ -35,7 +35,7 @@ func (s *Server) handleBridgeStart(ctx context.Context, req *Request) (interface
 
 // handleBridgeStop stops the bridge manager
 func (s *Server) handleBridgeStop(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.bridgeMgr == nil {
+	if isInterfaceNil(s.bridgeMgr) {
 		return nil, &ErrorObj{
 			Code:    InternalError,
 			Message: "Bridge manager not configured",
@@ -59,7 +59,7 @@ func (s *Server) handleBridgeStop(ctx context.Context, req *Request) (interface{
 func (s *Server) handleBridgeStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var stats map[string]interface{}
 
-	if s.bridgeMgr == nil {
+	if isInterfaceNil(s.bridgeMgr) {
 		stats = map[string]interface{}{
 			"enabled": false,
 			"status":  "not_configured",
@@ -88,7 +88,7 @@ func (s *Server) handleBridgeStatus(ctx context.Context, req *Request) (interfac
 
 // handleBridgeChannel creates a bridge between Matrix room and platform channel
 func (s *Server) handleBridgeChannel(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.bridgeMgr == nil {
+	if isInterfaceNil(s.bridgeMgr) {
 		return nil, &ErrorObj{
 			Code:    InternalError,
 			Message: "Bridge manager not configured",
@@ -140,7 +140,7 @@ func (s *Server) handleBridgeChannel(ctx context.Context, req *Request) (interfa
 
 // handleUnbridgeChannel removes a bridge
 func (s *Server) handleUnbridgeChannel(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.bridgeMgr == nil {
+	if isInterfaceNil(s.bridgeMgr) {
 		return nil, &ErrorObj{
 			Code:    InternalError,
 			Message: "Bridge manager not configured",
@@ -190,7 +190,7 @@ func (s *Server) handleUnbridgeChannel(ctx context.Context, req *Request) (inter
 
 // handleListBridgedChannels lists all bridged channels
 func (s *Server) handleListBridgedChannels(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.bridgeMgr == nil {
+	if isInterfaceNil(s.bridgeMgr) {
 		return map[string]interface{}{
 			"channels": []*appservice.BridgedChannel{},
 			"count":    0,
@@ -207,7 +207,7 @@ func (s *Server) handleListBridgedChannels(ctx context.Context, req *Request) (i
 
 // handleGhostUserList lists registered ghost users
 func (s *Server) handleGhostUserList(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.appService == nil {
+	if isInterfaceNil(s.appService) {
 		return map[string]interface{}{
 			"ghost_users": []interface{}{},
 			"count":       0,
@@ -225,7 +225,7 @@ func (s *Server) handleGhostUserList(ctx context.Context, req *Request) (interfa
 
 // handleAppServiceStatus returns AppService status
 func (s *Server) handleAppServiceStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
-	if s.appService == nil {
+	if isInterfaceNil(s.appService) {
 		return map[string]interface{}{
 			"enabled": false,
 			"status":  "not_configured",
