@@ -808,7 +808,7 @@ load_wizard_json() {
     SERVER_NAME="${detected_ip:-127.0.0.1}"
     MATRIX_SERVER="${SERVER_NAME}:8448"
     MATRIX_URL="http://localhost:6167"
-    BRIDGE_USER="bridge"
+    BRIDGE_USER="${ARMORCLAW_BRIDGE_USER:-bridge}"
 
     # Enterprise compliance patterns
     if [ "$DEPLOY_PROFILE" = "enterprise" ]; then
@@ -962,8 +962,8 @@ apply_quick_defaults() {
     SERVER_NAME="$detected_ip"
     MATRIX_SERVER="${detected_ip}:8448"
     MATRIX_URL="http://localhost:6167"
-    BRIDGE_USER="bridge"
-    BRIDGE_PASSWORD=$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)
+    BRIDGE_USER="${ARMORCLAW_BRIDGE_USER:-bridge}"
+    BRIDGE_PASSWORD="${ARMORCLAW_BRIDGE_PASSWORD:-$(openssl rand -base64 16 2>/dev/null | tr -d '/+=' || head -c 32 /dev/urandom | base64 2>/dev/null | tr -d '/+=\n' | cut -c1-16)}"
     LOG_LEVEL="info"
     SOCKET_PATH="/run/armorclaw/bridge.sock"
     SECURITY_TIER="enhanced"

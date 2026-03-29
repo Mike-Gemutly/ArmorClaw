@@ -79,8 +79,10 @@ DEFAULT_HARD_STOP="true"
 
 # Track Matrix installation state
 MATRIX_ENABLED="false"
-MATRIX_ADMIN_USER="admin"
+MATRIX_ADMIN_USER="${ARMORCLAW_ADMIN_USER:-admin}"
 MATRIX_ADMIN_PASSWORD=""
+MATRIX_BRIDGE_USER="${ARMORCLAW_BRIDGE_USER:-bridge}"
+MATRIX_BRIDGE_PASSWORD=""
 MATRIX_DOMAIN=""
 TUNNEL_URL=""
 LOCKFILE="/tmp/armorclaw-quick.lock"
@@ -393,14 +395,58 @@ create_matrix_admin_user() {
     fi
 }
 
+create_matrix_bridge_user() {
+    local server_name="${1:-localhost}"
+    local bridge_user="${2:-bridge}"
+    local bridge_pass="${3:-}"
+
+    if [[ -z "$bridge_pass" ]]; then
+        print_error "No password provided for bridge user"
+        return 1
+    fi
+
+    print_info "Creating Matrix bridge user: $bridge_user..."
+
+    local register_response
+    register_response=$(curl -sf "http://localhost:6167/_matrix/client/v3/register" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "username": "'"${bridge_user}"'",
+            "password": "'"${bridge_pass}"'",
+            "auth": {"type": "m.login.dummy"}
+        }' 2>/dev/null) || true
+
+    if echo "$register_response" | grep -q '"user_id"'; then
+        print_done "Matrix bridge user created: $bridge_user"
+        return 0
+    elif echo "$register_response" | grep -q '"errcode".*"M_USER_IN_USE"'; then
+        print_info "Matrix bridge user already exists: $bridge_user"
+        return 0
+    else
+        print_warning "Could not create Matrix bridge user (registration may be disabled)"
+        print_info "Response: ${register_response:-no response}"
+        return 1
+    fi
+}
+
 ensure_matrix() {
     if is_matrix_running; then
         # Matrix already running - check if we have credentials
         if [[ -z "$MATRIX_ADMIN_PASSWORD" ]]; then
             print_info "Matrix already running - generating admin credentials..."
             MATRIX_ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
+            MATRIX_BRIDGE_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
             MATRIX_DOMAIN=$(hostname -I | awk '{print $1}')
             create_matrix_admin_user "$MATRIX_DOMAIN" "$MATRIX_ADMIN_USER" "$MATRIX_ADMIN_PASSWORD" || true
+            create_matrix_bridge_user "$MATRIX_DOMAIN" "$MATRIX_BRIDGE_USER" "$MATRIX_BRIDGE_PASSWORD" || true
+            local config_file="$CONFIG_DIR/config.toml"
+            if [[ -f "$config_file" ]]; then
+                $SUDO sed -i 's/^enabled = false/enabled = true/' "$config_file" 2>/dev/null || true
+                $SUDO sed -i 's|homeserver_url = ""|homeserver_url = "http://localhost:6167"|' "$config_file" 2>/dev/null || true
+                $SUDO sed -i "s/^username = \"\"/username = \"$MATRIX_BRIDGE_USER\"/" "$config_file" 2>/dev/null || true
+                $SUDO sed -i "s/^password = \"\"/password = \"$MATRIX_BRIDGE_PASSWORD\"/" "$config_file" 2>/dev/null || true
+                print_done "Bridge Matrix credentials configured"
+            fi
         fi
         return 0
     fi
@@ -423,6 +469,9 @@ ensure_matrix() {
 
     MATRIX_ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
     print_info "Generated admin password"
+
+    MATRIX_BRIDGE_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
+    print_info "Generated bridge password"
 
     local CONDUIT_DATA_DIR="/var/lib/conduit"
     local CONDUIT_CONFIG_FILE="/etc/conduit.toml"
@@ -484,11 +533,18 @@ EOF
     local config_file="$CONFIG_DIR/config.toml"
     if [[ -f "$config_file" ]]; then
         if grep -q '^enabled = false' "$config_file" 2>/dev/null; then
-            sed -i 's/enabled = false/enabled = true/' "$config_file"
+            $SUDO sed -i 's/enabled = false/enabled = true/' "$config_file"
         fi
         if grep -q 'homeserver_url = ""' "$config_file"; then
-            sed -i 's|homeserver_url = ""|homeserver_url = "http://localhost:6167"|' "$config_file"
+            $SUDO sed -i 's|homeserver_url = ""|homeserver_url = "http://localhost:6167"|' "$config_file"
         fi
+        if grep -q '^username = ""' "$config_file" 2>/dev/null; then
+            $SUDO sed -i "s/^username = \"\"/username = \"$MATRIX_BRIDGE_USER\"/" "$config_file"
+        fi
+        if grep -q '^password = ""' "$config_file" 2>/dev/null; then
+            $SUDO sed -i "s/^password = \"\"/password = \"$MATRIX_BRIDGE_PASSWORD\"/" "$config_file"
+        fi
+        print_done "Bridge Matrix credentials configured"
     fi
 
     print_done "Matrix installed and running"

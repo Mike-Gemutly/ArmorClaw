@@ -1,8 +1,180 @@
 # ArmorClaw Architecture Review
 > **Purpose:** Complete guide to ArmorClaw deployment, architecture, and components
-> **Version:** 4.17.0
-> **Last Updated:** 2026-03-27
+> **Version:** 4.18.0
+> **Last Updated:** 2026-03-29
 > **Status:** Active Reference
+
+
+## Phase 19: Zero-Touch Deployment Automation (2026-03-29)
+
+### Overview
+
+Achieved true zero-touch deployment by automating all manual post-deployment steps. The bridge Matrix user is now created automatically, SSH tunnel setup is scripted, and all 4 deployment lessons are encoded in automation. New users can run a single command and get a fully operational system.
+
+### Implementation Details
+
+| Feature | Description | Files Changed |
+|---------|-------------|---------------|
+| **Bridge User Creation** | `create_matrix_bridge_user()` function registers bridge on Matrix | `deploy/setup-quick.sh` |
+| **Bridge Credentials Config** | Auto-writes username/password to config.toml | `deploy/setup-quick.sh`, `deploy/container-setup.sh` |
+| **SSH Tunnel Script** | Automates WSL tunnel setup for VPS access | `deploy/setup-ssh-tunnel.sh` (new) |
+| **Env Var Support** | `ARMORCLAW_BRIDGE_USER` for customization | `deploy/setup-quick.sh`, `deploy/container-setup.sh` |
+| **Deployment Lessons Doc** | All 4 lessons marked as automated | `DEPLOYMENT_LESSONS.md` (new) |
+
+### Bridge User Automation
+
+**File:** `deploy/setup-quick.sh`
+
+```bash
+create_matrix_bridge_user() {
+    local server_name="${1:-localhost}"
+    local bridge_user="${2:-bridge}"
+    local bridge_pass="${3:-}"
+
+    print_info "Creating Matrix bridge user: $bridge_user..."
+
+    local register_response
+    register_response=$(curl -sf "http://localhost:6167/_matrix/client/v3/register" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "username": "'"${bridge_user}"'",
+            "password": "'"${bridge_pass}"'",
+            "auth": {"type": "m.login.dummy"}
+        }' 2>/dev/null) || true
+
+    if echo "$register_response" | grep -q '"user_id"'; then
+        print_done "Matrix bridge user created: $bridge_user"
+        return 0
+    elif echo "$register_response" | grep -q '"errcode".*"M_USER_IN_USE"'; then
+        print_info "Matrix bridge user already exists: $bridge_user"
+        return 0
+    else
+        print_warning "Could not create Matrix bridge user (registration may be disabled)"
+        return 1
+    fi
+}
+```
+
+**Integration in `ensure_matrix()`:**
+```bash
+# Generate credentials
+MATRIX_BRIDGE_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
+
+# Create both users
+create_matrix_admin_user "$MATRIX_DOMAIN" "$MATRIX_ADMIN_USER" "$MATRIX_ADMIN_PASSWORD" || true
+create_matrix_bridge_user "$MATRIX_DOMAIN" "$MATRIX_BRIDGE_USER" "$MATRIX_BRIDGE_PASSWORD" || true
+
+# Write credentials to config.toml
+$SUDO sed -i "s/^username = \"\"/username = \"$MATRIX_BRIDGE_USER\"/" "$config_file"
+$SUDO sed -i "s/^password = \"\"/password = \"$MATRIX_BRIDGE_PASSWORD\"/" "$config_file"
+```
+
+### SSH Tunnel Automation
+
+**File:** `deploy/setup-ssh-tunnel.sh`
+
+Solves Lesson 3 (WSL tunnel visibility) with automated tunnel setup:
+
+```bash
+# Detect WSL environment
+is_wsl() {
+    if [[ -f /proc/version ]]; then
+        grep -qi microsoft /proc/version
+        return $?
+    fi
+    return 1
+}
+
+# Start SSH tunnel
+start_tunnel() {
+    local ssh_cmd=$(get_ssh_cmd)
+    
+    ssh -f -N -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" \
+        -o StrictHostKeyChecking=no \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=60 \
+        -o ServerAliveCountMax=3 \
+        $ssh_opts
+}
+```
+
+**Usage:**
+```bash
+# Set environment and run
+export VPS_IP=5.183.11.149
+./deploy/setup-ssh-tunnel.sh
+
+# Check tunnel status
+./deploy/setup-ssh-tunnel.sh --check
+
+# Stop tunnel
+./deploy/setup-ssh-tunnel.sh --stop
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ARMORCLAW_BRIDGE_USER` | Custom bridge username | `bridge` |
+| `ARMORCLAW_BRIDGE_PASSWORD` | Custom bridge password | auto-generated |
+| `ARMORCLAW_LOCAL_PORT` | SSH tunnel local port | `9000` |
+| `ARMORCLAW_REMOTE_PORT` | SSH tunnel remote port | `8081` |
+
+### Deployment Lessons Automation Status
+
+| Lesson | Status | Automation |
+|--------|--------|------------|
+| 1. Socket Trap | ✅ Automated | `docker-compose.yml` sets `ARMORCLAW_RPC_TYPE=tcp` |
+| 2. Identity Firewall | ✅ Automated | `docker-compose.yml` sets `ARMORCLAW_CONTAINER_MODE=false` |
+| 3. SSH Tunneling | ✅ Automated | `deploy/setup-ssh-tunnel.sh` |
+| 4. Hardware Unsealing | ✅ Automated | `Dockerfile.quickstart` generates keystore key |
+
+### Files Modified
+
+```
+deploy/setup-quick.sh          | +62 (bridge user creation, env vars)
+deploy/container-setup.sh      | +6  (ARMORCLAW_BRIDGE_USER env var)
+deploy/setup-ssh-tunnel.sh     | +240 (new file)
+DEPLOYMENT_LESSONS.md          | +35 (new file, automation status)
+```
+
+### Bug Fixes
+
+| Bug | Description | Fix |
+|-----|-------------|-----|
+| **Duplicate function call** | `create_matrix_bridge_user()` called twice (lines 441-442) | Removed duplicate call |
+| **Missing bridge user** | Only admin user created, bridge credentials empty | Added bridge user creation |
+| **Hardcoded bridge user** | `BRIDGE_USER="bridge"` hardcoded | Added env var support |
+
+### Guardrails Respected
+
+| Guardrail | Status |
+|-----------|--------|
+| No manual post-deployment steps | ✅ All steps automated |
+| No API keys in commit | ✅ Verified clean |
+| Matrix as control plane | ✅ Bridge connects automatically |
+| Quick setup flawless for new users | ✅ Single command deployment |
+
+### Quick Reference Commands
+
+```bash
+# Zero-touch deployment
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# Custom bridge user
+export ARMORCLAW_BRIDGE_USER=mybridge
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# SSH tunnel setup
+export VPS_IP=5.183.11.149
+./deploy/setup-ssh-tunnel.sh
+
+# Verify deployment
+curl --unix-socket /run/armorclaw/bridge.sock \
+    -d '{"jsonrpc":"2.0","method":"matrix.status","id":1}'
+```
+
+---
 
 
 ## Phase 18: Governor-Shield PII Interception (2026-03-27)
@@ -295,15 +467,18 @@ grep -q "GPG signature"
 - [ ] API key stored in environment (not persisted to disk)
 - [ ] Can switch providers via Matrix commands
 
-### US-3: Admin User Creation
+### US-3: Admin and Bridge User Creation
 
-**As a** VPS owner, I want to create an admin account for ArmorClaw with secure credentials.
+**As a** VPS owner, I want to create admin and bridge accounts for ArmorClaw with secure credentials automatically.
 
 **Acceptance Criteria:**
 - [ ] Admin user can log into Element X or ArmorChat
+- [ ] Bridge user created automatically on Matrix
+- [ ] Bridge credentials written to config.toml
 - [ ] Credentials displayed ON screen once
 - [ ] Password file created for later cleanup
 - [ ] Bridge RPC responds to `!status` command
+- [ ] Matrix connection shows `logged_in: true`
 
 ### US-4: Create First Agent
 
