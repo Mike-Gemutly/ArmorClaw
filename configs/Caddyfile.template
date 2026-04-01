@@ -32,7 +32,7 @@ ${DOMAIN_NAME} {
 
     # ArmorClaw Bridge API
     handle /api* {
-        reverse_proxy bridge:8443
+        reverse_proxy armorclaw-sentinel:8080
     }
 
     # Health check endpoint
@@ -42,11 +42,11 @@ ${DOMAIN_NAME} {
 
     # Discovery endpoint
     handle /discover {
-        reverse_proxy bridge:8443
+        reverse_proxy armorclaw-sentinel:8080
     }
 
     # Default fallback to bridge
     handle {
-        reverse_proxy bridge:8443
+        reverse_proxy armorclaw-sentinel:8080
     }
 }
