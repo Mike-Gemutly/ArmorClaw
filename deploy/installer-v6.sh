@@ -220,11 +220,37 @@ generate_secrets() {
     KEYSTORE_SECRET=""
     MATRIX_SECRET=""
 
-    ADMIN_TOKEN=$(generate_admin_token)
-    KEYSTORE_SECRET=$(generate_keystore_secret)
-    MATRIX_SECRET=$(generate_matrix_secret)
+    local env_file="/etc/armorclaw/.env"
+    if [[ -f "$env_file" ]]; then
+        print_info "Found existing .env file, preserving secrets..."
 
-    print_success "Secrets generated (only admin token will be displayed)"
+        ADMIN_TOKEN=$(grep "^ARMORCLAW_ADMIN_TOKEN=" "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "\"'")
+        KEYSTORE_SECRET=$(grep "^ARMORCLAW_KEYSTORE_SECRET=" "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "\"'")
+        MATRIX_SECRET=$(grep "^ARMORCLAW_MATRIX_SECRET=" "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "\"'")
+    fi
+
+    if [[ -z "$ADMIN_TOKEN" ]]; then
+        ADMIN_TOKEN=$(generate_admin_token)
+        print_info "Generated new ARMORCLAW_ADMIN_TOKEN"
+    else
+        print_info "Preserved existing ARMORCLAW_ADMIN_TOKEN"
+    fi
+
+    if [[ -z "$KEYSTORE_SECRET" ]]; then
+        KEYSTORE_SECRET=$(generate_keystore_secret)
+        print_info "Generated new ARMORCLAW_KEYSTORE_SECRET"
+    else
+        print_info "Preserved existing ARMORCLAW_KEYSTORE_SECRET"
+    fi
+
+    if [[ -z "$MATRIX_SECRET" ]]; then
+        MATRIX_SECRET=$(generate_matrix_secret)
+        print_info "Generated new ARMORCLAW_MATRIX_SECRET"
+    else
+        print_info "Preserved existing ARMORCLAW_MATRIX_SECRET"
+    fi
+
+    print_success "Secrets processed (only admin token will be displayed if new)"
 
     export ADMIN_TOKEN
     export KEYSTORE_SECRET
