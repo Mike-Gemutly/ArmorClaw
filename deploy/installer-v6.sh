@@ -188,6 +188,50 @@ detect_deployment_mode() {
 }
 
 ########################################
+# Secret Generation
+########################################
+
+generate_admin_token() {
+    local token
+    token=$(openssl rand -base64 32 | tr -d '=+/')
+    echo "$token"
+}
+
+generate_keystore_secret() {
+    local secret
+    secret=$(openssl rand -base64 32 | tr -d '=+/')
+    echo "$secret"
+}
+
+generate_matrix_secret() {
+    local secret
+    secret=$(openssl rand -base64 32 | tr -d '=+/')
+    echo "$secret"
+}
+
+generate_secrets() {
+    print_step "Generating Secure Secrets"
+
+    if ! command_exists openssl; then
+        fail "openssl is required for secret generation"
+    fi
+
+    ADMIN_TOKEN=""
+    KEYSTORE_SECRET=""
+    MATRIX_SECRET=""
+
+    ADMIN_TOKEN=$(generate_admin_token)
+    KEYSTORE_SECRET=$(generate_keystore_secret)
+    MATRIX_SECRET=$(generate_matrix_secret)
+
+    print_success "Secrets generated (only admin token will be displayed)"
+
+    export ADMIN_TOKEN
+    export KEYSTORE_SECRET
+    export MATRIX_SECRET
+}
+
+########################################
 # Prerequisite Checks
 ########################################
 
@@ -224,6 +268,17 @@ detect_docker_compose() {
         DOCKER_COMPOSE="docker compose" # Fallback/Assumption
     fi
     export DOCKER_COMPOSE
+}
+
+build_compose_cmd() {
+    COMPOSE_CMD="${DOCKER_COMPOSE}"
+
+    if [[ "${MODE:-native}" == "sentinel" ]]; then
+        COMPOSE_CMD="${COMPOSE_CMD} --profile sentinel"
+    fi
+
+    print_info "Docker Compose command: ${COMPOSE_CMD}"
+    export COMPOSE_CMD
 }
 
 ########################################
@@ -380,8 +435,9 @@ download_script() {
 run_setup() {
   export REPO VERSION
   export ARMORCLAW_API_KEY ARMORCLAW_ADMIN_USERNAME ARMORCLAW_ADMIN_PASSWORD
-  export DOCKER_COMPOSE CONDUIT_VERSION CONDUIT_IMAGE
+  export DOCKER_COMPOSE COMPOSE_CMD CONDUIT_VERSION CONDUIT_IMAGE
   export DOMAIN MODE EMAIL PUBLIC_IP
+  export ADMIN_TOKEN KEYSTORE_SECRET MATRIX_SECRET
 
   case "$INSTALL_MODE" in
     quick)
@@ -427,6 +483,8 @@ main() {
   print_info "Conduit image: $CONDUIT_IMAGE"
 
   detect_deployment_mode
+  build_compose_cmd
+  generate_secrets
 
   print_step "System Discovery"
   detect_os
@@ -442,6 +500,10 @@ main() {
 
   print_step "Installation Result"
   print_success "Installation complete!"
+  echo ""
+  print_info "Your Admin Token (save this securely):"
+  echo -e "${BOLD}${GREEN}$ADMIN_TOKEN${NC}"
+  echo ""
 }
 
 main "$@"
