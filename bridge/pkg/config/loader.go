@@ -89,6 +89,24 @@ func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("ARMORCLAW_DAEMONIZE"); v != "" {
 		cfg.Server.Daemonize = v == "true" || v == "1"
 	}
+	if v := os.Getenv("ARMORCLAW_SERVER_MODE"); v != "" {
+		cfg.Server.Mode = v
+	}
+	if v := os.Getenv("ARMORCLAW_RPC_TRANSPORT"); v != "" {
+		cfg.Server.RPCTransport = v
+	}
+	if v := os.Getenv("ARMORCLAW_LISTEN_ADDR"); v != "" {
+		cfg.Server.ListenAddr = v
+	}
+	if v := os.Getenv("ARMORCLAW_PUBLIC_BASE_URL"); v != "" {
+		cfg.Server.PublicBaseURL = v
+	}
+	if v := os.Getenv("ARMORCLAW_ADMIN_TOKEN"); v != "" {
+		cfg.Server.AdminToken = v
+	}
+	if v := os.Getenv("ARMORCLAW_AUTH"); v != "" {
+		cfg.Server.Auth = v
+	}
 
 	// Keystore overrides
 	if v := os.Getenv("ARMORCLAW_KEYSTORE_DB"); v != "" {

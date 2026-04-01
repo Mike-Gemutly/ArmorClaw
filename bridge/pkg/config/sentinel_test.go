@@ -43,3 +43,82 @@ func TestServerConfigSentinelFields(t *testing.T) {
 		assert.Equal(t, "test-token-12345", cfg.Server.AdminToken, "AdminToken should be overridden by env")
 	})
 }
+
+func TestValidateSentinelMode(t *testing.T) {
+	t.Run("sentinel mode requires ListenAddr", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = "sentinel"
+		cfg.Server.ListenAddr = ""
+		cfg.Server.PublicBaseURL = "https://example.com"
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server.listen_addr is required")
+	})
+
+	t.Run("sentinel mode requires PublicBaseURL", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = "sentinel"
+		cfg.Server.ListenAddr = "0.0.0.0:8080"
+		cfg.Server.PublicBaseURL = ""
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server.public_base_url is required")
+	})
+
+	t.Run("sentinel mode with all required fields", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = "sentinel"
+		cfg.Server.ListenAddr = "0.0.0.0:8080"
+		cfg.Server.PublicBaseURL = "https://example.com"
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.NoError(t, err)
+	})
+
+	t.Run("native mode requires SocketPath", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = "native"
+		cfg.Server.SocketPath = ""
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server.socket_path is required")
+	})
+
+	t.Run("native mode with valid SocketPath", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = "native"
+		cfg.Server.SocketPath = filepath.Join(os.TempDir(), "armorclaw", "test.sock")
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.NoError(t, err)
+	})
+
+	t.Run("invalid mode value", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = "invalid"
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server.mode must be 'native' or 'sentinel'")
+	})
+
+	t.Run("mode defaults to native", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Server.Mode = ""
+		cfg.Server.SocketPath = filepath.Join(os.TempDir(), "armorclaw", "test.sock")
+		cfg.Keystore.DBPath = filepath.Join(os.TempDir(), "test-keystore.db")
+
+		err := cfg.Validate()
+		assert.NoError(t, err)
+		assert.Equal(t, "native", cfg.Server.Mode)
+	})
+}

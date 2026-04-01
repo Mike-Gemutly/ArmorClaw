@@ -988,8 +988,34 @@ func ConfigPaths() []string {
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	// Validate server configuration
-	if c.Server.SocketPath == "" {
-		return fmt.Errorf("%w: server.socket_path is required", ErrInvalidConfig)
+	if c.Server.Mode == "" {
+		c.Server.Mode = "native"
+	}
+
+	validModes := map[string]bool{
+		"native":   true,
+		"sentinel": true,
+	}
+	if !validModes[c.Server.Mode] {
+		return fmt.Errorf("%w: server.mode must be 'native' or 'sentinel', got '%s'", ErrInvalidConfig, c.Server.Mode)
+	}
+
+	if c.Server.Mode == "sentinel" {
+		if c.Server.ListenAddr == "" {
+			return fmt.Errorf("%w: server.listen_addr is required when server.mode is 'sentinel'", ErrInvalidConfig)
+		}
+		if c.Server.PublicBaseURL == "" {
+			return fmt.Errorf("%w: server.public_base_url is required when server.mode is 'sentinel'", ErrInvalidConfig)
+		}
+	} else {
+		if c.Server.SocketPath == "" {
+			return fmt.Errorf("%w: server.socket_path is required when server.mode is 'native'", ErrInvalidConfig)
+		}
+
+		socketDir := filepath.Dir(c.Server.SocketPath)
+		if err := validateDirectoryWritable(socketDir); err != nil {
+			return fmt.Errorf("%w: socket directory %s: %w", ErrInvalidConfig, socketDir, err)
+		}
 	}
 
 	// Validate authentication mode
@@ -1003,12 +1029,6 @@ func (c *Config) Validate() error {
 
 	if !validAuthModes[c.Server.Auth] {
 		return fmt.Errorf("%w: server.auth must be 'token', got '%s'. auth: none is deprecated and not allowed for production", ErrInvalidConfig, c.Server.Auth)
-	}
-
-	// Validate socket directory exists or can be created
-	socketDir := filepath.Dir(c.Server.SocketPath)
-	if err := validateDirectoryWritable(socketDir); err != nil {
-		return fmt.Errorf("%w: socket directory %s: %w", ErrInvalidConfig, socketDir, err)
 	}
 
 	// Validate keystore configuration
