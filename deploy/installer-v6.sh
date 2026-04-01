@@ -231,6 +231,64 @@ generate_secrets() {
     export MATRIX_SECRET
 }
 
+generate_env_file() {
+    print_step "Generating .env Configuration File"
+
+    local env_dir="/etc/armorclaw"
+    local env_file="${env_dir}/.env"
+    local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+
+    if [[ ! -d "$env_dir" ]]; then
+        print_info "Creating $env_dir"
+        $SUDO mkdir -p "$env_dir"
+    fi
+
+    if [[ -f "$env_file" ]]; then
+        print_warning "Backing up existing .env to $backup_file"
+        $SUDO cp "$env_file" "$backup_file"
+    fi
+
+    local env_content=""
+    env_content+="# ArmorClaw Environment Configuration\n"
+    env_content+="# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")\n"
+    env_content+="\n"
+    env_content+="# Server Mode\n"
+    env_content+="ARMORCLAW_SERVER_MODE=${MODE}\n"
+    env_content+="\n"
+    env_content+="# RPC Configuration\n"
+    if [[ "$MODE" == "sentinel" ]]; then
+        env_content+="ARMORCLAW_RPC_TRANSPORT=tcp\n"
+        env_content+="ARMORCLAW_LISTEN_ADDR=0.0.0.0:8080\n"
+        env_content+="ARMORCLAW_PUBLIC_BASE_URL=https://${DOMAIN}\n"
+        env_content+="ARMORCLAW_EMAIL=${EMAIL}\n"
+    else
+        env_content+="ARMORCLAW_RPC_TRANSPORT=unix\n"
+    fi
+    env_content+="\n"
+    env_content+="# Secrets\n"
+    env_content+="ARMORCLAW_ADMIN_TOKEN=${ADMIN_TOKEN}\n"
+    env_content+="ARMORCLAW_KEYSTORE_SECRET=${KEYSTORE_SECRET}\n"
+    env_content+="ARMORCLAW_MATRIX_SECRET=${MATRIX_SECRET}\n"
+    env_content+="\n"
+    env_content+="# Network\n"
+    env_content+="ARMORCLAW_PUBLIC_IP=${PUBLIC_IP}\n"
+    env_content+="\n"
+    env_content+="# Matrix Configuration\n"
+    env_content+="ARMORCLAW_MATRIX_ENABLED=true\n"
+    if [[ "$MODE" == "sentinel" ]]; then
+        env_content+="ARMORCLAW_MATRIX_HOMESERVER_URL=https://${DOMAIN}:6167\n"
+    else
+        env_content+="ARMORCLAW_MATRIX_HOMESERVER_URL=http://127.0.0.1:6167\n"
+    fi
+
+    print_info "Writing $env_file"
+    printf "%b" "$env_content" | $SUDO tee "$env_file" > /dev/null
+
+    $SUDO chmod 0600 "$env_file"
+
+    print_success ".env file created with permissions 0600"
+}
+
 ########################################
 # Prerequisite Checks
 ########################################
@@ -485,6 +543,7 @@ main() {
   detect_deployment_mode
   build_compose_cmd
   generate_secrets
+  generate_env_file
 
   print_step "System Discovery"
   detect_os
