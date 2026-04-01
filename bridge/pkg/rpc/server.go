@@ -118,6 +118,11 @@ type MatrixHealthResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type HealthCheckResponse struct {
+	Status     string            `json:"status"`
+	Components map[string]string `json:"components"`
+}
+
 type HandlerFunc func(ctx context.Context, req *Request) (interface{}, *ErrorObj)
 
 type Server struct {
@@ -137,10 +142,17 @@ type Server struct {
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
 	heartbeats      sync.Map
+	metrics         *Metrics
+	listener        net.Listener
+	shutdownCh      chan struct{}
+	rpcTransport    string
+	listenAddr      string
 }
 
 type Config struct {
 	SocketPath      string
+	RPCTransport    string
+	ListenAddr      string
 	Keystore        Keystore
 	Matrix          MatrixAdapter
 	AIService       *ai.AIService
@@ -154,6 +166,7 @@ type Config struct {
 	SkillGate       interfaces.SkillGate
 	EventBus        *eventbus.EventBus
 	HardeningStore  trust.Store
+	Metrics         *Metrics
 }
 
 func New(cfg Config) (*Server, error) {
@@ -177,6 +190,10 @@ func New(cfg Config) (*Server, error) {
 		eventBus:        cfg.EventBus,
 		handlers:        make(map[string]HandlerFunc, 32),
 		hardeningStore:  cfg.HardeningStore,
+		metrics:         cfg.Metrics,
+		shutdownCh:      make(chan struct{}),
+		rpcTransport:    cfg.RPCTransport,
+		listenAddr:      cfg.ListenAddr,
 	}
 
 	s.registerHandlers()
@@ -204,6 +221,10 @@ func (s *Server) Handle(ctx context.Context, req *Request) (resp *Response) {
 
 	if req == nil {
 		return errorResponse(nil, InvalidRequest, "request is nil")
+	}
+
+	if s.metrics != nil {
+		s.metrics.IncrementCounter("armorclaw_rpc_requests_total", req.Method)
 	}
 
 	isNotification := req.ID == nil
@@ -272,6 +293,50 @@ func isInterfaceNil(i interface{}) bool {
 		return v.IsNil()
 	}
 	return false
+}
+
+func (s *Server) handleHealthCheck(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	components := make(map[string]string)
+	status := "unhealthy"
+
+	components["bridge"] = "ok"
+
+	if !isInterfaceNil(s.matrix) {
+		if s.matrix.IsLoggedIn() {
+			components["matrix"] = "connected"
+		} else {
+			components["matrix"] = "disconnected"
+		}
+	} else {
+		components["matrix"] = "disconnected"
+	}
+
+	if !isInterfaceNil(s.keystore) {
+		ks, ok := s.keystore.(*keystore.Keystore)
+		if ok && ks != nil {
+			if err := ks.Open(); err != nil {
+				components["keystore"] = "error"
+			} else {
+				ks.Close()
+				components["keystore"] = "initialized"
+			}
+		} else {
+			components["keystore"] = "initialized"
+		}
+	} else {
+		components["keystore"] = "error"
+	}
+
+	if components["bridge"] == "ok" && components["matrix"] == "connected" && components["keystore"] == "initialized" {
+		status = "healthy"
+	} else if components["bridge"] == "ok" {
+		status = "degraded"
+	}
+
+	return HealthCheckResponse{
+		Status:     status,
+		Components: components,
+	}, nil
 }
 
 // Matrix Handlers
@@ -365,6 +430,10 @@ func (s *Server) handleMatrixSend(ctx context.Context, req *Request) (interface{
 			Code:    InternalError,
 			Message: fmt.Errorf("send failed: %w", err).Error(),
 		}
+	}
+
+	if s.metrics != nil {
+		s.metrics.IncrementCounter("armorclaw_matrix_messages_total", "sent")
 	}
 
 	return map[string]interface{}{
@@ -645,6 +714,10 @@ func (s *Server) handleStoreKey(ctx context.Context, req *Request) (interface{},
 		return nil, &ErrorObj{Code: InternalError, Message: "failed to store key: " + err.Error()}
 	}
 
+	if s.metrics != nil {
+		s.metrics.IncrementCounter("armorclaw_keystore_operations_total", "store")
+	}
+
 	return map[string]interface{}{
 		"success":      true,
 		"id":           params.ID,
@@ -796,6 +869,7 @@ func (s *Server) registerHandlers() {
 		"hardening.status":          s.handleHardeningStatus,
 		"hardening.ack":             s.handleHardeningAck,
 		"hardening.rotate_password": s.handleHardeningRotatePassword,
+		"health.check":              s.handleHealthCheck,
 		"mobile.heartbeat":          s.handleMobileHeartbeat,
 	}
 
@@ -863,42 +937,49 @@ func (s *Server) Run(socketPath string) error {
 	var listener net.Listener
 	var err error
 
-	if runtime.GOOS == "windows" {
-		// Use TCP fallback on Windows
-		addr := "127.0.0.1:6168"
-		listener, err = net.Listen("tcp", addr)
+	useTCP := false
+	listenAddr := socketPath
+
+	if s.rpcTransport == "tcp" && s.listenAddr != "" {
+		useTCP = true
+		listenAddr = s.listenAddr
+	}
+
+	if !useTCP && runtime.GOOS == "windows" {
+		useTCP = true
+		listenAddr = "127.0.0.1:6168"
+	}
+
+	if useTCP {
+		listener, err = net.Listen("tcp", listenAddr)
 		if err != nil {
-			return fmt.Errorf("failed to create TCP listener on %s: %w", addr, err)
+			return fmt.Errorf("failed to create TCP listener on %s: %w", listenAddr, err)
 		}
-		slog.Info("RPC transport: tcp (windows fallback)", "address", addr)
+		slog.Info("RPC server listening", "transport", "tcp", "address", listenAddr)
 	} else {
-		// Ensure directory exists
-		if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+		socketDir := filepath.Dir(listenAddr)
+		if err := os.MkdirAll(socketDir, 0755); err != nil {
 			return fmt.Errorf("failed to create socket directory: %w", err)
 		}
 
-		// Remove existing socket file if present (cleanup stale socket)
-		if _, err := os.Stat(socketPath); err == nil {
-			if err := os.Remove(socketPath); err != nil {
-				return fmt.Errorf("failed to remove existing socket file: %w", err)
-			}
+		if _, err := os.Stat(listenAddr); err == nil {
+			os.Remove(listenAddr)
 		}
 
-		// Create Unix domain socket
-		listener, err = net.Listen("unix", socketPath)
+		listener, err = net.Listen("unix", listenAddr)
 		if err != nil {
-			return fmt.Errorf("failed to create Unix socket: %w", err)
+			return fmt.Errorf("failed to create Unix socket at %s: %w", listenAddr, err)
 		}
-		slog.Info("RPC transport: unix socket", "path", socketPath)
 
-		// Set appropriate permissions (mode 660)
-		if err := os.Chmod(socketPath, 0660); err != nil {
+		if err := os.Chmod(listenAddr, 0660); err != nil {
 			slog.Warn("failed to set socket permissions", "error", err)
 		}
-	}
-	defer listener.Close()
 
-	// Create channel to signal shutdown
+		slog.Info("RPC server listening", "transport", "unix", "path", listenAddr)
+	}
+
+	s.listener = listener
+
 	shutdown := make(chan struct{})
 	go func() {
 		sigint := make(chan os.Signal, 1)
@@ -908,7 +989,6 @@ func (s *Server) Run(socketPath string) error {
 		close(shutdown)
 	}()
 
-	// Main event loop
 	for {
 		select {
 		case <-shutdown:

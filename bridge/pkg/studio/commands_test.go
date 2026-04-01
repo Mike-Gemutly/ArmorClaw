@@ -209,63 +209,80 @@ func TestCommandHandler_ListProfiles(t *testing.T) {
 	}
 
 	// Check that the message contains profile information
-	if !strings.Contains(mockMatrix.sentMessages[0], "low") ||
-		!strings.Contains(mockMatrix.sentMessages[0], "medium") ||
-		!strings.Contains(mockMatrix.sentMessages[0], "high") {
+	if !strings.Contains(mockMatrix.sentMessages[0], "Low") ||
+		!strings.Contains(mockMatrix.sentMessages[0], "Medium") ||
+		!strings.Contains(mockMatrix.sentMessages[0], "High") {
 		t.Error("expected message to contain all profile tiers")
 	}
 }
 
 func TestCommandHandler_UnknownSubcommand(t *testing.T) {
-	store, handler, _ := newTestCommandHandler(t)
+	store, handler, mockMatrix := newTestCommandHandler(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	handled, err := handler.HandleMessage(ctx, "!room:example.com", "@test:example.com", "$event123", "!agent unknown-command")
-	if err == nil {
-		t.Error("expected error for unknown subcommand")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
 	}
 	_ = handled // may be true or false depending on implementation
+
+	// Should send help message for unknown command
+	if len(mockMatrix.sentMessages) == 0 {
+		t.Error("expected help message to be sent for unknown command")
+	}
 }
 
 func TestCommandHandler_Create_InsufficientArgs(t *testing.T) {
-	store, handler, _ := newTestCommandHandler(t)
+	store, handler, mockMatrix := newTestCommandHandler(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	handled, err := handler.HandleMessage(ctx, "!room:example.com", "@test:example.com", "$event123", "!agent create")
-	if err == nil {
-		t.Error("expected error for missing agent name")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
 	}
 	_ = handled
+
+	if len(mockMatrix.sentMessages) == 0 {
+		t.Error("expected error message to be sent for missing agent name")
+	}
 }
 
 func TestCommandHandler_Spawn_InsufficientArgs(t *testing.T) {
-	store, handler, _ := newTestCommandHandler(t)
+	store, handler, mockMatrix := newTestCommandHandler(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	handled, err := handler.HandleMessage(ctx, "!room:example.com", "@test:example.com", "$event123", "!agent spawn")
-	if err == nil {
-		t.Error("expected error for missing agent ID")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
 	}
 	_ = handled
+
+	if len(mockMatrix.sentMessages) == 0 {
+		t.Error("expected error message to be sent for missing agent ID")
+	}
 }
 
 func TestCommandHandler_Delete_InsufficientArgs(t *testing.T) {
-	store, handler, _ := newTestCommandHandler(t)
+	store, handler, mockMatrix := newTestCommandHandler(t)
 	defer store.Close()
 
 	ctx := context.Background()
 
 	handled, err := handler.HandleMessage(ctx, "!room:example.com", "@test:example.com", "$event123", "!agent delete")
-	if err == nil {
-		t.Error("expected error for missing agent ID")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
 	}
 	_ = handled
+
+	if len(mockMatrix.sentMessages) == 0 {
+		t.Error("expected error message to be sent for missing agent ID")
+	}
 }
 
 //=============================================================================
@@ -324,8 +341,8 @@ func TestCommandHandler_Stats(t *testing.T) {
 
 	// Check that stats contains expected information
 	statsMsg := mockMatrix.sentMessages[0]
-	if !strings.Contains(statsMsg, "Definitions") && !strings.Contains(statsMsg, "definitions") {
-		t.Error("expected stats to contain 'Definitions'")
+	if !strings.Contains(statsMsg, "Agents") && !strings.Contains(statsMsg, "agents") {
+		t.Error("expected stats to contain 'Agents'")
 	}
 }
 

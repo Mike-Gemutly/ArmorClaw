@@ -1814,7 +1814,7 @@ func runBridgeServer(cliCfg cliConfig) {
 			log.Fatalf("Failed to migrate keystore: %v", err)
 		}
 		log.Println("✓ Keystore migration completed successfully")
-		log.Println("  Key persisted to file: %s", cfg.Keystore.DBPath)
+		log.Printf("  Key persisted to file: %s", cfg.Keystore.DBPath)
 		log.Println("  You can now restart without --migrate-keystore flag")
 	}
 
@@ -2533,8 +2533,13 @@ func runBridgeServer(cliCfg cliConfig) {
 	hardeningStore := trust.NewKeystoreHardeningStore(ks.GetDB())
 	log.Println("Hardening store initialized")
 
+	metrics := rpc.NewMetrics()
+	log.Println("Metrics initialized")
+
 	server, err := rpc.New(rpc.Config{
 		SocketPath:      cfg.Server.SocketPath,
+		RPCTransport:    cfg.Server.RPCTransport,
+		ListenAddr:      cfg.Server.ListenAddr,
 		Keystore:        ks,
 		Matrix:          matrixAdapter,
 		AIService:       ai.NewAIService(ks),
@@ -2547,10 +2552,13 @@ func runBridgeServer(cliCfg cliConfig) {
 		SkillManager:    skillMgr,
 		EventBus:        eventBus,
 		HardeningStore:  hardeningStore,
+		Metrics:         metrics,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
+
+	log.Printf("Starting ArmorClaw Bridge in %s mode with %s transport", cfg.Server.Mode, cfg.Server.RPCTransport)
 
 	// Start the RPC server in a goroutine so it doesn't block other services (e.g. mDNS)
 	go func() {
@@ -2610,6 +2618,7 @@ func runBridgeServer(cliCfg cliConfig) {
 			PushGateway:      pushGW,
 			APIPath:          cfg.Discovery.APIPath,
 			WSPath:           cfg.Discovery.WSPath,
+			Metrics:          metrics,
 		})
 		if err != nil {
 			log.Printf("Warning: Failed to create HTTP discovery server: %v", err)

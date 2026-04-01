@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/rpc"
 )
 
 // HTTPServer provides HTTP endpoints for bridge discovery
@@ -17,6 +19,7 @@ type HTTPServer struct {
 	mu       sync.RWMutex
 	server   *http.Server
 	info     *BridgeInfo
+	metrics  *rpc.Metrics
 	running  bool
 	shutdown context.CancelFunc
 }
@@ -30,6 +33,7 @@ type HTTPServerConfig struct {
 	PushGateway      string
 	APIPath          string
 	WSPath           string
+	Metrics          *rpc.Metrics
 }
 
 // NewHTTPServer creates a new HTTP discovery server
@@ -72,7 +76,8 @@ func NewHTTPServer(config HTTPServerConfig) (*HTTPServer, error) {
 	}
 
 	return &HTTPServer{
-		info: info,
+		info:    info,
+		metrics: config.Metrics,
 	}, nil
 }
 
@@ -92,6 +97,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/discovery", s.handleDiscovery)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", s.info.Port)
 	s.server = &http.Server{
@@ -175,16 +181,22 @@ func (s *HTTPServer) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"version":           info.Version,
-		"mode":              info.Mode,
-		"service_name":      info.Name,
-		"port":              info.Port,
-		"tls":               info.TLS,
-		"api_url":           fmt.Sprintf("%s://%s:%d%s", protocol, hostname, info.Port, info.APIPath),
-		"ws_url":            fmt.Sprintf("%ss://%s:%d%s", map[bool]string{true: "wss", false: "ws"}[info.TLS], hostname, info.Port, info.WSPath),
-		"matrix_homeserver": info.MatrixHomeserver,
-		"push_gateway":      info.PushGateway,
-		"txt":               info.TXT,
+		"version":                info.Version,
+		"mode":                   info.Mode,
+		"service_name":           info.Name,
+		"port":                   info.Port,
+		"tls":                    info.TLS,
+		"api_url":                fmt.Sprintf("%s://%s:%d%s", protocol, hostname, info.Port, info.APIPath),
+		"ws_url":                 fmt.Sprintf("%ss://%s:%d%s", map[bool]string{true: "wss", false: "ws"}[info.TLS], hostname, info.Port, info.WSPath),
+		"matrix_homeserver":      info.MatrixHomeserver,
+		"push_gateway":           info.PushGateway,
+		"txt":                    info.TXT,
+		"provisioning_available": info.ProvisioningReady,
+		"server_name":            info.Name,
+	}
+
+	if info.PublicBaseURL != "" {
+		response["public_base_url"] = info.PublicBaseURL
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -198,4 +210,21 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Unix(),
 		"service":   "armorclaw-discovery",
 	})
+}
+
+func (s *HTTPServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+
+	if s.metrics != nil {
+		s.metrics.UpdateUptime()
+		w.Write([]byte(s.metrics.Export()))
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("metrics not initialized\n"))
+	}
 }

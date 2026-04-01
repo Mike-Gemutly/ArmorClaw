@@ -133,6 +133,21 @@ type ServerConfig struct {
 	// Valid values: "token" (Matrix token-based authentication)
 	// Deprecated: "none" is not allowed for production deployments
 	Auth string `toml:"auth" env:"ARMORCLAW_AUTH"`
+
+	// Mode is the server deployment mode: "native" (Unix sockets) or "sentinel" (TCP + TLS)
+	Mode string `toml:"mode" env:"ARMORCLAW_SERVER_MODE"`
+
+	// RPCTransport is the RPC transport type: "unix" or "tcp"
+	RPCTransport string `toml:"rpc_transport" env:"ARMORCLAW_RPC_TRANSPORT"`
+
+	// ListenAddr is the TCP listen address for sentinel mode (e.g., "0.0.0.0:8080")
+	ListenAddr string `toml:"listen_addr" env:"ARMORCLAW_LISTEN_ADDR"`
+
+	// PublicBaseURL is the public URL for sentinel mode (e.g., "https://bridge.example.com")
+	PublicBaseURL string `toml:"public_base_url" env:"ARMORCLAW_PUBLIC_BASE_URL"`
+
+	// AdminToken is the generated admin token for Sentinel mode
+	AdminToken string `toml:"admin_token" env:"ARMORCLAW_ADMIN_TOKEN"`
 }
 
 // KeystoreConfig holds keystore-specific configuration
@@ -772,10 +787,12 @@ type ErrorSystemConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			SocketPath: filepath.Join(os.TempDir(), "armorclaw", "bridge.sock"),
-			PidFile:    filepath.Join(os.TempDir(), "armorclaw", "bridge.pid"),
-			Daemonize:  false,
-			Auth:       "token",
+			Mode:         "native", // Default to native mode (Unix socket)
+			RPCTransport: "unix",   // Default to Unix socket
+			SocketPath:   filepath.Join(os.TempDir(), "armorclaw", "bridge.sock"),
+			PidFile:      filepath.Join(os.TempDir(), "armorclaw", "bridge.pid"),
+			Daemonize:    false,
+			Auth:         "token",
 		},
 		Keystore: KeystoreConfig{
 			DBPath:    "/var/lib/armorclaw/keystore.db",

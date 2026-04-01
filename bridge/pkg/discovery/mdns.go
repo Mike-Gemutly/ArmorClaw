@@ -33,19 +33,21 @@ const (
 
 // BridgeInfo contains discovered bridge information
 type BridgeInfo struct {
-	Name             string            `json:"name"`
-	Host             string            `json:"host"`
-	Port             int               `json:"port"`
-	IPs              []net.IP          `json:"ips"`
-	TXT              map[string]string `json:"txt"`
-	Version          string            `json:"version"`
-	Mode             string            `json:"mode"`
-	Hardware         string            `json:"hardware,omitempty"`
-	MatrixHomeserver string            `json:"matrix_homeserver,omitempty"`
-	PushGateway      string            `json:"push_gateway,omitempty"`
-	APIPath          string            `json:"api_path,omitempty"`
-	WSPath           string            `json:"ws_path,omitempty"`
-	TLS              bool              `json:"tls"`
+	Name              string            `json:"name"`
+	Host              string            `json:"host"`
+	Port              int               `json:"port"`
+	IPs               []net.IP          `json:"ips"`
+	TXT               map[string]string `json:"txt"`
+	Version           string            `json:"version"`
+	Mode              string            `json:"mode"`
+	Hardware          string            `json:"hardware,omitempty"`
+	MatrixHomeserver  string            `json:"matrix_homeserver,omitempty"`
+	PushGateway       string            `json:"push_gateway,omitempty"`
+	APIPath           string            `json:"api_path,omitempty"`
+	WSPath            string            `json:"ws_path,omitempty"`
+	TLS               bool              `json:"tls"`
+	PublicBaseURL     string            `json:"public_base_url,omitempty"`
+	ProvisioningReady bool              `json:"provisioning_ready"`
 }
 
 // Server represents an mDNS server that advertises the bridge

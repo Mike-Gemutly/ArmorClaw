@@ -345,11 +345,12 @@ func (s *SQLiteStore) GetDefinition(id string) (*AgentDefinition, error) {
 	def := &AgentDefinition{}
 	var skillsJSON, piiJSON string
 	var isActive int
+	var createdAt, updatedAt int64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, description, skills, pii_access, resource_tier, created_by, created_at, updated_at, is_active
 		FROM agent_definitions WHERE id = ?
-	`, id).Scan(&def.ID, &def.Name, &def.Description, &skillsJSON, &piiJSON, &def.ResourceTier, &def.CreatedBy, &def.CreatedAt, &def.UpdatedAt, &isActive)
+	`, id).Scan(&def.ID, &def.Name, &def.Description, &skillsJSON, &piiJSON, &def.ResourceTier, &def.CreatedBy, &createdAt, &updatedAt, &isActive)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("definition not found: %s", id)
@@ -368,8 +369,8 @@ func (s *SQLiteStore) GetDefinition(id string) (*AgentDefinition, error) {
 
 	def.IsActive = isActive == 1
 	// Convert timestamps back to time.Time
-	def.CreatedAt = time.UnixMilli(def.CreatedAt.UnixMilli())
-	def.UpdatedAt = time.UnixMilli(def.UpdatedAt.UnixMilli())
+	def.CreatedAt = time.UnixMilli(createdAt)
+	def.UpdatedAt = time.UnixMilli(updatedAt)
 
 	return def, nil
 }
@@ -382,11 +383,12 @@ func (s *SQLiteStore) GetDefinitionByName(name string) (*AgentDefinition, error)
 	def := &AgentDefinition{}
 	var skillsJSON, piiJSON string
 	var isActive int
+	var createdAt, updatedAt int64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, description, skills, pii_access, resource_tier, created_by, created_at, updated_at, is_active
 		FROM agent_definitions WHERE name = ?
-	`, name).Scan(&def.ID, &def.Name, &def.Description, &skillsJSON, &piiJSON, &def.ResourceTier, &def.CreatedBy, &def.CreatedAt, &def.UpdatedAt, &isActive)
+	`, name).Scan(&def.ID, &def.Name, &def.Description, &skillsJSON, &piiJSON, &def.ResourceTier, &def.CreatedBy, &createdAt, &updatedAt, &isActive)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("definition not found: %s", name)
@@ -404,6 +406,8 @@ func (s *SQLiteStore) GetDefinitionByName(name string) (*AgentDefinition, error)
 	}
 
 	def.IsActive = isActive == 1
+	def.CreatedAt = time.UnixMilli(createdAt)
+	def.UpdatedAt = time.UnixMilli(updatedAt)
 	return def, nil
 }
 
@@ -429,8 +433,9 @@ func (s *SQLiteStore) ListDefinitions(activeOnly bool) ([]*AgentDefinition, erro
 		def := &AgentDefinition{}
 		var skillsJSON, piiJSON string
 		var isActive int
+		var createdAt, updatedAt int64
 
-		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &skillsJSON, &piiJSON, &def.ResourceTier, &def.CreatedBy, &def.CreatedAt, &def.UpdatedAt, &isActive); err != nil {
+		if err := rows.Scan(&def.ID, &def.Name, &def.Description, &skillsJSON, &piiJSON, &def.ResourceTier, &def.CreatedBy, &createdAt, &updatedAt, &isActive); err != nil {
 			return nil, fmt.Errorf("failed to scan definition: %w", err)
 		}
 
@@ -443,6 +448,8 @@ func (s *SQLiteStore) ListDefinitions(activeOnly bool) ([]*AgentDefinition, erro
 		}
 
 		def.IsActive = isActive == 1
+		def.CreatedAt = time.UnixMilli(createdAt)
+		def.UpdatedAt = time.UnixMilli(updatedAt)
 		definitions = append(definitions, def)
 	}
 
@@ -542,12 +549,13 @@ func (s *SQLiteStore) GetSkill(id string) (*Skill, error) {
 	defer s.mu.RUnlock()
 
 	skill := &Skill{}
-	var envVarsJSON sql.NullString
+	var envVarsJSON, containerImage sql.NullString
+	var createdAt int64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, description, category, container_image, required_env_vars, created_at
 		FROM skill_registry WHERE id = ?
-	`, id).Scan(&skill.ID, &skill.Name, &skill.Description, &skill.Category, &skill.ContainerImage, &envVarsJSON, &skill.CreatedAt)
+	`, id).Scan(&skill.ID, &skill.Name, &skill.Description, &skill.Category, &containerImage, &envVarsJSON, &createdAt)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("skill not found: %s", id)
@@ -556,12 +564,16 @@ func (s *SQLiteStore) GetSkill(id string) (*Skill, error) {
 		return nil, fmt.Errorf("failed to get skill: %w", err)
 	}
 
+	if containerImage.Valid {
+		skill.ContainerImage = containerImage.String
+	}
 	if envVarsJSON.Valid && envVarsJSON.String != "" {
 		if err := json.Unmarshal([]byte(envVarsJSON.String), &skill.RequiredEnvVars); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal env vars: %w", err)
 		}
 	}
 
+	skill.CreatedAt = time.UnixMilli(createdAt)
 	return skill, nil
 }
 
@@ -588,18 +600,23 @@ func (s *SQLiteStore) ListSkills(category string) ([]*Skill, error) {
 	var skills []*Skill
 	for rows.Next() {
 		skill := &Skill{}
-		var envVarsJSON sql.NullString
+		var envVarsJSON, containerImage sql.NullString
+		var createdAt int64
 
-		if err := rows.Scan(&skill.ID, &skill.Name, &skill.Description, &skill.Category, &skill.ContainerImage, &envVarsJSON, &skill.CreatedAt); err != nil {
+		if err := rows.Scan(&skill.ID, &skill.Name, &skill.Description, &skill.Category, &containerImage, &envVarsJSON, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan skill: %w", err)
 		}
 
+		if containerImage.Valid {
+			skill.ContainerImage = containerImage.String
+		}
 		if envVarsJSON.Valid && envVarsJSON.String != "" {
 			if err := json.Unmarshal([]byte(envVarsJSON.String), &skill.RequiredEnvVars); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal env vars: %w", err)
 			}
 		}
 
+		skill.CreatedAt = time.UnixMilli(createdAt)
 		skills = append(skills, skill)
 	}
 
@@ -659,11 +676,13 @@ func (s *SQLiteStore) GetPIIField(id string) (*PIIField, error) {
 
 	field := &PIIField{}
 	var requiresApproval int
+	var keystoreKey sql.NullString
+	var createdAt int64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, description, sensitivity, keystore_key, requires_approval, created_at
 		FROM pii_registry WHERE id = ?
-	`, id).Scan(&field.ID, &field.Name, &field.Description, &field.Sensitivity, &field.KeystoreKey, &requiresApproval, &field.CreatedAt)
+	`, id).Scan(&field.ID, &field.Name, &field.Description, &field.Sensitivity, &keystoreKey, &requiresApproval, &createdAt)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("PII field not found: %s", id)
@@ -672,7 +691,11 @@ func (s *SQLiteStore) GetPIIField(id string) (*PIIField, error) {
 		return nil, fmt.Errorf("failed to get PII field: %w", err)
 	}
 
+	if keystoreKey.Valid {
+		field.KeystoreKey = keystoreKey.String
+	}
 	field.RequiresApproval = requiresApproval == 1
+	field.CreatedAt = time.UnixMilli(createdAt)
 	return field, nil
 }
 
@@ -700,12 +723,18 @@ func (s *SQLiteStore) ListPIIFields(sensitivity string) ([]*PIIField, error) {
 	for rows.Next() {
 		field := &PIIField{}
 		var requiresApproval int
+		var keystoreKey sql.NullString
+		var createdAt int64
 
-		if err := rows.Scan(&field.ID, &field.Name, &field.Description, &field.Sensitivity, &field.KeystoreKey, &requiresApproval, &field.CreatedAt); err != nil {
+		if err := rows.Scan(&field.ID, &field.Name, &field.Description, &field.Sensitivity, &keystoreKey, &requiresApproval, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan PII field: %w", err)
 		}
 
+		if keystoreKey.Valid {
+			field.KeystoreKey = keystoreKey.String
+		}
 		field.RequiresApproval = requiresApproval == 1
+		field.CreatedAt = time.UnixMilli(createdAt)
 		fields = append(fields, field)
 	}
 
