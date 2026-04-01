@@ -30,31 +30,76 @@ services:
     container_name: armorclaw-sentinel
     restart: unless-stopped
     ports:
-      - "8081:8080" # Maps local tunnel port to container RPC
+      - "${ARMORCLAW_BRIDGE_HOST_PORT:-8081}:${ARMORCLAW_BRIDGE_CONTAINER_PORT:-8080}"
     environment:
       # LESSON: Disable aggressive container isolation for SSH tunnel access
       - ARMORCLAW_CONTAINER_MODE=false
-      - ARMORCLAW_RPC_TYPE=tcp
-      - ARMORCLAW_RPC_ADDR=0.0.0.0:8080
+      - ARMORCLAW_RPC_TYPE=${ARMORCLAW_RPC_TRANSPORT:-tcp}
+      - ARMORCLAW_RPC_ADDR=${ARMORCLAW_LISTEN_ADDR:-0.0.0.0:8080}
+      - ARMORCLAW_SERVER_MODE=${ARMORCLAW_SERVER_MODE:-native}
+      - ARMORCLAW_PUBLIC_BASE_URL=${ARMORCLAW_PUBLIC_BASE_URL:-}
       # Use your WSL/Shell Environment Variables
       - AI_API_KEY=${AI_API_KEY}
       - AI_PROVIDER=${AI_PROVIDER}
-      - ARMORCLAW_TOKEN=4f8e9b2a1c7d6e5f3a0b9c8d7e6f5a4b
-      - ARMORCLAW_KEYSTORE_SECRET=dmVyeXNlY3VyZWtleTMyYnl0ZXNsb25nZml4MTIzNDU=
+      - ARMORCLAW_TOKEN=${ARMORCLAW_ADMIN_TOKEN:-4f8e9b2a1c7d6e5f3a0b9c8d7e6f5a4b}
+      - ARMORCLAW_KEYSTORE_SECRET=${ARMORCLAW_KEYSTORE_SECRET:-dmVyeXNlY3VyZWtleTMyYnl0ZXNsb25nZml4MTIzNDU=}
+      - ARMORCLAW_MATRIX_SECRET=${ARMORCLAW_MATRIX_SECRET:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/armorclaw/data:/data
     # LESSON: Explicit flags to force network binding over Unix sockets
-    command: 
+    command:
       - --config
       - /data/config.toml
       - --socket
-      - "tcp://0.0.0.0:8080"
+      - "tcp://${ARMORCLAW_LISTEN_ADDR:-0.0.0.0:8080}"
       - --host
-      - "0.0.0.0"
+      - "${ARMORCLAW_HOST:-0.0.0.0}"
     networks:
       - matrix-net
       - bridge-net
+
+  # ========================================
+  # Caddy Reverse Proxy (Sentinel Mode Only)
+  # ========================================
+  # This service only starts when --profile sentinel is specified
+  # It provides HTTPS termination and routing for public deployments
+  caddy:
+    profiles: ["sentinel"]
+    image: caddy:latest
+    container_name: armorclaw-caddy
+    restart: unless-stopped
+
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+
+    volumes:
+      - ${CADDY_CONFIG_PATH:-/etc/armorclaw}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+    environment:
+      - ACME_AGREE=true
+      - EMAIL=${ARMORCLAW_EMAIL:-}
+
+    networks:
+      - matrix-net
+      - bridge-net
+
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
 
 networks:
   matrix-net:
@@ -66,3 +111,11 @@ networks:
     ipam:
       config:
         - subnet: 172.21.0.0/24
+
+volumes:
+  caddy_data:
+    driver: local
+    name: armorclaw-caddy-data
+  caddy_config:
+    driver: local
+    name: armorclaw-caddy-config

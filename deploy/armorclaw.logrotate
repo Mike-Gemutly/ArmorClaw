@@ -1,0 +1,49 @@
+# ArmorClaw Log Rotation Configuration
+# 
+# This configuration manages log rotation for ArmorClaw services.
+# Logs are rotated based on size to prevent disk space exhaustion.
+#
+# Log location: /var/log/armorclaw/*.log
+# Service: armorclaw-bridge (systemd)
+#
+# Rotation strategy:
+# - Size-based: rotate when log file reaches 100MB
+# - Retention: keep 10 compressed archived logs
+# - Compression: use gzip with delay for current log
+# - Permissions: restricted to root and adm group (640)
+
+/var/log/armorclaw/*.log {
+    # Rotate based on size (100MB threshold)
+    size 100M
+
+    # Keep 10 rotated logs before deleting oldest
+    rotate 10
+
+    # Compress rotated logs with gzip
+    compress
+
+    # Delay compression of the most recent rotated log
+    # This allows immediate access to the recent log
+    delaycompress
+
+    # Don't error if log files don't exist
+    missingok
+
+    # Don't rotate empty log files
+    notifempty
+
+    # Use date extensions for rotated files (e.g., .log-20250329)
+    dateext
+
+    # Create new log file with restricted permissions
+    # Mode 0640: owner read/write, group read only
+    # Owner: root (privileged system user)
+    # Group: adm (administrative group for log access)
+    create 0640 root adm
+
+    # Reload the bridge service after rotation
+    # This ensures logs continue writing to the new file
+    postrotate
+        systemctl reload armorclaw-bridge >/dev/null 2>&1 || true
+    endscript
+}

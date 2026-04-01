@@ -289,6 +289,64 @@ generate_env_file() {
     print_success ".env file created with permissions 0600"
 }
 
+generate_caddyfile() {
+    print_step "Generating Caddyfile Configuration"
+
+    # Only generate Caddyfile for sentinel mode
+    if [[ "$MODE" != "sentinel" ]]; then
+        print_info "Skipping Caddyfile generation (native mode)"
+        return 0
+    fi
+
+    local caddyfile_dir="/etc/armorclaw"
+    local caddyfile_path="${caddyfile_dir}/Caddyfile"
+    local template_path="./configs/Caddyfile.template"
+    local backup_file="${caddyfile_path}.backup.$(date +%Y%m%d_%H%M%S)"
+
+    if [[ ! -d "$caddyfile_dir" ]]; then
+        print_info "Creating $caddyfile_dir"
+        $SUDO mkdir -p "$caddyfile_dir"
+    fi
+
+    if [[ -f "$caddyfile_path" ]]; then
+        print_warning "Backing up existing Caddyfile to $backup_file"
+        $SUDO cp "$caddyfile_path" "$backup_file"
+    fi
+
+    if [[ ! -f "$template_path" ]]; then
+        print_error "Caddyfile template not found at $template_path"
+        return 1
+    fi
+
+    export DOMAIN_NAME="$DOMAIN"
+    export ADMIN_EMAIL="$EMAIL"
+
+    print_info "Generating $caddyfile_path from template"
+    envsubst < "$template_path" | $SUDO tee "$caddyfile_path" > /dev/null
+
+    $SUDO chmod 0600 "$caddyfile_path"
+    $SUDO chown root:root "$caddyfile_path"
+
+    print_success "Caddyfile created with permissions 0600"
+
+    if command_exists caddy; then
+        print_info "Validating Caddyfile syntax"
+        if $SUDO caddy validate --config "$caddyfile_path" 2>&1; then
+            print_success "Caddyfile syntax is valid"
+        else
+            print_error "Caddyfile syntax validation failed"
+            return 1
+        fi
+    else
+        print_warning "caddy command not found, skipping syntax validation"
+    fi
+
+    export CADDYFILE_PATH="$caddyfile_path"
+    export CADDY_CONFIG_PATH="$caddyfile_dir"
+
+    print_info "Caddyfile location: $caddyfile_path"
+}
+
 ########################################
 # Prerequisite Checks
 ########################################
@@ -544,6 +602,7 @@ main() {
   build_compose_cmd
   generate_secrets
   generate_env_file
+  generate_caddyfile
 
   print_step "System Discovery"
   detect_os

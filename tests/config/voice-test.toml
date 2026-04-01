@@ -1,0 +1,75 @@
+# Test configuration for voice E2E testing
+# Optimized for testing voice service connectivity
+
+[bridge]
+socket_path = "/run/armorclaw/voice-test.sock"
+
+# Minimal logging for tests
+log_level = "error"
+
+# Matrix configuration (disabled for voice testing)
+[matrix]
+homeserver = "https://matrix.example.com"
+user_id = "@bridge:example.com"
+device_id = "VOICETEST"
+enabled = false
+
+# WebRTC configuration
+[webrtc]
+default_lifetime = "5m"
+max_lifetime = "30m"
+
+# ICE servers (public STUN only)
+[[webrtc.ice_servers]]
+urls = ["stun:stun.l.google.com:19302"]
+
+# Audio configuration
+[webrtc.audio]
+sample_rate = 16000
+channels = 1
+bitrate = 32000
+
+# Security - memory-only for tests
+[security]
+keystore_path = ":memory:"
+keystore_password = "voice-test-password"
+
+# Relaxed validation for testing
+strict_validation = false
+
+# Voice service URLs (point to test sidecars)
+[voice.services]
+vad_url = "http://localhost:8001"
+stt_url = "http://localhost:8002"
+tts_url = "http://localhost:8003"
+
+# Voice limits (low for testing)
+[voice]
+max_concurrent_calls = 5
+max_call_duration = "30m"
+
+# Disable rate limiting for tests
+rate_limit_calls = 0
+rate_limit_window = "1h"
+
+# Disable allowlists for tests
+allow_all_users = true
+allow_all_rooms = true
+
+# Disable E2EE requirement for tests
+require_e2ee = false
+require_signaling_tls = false
+
+# Budget limits (generous for testing)
+default_token_limit = 1000
+default_duration_limit = "30m"
+warning_threshold = 0.9
+hard_stop = true
+
+# TTL configuration
+[voice.ttl]
+default_ttl = "5m"
+max_ttl = "30m"
+enforcement_interval = "1m"
+warning_threshold = 0.9
+hard_stop = true
