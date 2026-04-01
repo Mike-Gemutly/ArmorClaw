@@ -10,7 +10,7 @@ set -euo pipefail
 # Configuration
 REPO="Gemutly/ArmorClaw"
 VERSION="${VERSION:-main}"
-INSTALLER="installer-v5.sh"
+INSTALLER="installer-v6.sh"
 BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/deploy"
 # Official Fingerprint: 573A 62B2 39F9 8A6B 98EF 917D 03FC 7E7C CF74 8504
 SIGNING_KEY_FPR="55AD64228EF6B4A342DA480A09C43CFA8AC93062"
