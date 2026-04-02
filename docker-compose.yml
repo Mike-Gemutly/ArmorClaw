@@ -41,9 +41,9 @@ services:
       # Use your WSL/Shell Environment Variables
       - AI_API_KEY=${AI_API_KEY}
       - AI_PROVIDER=${AI_PROVIDER}
-      - ARMORCLAW_TOKEN=${ARMORCLAW_ADMIN_TOKEN:-4f8e9b2a1c7d6e5f3a0b9c8d7e6f5a4b}
-      - ARMORCLAW_KEYSTORE_SECRET=${ARMORCLAW_KEYSTORE_SECRET:-dmVyeXNlY3VyZWtleTMyYnl0ZXNsb25nZml4MTIzNDU=}
-      - ARMORCLAW_MATRIX_SECRET=${ARMORCLAW_MATRIX_SECRET:-}
+      - ARMORCLAW_TOKEN=${ARMORCLAW_ADMIN_TOKEN:?Required}
+      - ARMORCLAW_KEYSTORE_SECRET=${ARMORCLAW_KEYSTORE_SECRET:?Required}
+      - ARMORCLAW_MATRIX_SECRET=${ARMORCLAW_MATRIX_SECRET:?Required}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/armorclaw/data:/data
