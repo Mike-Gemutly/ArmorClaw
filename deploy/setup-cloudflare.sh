@@ -228,6 +228,9 @@ main() {
 
     case "$MODE" in
         tunnel)
+            BASE_DOMAIN=$(echo "$DOMAIN" | cut -d. -f2-)
+            SUBDOMAIN=$(echo "$DOMAIN" | cut -d. -f1)
+            
             if [ "$DRY_RUN" = true ]; then
                 log_info "[DRY-RUN] Tunnel mode setup for $DOMAIN"
                 echo ""
@@ -247,9 +250,6 @@ main() {
                 echo ""
                 log_info "✓ Dry-run completed - no changes made"
             else
-                BASE_DOMAIN=$(echo "$DOMAIN" | cut -d. -f2-)
-                SUBDOMAIN=$(echo "$DOMAIN" | cut -d. -f1)
-
                 setup_cloudflare_tunnel
             fi
             ;;
