@@ -202,3 +202,329 @@ prompt_cloudflare_mode() {
         esac
     done
 }
+
+detect_network_environment() {
+    log_info "Detecting network environment..."
+    
+    # Default values (fallback)
+    local public_ip=""
+    local local_ip=""
+    local has_nat="unknown"
+    local port_80_open="unknown"
+    local port_443_open="unknown"
+    
+    # Get public IP with timeout
+    public_ip=$(curl -s --max-time 5 --connect-timeout 3 https://api.ipify.org 2>/dev/null || echo "")
+    if [ -z "$public_ip" ]; then
+        log_warn "Could not detect public IP (using fallback)"
+    else
+        log_info "Public IP: $public_ip"
+    fi
+    
+    # Get local IP with fallback methods
+    if command -v ip >/dev/null 2>&1; then
+        # Try primary interface first
+        local_ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="src")print $(i+1)}' | head -1)
+    fi
+    
+    # Fallback: try hostname -I
+    if [ -z "$local_ip" ] && command -v hostname >/dev/null 2>&1; then
+        local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    
+    # Fallback: try ifconfig
+    if [ -z "$local_ip" ] && command -v ifconfig >/dev/null 2>&1; then
+        local_ip=$(ifconfig 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+    fi
+    
+    if [ -z "$local_ip" ]; then
+        log_warn "Could not detect local IP (using fallback)"
+    else
+        log_info "Local IP: $local_ip"
+    fi
+    
+    # Detect NAT (compare IPs if both available)
+    if [ -n "$public_ip" ] && [ -n "$local_ip" ]; then
+        if [ "$public_ip" = "$local_ip" ]; then
+            has_nat="no"
+            log_info "NAT detected: No (direct public IP)"
+        else
+            has_nat="yes"
+            log_info "NAT detected: Yes (public IP differs from local IP)"
+        fi
+    else
+        log_warn "Could not determine NAT status (missing IP data)"
+    fi
+    
+    # Test port 80 connectivity (with timeout)
+    if command -v timeout >/dev/null 2>&1 && command -v nc >/dev/null 2>&1; then
+        if timeout 3 nc -z localhost 80 2>/dev/null; then
+            port_80_open="yes"
+            log_info "Port 80: Open (localhost)"
+        else
+            port_80_open="no"
+            log_info "Port 80: Closed or unavailable (localhost)"
+        fi
+    elif command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then
+        # Fallback: try using bash built-in with /dev/tcp
+        if timeout 3 bash -c 'echo > /dev/tcp/127.0.0.1/80' 2>/dev/null; then
+            port_80_open="yes"
+            log_info "Port 80: Open (localhost)"
+        else
+            port_80_open="no"
+            log_info "Port 80: Closed or unavailable (localhost)"
+        fi
+    else
+        log_warn "Could not test port 80 (missing tools)"
+    fi
+    
+    # Test port 443 connectivity (with timeout)
+    if command -v timeout >/dev/null 2>&1 && command -v nc >/dev/null 2>&1; then
+        if timeout 3 nc -z localhost 443 2>/dev/null; then
+            port_443_open="yes"
+            log_info "Port 443: Open (localhost)"
+        else
+            port_443_open="no"
+            log_info "Port 443: Closed or unavailable (localhost)"
+        fi
+    elif command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then
+        # Fallback: try using bash built-in with /dev/tcp
+        if timeout 3 bash -c 'echo > /dev/tcp/127.0.0.1/443' 2>/dev/null; then
+            port_443_open="yes"
+            log_info "Port 443: Open (localhost)"
+        else
+            port_443_open="no"
+            log_info "Port 443: Closed or unavailable (localhost)"
+        fi
+    else
+        log_warn "Could not test port 443 (missing tools)"
+    fi
+    
+    # Determine recommendation based on detected environment
+    if [ "$has_nat" = "yes" ]; then
+        # NAT detected - behind router/firewall
+        RECOMMEND="tunnel"
+        REASON="NAT detected (public IP: ${public_ip:-unknown} != local IP: ${local_ip:-unknown}). Cloudflare Tunnel bypasses NAT and doesn't require port forwarding."
+    elif [ "$has_nat" = "no" ]; then
+        # Direct public IP - check port availability
+        if [ "$port_80_open" = "yes" ] && [ "$port_443_open" = "yes" ]; then
+            RECOMMEND="proxy"
+            REASON="Direct public IP detected with both HTTP (80) and HTTPS (443) ports available. Cloudflare Proxy mode is recommended for optimal performance."
+        elif [ "$port_80_open" = "yes" ]; then
+            RECOMMEND="proxy"
+            REASON="Direct public IP detected with HTTP (80) port available. Cloudflare Proxy mode can be configured."
+        elif [ "$port_443_open" = "yes" ]; then
+            RECOMMEND="proxy"
+            REASON="Direct public IP detected with HTTPS (443) port available. Cloudflare Proxy mode can be configured."
+        else
+            RECOMMEND="tunnel"
+            REASON="Direct public IP detected but ports 80 and 443 are not available. Cloudflare Tunnel is recommended (no port forwarding required)."
+        fi
+    else
+        # Unknown NAT status - safe default
+        RECOMMEND="tunnel"
+        REASON="Network environment detection incomplete (NAT status: ${has_nat:-unknown}). Cloudflare Tunnel is the safe default for most environments."
+    fi
+    
+    log_info "Recommended mode: ${BOLD}${RECOMMEND}${NC}"
+    log_info "Reason: $REASON"
+
+    # Export variables for use by caller
+    export RECOMMEND
+    export REASON
+
+    return 0
+}
+
+setup_cloudflare_tunnel() {
+    log_info "Setting up Cloudflare Tunnel..."
+
+    # Check and install cloudflared if needed
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        log_warn "cloudflared not installed, installing now..."
+        install_cloudflared
+    else
+        log_info "cloudflared already installed: $(cloudflared --version 2>&1 | head -1)"
+    fi
+
+    # Prompt for domain input
+    local domain
+    while true; do
+        echo ""
+        read -p "Enter your domain (e.g., armorclaw.example.com): " domain
+        domain=$(echo "$domain" | xargs)  # Trim whitespace
+
+        # Basic domain validation
+        if [ -z "$domain" ]; then
+            log_error "Domain cannot be empty"
+            continue
+        fi
+
+        # Check domain format (basic regex)
+        if ! echo "$domain" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'; then
+            log_error "Invalid domain format. Please use format like example.com or sub.example.com"
+            continue
+        fi
+
+        break
+    done
+
+    log_info "Using domain: $domain"
+
+    # Extract subdomain and base domain
+    local subdomain base_domain
+    if echo "$domain" | grep -q '\.'; then
+        subdomain=$(echo "$domain" | cut -d. -f1)
+        base_domain=$(echo "$domain" | cut -d. -f2-)
+    else
+        log_error "Domain must have at least one dot (e.g., example.com or sub.example.com)"
+        return 1
+    fi
+
+    log_info "Subdomain: $subdomain"
+    log_info "Base domain: $base_domain"
+
+    # Check for existing authentication
+    local cloudflared_dir="$HOME/.cloudflared"
+    local cert_file="$cloudflared_dir/cert.pem"
+
+    if [ -f "$cert_file" ]; then
+        log_info "Found existing Cloudflare certificate"
+    else
+        log_warn "No Cloudflare certificate found"
+        log_info "Running 'cloudflared tunnel login' to authenticate..."
+
+        # Trigger login
+        cloudflared tunnel login || die_on_error "Failed to authenticate with Cloudflare. Please run 'cloudflared tunnel login' manually."
+
+        if [ ! -f "$cert_file" ]; then
+            die_on_error "Authentication failed - certificate file not found after login"
+        fi
+
+        log_info "Authentication successful"
+    fi
+
+    # Check for existing tunnel
+    local tunnel_name="armorclaw-$base_domain"
+    local tunnel_info tunnel_id
+
+    log_info "Checking for existing tunnel: $tunnel_name"
+
+    if tunnel_info=$(cloudflared tunnel list 2>/dev/null | grep "$tunnel_name"); then
+        tunnel_id=$(echo "$tunnel_info" | awk '{print $1}')
+        log_info "Found existing tunnel: $tunnel_name (ID: $tunnel_id)"
+    else
+        log_info "Creating new tunnel: $tunnel_name"
+
+        if ! tunnel_info=$(cloudflared tunnel create "$tunnel_name" 2>&1); then
+            die_on_error "Failed to create tunnel: $tunnel_info"
+        fi
+
+        tunnel_id=$(echo "$tunnel_info" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+        log_info "Tunnel created with ID: $tunnel_id"
+    fi
+
+    # Create config directory
+    mkdir -p "$cloudflared_dir" || die_on_error "Failed to create $cloudflared_dir"
+
+    # Generate config.yml
+    local config_file="$cloudflared_dir/config.yml"
+
+    log_info "Generating config file: $config_file"
+
+    cat > "$config_file" <<EOF
+# Cloudflare Tunnel Configuration for ArmorClaw
+# Auto-generated by setup script
+
+tunnel: $tunnel_id
+credentials-file: $cloudflared_dir/${tunnel_id}.json
+
+ingress:
+  # Main ArmorClaw domain
+  - hostname: $domain
+    service: http://localhost:8443
+  # Matrix server subdomain
+  - hostname: matrix.$domain
+    service: http://localhost:6167
+  # Catch-all to block
+  - service: http_status:404
+EOF
+
+    log_info "Config file generated with ingress rules for:"
+    log_info "  - $domain -> localhost:8443 (Bridge)"
+    log_info "  - matrix.$domain -> localhost:6167 (Matrix)"
+
+    # Create DNS records
+    log_info "Creating DNS records..."
+
+    # Create DNS for main domain
+    log_info "Creating DNS record for $domain"
+    if cloudflared tunnel route dns "$tunnel_name" "$domain"; then
+        log_info "DNS record created for $domain"
+    else
+        log_warn "Failed to create DNS record for $domain (may already exist)"
+    fi
+
+    # Create DNS for matrix subdomain
+    log_info "Creating DNS record for matrix.$domain"
+    if cloudflared tunnel route dns "$tunnel_name" "matrix.$domain"; then
+        log_info "DNS record created for matrix.$domain"
+    else
+        log_warn "Failed to create DNS record for matrix.$domain (may already exist)"
+    fi
+
+    # Create systemd service file
+    local service_file="/etc/systemd/system/cloudflared-tunnel.service"
+
+    log_info "Creating systemd service: $service_file"
+
+    local service_content="[Unit]
+Description=Cloudflare Tunnel for ArmorClaw
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+ExecStart=/usr/local/bin/cloudflared tunnel run --config=$config_file $tunnel_name
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target"
+
+    if [ -w "/etc/systemd/system" ]; then
+        echo "$service_content" > "$service_file"
+    elif command -v sudo >/dev/null 2>&1; then
+        echo "$service_content" | sudo tee "$service_file" >/dev/null || die_on_error "Failed to create systemd service file"
+    else
+        die_on_error "Cannot write to /etc/systemd/system (need sudo)"
+    fi
+
+    log_info "Systemd service file created"
+
+    # Reload systemd and enable service
+    log_info "Reloading systemd daemon..."
+    if command -v sudo >/dev/null 2>&1; then
+        sudo systemctl daemon-reload || die_on_error "Failed to reload systemd daemon"
+        sudo systemctl enable cloudflared-tunnel.service || die_on_error "Failed to enable cloudflared-tunnel service"
+        sudo systemctl start cloudflared-tunnel.service || die_on_error "Failed to start cloudflared-tunnel service"
+    else
+        systemctl daemon-reload || die_on_error "Failed to reload systemd daemon"
+        systemctl enable cloudflared-tunnel.service || die_on_error "Failed to enable cloudflared-tunnel service"
+        systemctl start cloudflared-tunnel.service || die_on_error "Failed to start cloudflared-tunnel service"
+    fi
+
+    log_info "Cloudflare Tunnel service started successfully"
+
+    # Export variables for downstream use
+    export PUBLIC_URL="https://$domain"
+    export MATRIX_URL="https://matrix.$domain"
+    export DOMAIN="$domain"
+
+    log_info "Environment variables exported:"
+    log_info "  PUBLIC_URL=$PUBLIC_URL"
+    log_info "  MATRIX_URL=$MATRIX_URL"
+    log_info "  DOMAIN=$DOMAIN"
+
+    return 0
+}
