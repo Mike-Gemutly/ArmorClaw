@@ -35,6 +35,8 @@ ArmorClaw v4.7.0 introduces **automatic deployment mode detection** for zero-con
 |------|---------|---------------|-----|------------|
 | **Native** | Development, testing, local | Unix socket | None | ~2 min |
 | **Sentinel** ⚡ | Production VPS, public access | TCP + HTTPS | Let's Encrypt | ~5 min |
+| **Cloudflare Tunnel** | VPS behind NAT/firewall, no public IP | cloudflared tunnel | Cloudflare | ~3 min |
+| **Cloudflare Proxy** | Existing Cloudflare proxy, CDN | HTTP(S) | Cloudflare | ~5 min |
 
 ### Native Mode (Default)
 - **Communication:** Unix domain socket (`/run/armorclaw/bridge.sock`)
@@ -49,20 +51,60 @@ ArmorClaw v4.7.0 introduces **automatic deployment mode detection** for zero-con
 
 **Activating Sentinel Mode:**
 ```bash
-# During installation,curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+# During installation
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 # When prompted, enter your domain (e.g., armorclaw.example.com)
 # Leave blank for Native mode
 ```
 
+### Cloudflare Tunnel Mode
+- **Communication:** Outbound via Cloudflare Tunnel (cloudflared)
+- **Access:** Public via `https://your-domain.com` through Cloudflare network
+- **TLS:** Automatic Cloudflare SSL certificates
+- **Best for:** VPS behind NAT/firewall, no public IP, dynamic IP
+- **Requirements:** Cloudflare account with API token
+
+**Activating Cloudflare Tunnel Mode:**
+```bash
+# Set environment variables before installation
+export CF_API_TOKEN=your-cloudflare-api-token
+export CF_TUNNEL_DOMAIN=armorclaw.example.com
+
+# Run installer
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+```
+
+### Cloudflare Proxy Mode
+- **Communication:** HTTP(S) through Cloudflare proxy
+- **Access:** Public via `https://your-domain.com` with Cloudflare CDN
+- **TLS:** Cloudflare SSL (Flexible/Full/Full Strict)
+- **Best for:** Existing Cloudflare setup, CDN caching, DDoS protection
+- **Requirements:** Cloudflare account with domain configured
+
+**Activating Cloudflare Proxy Mode:**
+```bash
+# Set environment variables before installation
+export CF_API_TOKEN=your-cloudflare-api-token
+export CF_MODE=proxy
+export CF_ZONE_ID=your-zone-id
+
+# Run installer
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+```
+
 ### Environment Variables
 
-| Variable | Native Mode | Sentinel Mode |
-|----------|-------------|---------------|
-| `ARMORCLAW_SERVER_MODE` | `native` | `sentinel` |
-| `ARMORCLAW_RPC_TRANSPORT` | `unix` | `tcp` |
-| `ARMORCLAW_LISTEN_ADDR` | - | `0.0.0.0:8080` |
-| `ARMORCLAW_PUBLIC_BASE_URL` | - | `https://your-domain.com` |
-| `ARMORCLAW_EMAIL` | - | `admin@your-domain.com` |
+| Variable | Native Mode | Sentinel Mode | Cloudflare |
+|----------|-------------|---------------|------------|
+| `ARMORCLAW_SERVER_MODE` | `native` | `sentinel` | `cloudflare` |
+| `ARMORCLAW_RPC_TRANSPORT` | `unix` | `tcp` | `tcp` |
+| `ARMORCLAW_LISTEN_ADDR` | - | `0.0.0.0:8080` | `0.0.0.0:8080` |
+| `ARMORCLAW_PUBLIC_BASE_URL` | - | `https://your-domain.com` | `https://your-domain.com` |
+| `ARMORCLAW_EMAIL` | - | `admin@your-domain.com` | `admin@your-domain.com` |
+| `CF_API_TOKEN` | - | - | Cloudflare API token |
+| `CF_TUNNEL_DOMAIN` | - | - | Tunnel domain |
+| `CF_MODE` | - | - | `tunnel` or `proxy` |
+| `CF_ZONE_ID` | - | - | Zone ID (proxy mode only) |
 
 ---
 
@@ -105,7 +147,13 @@ OPEN_AI_KEY               # OpenAI
 ZAI_API_KEY               # xAI (Grok)
 
 # Deployment Mode (auto-detected from domain input)
-ARMORCLAW_SERVER_MODE        # native | sentinel (auto-detected)
+ARMORCLAW_SERVER_MODE        # native | sentinel | cloudflare (auto-detected)
+
+# Cloudflare (for cloudflare mode)
+CF_API_TOKEN             # Cloudflare API token
+CF_TUNNEL_DOMAIN         # Domain for Cloudflare Tunnel
+CF_MODE                  # cloudflare mode: tunnel | proxy
+CF_ZONE_ID               # Cloudflare Zone ID (proxy mode only)
 
 # Optional
 ARMORCLAW_ADMIN_USERNAME  # Custom admin username (optional)
@@ -452,6 +500,8 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 |------|---------|----------|
 | **Quickstart** | `bash install.sh` | First-time users, all-in-one |
 | **Production** | `docker compose -f docker-compose-full.yml up -d` | Production, scalable |
+| **Cloudflare Tunnel** | `CF_API_TOKEN=xxx CF_TUNNEL_DOMAIN=xxx bash install.sh` | VPS behind NAT, no public IP |
+| **Cloudflare Proxy** | `CF_API_TOKEN=xxx CF_MODE=proxy CF_ZONE_ID=xxx bash install.sh` | Existing Cloudflare setup |
 | **Bridge-only** | `bash install.sh --bridge-only` | Testing, external Matrix |
 | **External Matrix** | `ARMORCLAW_EXTERNAL_MATRIX=true` | Use existing Matrix server |
 
@@ -466,6 +516,20 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 # Or with explicit server IP/domain
 export OPENROUTER_API_KEY=sk-or-v1-xxx
 export ARMORCLAW_SERVER_NAME=192.168.1.50
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# With Cloudflare Tunnel
+export OPENROUTER_API_KEY=sk-or-v1-xxx
+export CF_API_TOKEN=your-cloudflare-token
+export CF_TUNNEL_DOMAIN=armorclaw.example.com
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# With Cloudflare Proxy
+export OPENROUTER_API_KEY=sk-or-v1-xxx
+export CF_API_TOKEN=your-cloudflare-token
+export CF_MODE=proxy
+export CF_ZONE_ID=your-zone-id
+export MATRIX_DOMAIN=armorclaw.example.com
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
 
@@ -502,6 +566,10 @@ Use for:
 | `ARMORCLAW_MATRIX_HOMESERVER_URL` | External Matrix URL | `http://127.0.0.1:6167` |
 | `ARMORCLAW_MATRIX_ENABLED` | Enable Matrix integration | `true` |
 | `ARMORCLAW_ADMIN_PASSWORD` | Admin password | auto-generated |
+| `CF_API_TOKEN` | Cloudflare API token for Tunnel/Proxy mode | - |
+| `CF_TUNNEL_DOMAIN` | Domain for Cloudflare Tunnel | - |
+| `CF_MODE` | Cloudflare mode: `tunnel` or `proxy` | - |
+| `CF_ZONE_ID` | Cloudflare Zone ID (required for proxy mode) | - |
 
 ### Manual Docker Run
 
@@ -590,6 +658,276 @@ echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | \
 
 # Test Matrix API
 curl http://localhost:6167/_matrix/client/versions
+```
+
+---
+
+## Cloudflare Setup
+
+### Cloudflare Tunnel Mode
+
+Cloudflare Tunnel provides secure, outbound-only access to your ArmorClaw server without opening public ports or configuring firewall rules.
+
+#### Prerequisites
+
+1. **Cloudflare Account** - Sign up at [cloudflare.com](https://cloudflare.com) (free tier available)
+2. **Domain** - Add your domain to Cloudflare
+3. **API Token** - Create an API token with:
+   - Zone: DNS - Edit
+   - Zone: Cloudflare Tunnel - Edit
+   - Account: Cloudflare Tunnel - Read
+
+   Create token at: Cloudflare Dashboard → My Profile → API Tokens → Create Token
+
+#### Manual Setup
+
+```bash
+# 1. Create Cloudflare API token
+#    Visit: https://dash.cloudflare.com/profile/api-tokens
+#    Create token with Zone DNS, Cloudflare Tunnel permissions
+
+# 2. Set environment variables
+export CF_API_TOKEN=your-cloudflare-api-token
+export CF_TUNNEL_DOMAIN=armorclaw.yourdomain.com
+
+# 3. Run installer
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# 4. Installer will:
+#    - Install cloudflared
+#    - Create tunnel
+#    - Configure DNS records
+#    - Start tunnel service
+```
+
+#### Troubleshooting Cloudflare Tunnel
+
+**Tunnel not connecting:**
+```bash
+# Check cloudflared service status
+sudo systemctl status cloudflared
+
+# View tunnel logs
+sudo journalctl -u cloudflared -f
+
+# Verify tunnel exists in Cloudflare Dashboard
+#    Visit: https://dash.cloudflare.com/ -> Access -> Tunnels
+```
+
+**DNS not propagating:**
+```bash
+# Check DNS records
+dig +short armorclaw.yourdomain.com
+
+# If no result, verify DNS record in Cloudflare Dashboard
+#    Visit: https://dash.cloudflare.com/ -> DNS -> Records
+```
+
+**API token permissions error:**
+```bash
+# Verify token has correct permissions:
+#    - Zone: DNS - Edit (for your zone)
+#    - Zone: Cloudflare Tunnel - Edit (for your zone)
+#    - Account: Cloudflare Tunnel - Read
+
+# Test token with curl:
+curl -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+**Tunnel status shows inactive:**
+```bash
+# Restart cloudflared service
+sudo systemctl restart cloudflared
+
+# Check if port 8080 is listening (Bridge)
+sudo netstat -tlnp | grep 8080
+
+# Verify Bridge is running
+docker ps | grep armorclaw
+```
+
+### Cloudflare Proxy Mode
+
+Cloudflare Proxy mode uses Cloudflare's reverse proxy and CDN to serve your ArmorClaw instance through existing Cloudflare infrastructure.
+
+#### Prerequisites
+
+1. **Cloudflare Account** with your domain already configured
+2. **Zone ID** - Find at Cloudflare Dashboard → Select domain → Overview → Right sidebar
+3. **API Token** - Create token with:
+   - Zone: DNS - Edit
+   - Zone: Cloudflare SSL/TLS - Edit
+
+#### Manual Setup
+
+```bash
+# 1. Get your Zone ID
+#    Visit: https://dash.cloudflare.com/ -> Select your domain
+#    Zone ID is in the right sidebar
+
+# 2. Set environment variables
+export CF_API_TOKEN=your-cloudflare-api-token
+export CF_MODE=proxy
+export CF_ZONE_ID=your-zone-id
+
+# 3. Run installer
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# 4. Installer will:
+#    - Configure Caddy to listen on 0.0.0.0:8080
+#    - Set up Cloudflare DNS records
+#    - Configure SSL mode
+```
+
+#### Troubleshooting Cloudflare Proxy
+
+**"522" Connection Timed Out:**
+```bash
+# Check if Caddy is listening on port 8080
+sudo netstat -tlnp | grep 8080
+
+# Check firewall rules
+sudo ufw status
+sudo ufw allow 8080/tcp
+
+# Verify Caddy logs
+docker logs caddy
+```
+
+**"1016" Origin DNS Error:**
+```bash
+# Verify DNS A record points to correct IP
+dig +short armorclaw.yourdomain.com
+
+# Check if ArmorClaw Bridge is running
+docker ps | grep armorclaw
+
+# Test local access
+curl http://localhost:8080/health
+```
+
+**SSL Certificate Issues:**
+```bash
+# Check SSL/TLS mode in Cloudflare Dashboard
+#    Visit: https://dash.cloudflare.com/ -> SSL/TLS -> Overview
+#    Recommended: Full (strict) mode
+
+# Verify Caddy is generating certificates
+docker logs caddy | grep "certificate"
+```
+
+**Cloudflare caching static content:**
+```bash
+# Purge cache if experiencing stale content
+#    Visit: https://dash.cloudflare.com/ -> Caching -> Configuration
+#    Or use Cloudflare API to purge cache
+```
+
+### Creating a Cloudflare API Token
+
+1. **Navigate to API Tokens:**
+   - Go to Cloudflare Dashboard
+   - Click on your profile (top right)
+   - Select "My Profile"
+   - Click "API Tokens" tab
+   - Click "Create Token"
+
+2. **Use Template:**
+   - Select "Custom token" template
+   - Set permissions:
+     - **Account** → Cloudflare Tunnel → Read
+     - **Zone** → DNS → Edit
+     - **Zone** → Cloudflare Tunnel → Edit (for proxy mode: SSL/TLS → Edit)
+   - Set Account Resources: Include → All accounts (or specific account)
+   - Set Zone Resources: Include → Specific zone → your-domain.com
+   - Click "Continue to summary"
+   - Click "Create Token"
+
+3. **Copy Token:**
+   - Copy the token (you won't see it again!)
+   - Store securely: `export CF_API_TOKEN=xxx`
+
+### Example: Complete Cloudflare Tunnel Setup
+
+```bash
+#!/bin/bash
+# Complete Cloudflare Tunnel setup for ArmorClaw
+
+# 1. Set your configuration
+export CF_API_TOKEN="your-actual-api-token-here"
+export CF_TUNNEL_DOMAIN="armorclaw.example.com"
+export OPENROUTER_API_KEY="your-openrouter-key"
+
+# 2. Verify token
+echo "Verifying Cloudflare API token..."
+curl -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" | jq .
+
+# 3. Run ArmorClaw installer with Cloudflare Tunnel
+echo "Installing ArmorClaw with Cloudflare Tunnel..."
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# 4. Verify installation
+echo ""
+echo "Checking services..."
+docker ps
+sudo systemctl status cloudflared --no-pager
+
+# 5. Test tunnel
+echo ""
+echo "Testing tunnel connection..."
+sleep 5
+curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" https://$CF_TUNNEL_DOMAIN/health
+
+echo ""
+echo "Setup complete! Access ArmorClaw at: https://$CF_TUNNEL_DOMAIN"
+```
+
+### Example: Complete Cloudflare Proxy Setup
+
+```bash
+#!/bin/bash
+# Complete Cloudflare Proxy setup for ArmorClaw
+
+# 1. Set your configuration
+export CF_API_TOKEN="your-actual-api-token-here"
+export CF_ZONE_ID="your-zone-id-here"
+export CF_MODE="proxy"
+export MATRIX_DOMAIN="armorclaw.example.com"
+export OPENROUTER_API_KEY="your-openrouter-key"
+
+# 2. Verify token
+echo "Verifying Cloudflare API token..."
+curl -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" | jq .
+
+# 3. Run ArmorClaw installer with Cloudflare Proxy
+echo "Installing ArmorClaw with Cloudflare Proxy..."
+curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+
+# 4. Verify DNS setup
+echo ""
+echo "Checking DNS propagation..."
+sleep 10
+dig +short $MATRIX_DOMAIN
+
+# 5. Verify services
+echo ""
+echo "Checking services..."
+docker ps
+
+# 6. Test proxy
+echo ""
+echo "Testing proxy connection..."
+sleep 5
+curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" https://$MATRIX_DOMAIN/health
+
+echo ""
+echo "Setup complete! Access ArmorClaw at: https://$MATRIX_DOMAIN"
 ```
 
 ---
