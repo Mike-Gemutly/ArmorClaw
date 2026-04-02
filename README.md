@@ -1,13 +1,13 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.6.0-blue)](https://github.com/Gemutly/ArmorClaw)
-[![Status](https://img.shields.io/badge/status-production%20ready-green)](https://github.com/Gemutly/ArmorClaw)
+[![Version](https://img.shields.io/badge/version-v4.7.0-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Status](https://img.shields.io/badge/status-production%20 ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
 
 ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, and manage tasks—while you approve sensitive actions via your phone.
 
-**🛡️ v4.6.0 Highlights:** **Environment Variable API Keys** (keys stored in .zshrc, never persisted to disk), **SQLCipher-linked bridge**, and **21 Browser Skills** for Chrome DevTools MCP integration.
+**🛡️ v4.7.0 Highlights:** **Sentinel Mode** (automatic VPS deployment with Let's Encrypt TLS), **Native/Sentinel deployment modes**, and **21 Browser Skills** for Chrome DevTools MCP integration.
 
 ---
 
@@ -19,17 +19,50 @@ The recommended way to start is the bootstrap installer, which now includes an o
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
 
-**v4.6.0 Improvements:**
+**v4.7.0 Improvements:**
+- **🌐 Sentinel Mode** - Automatic VPS deployment with Let's Encrypt TLS
+- **🔄 Deployment Modes** - Native (local) vs Sentinel (public) auto-detection
 - **🔐 Environment API Keys** - Keys from env vars (OPENROUTER_API_KEY, ZAI_API_KEY, OPEN_AI_KEY), never persisted to disk
-- **🔗 SQLCipher Linked** - Bridge binary links against SQLCipher for encrypted keystore
-- **🌐 21 Browser Skills** - Chrome DevTools MCP skills (navigate, click, fill, screenshot, etc.)
-- **🛡️ Hardened Security** - GPG-verified bootstrap, lockfile protection, and persistent logging
+- **🛡️ Secure Migrations** - Existing secrets preserved during mode upgrades
 
-### Install Specific Version
+---
 
+## Deployment Modes
+
+ArmorClaw v4.7.0 introduces **automatic deployment mode detection** for zero-configuration VPS deployment.
+
+| Mode | Use Case | Communication | TLS | Setup Time |
+|------|---------|---------------|-----|------------|
+| **Native** | Development, testing, local | Unix socket | None | ~2 min |
+| **Sentinel** ⚡ | Production VPS, public access | TCP + HTTPS | Let's Encrypt | ~5 min |
+
+### Native Mode (Default)
+- **Communication:** Unix domain socket (`/run/armorclaw/bridge.sock`)
+- **Access:** Local-only (no public exposure)
+- **Best for:** Development, testing, machines without public IP
+
+### Sentinel Mode (Production)
+- **Communication:** TCP (`0.0.0.0:8080`) with Caddy reverse proxy
+- **Access:** Public via `https://your-domain.com`
+- **TLS:** Automatic Let's Encrypt certificates
+- **Best for:** Production VPS, public access
+
+**Activating Sentinel Mode:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | VERSION=v4.6.0 bash
+# During installation,curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
+# When prompted, enter your domain (e.g., armorclaw.example.com)
+# Leave blank for Native mode
 ```
+
+### Environment Variables
+
+| Variable | Native Mode | Sentinel Mode |
+|----------|-------------|---------------|
+| `ARMORCLAW_SERVER_MODE` | `native` | `sentinel` |
+| `ARMORCLAW_RPC_TRANSPORT` | `unix` | `tcp` |
+| `ARMORCLAW_LISTEN_ADDR` | - | `0.0.0.0:8080` |
+| `ARMORCLAW_PUBLIC_BASE_URL` | - | `https://your-domain.com` |
+| `ARMORCLAW_EMAIL` | - | `admin@your-domain.com` |
 
 ---
 
@@ -70,6 +103,9 @@ The production-grade installer (install.sh) now includes:
 OPENROUTER_API_KEY         # OpenRouter (recommended - supports many providers)
 OPEN_AI_KEY               # OpenAI
 ZAI_API_KEY               # xAI (Grok)
+
+# Deployment Mode (auto-detected from domain input)
+ARMORCLAW_SERVER_MODE        # native | sentinel (auto-detected)
 
 # Optional
 ARMORCLAW_ADMIN_USERNAME  # Custom admin username (optional)

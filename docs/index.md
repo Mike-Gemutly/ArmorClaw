@@ -17,12 +17,51 @@
 
 ## Production Installer (Recommended)
 
+## Deployment Modes
+
+| Mode | Description | Use Case | Setup Time |
+|------|-------------|---------|------------|
+| **Native** | Local-only, Unix socket | Development, testing | 2 min |
+| **Sentinel** ⚡ | Public VPS, automatic TLS, Production deployment | 5 min |
+
+### Native Mode
+- **Communication:** Unix domain socket (`/run/armorclaw/bridge.sock`)
+- **Access:** Local-only (no public network exposure)
+- **TLS:** None required (local only)
+- **Best for:** Development, testing, local experimentation
+
+```bash
+# Native mode installation
+curl -fsSL https://install.armorclaw.com | bash
+# When prompted for domain, leave blank → Native mode
+```
+
+### Sentinel Mode ⚡
+- **Communication:** TCP + TLS via Caddy reverse proxy
+- **Access:** Public HTTPS (`https://your-domain.com`)
+- **TLS:** Let's Encrypt automatic certificates
+- **Best for:** Production VPS, public access
+
+```bash
+# Sentinel mode installation
+curl -fsSL https://install.armorclaw.com | bash
+# When prompted, enter your domain (e.g., armorclaw.example.com)
+```
+
+**Features:**
+- ✅ Automatic Let's Encrypt certificate provisioning
+- ✅ Caddy reverse proxy with HTTPS
+- ✅ TCP transport for public API access
+- ✅ Secure secret generation (32-byte entropy)
+- ✅ Mode migration with data preservation
+
 | Feature | Description |
 |---------|-------------|
 | **13 Detection Modules** | Cloud provider, resources, NAT, firewall detection |
 | **Blue-Green Deployment** | Zero-downtime upgrades with instant rollback |
 | **Systemd Hardening** | Non-root, sandboxed, resource-limited |
 | **Nginx Template** | Rate limiting, localhost-only bridge, HSTS |
+| **Sentinel Mode** ⚡ | Automatic VPS deployment with Let's Encrypt TLS |
 
 ```bash
 # One-command production install
@@ -33,6 +72,10 @@ curl -fsSL https://install.armorclaw.com | bash -s -- --yes
 
 # Dry run (validate only)
 curl -fsSL https://install.armorclaw.com | bash -s -- --dry-run
+
+# Native mode (local development)
+curl -fsSL https://install.armorclaw.com | bash
+# Leave domain blank when prompted
 ```
 
 ## Post-Setup Scripts
