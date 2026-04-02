@@ -341,6 +341,65 @@ detect_network_environment() {
 }
 
 setup_cloudflare_tunnel() {
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Setting up Cloudflare Tunnel..."
+
+        local domain
+        if [ -n "${1:-}" ]; then
+            domain="$1"
+        else
+            while true; do
+                echo ""
+                read -p "Enter your domain (e.g., armorclaw.example.com): " domain
+                domain=$(echo "$domain" | xargs)
+
+                if [ -z "$domain" ]; then
+                    log_error "Domain cannot be empty"
+                    continue
+                fi
+
+                if ! echo "$domain" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'; then
+                    log_error "Invalid domain format. Please use format like example.com or sub.example.com"
+                    continue
+                fi
+
+                break
+            done
+        fi
+
+        local base_domain
+        local tunnel_name="armorclaw-$base_domain"
+        local tunnel_id="mock-tunnel-id-$(echo "$domain" | md5sum | cut -c1-8)"
+
+        log_info "[DRY-RUN] Using domain: $domain"
+        log_info "[DRY-RUN] Would perform:"
+        log_info "[DRY-RUN]   1. Install cloudflared (if needed)"
+        log_info "[DRY-RUN]   2. Authenticate with Cloudflare"
+        log_info "[DRY-RUN]   3. Create tunnel: $tunnel_name (ID: $tunnel_id)"
+        log_info "[DRY-RUN]   4. Generate cloudflared config file"
+        log_info "[DRY-RUN]   5. Create DNS records for $domain and matrix.$domain"
+        log_info "[DRY-RUN]   6. Create systemd service"
+        log_info "[DRY-RUN]   7. Start cloudflared service"
+
+        local cloudflared_dir="$HOME/.cloudflared"
+        local config_file="$cloudflared_dir/config.yml"
+        log_info "[DRY-RUN] Would generate config file: $config_file"
+        log_info "[DRY-RUN] Config would include:"
+        log_info "[DRY-RUN]   - $domain -> localhost:8443"
+        log_info "[DRY-RUN]   - matrix.$domain -> localhost:6167"
+
+        export PUBLIC_URL="https://$domain"
+        export MATRIX_URL="https://matrix.$domain"
+        export DOMAIN="$domain"
+
+        log_info "[DRY-RUN] Would export:"
+        log_info "[DRY-RUN]   PUBLIC_URL=$PUBLIC_URL"
+        log_info "[DRY-RUN]   MATRIX_URL=$MATRIX_URL"
+        log_info "[DRY-RUN]   DOMAIN=$DOMAIN"
+
+        return 0
+    fi
+
     log_info "Setting up Cloudflare Tunnel..."
 
     check_existing_web_server
@@ -1120,6 +1179,66 @@ create_cloudflare_origin_cert() {
 #   export CF_API_TOKEN=your_api_token
 #   setup_cloudflare_proxy
 setup_cloudflare_proxy() {
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Setting up Cloudflare Proxy mode..."
+        echo ""
+
+        local domain
+        if [ -n "${1:-}" ]; then
+            domain="$1"
+        else
+            while true; do
+                read -p "Enter your domain (e.g., example.com or sub.example.com): " domain
+                domain=$(echo "$domain" | xargs)
+
+                if [ -z "$domain" ]; then
+                    log_error "Domain cannot be empty"
+                    continue
+                fi
+
+                if ! echo "$domain" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'; then
+                    log_error "Invalid domain format. Please use format like example.com or sub.example.com"
+                    continue
+                fi
+
+                break
+            done
+        fi
+
+        local public_ip="203.0.113.1"
+        local mock_zone_id="mock-zone-id-$(echo "$domain" | md5sum | cut -c1-8)"
+
+        log_info "[DRY-RUN] Using domain: $domain"
+        log_info "[DRY-RUN] Using mock public IP: $public_ip"
+        log_info "[DRY-RUN] Would perform:"
+        log_info "[DRY-RUN]   1. Verify domain uses Cloudflare nameservers"
+        log_info "[DRY-RUN]   2. Detect public IP address"
+        log_info "[DRY-RUN]   3. Verify ports 80 and 443 are accessible"
+        log_info "[DRY-RUN]   4. Create DNS A records with proxy enabled (orange cloud)"
+        log_info "[DRY-RUN]   5. Generate Cloudflare origin certificate"
+        log_info "[DRY-RUN]   6. Configure Caddy with origin certificate"
+        log_info "[DRY-RUN]   7. Display SSL/TLS configuration instructions"
+
+        log_info "[DRY-RUN] Would create DNS records:"
+        log_info "[DRY-RUN]   - $domain -> $public_ip (proxy enabled)"
+        log_info "[DRY-RUN]   - matrix.$domain -> $public_ip (proxy enabled)"
+
+        log_info "[DRY-RUN] Would export:"
+        log_info "[DRY-RUN]   PUBLIC_URL=https://$domain"
+        log_info "[DRY-RUN]   MATRIX_URL=https://matrix.$domain"
+        log_info "[DRY-RUN]   DOMAIN=$domain"
+        log_info "[DRY-RUN]   CF_ZONE_ID=$mock_zone_id"
+
+        export PUBLIC_URL="https://$domain"
+        export MATRIX_URL="https://matrix.$domain"
+        export DOMAIN="$domain"
+        export CF_ZONE_ID="$mock_zone_id"
+
+        log_info "[DRY-RUN] ✓ Dry-run completed - no changes made"
+
+        return 0
+    fi
+
     log_info "Setting up Cloudflare Proxy mode..."
     echo ""
 
@@ -1207,7 +1326,7 @@ setup_cloudflare_proxy() {
     fi
 
     if [ "$port_80_accessible" -eq 0 ] && [ "$port_443_accessible" -eq 0 ]; then
-        log_error "Neither port 80 nor 443 is accessible from the public internet"
+        log_error "Neither port 80 nor 443 is accessible from public internet"
         log_error "Cloudflare Proxy mode requires at least one of these ports to be open"
         log_error "Please configure your firewall/router to allow incoming traffic on ports 80 and 443"
         log_error "Or consider using Tunnel mode instead (bypasses port requirements)"
@@ -1248,9 +1367,9 @@ setup_cloudflare_proxy() {
     log_info "✓ Caddy configured successfully"
 
     echo ""
-    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}═════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}         Cloudflare SSL/TLS Configuration${NC}"
-    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}═════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "${BOLD}IMPORTANT: Set SSL/TLS Mode to ${GREEN}Full (strict)${NC}${BOLD}${NC}"
     echo ""
@@ -1273,7 +1392,7 @@ setup_cloudflare_proxy() {
     echo ""
     echo -e "${YELLOW}⚠${NC} Do NOT use 'Off' or 'Flexible' - these will break your setup!"
     echo ""
-    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}═════════════════════════════════════════════════════════${NC}"
     echo ""
 
     export PUBLIC_URL="https://$domain"
@@ -1291,7 +1410,7 @@ setup_cloudflare_proxy() {
     echo ""
     echo -e "${BOLD}Next Steps:${NC}"
     echo -e "  1. Set SSL/TLS mode to ${GREEN}Full (strict)${NC} in Cloudflare dashboard"
-    echo -e "  2. Restart Caddy to apply the new configuration"
+    echo -e "  2. Restart Caddy to apply new configuration"
     echo -e "  3. Verify your site is accessible at ${CYAN}https://$domain${NC}"
     echo ""
 

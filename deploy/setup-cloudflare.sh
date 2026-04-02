@@ -32,7 +32,8 @@ fi
 
 DOMAIN=""
 MODE=""
-DRY_RUN=false
+DRY_RUN="${DRY_RUN:-false}"
+export DRY_RUN
 HELP=false
 
 RED='\033[0;31m'
@@ -132,6 +133,7 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                export DRY_RUN
                 shift
                 ;;
             --help|-h)
