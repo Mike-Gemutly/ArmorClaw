@@ -343,11 +343,11 @@ detect_network_environment() {
 setup_cloudflare_tunnel() {
     log_info "Setting up Cloudflare Tunnel..."
 
-    if ! command -v cloudflared >/dev/null 2>&1; then
+    check_existing_web_server
+
+    if ! check_cloudflared_installed; then
         log_warn "cloudflared not installed, installing now..."
         install_cloudflared
-    else
-        log_info "cloudflared already installed: $(cloudflared --version 2>&1 | head -1)"
     fi
 
     local domain
@@ -392,7 +392,7 @@ setup_cloudflare_tunnel() {
         log_warn "No Cloudflare certificate found"
         log_info "Running 'cloudflared tunnel login' to authenticate..."
 
-        cloudflared tunnel login || die_on_error "Failed to authenticate with Cloudflare. Please run 'cloudflared tunnel login' manually."
+        handle_auth_timeout 300 || die_on_error "Failed to authenticate with Cloudflare"
 
         if [ ! -f "$cert_file" ]; then
             die_on_error "Authentication failed - certificate file not found after login"
@@ -406,9 +406,9 @@ setup_cloudflare_tunnel() {
 
     log_info "Checking for existing tunnel: $tunnel_name"
 
-    if tunnel_info=$(cloudflared tunnel list 2>/dev/null | grep "$tunnel_name"); then
-        tunnel_id=$(echo "$tunnel_info" | awk '{print $1}')
-        log_info "Found existing tunnel: $tunnel_name (ID: $tunnel_id)"
+    if check_existing_tunnel "$tunnel_name"; then
+        tunnel_id="$CF_TUNNEL_ID"
+        log_info "Reusing existing tunnel: $tunnel_name (ID: $tunnel_id)"
     else
         log_info "Creating new tunnel: $tunnel_name"
 
@@ -490,11 +490,17 @@ WantedBy=multi-user.target"
     if command -v sudo >/dev/null 2>&1; then
         sudo systemctl daemon-reload || die_on_error "Failed to reload systemd daemon"
         sudo systemctl enable cloudflared-tunnel.service || die_on_error "Failed to enable cloudflared-tunnel service"
-        sudo systemctl start cloudflared-tunnel.service || die_on_error "Failed to start cloudflared-tunnel service"
+        if ! sudo systemctl start cloudflared-tunnel.service; then
+            handle_service_failure "cloudflared-tunnel"
+            die_on_error "Failed to start cloudflared-tunnel service"
+        fi
     else
         systemctl daemon-reload || die_on_error "Failed to reload systemd daemon"
         systemctl enable cloudflared-tunnel.service || die_on_error "Failed to enable cloudflared-tunnel service"
-        systemctl start cloudflared-tunnel.service || die_on_error "Failed to start cloudflared-tunnel service"
+        if ! systemctl start cloudflared-tunnel.service; then
+            handle_service_failure "cloudflared-tunnel"
+            die_on_error "Failed to start cloudflared-tunnel service"
+        fi
     fi
 
     log_info "Cloudflare Tunnel service started successfully"
@@ -1123,6 +1129,8 @@ setup_cloudflare_proxy() {
         return 1
     fi
 
+    check_existing_web_server
+
     local domain
     while true; do
         read -p "Enter your domain (e.g., example.com or sub.example.com): " domain
@@ -1208,12 +1216,7 @@ setup_cloudflare_proxy() {
 
     log_info "✓ Port verification completed"
 
-    if ! check_cloudflare_nameservers "$domain"; then
-        log_error "Domain $domain is not using Cloudflare nameservers"
-        log_error "Proxy mode requires Cloudflare nameservers"
-        log_error "Please change your domain's nameservers to Cloudflare, or use Tunnel mode instead"
-        return 1
-    fi
+    handle_ns_check_warning "$domain"
 
     log_info "Creating DNS A records with Cloudflare proxy enabled..."
     if ! create_dns_a_record "$domain" "$public_ip" "$CF_API_TOKEN"; then
@@ -1221,6 +1224,8 @@ setup_cloudflare_proxy() {
         return 1
     fi
     log_info "✓ DNS A records created successfully"
+
+    wait_for_dns_propagation "$domain" "$public_ip" 600
 
     log_info "Generating Cloudflare origin certificate..."
     local cert_key_paths
@@ -1289,6 +1294,525 @@ setup_cloudflare_proxy() {
     echo -e "  2. Restart Caddy to apply the new configuration"
     echo -e "  3. Verify your site is accessible at ${CYAN}https://$domain${NC}"
     echo ""
+
+    return 0
+}
+
+# =============================================================================
+# Edge Case Handler Functions
+# =============================================================================
+
+# Non-blocking NS check warning - warns but doesn't block setup
+# Arguments:
+#   $1 - domain to check
+# Returns:
+#   0 (always returns success - non-blocking)
+handle_ns_check_warning() {
+    local domain="$1"
+
+    if [ -z "$domain" ]; then
+        return 0
+    fi
+
+    log_info "Checking nameservers (non-blocking)..."
+    local nameservers
+    nameservers=$(dig +short NS "$domain" 2>/dev/null)
+
+    if [ -z "$nameservers" ]; then
+        log_warn "Could not retrieve nameservers for $domain"
+        return 0
+    fi
+
+    local cf_ns_pattern="\.cloudflare\.com\."
+    local is_cloudflare=0
+
+    while IFS= read -r ns; do
+        if echo "$ns" | grep -qiE "$cf_ns_pattern"; then
+            is_cloudflare=1
+            break
+        fi
+    done <<< "$nameservers"
+
+    if [ "$is_cloudflare" -eq 1 ]; then
+        log_info "✓ Domain $domain is using Cloudflare nameservers"
+    else
+        log_warn "⚠ Domain $domain is NOT using Cloudflare nameservers"
+        log_warn "  Current nameservers:"
+        while IFS= read -r ns; do
+            log_warn "    - $ns"
+        done <<< "$nameservers"
+        log_warn "  Warning: Proxy mode requires Cloudflare nameservers for full functionality."
+        log_warn "  You may proceed, but some features may not work as expected."
+        log_warn "  Consider using Tunnel mode instead for better compatibility."
+    fi
+
+    return 0
+}
+
+# Check for existing cloudflared tunnels and reuse them
+# Arguments:
+#   $1 - tunnel name to check
+# Returns:
+#   0 if tunnel exists (with ID in CF_TUNNEL_ID), 1 if not found
+check_existing_tunnel() {
+    local tunnel_name="$1"
+
+    if [ -z "$tunnel_name" ]; then
+        return 1
+    fi
+
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        return 1
+    fi
+
+    log_info "Checking for existing tunnel: $tunnel_name"
+
+    local tunnel_info
+    if tunnel_info=$(cloudflared tunnel list 2>/dev/null | grep "$tunnel_name"); then
+        local tunnel_id
+        tunnel_id=$(echo "$tunnel_info" | awk '{print $1}')
+        log_info "Found existing tunnel: $tunnel_name (ID: $tunnel_id)"
+        export CF_TUNNEL_ID="$tunnel_id"
+        return 0
+    fi
+
+    return 1
+}
+
+# Handle authentication timeout - provide manual URL fallback
+# Arguments:
+#   $1 - timeout in seconds (default: 300)
+# Returns:
+#   0 on success, 1 on failure
+handle_auth_timeout() {
+    local timeout="${1:-300}"
+    local elapsed=0
+    local interval=10
+
+    log_info "Starting Cloudflare authentication (timeout: ${timeout}s)..."
+
+    # Start cloudflared login in background
+    cloudflared tunnel login &
+    local auth_pid=$!
+
+    log_info "Waiting for authentication..."
+    log_info "  Please open the URL displayed by cloudflared in your browser"
+
+    while [ $elapsed -lt $timeout ]; do
+        if ! kill -0 $auth_pid 2>/dev/null; then
+            # Process finished
+            wait $auth_pid
+            local exit_code=$?
+            if [ $exit_code -eq 0 ]; then
+                log_info "✓ Authentication successful"
+                return 0
+            else
+                log_error "Authentication failed with exit code: $exit_code"
+                return 1
+            fi
+        fi
+
+        sleep $interval
+        elapsed=$((elapsed + interval))
+
+        if [ $((elapsed % 30)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+            log_info "Still waiting for authentication... (${elapsed}s elapsed)"
+        fi
+    done
+
+    # Timeout reached
+    log_warn "Authentication timed out after ${timeout}s"
+    log_warn "Killing background process..."
+
+    if kill -0 $auth_pid 2>/dev/null; then
+        kill $auth_pid 2>/dev/null
+        wait $auth_pid 2>/dev/null
+    fi
+
+    echo ""
+    log_warn "========================================="
+    log_warn "MANUAL FALLBACK INSTRUCTIONS"
+    log_warn "========================================="
+    log_warn "The automated authentication timed out."
+    log_warn "Please complete authentication manually:"
+    echo ""
+    log_info "1. Run this command in a separate terminal:"
+    echo -e "   ${CYAN}cloudflared tunnel login${NC}"
+    echo ""
+    log_info "2. Open the URL displayed in your browser"
+    log_info "3. Authorize Cloudflare access"
+    log_info "4. Return here and press Enter when done"
+    log_warn "========================================="
+    echo ""
+
+    read -p "Press Enter once authentication is complete: "
+
+    # Verify certificate exists
+    local cert_file="$HOME/.cloudflared/cert.pem"
+    if [ -f "$cert_file" ]; then
+        log_info "✓ Certificate found: $cert_file"
+        return 0
+    else
+        log_error "Certificate not found after manual authentication"
+        return 1
+    fi
+}
+
+# Wait for DNS propagation with timeout
+# Arguments:
+#   $1 - domain to check
+#   $2 - expected IP address (optional)
+#   $3 - timeout in seconds (default: 600)
+# Returns:
+#   0 if DNS propagated, 1 if timeout
+wait_for_dns_propagation() {
+    local domain="$1"
+    local expected_ip="$2"
+    local timeout="${3:-600}"
+    local elapsed=0
+    local interval=15
+    local check_count=0
+
+    if [ -z "$domain" ]; then
+        log_error "Domain parameter is required"
+        return 1
+    fi
+
+    log_info "Waiting for DNS propagation for $domain..."
+    if [ -n "$expected_ip" ]; then
+        log_info "  Expected IP: $expected_ip"
+    fi
+    log_info "  Timeout: ${timeout}s"
+
+    while [ $elapsed -lt $timeout ]; do
+        local resolved_ip
+        resolved_ip=$(dig +short "$domain" @8.8.8.8 2>/dev/null | head -1)
+
+        if [ -n "$resolved_ip" ]; then
+            check_count=$((check_count + 1))
+
+            if [ -n "$expected_ip" ]; then
+                if [ "$resolved_ip" = "$expected_ip" ]; then
+                    log_info "✓ DNS propagated successfully ($resolved_ip)"
+                    return 0
+                else
+                    log_warn "DNS record found but IP mismatch:"
+                    log_warn "  Expected: $expected_ip"
+                    log_warn "  Found: $resolved_ip"
+                fi
+            else
+                log_info "✓ DNS record resolved: $resolved_ip"
+                return 0
+            fi
+        else
+            log_info "DNS not yet propagated... ($elapsed/${timeout}s)"
+        fi
+
+        sleep $interval
+        elapsed=$((elapsed + interval))
+
+        if [ $((elapsed % 60)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+            log_info "Still waiting for DNS propagation... (${elapsed}s elapsed, ${check_count} checks performed)"
+        fi
+    done
+
+    log_error "DNS propagation timed out after ${timeout}s"
+    log_warn "DNS may still be propagating. You can continue, but services may not be accessible yet."
+    log_warn "Check again with: dig +short $domain @8.8.8.8"
+    return 1
+}
+
+# Handle tunnel/proxy service failure - show logs and recovery instructions
+# Arguments:
+#   $1 - service name (cloudflared or caddy)
+# Returns:
+#   0 (always returns - informational only)
+handle_service_failure() {
+    local service_name="$1"
+
+    if [ -z "$service_name" ]; then
+        log_error "Service name required"
+        return 0
+    fi
+
+    log_error "========================================="
+    log_error "SERVICE FAILURE: $service_name"
+    log_error "========================================="
+
+    # Show recent logs
+    log_info "Recent logs (last 20 lines):"
+    echo ""
+
+    if command -v journalctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+        sudo journalctl -u "$service_name" -n 20 --no-pager 2>/dev/null || true
+    elif command -v journalctl >/dev/null 2>&1; then
+        journalctl -u "$service_name" -n 20 --no-pager 2>/dev/null || true
+    else
+        log_warn "Cannot show logs (journalctl not available)"
+    fi
+
+    echo ""
+    log_warn "========================================="
+    log_warn "RECOVERY INSTRUCTIONS"
+    log_warn "========================================="
+    log_info "1. Check service status:"
+    echo -e "   ${CYAN}systemctl status $service_name${NC}"
+    echo ""
+    log_info "2. View full logs:"
+    echo -e "   ${CYAN}journalctl -u $service_name -f${NC}"
+    echo ""
+    log_info "3. Restart the service:"
+    echo -e "   ${CYAN}sudo systemctl restart $service_name${NC}"
+    echo ""
+    log_info "4. Check configuration:"
+    case "$service_name" in
+        cloudflared)
+            echo -e "   ${CYAN}cat ~/.cloudflared/config.yml${NC}"
+            ;;
+        caddy)
+            echo -e "   ${CYAN}cat /etc/caddy/Caddyfile${NC}"
+            echo -e "   ${CYAN}caddy validate --config /etc/caddy/Caddyfile${NC}"
+            ;;
+    esac
+    echo ""
+    log_info "5. Test connectivity:"
+    case "$service_name" in
+        cloudflared)
+            echo -e "   ${CYAN}cloudflared tunnel info <tunnel-name>${NC}"
+            ;;
+        caddy)
+            echo -e "   ${CYAN}curl -I https://localhost${NC}"
+            ;;
+    esac
+    log_warn "========================================="
+
+    return 0
+}
+
+# Cleanup partial state on cancel - remove temp files, stop partial services
+# Arguments:
+#   $1 - cleanup type (tunnel, proxy, all)
+# Returns:
+#   0 on success, 1 on failure
+cleanup_on_cancel() {
+    local cleanup_type="${1:-all}"
+
+    log_warn "========================================="
+    log_warn "CLEANING UP PARTIAL STATE"
+    log_warn "========================================="
+
+    local cleanup_count=0
+
+    # Clean up temp files
+    log_info "Cleaning up temporary files..."
+
+    local temp_patterns=(
+        "/tmp/cloudflared-*"
+        "/tmp/caddy-*"
+        "/tmp/armorclaw-cloudflare-*"
+    )
+
+    for pattern in "${temp_patterns[@]}"; do
+        for file in $pattern; do
+            if [ -e "$file" ]; then
+                rm -rf "$file" 2>/dev/null && {
+                    log_info "  Removed: $file"
+                    cleanup_count=$((cleanup_count + 1))
+                }
+            fi
+        done
+    done
+
+    # Stop partial services based on cleanup type
+    case "$cleanup_type" in
+        tunnel|all)
+            if systemctl is-active --quiet cloudflared-tunnel 2>/dev/null; then
+                log_info "Stopping cloudflared-tunnel service..."
+                if command -v sudo >/dev/null 2>&1; then
+                    sudo systemctl stop cloudflared-tunnel 2>/dev/null && {
+                        log_info "  ✓ Stopped cloudflared-tunnel"
+                        cleanup_count=$((cleanup_count + 1))
+                    }
+                else
+                    systemctl stop cloudflared-tunnel 2>/dev/null && {
+                        log_info "  ✓ Stopped cloudflared-tunnel"
+                        cleanup_count=$((cleanup_count + 1))
+                    }
+                fi
+            fi
+            ;;
+        proxy|all)
+            if systemctl is-active --quiet caddy 2>/dev/null; then
+                log_info "Stopping caddy service..."
+                if command -v sudo >/dev/null 2>&1; then
+                    sudo systemctl stop caddy 2>/dev/null && {
+                        log_info "  ✓ Stopped caddy"
+                        cleanup_count=$((cleanup_count + 1))
+                    }
+                else
+                    systemctl stop caddy 2>/dev/null && {
+                        log_info "  ✓ Stopped caddy"
+                        cleanup_count=$((cleanup_count + 1))
+                    }
+                fi
+            fi
+            ;;
+    esac
+
+    # Clean up systemd service files if requested
+    if [ "$cleanup_type" = "all" ]; then
+        log_info "Cleaning up systemd service files..."
+
+        local service_files=(
+            "/etc/systemd/system/cloudflared-tunnel.service"
+        )
+
+        for service_file in "${service_files[@]}"; do
+            if [ -f "$service_file" ]; then
+                if command -v sudo >/dev/null 2>&1; then
+                    sudo rm -f "$service_file" 2>/dev/null && {
+                        log_info "  Removed: $service_file"
+                        cleanup_count=$((cleanup_count + 1))
+                    }
+                else
+                    rm -f "$service_file" 2>/dev/null && {
+                        log_info "  Removed: $service_file"
+                        cleanup_count=$((cleanup_count + 1))
+                    }
+                fi
+            fi
+        done
+
+        # Reload systemd
+        log_info "Reloading systemd daemon..."
+        if command -v sudo >/dev/null 2>&1; then
+            sudo systemctl daemon-reload 2>/dev/null
+        else
+            systemctl daemon-reload 2>/dev/null
+        fi
+    fi
+
+    log_warn "========================================="
+    log_info "Cleanup completed: $cleanup_count items"
+    log_warn "========================================="
+
+    return 0
+}
+
+# Check if cloudflared is already installed
+# Returns:
+#   0 if installed (version in CF_CLOUDFLARED_VERSION), 1 if not
+check_cloudflared_installed() {
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local version
+    version=$(cloudflared --version 2>&1 | head -1)
+
+    if [ -n "$version" ]; then
+        log_info "✓ cloudflared is already installed"
+        log_info "  Version: $version"
+        export CF_CLOUDFLARED_VERSION="$version"
+        return 0
+    fi
+
+    return 1
+}
+
+# Check for existing Caddy/Nginx web servers and warn about conflicts
+# Returns:
+#   0 (always returns - informational only)
+check_existing_web_server() {
+    local has_caddy=0
+    local has_nginx=0
+    local conflicts_found=0
+
+    log_info "Checking for existing web servers..."
+
+    # Check for Caddy
+    if command -v caddy >/dev/null 2>&1; then
+        has_caddy=1
+        if systemctl is-active --quiet caddy 2>/dev/null; then
+            conflicts_found=$((conflicts_found + 1))
+            log_warn "⚠ Caddy is running and active"
+            log_warn "  Binary: $(command -v caddy)"
+        else
+            log_info "✓ Caddy is installed but not running"
+        fi
+    fi
+
+    # Check for Nginx
+    if command -v nginx >/dev/null 2>&1; then
+        has_nginx=1
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+            conflicts_found=$((conflicts_found + 1))
+            log_warn "⚠ Nginx is running and active"
+            log_warn "  Binary: $(command -v nginx)"
+        else
+            log_info "✓ Nginx is installed but not running"
+        fi
+    fi
+
+    # Check for port conflicts
+    if command -v ss >/dev/null 2>&1; then
+        local port_80_in_use
+        local port_443_in_use
+        port_80_in_use=$(ss -tlnp 2>/dev/null | grep ':80 ' || echo "")
+        port_443_in_use=$(ss -tlnp 2>/dev/null | grep ':443 ' || echo "")
+
+        if [ -n "$port_80_in_use" ]; then
+            log_warn "⚠ Port 80 is already in use:"
+            echo "$port_80_in_use" | head -1 | sed 's/^/    /'
+        fi
+
+        if [ -n "$port_443_in_use" ]; then
+            log_warn "⚠ Port 443 is already in use:"
+            echo "$port_443_in_use" | head -1 | sed 's/^/    /'
+        fi
+    elif command -v netstat >/dev/null 2>&1; then
+        local port_80_in_use
+        local port_443_in_use
+        port_80_in_use=$(netstat -tlnp 2>/dev/null | grep ':80 ' || echo "")
+        port_443_in_use=$(netstat -tlnp 2>/dev/null | grep ':443 ' || echo "")
+
+        if [ -n "$port_80_in_use" ]; then
+            log_warn "⚠ Port 80 is already in use:"
+            echo "$port_80_in_use" | head -1 | sed 's/^/    /'
+        fi
+
+        if [ -n "$port_443_in_use" ]; then
+            log_warn "⚠ Port 443 is already in use:"
+            echo "$port_443_in_use" | head -1 | sed 's/^/    /'
+        fi
+    fi
+
+    if [ $conflicts_found -gt 0 ]; then
+        echo ""
+        log_warn "========================================="
+        log_warn "WEB SERVER CONFLICT DETECTED"
+        log_warn "========================================="
+        log_warn "You have existing web servers that may conflict with:"
+        log_warn "  • Caddy (for Proxy mode)"
+        log_warn "  • Cloudflare Tunnel (for Tunnel mode)"
+        echo ""
+        log_info "Recommended actions:"
+        if [ $has_nginx -eq 1 ] && [ $has_caddy -eq 0 ]; then
+            log_info "  • Nginx users: Consider using existing Nginx as reverse proxy"
+            log_info "  • Or stop Nginx before proceeding: sudo systemctl stop nginx"
+        elif [ $has_caddy -eq 1 ] && [ $has_nginx -eq 0 ]; then
+            log_info "  • Caddy users: ArmorClaw will configure your existing Caddy"
+            log_info "  • Ensure Caddy is not already configured for ports 80/443"
+        elif [ $has_nginx -eq 1 ] && [ $has_caddy -eq 1 ]; then
+            log_warn "  • Both servers detected! Choose one or disable both"
+            log_info "  • Stop one: sudo systemctl stop nginx|caddy"
+        fi
+        log_info "  • Tunnel mode bypasses most web server conflicts"
+        log_warn "========================================="
+        echo ""
+    else
+        log_info "✓ No web server conflicts detected"
+    fi
 
     return 0
 }
