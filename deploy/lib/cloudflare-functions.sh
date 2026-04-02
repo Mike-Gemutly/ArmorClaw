@@ -149,3 +149,56 @@ check_cloudflare_nameservers() {
         return 1
     fi
 }
+
+prompt_cloudflare_mode() {
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}         Cloudflare Deployment Mode Selection${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BOLD}Detected Environment:${NC}"
+    echo -e "  ${CYAN}NAT Status:${NC} ${HAS_NAT}"
+    echo -e "  ${CYAN}Available Ports:${NC} ${PORTS_AVAILABLE}"
+    echo ""
+    echo -e "${BOLD}Recommendation:${NC}"
+    echo -e "  ${GREEN}✓${NC} ${RECOMMEND}"
+    echo -e "  ${YELLOW}→${NC} ${REASON}"
+    echo ""
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "${BOLD}Select Deployment Mode:${NC}"
+    echo ""
+    echo -e "  ${BOLD}1) Tunnel Mode${NC} ${CYAN}(cloudflared)${NC}"
+    echo -e "     ${GREEN}Best for: NAT/CGNAT, dynamic IP, no public ports${NC}"
+    echo -e "     Creates outbound tunnel to Cloudflare, bypasses NAT${NC}"
+    echo ""
+    echo -e "  ${BOLD}2) Proxy Mode${NC} ${CYAN}(DNS/CDN)${NC}"
+    echo -e "     ${GREEN}Best for: Static public IP, port forwarding, own domain${NC}"
+    echo -e "     Proxies traffic through Cloudflare DNS/CDN${NC}"
+    echo ""
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo ""
+
+    local choice
+    while true; do
+        read -p "Enter your choice [1-2]: " choice
+        case "$choice" in
+            1)
+                export CF_MODE="tunnel"
+                echo ""
+                log_info "Selected: Tunnel Mode"
+                return 0
+                ;;
+            2)
+                export CF_MODE="proxy"
+                echo ""
+                log_info "Selected: Proxy Mode"
+                return 0
+                ;;
+            *)
+                echo ""
+                log_error "Invalid choice. Please enter 1 or 2."
+                ;;
+        esac
+    done
+}
