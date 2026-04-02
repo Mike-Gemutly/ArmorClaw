@@ -813,3 +813,272 @@ create_dns_a_record() {
 
     return 0
 }
+
+setup_manual_domain() {
+    log_info "Setting up manual domain configuration..."
+
+    local domain
+    while true; do
+        echo ""
+        read -p "Enter your domain (e.g., example.com or sub.example.com): " domain
+        domain=$(echo "$domain" | xargs)
+
+        if [ -z "$domain" ]; then
+            log_error "Domain cannot be empty"
+            continue
+        fi
+
+        if ! echo "$domain" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'; then
+            log_error "Invalid domain format. Please use format like example.com or sub.example.com"
+            continue
+        fi
+
+        break
+    done
+
+    log_info "Using domain: $domain"
+
+    # Detect public IP
+    local public_ip
+    log_info "Detecting public IP address..."
+    public_ip=$(curl -s --max-time 5 --connect-timeout 3 https://api.ipify.org 2>/dev/null || echo "")
+
+    if [ -z "$public_ip" ]; then
+        log_warn "Could not detect public IP automatically"
+        while true; do
+            read -p "Enter your public IP address: " public_ip
+            public_ip=$(echo "$public_ip" | xargs)
+
+            if [ -z "$public_ip" ]; then
+                log_error "Public IP cannot be empty"
+                continue
+            fi
+
+            if ! echo "$public_ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                log_error "Invalid IP format. Please use format like 1.2.3.4"
+                continue
+            fi
+
+            break
+        done
+    else
+        log_info "Public IP detected: $public_ip"
+    fi
+
+    # Display DNS configuration instructions
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}         Manual DNS Configuration Instructions${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BOLD}Your Public IP:${NC} ${CYAN}$public_ip${NC}"
+    echo -e "${BOLD}Your Domain:${NC} ${CYAN}$domain${NC}"
+    echo ""
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo -e "${BOLD}Step 1: Configure DNS Records${NC}"
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "Add the following ${GREEN}A records${NC} to your DNS provider:"
+    echo ""
+    echo -e "  ${CYAN}@${NC}       IN A    ${YELLOW}$public_ip${NC}"
+    echo -e "  ${CYAN}matrix${NC}  IN A    ${YELLOW}$public_ip${NC}"
+    echo ""
+    echo -e "Examples:"
+    echo -e "  ${domain}.           IN A    $public_ip"
+    echo -e "  matrix.${domain}.    IN A    $public_ip"
+    echo ""
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo -e "${BOLD}Step 2: Configure SSL/TLS Certificates${NC}"
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "${YELLOW}⚠${NC} You need to configure SSL/TLS certificates for your domain."
+    echo ""
+    echo -e "${BOLD}Recommended Options:${NC}"
+    echo -e "  • ${GREEN}Let's Encrypt${NC} - Free, automated certificates"
+    echo -e "  • ${GREEN}Caddy${NC} - Automatic HTTPS with simple config"
+    echo -e "  • ${GREEN}Certbot${NC} - ACME client for Let's Encrypt"
+    echo ""
+    echo -e "${BOLD}Certificate Requirements:${NC}"
+    echo -e "  • ${CYAN}$domain${NC} (for ArmorClaw Bridge)"
+    echo -e "  • ${CYAN}matrix.$domain${NC} (for Matrix Conduit)"
+    echo ""
+    echo -e "${BOLD}───────────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "${YELLOW}⚠${NC} After configuring DNS, it may take ${BOLD}5-30 minutes${NC} to propagate."
+    echo -e "${YELLOW}⚠${NC} You can verify DNS propagation with: ${CYAN}nslookup $domain${NC} or ${CYAN}dig $domain${NC}"
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Wait for user confirmation
+    read -p "Press Enter once you have configured DNS and SSL/TLS..."
+
+    # Export variables for downstream use
+    export PUBLIC_URL="https://$domain"
+    export MATRIX_URL="https://matrix.$domain"
+    export DOMAIN="$domain"
+
+    log_info "Environment variables exported:"
+    log_info "  PUBLIC_URL=$PUBLIC_URL"
+    log_info "  MATRIX_URL=$MATRIX_URL"
+    log_info "  DOMAIN=$DOMAIN"
+
+    return 0
+}
+
+create_cloudflare_origin_cert() {
+    log_info "Creating Cloudflare origin certificate..."
+
+    # Check for API token
+    if [ -z "$CF_API_TOKEN" ]; then
+        log_error "CF_API_TOKEN environment variable is required"
+        log_error "Set it with: export CF_API_TOKEN=your_token"
+        return 1
+    fi
+
+    # Define certificate paths
+    local cert_path="/etc/ssl/certs/cloudflare-origin.pem"
+    local key_path="/etc/ssl/private/cloudflare-origin.key"
+    local api_url="https://api.cloudflare.com/client/v4/certificates"
+
+    # Backup existing certificates if they exist
+    local backup_needed=0
+    if [ -f "$cert_path" ] || [ -f "$key_path" ]; then
+        backup_needed=1
+        local timestamp
+        timestamp=$(date +%Y%m%d%H%M%S)
+        log_warn "Existing certificates found - creating backups..."
+
+        if [ -f "$cert_path" ]; then
+            cp "$cert_path" "${cert_path}.backup-${timestamp}" || {
+                log_error "Failed to backup certificate"
+                return 1
+            }
+            log_info "Backed up: ${cert_path}.backup-${timestamp}"
+        fi
+
+        if [ -f "$key_path" ]; then
+            cp "$key_path" "${key_path}.backup-${timestamp}" || {
+                log_error "Failed to backup private key"
+                return 1
+            }
+            log_info "Backed up: ${key_path}.backup-${timestamp}"
+        fi
+    fi
+
+    # Ensure certificate directories exist
+    log_info "Ensuring SSL directories exist..."
+    if command -v sudo >/dev/null 2>&1; then
+        sudo mkdir -p "$(dirname "$cert_path")" "$(dirname "$key_path")" || {
+            log_error "Failed to create SSL directories"
+            return 1
+        }
+    else
+        mkdir -p "$(dirname "$cert_path")" "$(dirname "$key_path")" || {
+            log_error "Failed to create SSL directories"
+            return 1
+        }
+    fi
+
+    # Generate 15-year validity origin certificate via Cloudflare API
+    log_info "Requesting origin certificate from Cloudflare API (15-year validity)..."
+
+    local api_response
+    api_response=$(curl -s -X POST "$api_url" \
+        -H "Authorization: Bearer $CF_API_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "type": "origin",
+            "hostnames": ["*"],
+            "validity_days": 5479,
+            "requested_validity": 5479,
+            "request_type": "keyless-certificate"
+        }' 2>&1)
+
+    # Check for curl errors
+    if [ $? -ne 0 ]; then
+        log_error "Failed to communicate with Cloudflare API"
+        log_error "Response: $api_response"
+        return 1
+    fi
+
+    # Parse API response
+    local success
+    success=$(echo "$api_response" | jq -r '.success // false' 2>/dev/null)
+
+    if [ "$success" != "true" ]; then
+        log_error "Cloudflare API returned error"
+        local errors
+        errors=$(echo "$api_response" | jq -r '.errors[]?.message // "Unknown error"' 2>/dev/null)
+        log_error "Details: $errors"
+        return 1
+    fi
+
+    # Extract certificate and key from response
+    local certificate
+    local private_key
+
+    certificate=$(echo "$api_response" | jq -r '.result.certificate' 2>/dev/null)
+    private_key=$(echo "$api_response" | jq -r '.result.private_key' 2>/dev/null)
+
+    if [ -z "$certificate" ] || [ -z "$private_key" ]; then
+        log_error "Failed to extract certificate or private key from API response"
+        return 1
+    fi
+
+    # Save certificate
+    log_info "Saving certificate to $cert_path"
+    if command -v sudo >/dev/null 2>&1; then
+        echo "$certificate" | sudo tee "$cert_path" >/dev/null || {
+            log_error "Failed to save certificate to $cert_path"
+            return 1
+        }
+        sudo chmod 644 "$cert_path" || {
+            log_error "Failed to set permissions on certificate"
+            return 1
+        }
+    else
+        echo "$certificate" > "$cert_path" || {
+            log_error "Failed to save certificate to $cert_path"
+            return 1
+        }
+        chmod 644 "$cert_path" || {
+            log_error "Failed to set permissions on certificate"
+            return 1
+        }
+    fi
+
+    # Save private key
+    log_info "Saving private key to $key_path"
+    if command -v sudo >/dev/null 2>&1; then
+        echo "$private_key" | sudo tee "$key_path" >/dev/null || {
+            log_error "Failed to save private key to $key_path"
+            return 1
+        }
+        sudo chmod 600 "$key_path" || {
+            log_error "Failed to set permissions on private key"
+            return 1
+        }
+    else
+        echo "$private_key" > "$key_path" || {
+            log_error "Failed to save private key to $key_path"
+            return 1
+        }
+        chmod 600 "$key_path" || {
+            log_error "Failed to set permissions on private key"
+            return 1
+        }
+    fi
+
+    log_info "✓ Cloudflare origin certificate created successfully"
+    log_info "  Certificate: $cert_path"
+    log_info "  Private Key:  $key_path"
+
+    if [ "$backup_needed" -eq 1 ]; then
+        log_info "  Backups created (with timestamp)"
+    fi
+
+    # Return paths to caller
+    echo "$cert_path:$key_path"
+    return 0
+}
