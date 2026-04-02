@@ -43,6 +43,15 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# Source Cloudflare functions library
+CLOUDFLARE_FUNCTIONS_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/cloudflare-functions.sh"
+if [[ -f "$CLOUDFLARE_FUNCTIONS_SCRIPT" ]]; then
+    source "$CLOUDFLARE_FUNCTIONS_SCRIPT"
+else
+    echo -e "${RED}WARNING: Cloudflare functions library not found at $CLOUDFLARE_FUNCTIONS_SCRIPT${NC}"
+    echo -e "${YELLOW}Cloudflare HTTPS features will be unavailable${NC}"
+fi
+
 # Global variables
 export REPO="Gemutly/ArmorClaw"
 export VERSION="${VERSION:-main}"
@@ -1660,6 +1669,14 @@ main() {
 
     # Run setup steps
     check_prerequisites
+
+    # Network detection and Cloudflare mode selection
+    if command -v detect_network_environment >/dev/null 2>&1; then
+        detect_network_environment
+    else
+        print_warning "Cloudflare functions not available - skipping network detection"
+    fi
+
     install_bridge
     create_user
     generate_config
@@ -1696,8 +1713,38 @@ main() {
     prompt_api_key
     generate_qr_code
 
+    # Cloudflare HTTPS setup (if Matrix is running)
     if [[ "$MATRIX_ENABLED" == "true" ]] || is_matrix_running; then
-        start_cloudflare_tunnel
+        if command -v prompt_cloudflare_mode >/dev/null 2>&1 && ! $NON_INTERACTIVE; then
+            prompt_cloudflare_mode
+
+            # Route to appropriate Cloudflare setup based on mode
+            case "${CF_MODE:-}" in
+                tunnel)
+                    if command -v setup_cloudflare_tunnel >/dev/null 2>&1; then
+                        setup_cloudflare_tunnel
+                    else
+                        print_warning "Cloudflare Tunnel setup function not available - using legacy tunnel"
+                        start_cloudflare_tunnel
+                    fi
+                    ;;
+                proxy)
+                    if command -v setup_cloudflare_proxy >/dev/null 2>&1; then
+                        setup_cloudflare_proxy
+                    else
+                        print_warning "Cloudflare Proxy setup function not available - using legacy tunnel"
+                        start_cloudflare_tunnel
+                    fi
+                    ;;
+                *)
+                    # Default to legacy tunnel for backward compatibility
+                    start_cloudflare_tunnel
+                    ;;
+            esac
+        else
+            # Default behavior - use legacy tunnel
+            start_cloudflare_tunnel
+        fi
     fi
 
     print_completion
