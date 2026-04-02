@@ -14,6 +14,10 @@
 #   - check_cloudflare_prerequisites() : Verify required tools are available
 #   - install_cloudflared()            : Download and install cloudflared binary
 #   - check_cloudflare_nameservers()   : Check if domain uses Cloudflare nameservers
+#   - get_cloudflare_zone_id()        : Get Cloudflare zone ID for a domain
+#   - get_existing_dns_record_id()    : Check if DNS record exists and get its ID
+#   - create_or_update_dns_a_record() : Create or update DNS A record with proxy
+#   - create_dns_a_record()           : Create DNS A records for ArmorClaw (main + matrix)
 # =============================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -585,5 +589,227 @@ EOF
     fi
 
     log_info "Caddy origin certificate configuration completed"
+    return 0
+}
+
+# =============================================================================
+# DNS A Record Creation Functions
+# =============================================================================
+
+# Function to get Cloudflare zone ID for a domain
+# Arguments:
+#   $1 - domain (e.g., example.com)
+#   $2 - CF_API_TOKEN
+# Returns:
+#   Zone ID on success, empty string on failure
+get_cloudflare_zone_id() {
+    local domain="$1"
+    local cf_token="$2"
+
+    if [ -z "$domain" ] || [ -z "$cf_token" ]; then
+        log_error "Domain and CF_API_TOKEN are required"
+        echo ""
+        return 1
+    fi
+
+    log_info "Looking up Cloudflare zone ID for $domain..."
+    local response
+    response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${domain}" \
+        -H "Authorization: Bearer ${cf_token}" \
+        -H "Content-Type: application/json")
+
+    if ! echo "$response" | jq -e '.success' >/dev/null 2>&1; then
+        log_error "Failed to get zone ID"
+        log_error "Response: $(echo "$response" | jq -r '.errors[].message' 2>/dev/null || echo 'Unknown error')"
+        echo ""
+        return 1
+    fi
+
+    local zone_id
+    zone_id=$(echo "$response" | jq -r '.result[0].id' 2>/dev/null)
+
+    if [ -z "$zone_id" ] || [ "$zone_id" = "null" ]; then
+        log_error "No zone found for domain: $domain"
+        echo ""
+        return 1
+    fi
+
+    log_info "Zone ID found: $zone_id"
+    echo "$zone_id"
+    return 0
+}
+
+# Function to check if a DNS record exists and get its ID
+# Arguments:
+#   $1 - zone_id
+#   $2 - record_name (e.g., example.com or matrix.example.com)
+#   $3 - CF_API_TOKEN
+# Returns:
+#   Record ID on success, empty string if not found, error on failure
+get_existing_dns_record_id() {
+    local zone_id="$1"
+    local record_name="$2"
+    local cf_token="$3"
+
+    local response
+    response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A&name=${record_name}" \
+        -H "Authorization: Bearer ${cf_token}" \
+        -H "Content-Type: application/json")
+
+    if ! echo "$response" | jq -e '.success' >/dev/null 2>&1; then
+        log_error "Failed to query DNS records"
+        log_error "Response: $(echo "$response" | jq -r '.errors[].message' 2>/dev/null || echo 'Unknown error')"
+        echo ""
+        return 1
+    fi
+
+    local record_id
+    record_id=$(echo "$response" | jq -r '.result[0].id // ""' 2>/dev/null)
+
+    echo "$record_id"
+    return 0
+}
+
+# Function to create or update a DNS A record with proxy enabled
+# Arguments:
+#   $1 - zone_id
+#   $2 - record_name (e.g., example.com or matrix.example.com)
+#   $3 - ip_address
+#   $4 - CF_API_TOKEN
+# Returns:
+#   0 on success, 1 on failure
+create_or_update_dns_a_record() {
+    local zone_id="$1"
+    local record_name="$2"
+    local ip_address="$3"
+    local cf_token="$4"
+
+    log_info "Processing DNS record: $record_name -> $ip_address"
+
+    # Check if record exists
+    local existing_record_id
+    existing_record_id=$(get_existing_dns_record_id "$zone_id" "$record_name" "$cf_token")
+
+    if [ $? -ne 0 ]; then
+        log_error "Failed to check for existing record"
+        return 1
+    fi
+
+    # Get current IP if record exists
+    local current_ip=""
+    if [ -n "$existing_record_id" ]; then
+        local response
+        response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${existing_record_id}" \
+            -H "Authorization: Bearer ${cf_token}" \
+            -H "Content-Type: application/json")
+
+        if echo "$response" | jq -e '.success' >/dev/null 2>&1; then
+            current_ip=$(echo "$response" | jq -r '.result.content' 2>/dev/null)
+        fi
+
+        # Check if IP matches
+        if [ "$current_ip" = "$ip_address" ]; then
+            log_info "✓ Record exists and IP matches (proxy enabled)"
+            return 0
+        else
+            log_warn "Record exists but IP differs: $current_ip -> $ip_address"
+        fi
+    fi
+
+    # Create or update record
+    local response
+    if [ -n "$existing_record_id" ]; then
+        # Update existing record
+        log_info "Updating existing DNS record..."
+        response=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${existing_record_id}" \
+            -H "Authorization: Bearer ${cf_token}" \
+            -H "Content-Type: application/json" \
+            --data "{\"type\":\"A\",\"name\":\"${record_name}\",\"content\":\"${ip_address}\",\"proxied\":true}")
+    else
+        # Create new record
+        log_info "Creating new DNS record with proxy enabled..."
+        response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+            -H "Authorization: Bearer ${cf_token}" \
+            -H "Content-Type: application/json" \
+            --data "{\"type\":\"A\",\"name\":\"${record_name}\",\"content\":\"${ip_address}\",\"proxied\":true}")
+    fi
+
+    if ! echo "$response" | jq -e '.success' >/dev/null 2>&1; then
+        log_error "Failed to create DNS record for $record_name"
+        log_error "Response: $(echo "$response" | jq -r '.errors[].message' 2>/dev/null || echo 'Unknown error')"
+        return 1
+    fi
+
+    log_info "✓ DNS A record created/updated: $record_name -> $ip_address (proxy enabled)"
+    return 0
+}
+
+# Main function to create DNS A records for ArmorClaw deployment
+# Creates both main domain and matrix subdomain records with Cloudflare proxy enabled
+#
+# Arguments:
+#   $1 - domain (e.g., example.com)
+#   $2 - ip_address (e.g., 203.0.113.1)
+#   $3 - CF_API_TOKEN (Cloudflare API token with Zone:DNS edit permissions)
+#
+# Returns:
+#   0 on success, 1 on failure
+#
+# Environment Variables Exported on Success:
+#   - CF_ZONE_ID: The Cloudflare zone ID
+#
+# Example:
+#   create_dns_a_record "example.com" "203.0.113.1" "your_api_token"
+create_dns_a_record() {
+    local domain="$1"
+    local ip_address="$2"
+    local cf_token="$3"
+
+    if [ -z "$domain" ]; then
+        log_error "Domain parameter is required"
+        return 1
+    fi
+
+    if [ -z "$ip_address" ]; then
+        log_error "IP address parameter is required"
+        return 1
+    fi
+
+    if [ -z "$cf_token" ]; then
+        log_error "CF_API_TOKEN is required"
+        return 1
+    fi
+
+    log_info "Creating DNS A records for Cloudflare Proxy mode..."
+    log_info "  Domain: $domain"
+    log_info "  IP Address: $ip_address"
+
+    # Get zone ID
+    local zone_id
+    zone_id=$(get_cloudflare_zone_id "$domain" "$cf_token")
+
+    if [ -z "$zone_id" ]; then
+        log_error "Failed to retrieve zone ID for $domain"
+        return 1
+    fi
+
+    export CF_ZONE_ID="$zone_id"
+
+    # Create main domain record
+    if ! create_or_update_dns_a_record "$zone_id" "$domain" "$ip_address" "$cf_token"; then
+        log_error "Failed to create/update DNS record for $domain"
+        return 1
+    fi
+
+    # Create matrix subdomain record
+    if ! create_or_update_dns_a_record "$zone_id" "matrix.$domain" "$ip_address" "$cf_token"; then
+        log_error "Failed to create/update DNS record for matrix.$domain"
+        return 1
+    fi
+
+    log_info "✓ All DNS A records created successfully with proxy enabled"
+    log_info "  - $domain -> $ip_address (orange cloud: ON)"
+    log_info "  - matrix.$domain -> $ip_address (orange cloud: ON)"
+
     return 0
 }
