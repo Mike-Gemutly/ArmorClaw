@@ -1082,3 +1082,213 @@ create_cloudflare_origin_cert() {
     echo "$cert_path:$key_path"
     return 0
 }
+
+# =============================================================================
+# Cloudflare Proxy Setup Functions
+# =============================================================================
+
+# Main function to orchestrate Cloudflare Proxy mode setup
+# This function performs the complete setup for Cloudflare Proxy mode:
+#   - Verifies ports 80/443 are accessible
+#   - Creates DNS A records with proxy enabled
+#   - Generates Cloudflare origin certificate
+#   - Configures Caddy with origin certificate
+#   - Displays SSL/TLS configuration instructions
+#
+# Arguments:
+#   None (prompts for domain and IP address if not provided)
+#
+# Environment Variables Required:
+#   - CF_API_TOKEN: Cloudflare API token with Zone:DNS and Zone:SSL edit permissions
+#
+# Environment Variables Exported on Success:
+#   - PUBLIC_URL: The public HTTPS URL (e.g., https://example.com)
+#   - MATRIX_URL: The Matrix homeserver URL (e.g., https://matrix.example.com)
+#   - DOMAIN: The base domain (e.g., example.com)
+#   - CF_ZONE_ID: The Cloudflare zone ID
+#
+# Returns:
+#   0 on success, 1 on failure
+#
+# Example:
+#   export CF_API_TOKEN=your_api_token
+#   setup_cloudflare_proxy
+setup_cloudflare_proxy() {
+    log_info "Setting up Cloudflare Proxy mode..."
+    echo ""
+
+    if [ -z "$CF_API_TOKEN" ]; then
+        log_error "CF_API_TOKEN environment variable is required"
+        log_error "Set it with: export CF_API_TOKEN=your_token"
+        return 1
+    fi
+
+    local domain
+    while true; do
+        read -p "Enter your domain (e.g., example.com or sub.example.com): " domain
+        domain=$(echo "$domain" | xargs)
+
+        if [ -z "$domain" ]; then
+            log_error "Domain cannot be empty"
+            continue
+        fi
+
+        if ! echo "$domain" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'; then
+            log_error "Invalid domain format. Please use format like example.com or sub.example.com"
+            continue
+        fi
+
+        break
+    done
+
+    log_info "Using domain: $domain"
+
+    local public_ip
+    log_info "Detecting public IP address..."
+    public_ip=$(curl -s --max-time 5 --connect-timeout 3 https://api.ipify.org 2>/dev/null || echo "")
+
+    if [ -z "$public_ip" ]; then
+        log_warn "Could not detect public IP automatically"
+        while true; do
+            read -p "Enter your public IP address: " public_ip
+            public_ip=$(echo "$public_ip" | xargs)
+
+            if [ -z "$public_ip" ]; then
+                log_error "Public IP cannot be empty"
+                continue
+            fi
+
+            if ! echo "$public_ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                log_error "Invalid IP format. Please use format like 1.2.3.4"
+                continue
+            fi
+
+            break
+        done
+    else
+        log_info "Public IP detected: $public_ip"
+    fi
+
+    log_info "Verifying ports 80 and 443 are accessible..."
+
+    local port_80_accessible=0
+    local port_443_accessible=0
+
+    if command -v timeout >/dev/null 2>&1 && command -v nc >/dev/null 2>&1; then
+        if timeout 3 nc -z "$public_ip" 80 2>/dev/null; then
+            port_80_accessible=1
+            log_info "✓ Port 80 is accessible"
+        else
+            log_warn "✗ Port 80 is not accessible from public"
+        fi
+    else
+        log_warn "Cannot test port 80 (missing nc command), assuming accessible"
+        port_80_accessible=1
+    fi
+
+    if command -v timeout >/dev/null 2>&1 && command -v nc >/dev/null 2>&1; then
+        if timeout 3 nc -z "$public_ip" 443 2>/dev/null; then
+            port_443_accessible=1
+            log_info "✓ Port 443 is accessible"
+        else
+            log_warn "✗ Port 443 is not accessible from public"
+        fi
+    else
+        log_warn "Cannot test port 443 (missing nc command), assuming accessible"
+        port_443_accessible=1
+    fi
+
+    if [ "$port_80_accessible" -eq 0 ] && [ "$port_443_accessible" -eq 0 ]; then
+        log_error "Neither port 80 nor 443 is accessible from the public internet"
+        log_error "Cloudflare Proxy mode requires at least one of these ports to be open"
+        log_error "Please configure your firewall/router to allow incoming traffic on ports 80 and 443"
+        log_error "Or consider using Tunnel mode instead (bypasses port requirements)"
+        return 1
+    fi
+
+    log_info "✓ Port verification completed"
+
+    if ! check_cloudflare_nameservers "$domain"; then
+        log_error "Domain $domain is not using Cloudflare nameservers"
+        log_error "Proxy mode requires Cloudflare nameservers"
+        log_error "Please change your domain's nameservers to Cloudflare, or use Tunnel mode instead"
+        return 1
+    fi
+
+    log_info "Creating DNS A records with Cloudflare proxy enabled..."
+    if ! create_dns_a_record "$domain" "$public_ip" "$CF_API_TOKEN"; then
+        log_error "Failed to create DNS A records"
+        return 1
+    fi
+    log_info "✓ DNS A records created successfully"
+
+    log_info "Generating Cloudflare origin certificate..."
+    local cert_key_paths
+    if ! cert_key_paths=$(create_cloudflare_origin_cert); then
+        log_error "Failed to create Cloudflare origin certificate"
+        return 1
+    fi
+
+    local cert_path key_path
+    cert_path=$(echo "$cert_key_paths" | cut -d: -f1)
+    key_path=$(echo "$cert_key_paths" | cut -d: -f2)
+
+    log_info "✓ Origin certificate created successfully"
+
+    log_info "Configuring Caddy with Cloudflare origin certificate..."
+    if ! configure_caddy_origin "$domain" "$cert_path" "$key_path"; then
+        log_error "Failed to configure Caddy"
+        return 1
+    fi
+    log_info "✓ Caddy configured successfully"
+
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}         Cloudflare SSL/TLS Configuration${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BOLD}IMPORTANT: Set SSL/TLS Mode to ${GREEN}Full (strict)${NC}${BOLD}${NC}"
+    echo ""
+    echo -e "${BOLD}Steps to configure:${NC}"
+    echo ""
+    echo -e "  1. Go to: ${CYAN}https://dash.cloudflare.com${NC}"
+    echo -e "  2. Select your domain: ${CYAN}$domain${NC}"
+    echo -e "  3. Navigate to ${BOLD}SSL/TLS${NC} → ${BOLD}Overview${NC}"
+    echo -e "  4. Set SSL/TLS encryption mode to: ${GREEN}Full (strict)${NC}"
+    echo ""
+    echo -e "${BOLD}Why Full (strict)?${NC}"
+    echo -e "  • ${YELLOW}Flexible${NC} - Cloudflare to origin: HTTP (less secure)"
+    echo -e "  • ${YELLOW}Full${NC} - Cloudflare to origin: HTTPS (any cert)"
+    echo -e "  • ${GREEN}Full (strict)${NC} - Cloudflare to origin: HTTPS (valid cert only)"
+    echo ""
+    echo -e "${BOLD}With Full (strict):${NC}"
+    echo -e "  • End-to-end encryption between client and your server"
+    echo -e "  • Origin certificate validates authenticity"
+    echo -e "  • Maximum security for your deployment"
+    echo ""
+    echo -e "${YELLOW}⚠${NC} Do NOT use 'Off' or 'Flexible' - these will break your setup!"
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    export PUBLIC_URL="https://$domain"
+    export MATRIX_URL="https://matrix.$domain"
+    export DOMAIN="$domain"
+
+    log_info "Environment variables exported:"
+    log_info "  PUBLIC_URL=$PUBLIC_URL"
+    log_info "  MATRIX_URL=$MATRIX_URL"
+    log_info "  DOMAIN=$DOMAIN"
+    log_info "  CF_ZONE_ID=$CF_ZONE_ID"
+
+    echo ""
+    log_info "✓ Cloudflare Proxy mode setup completed successfully"
+    echo ""
+    echo -e "${BOLD}Next Steps:${NC}"
+    echo -e "  1. Set SSL/TLS mode to ${GREEN}Full (strict)${NC} in Cloudflare dashboard"
+    echo -e "  2. Restart Caddy to apply the new configuration"
+    echo -e "  3. Verify your site is accessible at ${CYAN}https://$domain${NC}"
+    echo ""
+
+    return 0
+}
