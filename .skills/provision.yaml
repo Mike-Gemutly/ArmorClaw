@@ -34,17 +34,37 @@ steps:
   - name: "generate_qr"
     automation: "auto"
     description: "Generate QR code and deep link using qrencode"
-    command: "sudo ./deploy/armorclaw-provision.sh --expiry {{expiry}} {{#if show_url}}--show-url{{/if}}"
+    command: |
+      CMD="./deploy/armorclaw-provision.sh --expiry ${expiry:-300}"
+      if [ "${show_url}" = "true" ]; then
+        CMD="$CMD --show-url"
+      fi
+      sudo $CMD
 
   - name: "display_deep_link"
     automation: "auto"
     description: "Display connection details and deep link for manual entry"
-    command: "sudo ./deploy/armorclaw-provision.sh --show-url"
+    command: |
+      sudo ./deploy/armorclaw-provision.sh --show-url
 
   - name: "manual_entry"
     automation: "guide"
     description: "Show instructions for manual entry in ArmorChat mobile app"
-    command: "echo 'Install ArmorChat from Google Play, enter deep link manually, set up biometrics for secure keystore access'"
+    command: |
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Manual Provisioning Instructions"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "1. Install ArmorChat from Google Play"
+      echo "2. Copy the deep link displayed above"
+      echo "3. Paste into ArmorChat when prompted for configuration"
+      echo "4. Set up biometrics for secure keystore access"
+      echo "5. Done - your digital secretary is online"
+      echo ""
+      echo "For QR code generation, ensure qrencode is installed:"
+      echo "  Ubuntu/Debian: sudo apt install qrencode"
+      echo "  macOS: brew install qrencode"
+      echo ""
 
 # Supported platforms for this skill
 platforms:
