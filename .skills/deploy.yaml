@@ -1,0 +1,280 @@
+name: "armorclaw_deploy"
+version: "2.0.0"
+description: "Deploy ArmorClaw to VPS with cross-platform support (Linux, macOS, Windows, WSL). Handles Native, Sentinel, and Cloudflare deployment modes."
+
+parameters:
+  - name: "vps_ip"
+    type: "string"
+    required: true
+    description: "IP address or hostname of target VPS"
+    default: ""
+
+  - name: "ssh_user"
+    type: "string"
+    required: false
+    description: "SSH username for VPS access (default: root)"
+    default: "root"
+
+  - name: "ssh_key"
+    type: "string"
+    required: false
+    description: "Path to SSH private key (default: ~/.ssh/id_ed25519)"
+    default: "~/.ssh/id_ed25519"
+
+  - name: "domain"
+    type: "string"
+    required: false
+    description: "Domain name for Sentinel/Cloudflare modes (optional for Native mode)"
+    default: ""
+
+  - name: "mode"
+    type: "string"
+    required: false
+    description: "Deployment mode (native, sentinel, cloudflare)"
+    default: "native"
+
+  - name: "cf_api_token"
+    type: "string"
+    required: false
+    description: "Cloudflare API token (required for cloudflare mode)"
+    default: ""
+
+  - name: "openrouter_api_key"
+    type: "string"
+    required: false
+    description: "OpenRouter API key (recommended AI provider)"
+    default: ""
+
+  - name: "admin_username"
+    type: "string"
+    required: false
+    description: "Custom admin username (optional)"
+    default: ""
+
+  - name: "admin_password"
+    type: "string"
+    required: false
+    description: "Custom admin password (optional, auto-generated if not set)"
+    default: ""
+
+steps:
+  - name: "detect_os"
+    automation: "auto"
+    description: "Detect user's operating system and shell environment"
+    command: |
+      if [ -n "$MSYSTEM" ] || [ -n "$MINGW" ]; then
+          PLATFORM="windows-gitbash"
+      elif [ -n "$WSL_DISTRO_NAME" ] || [ -d /mnt/c ]; then
+          PLATFORM="wsl"
+      elif [[ "$OSTYPE" == "darwin"* ]]; then
+          PLATFORM="macos"
+      elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+          PLATFORM="linux"
+      elif [ -n "$COMSPEC" ] || [ -n "$ComSpec" ]; then
+          PLATFORM="windows-powershell"
+      else
+          PLATFORM="unknown"
+      fi
+      echo "Detected platform: $PLATFORM"
+
+  - name: "validate_environment"
+    automation: "auto"
+    description: "Validate SSH key and network connectivity"
+    command: |
+      # Expand SSH key path
+      SSH_KEY="${ssh_key:-~/.ssh/id_ed25519}"
+
+      # Check if SSH key exists
+      if [ ! -f "$SSH_KEY" ]; then
+          echo "ERROR: SSH key not found at $SSH_KEY"
+          echo "Please generate one with: ssh-keygen -t ed25519"
+          exit 1
+      fi
+
+      # Test SSH connection (non-interactive)
+      echo "Testing SSH connection to ${ssh_user}@${vps_ip}..."
+      if ! ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 \
+          "${ssh_user}@${vps_ip}" "echo 'SSH connection successful'"; then
+          echo "ERROR: Cannot connect to VPS. Please check:"
+          echo "  1. VPS IP is correct: ${vps_ip}"
+          echo "  2. SSH key is correct: $SSH_KEY"
+          echo "  3. SSH user is correct: ${ssh_user}"
+          echo "  4. VPS is accessible and SSH service is running"
+          exit 1
+      fi
+      echo "✓ SSH connection validated"
+
+  - name: "prepare_cloudflare"
+    automation: "guide"
+    description: "Set up Cloudflare configuration if using Cloudflare mode"
+    command: |
+      if [ "$mode" = "cloudflare" ] && [ -z "$domain" ]; then
+          echo "ERROR: Cloudflare mode requires a domain"
+          echo "Please provide: domain=your-domain.com"
+          exit 1
+      fi
+
+      if [ "$mode" = "cloudflare" ] && [ -z "$cf_api_token" ]; then
+          echo "Cloudflare mode requires CF_API_TOKEN"
+          echo ""
+          echo "To create a Cloudflare API token:"
+          echo "  1. Visit: https://dash.cloudflare.com/profile/api-tokens"
+          echo "  2. Click 'Create Token'"
+          echo "  3. Use 'Custom token' template with:"
+          echo "     - Zone: DNS - Edit"
+          echo "     - Zone: Cloudflare Tunnel - Edit"
+          echo "  4. Copy token and run: export CF_API_TOKEN=your-token"
+          echo ""
+          echo "Then run this command again with: cf_api_token=your-token"
+          exit 1
+      fi
+
+  - name: "deploy_installer"
+    automation: "confirm"
+    description: "Copy and execute ArmorClaw installer on VPS"
+    command: |
+      SSH_KEY="${ssh_key:-~/.ssh/id_ed25519}"
+
+      echo "Deploying ArmorClaw installer to ${vps_ip}..."
+      echo "Deployment mode: ${mode}"
+
+      # Build SSH command with environment variables
+      ENV_VARS=""
+      if [ -n "$domain" ]; then
+          ENV_VARS="$ENV_VARS MATRIX_DOMAIN=$domain"
+      fi
+      if [ -n "$mode" ]; then
+          if [ "$mode" = "sentinel" ] && [ -n "$domain" ]; then
+              ENV_VARS="$ENV_VARS ARMORCLAW_SERVER_MODE=sentinel"
+          elif [ "$mode" = "cloudflare" ] && [ -n "$cf_api_token" ]; then
+              ENV_VARS="$ENV_VARS CF_API_TOKEN=$cf_api_token CF_TUNNEL_DOMAIN=$domain"
+          fi
+      fi
+      if [ -n "$admin_username" ]; then
+          ENV_VARS="$ENV_VARS ARMORCLAW_ADMIN_USERNAME=$admin_username"
+      fi
+      if [ -n "$admin_password" ]; then
+          ENV_VARS="$ENV_VARS ARMORCLAW_ADMIN_PASSWORD=$admin_password"
+      fi
+
+      # Execute installer on VPS
+      if [ -n "$ENV_VARS" ]; then
+          ssh -i "$SSH_KEY" "${ssh_user}@${vps_ip}" \
+              "$ENV_VARS bash -c '\\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)'"
+      else
+          ssh -i "$SSH_KEY" "${ssh_user}@${vps_ip}" \
+              "bash -c '\\$(curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh)'"
+      fi
+
+  - name: "wait_for_services"
+    automation: "auto"
+    description: "Wait for ArmorClaw services to start"
+    command: |
+      SSH_KEY="${ssh_key:-~/.ssh/id_ed25519}"
+      MAX_RETRIES=30
+      RETRY_COUNT=0
+
+      echo "Waiting for ArmorClaw services to start..."
+      while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+          if ssh -i "$SSH_KEY" -o ConnectTimeout=5 "${ssh_user}@${vps_ip}" \
+              "docker ps | grep -q armorclaw"; then
+              echo "✓ ArmorClaw services are running"
+              break
+          fi
+          RETRY_COUNT=$((RETRY_COUNT + 1))
+          echo -n "."
+          sleep 2
+      done
+      echo ""
+
+      if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+          echo "WARNING: Services did not start within expected time"
+          echo "Check status manually with: ssh -i $SSH_KEY ${ssh_user}@${vps_ip} 'docker ps'"
+      fi
+
+  - name: "verify_installation"
+    automation: "auto"
+    description: "Verify ArmorClaw installation and health status"
+    command: |
+      SSH_KEY="${ssh_key:-~/.ssh/id_ed25519}"
+
+      echo "Verifying ArmorClaw installation..."
+
+      # Check if containers are running
+      if ssh -i "$SSH_KEY" "${ssh_user}@${vps_ip}" "docker ps | grep -q armorclaw"; then
+          echo "✓ ArmorClaw containers are running"
+      else
+          echo "✗ ArmorClaw containers not found"
+          exit 1
+      fi
+
+      # Test health endpoint
+      if [ "$mode" = "sentinel" ] || [ "$mode" = "cloudflare" ]; then
+          HEALTH_URL="https://${domain}/health"
+      else
+          HEALTH_URL="http://${vps_ip}:8443/health"
+      fi
+
+      echo "Testing health endpoint: $HEALTH_URL"
+      if curl -sfk -o /dev/null "$HEALTH_URL"; then
+          echo "✓ Health endpoint is responding"
+      else
+          echo "⚠ Health endpoint not accessible yet (this may be normal for first-time setup)"
+      fi
+
+  - name: "get_connection_info"
+    automation: "auto"
+    description: "Retrieve and display connection information"
+    command: |
+      SSH_KEY="${ssh_key:-~/.ssh/id_ed25519}"
+
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "ArmorClaw Deployment Complete"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+
+      if [ "$mode" = "sentinel" ] || [ "$mode" = "cloudflare" ]; then
+          echo "Public URL: https://${domain}"
+          echo "Mode: $mode"
+      else
+          echo "Bridge URL: http://${vps_ip}:8443"
+          echo "Matrix URL: http://${vps_ip}:6167"
+          echo "Mode: native (local access only)"
+      fi
+
+      echo ""
+      echo "To check logs:"
+      echo "  ssh -i $SSH_KEY ${ssh_user}@${vps_ip} 'docker logs -f armorclaw'"
+      echo ""
+      echo "To check status:"
+      echo "  ssh -i $SSH_KEY ${ssh_user}@${vps_ip} 'docker ps'"
+      echo ""
+      echo "Next steps:"
+      echo "  1. Install ArmorChat on your phone"
+      echo "  2. Scan the QR code displayed during installation"
+      echo "  3. Create your first agent: !agent create name='Researcher' skills='web_browsing'"
+      echo ""
+
+platforms:
+  - linux
+  - macos
+  - windows-gitbash
+  - windows-powershell
+  - wsl
+
+examples:
+  - description: "Deploy in Native mode (local access only)"
+    command: "/armorclaw_deploy vps_ip=192.168.1.100"
+
+  - description: "Deploy in Sentinel mode with domain (public access with Let's Encrypt)"
+    command: "/armorclaw_deploy vps_ip=5.183.11.149 domain=armorclaw.example.com mode=sentinel"
+
+  - description: "Deploy with Cloudflare Tunnel (VPS behind NAT)"
+    command: "/armorclaw_deploy vps_ip=192.168.1.50 domain=armorclaw.example.com mode=cloudflare cf_api_token=your-token"
+
+  - description: "Deploy with custom SSH key and user"
+    command: "/armorclaw_deploy vps_ip=5.183.11.149 ssh_user=ubuntu ssh_key=~/.ssh/my_key.pem mode=sentinel domain=armorclaw.example.com"
+
+  - description: "Deploy from WSL (Windows Subsystem for Linux)"
+    command: "/armorclaw_deploy vps_ip=5.183.11.149 domain=armorclaw.example.com mode=sentinel"

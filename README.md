@@ -11,6 +11,35 @@ ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, 
 
 ---
 
+> ⚠️ **Requirements Before You Start**
+>
+> Before installing ArmorClaw, make sure you have:
+>
+> - **AI Provider API Key** - At least one of:
+>   - OpenRouter (recommended - supports 100+ models) - [Get key](https://openrouter.ai)
+>   - OpenAI API key - [Get key](https://platform.openai.com)
+>   - xAI (Grok) API key - [Get key](https://x.ai)
+>   - Anthropic API key - [Get key](https://console.anthropic.com)
+>   - See [Supported AI Providers](#supported-ai-providers-v450) for full list
+>
+> - **For Production (Public Access):**
+>   - **Domain** - You must own a domain (e.g., `armorclaw.example.com`)
+>   - **Cloudflare Account** - Free tier works, required for:
+>     - Automatic HTTPS/TLS certificates
+>     - DDoS protection
+>     - NAT/firewall traversal (Tunnel mode)
+>     - CDN caching
+>
+> - **System Requirements:**
+>   - Linux VPS (Ubuntu 20.04+) or local machine
+>   - Docker 24.0+
+>   - 2GB RAM minimum, 4GB recommended
+>   - 10GB disk minimum
+>
+> **Local/Development Mode** works without a domain - uses Unix sockets only.
+
+---
+
 ## Quick Install (All-in-One)
 
 The recommended way to start is the bootstrap installer, which now includes an optional **Matrix/Conduit** setup for instant QR provisioning:
@@ -105,6 +134,85 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 | `CF_TUNNEL_DOMAIN` | - | - | Tunnel domain |
 | `CF_MODE` | - | - | `tunnel` or `proxy` |
 | `CF_ZONE_ID` | - | - | Zone ID (proxy mode only) |
+
+---
+
+## Deployment Skills for AI CLI Tools
+
+ArmorClaw includes deployment skills for AI CLI tools (Claude Code, OpenCode, Cursor, etc.) that help users deploy and manage ArmorClaw on VPS with cross-platform support.
+
+### Quick Reference
+
+| Skill | Purpose | Example |
+|-------|---------|---------|
+| **Deploy** | Deploy ArmorClaw to VPS | `/deploy vps_ip=5.183.11.149 ssh_key=~/.ssh/id_rsa` |
+| **Status** | Check deployment health | `/status vps_ip=5.183.11.149` |
+| **Cloudflare** | Configure HTTPS | `/cloudflare domain=example.com mode=tunnel` |
+| **Provision** | Connect mobile device | `/provision vps_ip=5.183.11.149` |
+
+### Using with Your AI CLI Tool
+
+1. **Navigate to project directory:**
+   ```bash
+   cd /path/to/armorclaw-omo
+   ```
+
+2. **Tell your AI:**
+   ```
+   "Deploy ArmorClaw to VPS 5.183.11.149 with domain myvps.example.com"
+   ```
+
+3. **AI reads `.skills/deploy.yaml`** and executes deployment with appropriate confirmations.
+
+### Skills Directory Structure
+
+```
+.skills/
+├── deploy/          # VPS deployment skill
+├── status/          # Health checking skill
+├── cloudflare/      # Cloudflare HTTPS setup
+├── provision/       # Mobile device provisioning
+├── PLATFORM.md      # Cross-platform patterns
+├── TEMPLATE.yaml    # Skill schema template
+└── README.md        # Skills index
+```
+
+### Cross-Platform Support
+
+All skills work on:
+- **Linux** - Native OpenSSH, curl
+- **macOS** - Native OpenSSH, curl
+- **Windows (PowerShell)** - OpenSSH, Invoke-WebRequest
+- **Windows (Git Bash)** - OpenSSH, curl
+- **Windows (WSL)** - OpenSSH with `/mnt/c/` paths
+
+### Automation Levels
+
+| Level | Behavior | Example |
+|-------|----------|---------|
+| `auto` | Execute immediately | Health checks, status |
+| `confirm` | Ask user first | SSH connection, installer |
+| `guide` | Provide instructions | Account creation, DNS setup |
+
+### Example: Deploy to VPS
+
+```bash
+# Tell your AI CLI tool:
+"Deploy ArmorClaw to VPS 5.183.11.149 with SSH key ~/.ssh/id_rsa and domain armorclaw.example.com"
+
+# AI will:
+1. Detect your OS (Linux/macOS/Windows)
+2. Ask confirmation before SSH
+3. Ask confirmation before running installer
+4. Auto-verify services are ready
+5. Auto-display connection info
+```
+
+### Documentation
+
+- **Full Documentation**: `doc/armorclaw.md` - Deployment Skills section
+- **Skills Index**: `.skills/README.md`
+- **Platform Patterns**: `.skills/PLATFORM.md`
 
 ---
 

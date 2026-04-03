@@ -1,0 +1,36 @@
+# ArmorClaw Skill Schema Template
+# Copy this template to create new deployment skills
+
+name: "skill-name"
+version: "1.0.0"
+description: "Brief description of what this skill does"
+
+# Parameters that can be configured when invoking the skill
+parameters:
+  - name: "example_param"
+    type: "string"
+    required: true
+    description: "Description of this parameter"
+    default: ""
+
+# Steps to execute the skill
+# Each step should have an automation flag:
+#   - auto:     Execute directly without asking
+#   - confirm:  Ask user before executing
+#   - guide:    Show instructions for user to perform manually
+steps:
+  - name: "example_step"
+    automation: "auto"
+    description: "What this step does"
+    command: "shell-command-here"
+
+# Supported platforms for this skill
+platforms:
+  - linux
+  - macos
+  - windows
+
+# Examples of using the skill (optional)
+examples:
+  - description: "Example usage"
+    command: "/skill-name param1=value1"

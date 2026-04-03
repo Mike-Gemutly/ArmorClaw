@@ -1,0 +1,67 @@
+# ArmorClaw Provisioning Skill
+# Generate QR codes for secure ArmorChat/ArmorTerminal connection
+
+name: "provision"
+version: "1.0.0"
+description: "Generate QR codes for secure mobile app provisioning with QR display and manual entry options"
+
+# Parameters that can be configured when invoking the skill
+parameters:
+  - name: "vps_ip"
+    type: "string"
+    required: false
+    description: "Server IP address or domain (auto-detected from config if not provided)"
+    default: ""
+
+  - name: "expiry"
+    type: "integer"
+    required: false
+    description: "Token expiry time in seconds (default: 300, max: 3600)"
+    default: 300
+
+  - name: "show_url"
+    type: "boolean"
+    required: false
+    description: "Show URL only without QR code (for scripting)"
+    default: false
+
+# Steps to execute the skill
+# Each step has an automation flag:
+#   - auto:     Execute directly without asking
+#   - confirm:  Ask user before executing
+#   - guide:    Show instructions for user to perform manually
+steps:
+  - name: "generate_qr"
+    automation: "auto"
+    description: "Generate QR code and deep link using qrencode"
+    command: "sudo ./deploy/armorclaw-provision.sh --expiry {{expiry}} {{#if show_url}}--show-url{{/if}}"
+
+  - name: "display_deep_link"
+    automation: "auto"
+    description: "Display connection details and deep link for manual entry"
+    command: "sudo ./deploy/armorclaw-provision.sh --show-url"
+
+  - name: "manual_entry"
+    automation: "guide"
+    description: "Show instructions for manual entry in ArmorChat mobile app"
+    command: "echo 'Install ArmorChat from Google Play, enter deep link manually, set up biometrics for secure keystore access'"
+
+# Supported platforms for this skill
+platforms:
+  - linux
+  - macos
+  - windows
+
+# Examples of using the skill
+examples:
+  - description: "Generate QR code with default 5-minute expiry"
+    command: "/provision"
+
+  - description: "Generate QR code with 1-minute expiry"
+    command: "/provision expiry=60"
+
+  - description: "Show URL only without QR code"
+    command: "/provision show_url=true"
+
+  - description: "Generate QR code for specific VPS"
+    command: "/provision vps_ip=192.168.1.50"

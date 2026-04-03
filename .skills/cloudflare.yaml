@@ -1,0 +1,339 @@
+name: "cloudflare"
+version: "1.0.0"
+description: "Set up Cloudflare HTTPS for ArmorClaw with Tunnel or Proxy mode support. Handles network detection, Cloudflare configuration, and HTTPS verification."
+
+parameters:
+  - name: "vps_ip"
+    type: "string"
+    required: false
+    description: "IP address of target VPS (for network detection)"
+    default: ""
+
+  - name: "ssh_key"
+    type: "string"
+    required: false
+    description: "Path to SSH private key (for VPS network checks)"
+    default: "~/.ssh/id_ed25519"
+
+  - name: "domain"
+    type: "string"
+    required: true
+    description: "Domain name for Cloudflare setup (e.g., armorclaw.example.com)"
+    default: ""
+
+  - name: "mode"
+    type: "string"
+    required: false
+    description: "Cloudflare mode: tunnel (cloudflared) or proxy (DNS/CDN)"
+    default: "tunnel"
+
+  - name: "cf_api_token"
+    type: "string"
+    required: false
+    description: "Cloudflare API token (required for proxy mode, optional for tunnel mode)"
+    default: ""
+
+steps:
+  - name: "detect_network"
+    automation: "auto"
+    description: "Detect network environment and recommend optimal Cloudflare mode"
+    command: |
+      echo "Detecting network environment..."
+      echo ""
+
+      # Detect platform
+      if [ -n "$MSYSTEM" ] || [ -n "$MINGW" ]; then
+          PLATFORM="windows-gitbash"
+      elif [ -n "$WSL_DISTRO_NAME" ] || [ -d /mnt/c ]; then
+          PLATFORM="wsl"
+      elif [[ "$OSTYPE" == "darwin"* ]]; then
+          PLATFORM="macos"
+      elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+          PLATFORM="linux"
+      else
+          PLATFORM="unknown"
+      fi
+      echo "Detected platform: $PLATFORM"
+      echo ""
+
+      # Check if VPS IP is provided
+      if [ -n "$vps_ip" ]; then
+          echo "Testing connectivity to VPS: $vps_ip"
+          echo ""
+
+          # Check if ports 80/443 are accessible
+          if command -v nc &> /dev/null; then
+              echo "Checking if ports 80 and 443 are accessible..."
+
+              # Test port 80
+              if timeout 3 nc -zv "$vps_ip" 80 2>&1 | grep -q "succeeded\|open"; then
+                  PORT_80_OPEN=true
+                  echo "  ✓ Port 80 is accessible"
+              else
+                  PORT_80_OPEN=false
+                  echo "  ✗ Port 80 is NOT accessible"
+              fi
+
+              # Test port 443
+              if timeout 3 nc -zv "$vps_ip" 443 2>&1 | grep -q "succeeded\|open"; then
+                  PORT_443_OPEN=true
+                  echo "  ✓ Port 443 is accessible"
+              else
+                  PORT_443_OPEN=false
+                  echo "  ✗ Port 443 is NOT accessible"
+              fi
+          else
+              echo "Note: nc command not available, skipping port checks"
+              PORT_80_OPEN="unknown"
+              PORT_443_OPEN="unknown"
+          fi
+          echo ""
+
+          # Recommend mode based on network detection
+          if [ "$PORT_80_OPEN" = true ] && [ "$PORT_443_OPEN" = true ]; then
+              echo "Network Recommendation: Proxy Mode"
+              echo "  Both ports 80 and 443 are accessible"
+              echo "  Proxy mode provides Cloudflare CDN and DDoS protection"
+              echo "  Requires: CF_API_TOKEN, Cloudflare domain configured"
+              echo ""
+              echo "If you already set mode=tunnel, ensure:"
+              echo "  - You want outbound-only connection (no port forwarding)"
+              echo "  - VPS is behind NAT/CGNAT or dynamic IP"
+          else
+              echo "Network Recommendation: Tunnel Mode"
+              echo "  Ports 80/443 are not both accessible"
+              echo "  Tunnel mode works without public ports"
+              echo "  Requires: cloudflared authentication (cloudflared tunnel login)"
+              echo ""
+              echo "If you already set mode=proxy, ensure:"
+              echo "  - Ports 80 and 443 are accessible from internet"
+              echo "  - Firewall rules allow incoming connections"
+              echo "  - VPS has static public IP"
+          fi
+      else
+          echo "No VPS IP provided - skipping network detection"
+          echo "Network recommendation based on mode selection:"
+          echo ""
+          echo "Tunnel Mode (recommended for NAT/CGNAT):"
+          echo "  - No port forwarding required"
+          echo "  - Outbound tunnel to Cloudflare"
+          echo "  - Best for: dynamic IP, no public ports, home/office VPS"
+          echo ""
+          echo "Proxy Mode (recommended for static public IP):"
+          echo "  - Requires ports 80 and 443 accessible"
+          echo "  - Uses Cloudflare DNS/CDN proxy"
+          echo "  - Best for: static public IP, port forwarding, production VPS"
+      fi
+
+      echo ""
+      echo "Selected mode: $mode"
+
+  - name: "validate_prerequisites"
+    automation: "auto"
+    description: "Validate Cloudflare prerequisites and API token"
+    command: |
+      DOMAIN="${domain:-}"
+      MODE="${mode:-tunnel}"
+      CF_API_TOKEN="${cf_api_token:-}"
+
+      echo "Validating Cloudflare prerequisites..."
+      echo ""
+
+      # Check domain format
+      if [ -z "$DOMAIN" ]; then
+          echo "ERROR: Domain is required"
+          echo "Usage: mode=tunnel domain=your-domain.com"
+          exit 1
+      fi
+
+      if ! echo "$DOMAIN" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'; then
+          echo "ERROR: Invalid domain format: $DOMAIN"
+          echo "Please use format like: example.com or sub.example.com"
+          exit 1
+      fi
+      echo "✓ Domain is valid: $DOMAIN"
+      echo ""
+
+      # Check mode
+      if [ "$MODE" != "tunnel" ] && [ "$MODE" != "proxy" ]; then
+          echo "ERROR: Invalid mode: $MODE (must be 'tunnel' or 'proxy')"
+          exit 1
+      fi
+      echo "✓ Mode is valid: $MODE"
+      echo ""
+
+      # Check prerequisites based on mode
+      if [ "$MODE" = "proxy" ]; then
+          if [ -z "$CF_API_TOKEN" ]; then
+              echo "ERROR: Proxy mode requires CF_API_TOKEN"
+              echo ""
+              echo "To create a Cloudflare API token:"
+              echo "  1. Visit: https://dash.cloudflare.com/profile/api-tokens"
+              echo "  2. Click 'Create Token'"
+              echo "  3. Use 'Custom token' template with:"
+              echo "     - Zone: DNS - Edit"
+              echo "     - Zone: SSL/TLS - Edit"
+              echo "  4. Set zone resources to include your domain: $DOMAIN"
+              echo "  5. Copy token and run: export CF_API_TOKEN=your-token"
+              echo ""
+              echo "Then run this command again with: cf_api_token=your-token"
+              exit 1
+          fi
+
+          # Validate API token
+          if command -v curl &> /dev/null; then
+              echo "Validating Cloudflare API token..."
+              TOKEN_RESPONSE=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+                  -H "Authorization: Bearer $CF_API_TOKEN" \
+                  -H "Content-Type: application/json")
+
+              if echo "$TOKEN_RESPONSE" | jq -e '.success' &> /dev/null; then
+                  echo "✓ Cloudflare API token is valid"
+              else
+                  echo "ERROR: Cloudflare API token validation failed"
+                  echo "$TOKEN_RESPONSE" | jq -r '.errors[].message' 2>/dev/null || echo "$TOKEN_RESPONSE"
+                  exit 1
+              fi
+          fi
+      else
+          if [ -n "$CF_API_TOKEN" ]; then
+              echo "Note: CF_API_TOKEN provided but not required for tunnel mode"
+              echo "Cloudflare Tunnel uses cloudflared authentication instead"
+          fi
+          echo "✓ Tunnel mode selected (API token optional)"
+      fi
+
+      echo ""
+      echo "✓ All prerequisites validated"
+
+  - name: "run_setup"
+    automation: "confirm"
+    description: "Execute Cloudflare setup using deploy/setup-cloudflare.sh"
+    command: |
+      DOMAIN="${domain:-}"
+      MODE="${mode:-tunnel}"
+      CF_API_TOKEN="${cf_api_token:-}"
+
+      echo "Running Cloudflare setup..."
+      echo ""
+      echo "Domain: $DOMAIN"
+      echo "Mode: $MODE"
+      echo ""
+
+      # Check if setup script exists
+      if [ ! -f "deploy/setup-cloudflare.sh" ]; then
+          echo "ERROR: setup-cloudflare.sh not found in deploy/ directory"
+          echo "Please run from the ArmorClaw project root directory"
+          exit 1
+      fi
+
+      # Make script executable
+      chmod +x deploy/setup-cloudflare.sh
+
+      # Build command based on mode
+      SETUP_CMD="bash deploy/setup-cloudflare.sh --domain $DOMAIN --mode $MODE"
+
+      # Add dry-run flag for tunnel mode without cloudflared auth
+      if [ "$MODE" = "tunnel" ] && [ ! -d "$HOME/.cloudflared" ]; then
+          echo "Note: cloudflared not authenticated yet"
+          echo "This is normal - you'll authenticate with: cloudflared tunnel login"
+          echo ""
+      fi
+
+      # Execute setup script
+      echo "Executing: $SETUP_CMD"
+      echo ""
+
+      if [ -n "$CF_API_TOKEN" ]; then
+          CF_API_TOKEN="$CF_API_TOKEN" $SETUP_CMD
+      else
+          $SETUP_CMD
+      fi
+
+  - name: "verify_https"
+    automation: "auto"
+    description: "Verify HTTPS is accessible and SSL certificate is valid"
+    command: |
+      DOMAIN="${domain:-}"
+
+      echo "Verifying HTTPS access for: $DOMAIN"
+      echo ""
+
+      # Wait a moment for DNS propagation
+      echo "Waiting for DNS propagation (5 seconds)..."
+      sleep 5
+      echo ""
+
+      # Test HTTPS connectivity
+      if command -v curl &> /dev/null; then
+          echo "Testing HTTPS connection..."
+
+          # Test basic connectivity
+          if curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" "https://$DOMAIN" 2>&1 | grep -q "HTTP Status: [0-9][0-9][0-9]"; then
+              echo "✓ HTTPS is accessible"
+          else
+              echo "⚠ HTTPS not yet accessible (may still be propagating)"
+              echo "   Try again in 1-2 minutes"
+          fi
+          echo ""
+
+          # Check SSL certificate
+          echo "Checking SSL certificate..."
+          CERT_INFO=$(curl -sI "https://$DOMAIN" 2>&1 | grep -i "SSL certificate" || echo "")
+          if [ -n "$CERT_INFO" ]; then
+              echo "$CERT_INFO"
+          else
+              # Alternative: use openssl if available
+              if command -v openssl &> /dev/null; then
+                  echo | openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:443" 2>/dev/null | grep -E "issuer|subject|CN=" | head -5
+              else
+                  echo "   (Certificate details require openssl)"
+              fi
+          fi
+          echo ""
+
+          # Test health endpoint (common ArmorClaw endpoint)
+          echo "Testing ArmorClaw health endpoint..."
+          if curl -sf -o /dev/null "https://$DOMAIN/health"; then
+              echo "✓ ArmorClaw health endpoint is responding"
+          else
+              echo "⚠ ArmorClaw health endpoint not accessible (may be normal if not yet deployed)"
+          fi
+      else
+          echo "Note: curl not available, skipping HTTPS verification"
+          echo "Manual verification: open https://$DOMAIN in your browser"
+      fi
+
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Cloudflare HTTPS Setup Complete"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "Your ArmorClaw deployment should now be accessible at:"
+      echo "  https://$DOMAIN"
+      echo ""
+      echo "Next steps:"
+      echo "  1. Verify ArmorClaw is accessible in your browser"
+      echo "  2. Connect your phone using ArmorChat"
+      echo "  3. Create your first agent"
+      echo ""
+
+platforms:
+  - linux
+  - macos
+  - windows-gitbash
+  - windows-powershell
+  - wsl
+
+examples:
+  - description: "Set up Cloudflare Tunnel (recommended for NAT/CGNAT)"
+    command: "/cloudflare domain=armorclaw.example.com mode=tunnel"
+
+  - description: "Set up Cloudflare Tunnel with network detection"
+    command: "/cloudflare domain=armorclaw.example.com mode=tunnel vps_ip=192.168.1.100"
+
+  - description: "Set up Cloudflare Proxy (requires CF_API_TOKEN)"
+    command: "/cloudflare domain=armorclaw.example.com mode=proxy cf_api_token=your-token"
+
+  - description: "Set up Cloudflare Proxy with VPS network check"
+    command: "/cloudflare domain=armorclaw.example.com mode=proxy cf_api_token=your-token vps_ip=5.183.11.149"

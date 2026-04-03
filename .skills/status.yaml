@@ -1,0 +1,210 @@
+name: "armorclaw_status"
+version: "1.0.0"
+description: "Check ArmorClaw deployment health and status on VPS. Verifies containers, services, SSL/TLS, and overall system health."
+
+parameters:
+  - name: "vps_ip"
+    type: "string"
+    required: true
+    description: "IP address or hostname of target VPS"
+    default: ""
+
+  - name: "ssh_user"
+    type: "string"
+    required: false
+    description: "SSH username for VPS access (default: root)"
+    default: "root"
+
+  - name: "ssh_key"
+    type: "string"
+    required: false
+    description: "Path to SSH private key (default: ~/.ssh/id_ed25519)"
+    default: "~/.ssh/id_ed25519"
+
+  - name: "domain"
+    type: "string"
+    required: false
+    description: "Domain name for HTTPS checks (optional for Native mode)"
+    default: ""
+
+  - name: "verbose"
+    type: "boolean"
+    required: false
+    description: "Enable verbose output with detailed health check results"
+    default: false
+
+steps:
+  - name: "detect_platform"
+    automation: "auto"
+    description: "Detect user's operating system and shell environment"
+    command: |
+      if [ -n "$MSYSTEM" ] || [ -n "$MINGW" ]; then
+        PLATFORM="windows-gitbash"
+      elif [ -n "$WSL_DISTRO_NAME" ] || [ -d /mnt/c ]; then
+        PLATFORM="wsl"
+      elif [[ "$OSTYPE" == "darwin"* ]]; then
+        PLATFORM="macos"
+      elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        PLATFORM="linux"
+      elif [ -n "$COMSPEC" ] || [ -n "$ComSpec" ]; then
+        PLATFORM="windows-powershell"
+      else
+        PLATFORM="unknown"
+      fi
+      echo "Detected platform: $PLATFORM"
+
+  - name: "validate_ssh"
+    automation: "auto"
+    description: "Validate SSH key exists and has correct permissions"
+    command: |
+      # Expand tilde in path
+      SSH_KEY_PATH="${ssh_key/#\~/$HOME}"
+      
+      if [[ ! -f "$SSH_KEY_PATH" ]]; then
+        echo "ERROR: SSH key not found at $SSH_KEY_PATH"
+        exit 1
+      fi
+      
+      # Check permissions (Linux/macOS)
+      if [[ "$PLATFORM" != "windows-powershell" ]]; then
+        PERMS=$(stat -c '%a' "$SSH_KEY_PATH" 2>/dev/null || stat -f '%Lp' "$SSH_KEY_PATH" 2>/dev/null)
+        if [[ "$PERMS" != "600" ]] && [[ "$PERMS" != "400" ]]; then
+          echo "WARNING: SSH key permissions are $PERMS (recommend 600)"
+        fi
+      fi
+      
+      echo "SSH key validated: $SSH_KEY_PATH"
+
+  - name: "check_docker"
+    automation: "auto"
+    description: "Check Docker daemon status and ArmorClaw containers"
+    command: |
+      # Platform-specific SSH command
+      if [[ "$PLATFORM" == "windows-powershell" ]]; then
+        SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      else
+        SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      fi
+      
+      # Check Docker daemon
+      echo "--- Docker Daemon ---"
+      $SSH_CMD "docker info >/dev/null 2>&1 && echo '✓ Docker daemon running' || echo '✗ Docker daemon not running'"
+      
+      # Check ArmorClaw containers
+      echo ""
+      echo "--- ArmorClaw Containers ---"
+      $SSH_CMD "docker ps --filter 'name=armorclaw' --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || echo 'No ArmorClaw containers found'"
+
+  - name: "check_matrix"
+    automation: "auto"
+    description: "Check Matrix Conduit health and federation"
+    command: |
+      SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      
+      echo "--- Matrix Stack ---"
+      
+      # Matrix client versions
+      $SSH_CMD "curl -sf http://localhost:6167/_matrix/client/versions >/dev/null 2>&1 && echo '✓ Matrix Conduit responding' || echo '✗ Matrix Conduit not responding'"
+      
+      # Matrix federation
+      $SSH_CMD "curl -sf http://localhost:8448/_matrix/federation/v1/version >/dev/null 2>&1 && echo '✓ Matrix federation available' || echo '! Matrix federation not available'"
+
+  - name: "check_bridge"
+    automation: "auto"
+    description: "Check Bridge RPC and socket status"
+    command: |
+      SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      
+      echo "--- Bridge Stack ---"
+      
+      # Bridge HTTP health
+      $SSH_CMD "curl -sf http://localhost:8443/health >/dev/null 2>&1 && echo '✓ Bridge HTTP health OK' || echo '✗ Bridge HTTP health failed'"
+      
+      # Bridge socket
+      $SSH_CMD "if [[ -S /run/armorclaw/bridge.sock ]]; then echo '✓ Bridge socket exists'; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"status\"}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock 2>/dev/null && echo '✓ Bridge RPC responding' || echo '✗ Bridge RPC not responding'; else echo '! Bridge socket not found'; fi"
+
+  - name: "check_services"
+    automation: "auto"
+    description: "Check additional services (Sygnal, Catwalk, Nginx)"
+    command: |
+      SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      
+      echo "--- Additional Services ---"
+      
+      # Sygnal push gateway
+      $SSH_CMD "curl -sf http://localhost:5000/_matrix/push/v1/notify >/dev/null 2>&1 && echo '✓ Sygnal push gateway OK' || echo '! Sygnal not responding'"
+      
+      # Catwalk AI service
+      $SSH_CMD "curl -sf http://localhost:8080/healthz >/dev/null 2>&1 && echo '✓ Catwalk AI service OK' || echo '! Catwalk not responding'"
+      
+      # Nginx proxy
+      $SSH_CMD "curl -sf http://localhost/health >/dev/null 2>&1 && echo '✓ Nginx health OK' || echo '! Nginx health not configured'"
+
+  - name: "check_ssl"
+    automation: "auto"
+    description: "Check SSL/TLS certificates if domain provided"
+    command: |
+      if [[ -z "${domain}" ]]; then
+        echo "--- SSL/TLS ---"
+        echo "ℹ No domain provided, skipping SSL checks (Native mode)"
+        return 0
+      fi
+      
+      SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      
+      echo "--- SSL/TLS ---"
+      
+      # Check HTTPS
+      $SSH_CMD "curl -sf https://${domain}/_matrix/client/versions >/dev/null 2>&1 && echo '✓ HTTPS configured' || echo '✗ HTTPS not working'"
+      
+      # Check certificate expiry
+      $SSH_CMD "echo | openssl s_client -servername ${domain} -connect ${domain}:443 2>/dev/null | openssl x509 -noout -dates 2>/dev/null | grep 'notAfter' || echo '! Could not check certificate'"
+
+  - name: "check_network"
+    automation: "auto"
+    description: "Check Docker networks and volumes"
+    command: |
+      SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      
+      echo "--- Network & Volumes ---"
+      
+      # Docker networks
+      $SSH_CMD "docker network ls --filter 'name=armorclaw' --format '{{.Name}}' 2>/dev/null | grep -q 'armorclaw' && echo '✓ ArmorClaw networks exist' || echo '! ArmorClaw networks not found'"
+      
+      # Docker volumes
+      $SSH_CMD "docker volume ls --filter 'name=armorclaw' --format '{{.Name}}' 2>/dev/null | grep -q 'armorclaw' && echo '✓ ArmorClaw volumes exist' || echo '! ArmorClaw volumes not found'"
+
+  - name: "run_health_script"
+    automation: "confirm"
+    description: "Run comprehensive health-check.sh script (if available)"
+    command: |
+      SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"
+      
+      echo "--- Comprehensive Health Check ---"
+      echo "Running deploy/health-check.sh on VPS..."
+      echo ""
+      
+      # Check if script exists
+      if $SSH_CMD "test -f /opt/armorclaw/deploy/health-check.sh"; then
+        $SSH_CMD "cd /opt/armorclaw && bash deploy/health-check.sh ${verbose:+--verbose}"
+      else
+        echo "ℹ health-check.sh not found on VPS (may not be installed yet)"
+      fi
+
+platforms:
+  - linux
+  - macos
+  - windows
+
+examples:
+  - description: "Check deployment health on VPS"
+    command: "/status vps_ip=192.168.1.100"
+
+  - description: "Check health with custom SSH key"
+    command: "/status vps_ip=192.168.1.100 ssh_key=~/.ssh/custom_key"
+
+  - description: "Check health with domain for SSL verification"
+    command: "/status vps_ip=192.168.1.100 domain=armorclaw.example.com"
+
+  - description: "Verbose health check with all details"
+    command: "/status vps_ip=192.168.1.100 domain=armorclaw.example.com verbose=true"
