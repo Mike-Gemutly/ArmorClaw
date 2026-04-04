@@ -1,0 +1,15 @@
+use crate::error::{Result, SidecarError};
+use crate::document::validate_file_size;
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+#[async_trait]
+pub trait CloudConnector: Send + Sync {
+    async fn upload(&self, container: &str, key: &str, data: &[u8]) -> Result<String, SidecarError>;
+    async fn download(&self, container: &str, key: &str) -> Result<Vec<u8>, SidecarError>;
+    async fn list(&self, container: &str, prefix: &str) -> Result<Vec<String>>;
+    async fn delete(&self, container: &str, key: &str) -> Result<()>;
+    async fn health_check(&self) -> Result<bool>;
+    async fn get_config(&self) -> HashMap<String, String>;
+}

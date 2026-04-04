@@ -1,0 +1,128 @@
+use crate::error::SidecarError;
+use async_trait::async_trait;
+use azure_storage::BlobClient;
+use azure_storage_blobs::prelude::*;
+use std::collections::HashMap;
+
+use super::CloudConnector;
+
+pub struct AzureBlobConfig {
+    pub account_name: String,
+    pub account_key: String,
+    pub container_name: String,
+}
+
+pub struct AzureBlobConnector {
+    client: BlobClient,
+    config: AzureBlobConfig,
+}
+
+impl AzureBlobConnector {
+    pub fn new(config: AzureBlobConfig) -> Result<Self, SidecarError> {
+        let connection_string = format!(
+            "DefaultEndpointsProtocol=https;AccountName={};AccountKey={};EndpointSuffix=core.windows.net",
+            config.account_name,
+            config.account_key
+        );
+
+        let client = BlobClient::from_connection_string(&connection_string)
+            .map_err(|e| SidecarError::CloudStorageError(format!("Failed to create Azure Blob client: {}", e)))?;
+
+        Ok(Self {
+            client,
+            config,
+        })
+    }
+
+    pub async fn upload_blob(&self, blob_name: &str, data: &[u8]) -> Result<String, SidecarError> {
+        self.client
+            .put_blob()
+            .container(&self.config.container_name)
+            .blob(blob_name)
+            .body(data.to_vec())
+            .into_stream()
+            .await
+            .map(|_| blob_name.to_string())
+            .map_err(|e| SidecarError::CloudStorageError(format!("Upload failed: {}", e)))
+    }
+
+    pub async fn download_blob(&self, blob_name: &str) -> Result<Vec<u8>, SidecarError> {
+        let response = self.client
+            .get_blob()
+            .container(&self.config.container_name)
+            .blob(blob_name)
+            .into_stream()
+            .await
+            .map_err(|e| SidecarError::CloudStorageError(format!("Download failed: {}", e)))?;
+
+        Ok(response.data.collect().await.to_vec())
+    }
+
+    pub async fn list_blobs(&self, prefix: &str) -> Result<Vec<String>, SidecarError> {
+        let response = self.client
+            .list_blobs()
+            .container(&self.config.container_name)
+            .prefix(prefix)
+            .into_stream()
+            .await
+            .map_err(|e| SidecarError::CloudStorageError(format!("List failed: {}", e)))?;
+
+        Ok(response.blobs.items.into_iter().map(|item| item.name).collect())
+    }
+
+    pub async fn delete_blob(&self, blob_name: &str) -> Result<(), SidecarError> {
+        self.client
+            .delete_blob()
+            .container(&self.config.container_name)
+            .blob(blob_name)
+            .into_stream()
+            .await
+            .map(|_| ())
+            .map_err(|e| SidecarError::CloudStorageError(format!("Delete failed: {}", e)))
+    }
+}
+
+#[async_trait]
+impl CloudConnector for AzureBlobConnector {
+    async fn upload(&self, bucket: &str, key: &str, data: &[u8]) -> Result<String, SidecarError> {
+        self.upload_blob(key, data)
+    }
+
+    async fn download(&self, bucket: &str, key: &str) -> Result<Vec<u8>, SidecarError> {
+        self.download_blob(key)
+    }
+
+    async fn list(&self, bucket: &str, prefix: &str) -> Result<Vec<String>, SidecarError> {
+        self.list_blobs(prefix)
+    }
+
+    async fn delete(&self, bucket: &str, key: &str) -> Result<(), SidecarError> {
+        self.delete_blob(key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_azure_blob_config_creation() {
+        let config = AzureBlobConfig {
+            account_name: "testaccount".to_string(),
+            account_key: "testkey".to_string(),
+            container_name: "testcontainer".to_string(),
+        };
+        assert_eq!(config.account_name, "testaccount");
+    }
+
+    #[test]
+    fn test_azure_blob_connector_creation() {
+        let config = AzureBlobConfig {
+            account_name: "testaccount".to_string(),
+            account_key: "testkey".to_string(),
+            container_name: "testcontainer".to_string(),
+        };
+        let result = AzureBlobConnector::new(config);
+        assert!(result.is_ok());
+    }
+}

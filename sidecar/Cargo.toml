@@ -7,8 +7,9 @@ description = "High-performance data plane for ArmorClaw enterprise operations"
 license = "MIT"
 
 [dependencies]
-# Async Runtime
-tokio = { version = "1.35", features = ["full", "net", "io-util", "sync", "time", "fs"] }
+# Async Runtime (exclude native-tls to use rustls instead)
+tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "fs", "process", "signal", "macros"] }
+tokio-stream = "0.1"
 
 # gRPC
 tonic = "0.10"
@@ -25,9 +26,15 @@ aws-config = "1.1"
 aws-credential-types = "1.1"
 
 # HTTP Client (for future connectors)
-reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], optional = true }
-reqwest-middleware = { version = "0.2", optional = true }
-reqwest-retry = { version = "0.3", optional = true }
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], default-features = false }
+reqwest-middleware = { version = "0.2" }
+reqwest-retry = { version = "0.3" }
+
+# Async trait support
+async-trait = "0.1"
+
+# Qdrant client (Phase 2)
+qdrant-client = "1.7"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -59,6 +66,7 @@ anyhow = "1.0"
 # Streaming
 async-stream = "0.3"
 futures = "0.3"
+futures-util = "0.3"
 
 # Configuration
 config = "0.14"
@@ -70,7 +78,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build = { version = "0.10", features = ["prost", "cleanup-markdown"] }
+prost-build = "0.12"
 
 [dev-dependencies]
 tempfile = "3.9"
@@ -82,5 +91,5 @@ name = "armorclaw-sidecar"
 path = "src/main.rs"
 
 [features]
-default = []
-full-connectors = ["reqwest", "reqwest-middleware", "reqwest-retry"]
+default = ["full-connectors"]
+full-connectors = []

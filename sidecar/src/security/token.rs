@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 type HmacSha256 = Hmac<Sha256>;
 
-const TOKEN_TTL_SECONDS: u64 = 1800; // 30 minutes
-const MAX_TIMESTAMP_AGE_SECONDS: u64 = 300; // 5 minutes
+pub const TOKEN_TTL_SECONDS: u64 = 1800; // 30 minutes
+pub const MAX_TIMESTAMP_AGE_SECONDS: u64 = 300; // 5 minutes
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenInfo {
@@ -22,9 +22,9 @@ pub enum TokenError {
     InvalidFormat(usize),
     #[error("invalid timestamp: {0}")]
     InvalidTimestamp(#[from] std::num::ParseIntError),
-    #[error("token timestamp is too old (> {0:?})", _0)]
+    #[error("token timestamp is too old (> {0:?})")]
     TokenTooOld(Duration),
-    #[error("token has expired (TTL: {0:?})", _0)]
+    #[error("token has expired (TTL: {0:?})")]
     TokenExpired(Duration),
     #[error("invalid token signature")]
     InvalidSignature,

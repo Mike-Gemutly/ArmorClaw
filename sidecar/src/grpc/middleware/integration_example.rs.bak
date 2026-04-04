@@ -1,0 +1,55 @@
+use crate::grpc::middleware::ConcurrencyLimit;
+use std::sync::Arc;
+
+/// Example of how to integrate ConcurrencyLimit middleware into the gRPC server
+///
+/// This example shows how to wrap a gRPC service with concurrency limiting:
+///
+/// ```rust,no_run
+/// use armorclaw_sidecar::grpc::middleware::{ConcurrencyLimiter, ConcurrencyLimit};
+/// use armorclaw_sidecar::grpc::SidecarServiceImpl;
+/// use std::sync::Arc;
+/// use tonic::transport::Server;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create the concurrency limiter with a limit of 50 requests
+/// let limiter = Arc::new(ConcurrencyLimiter::new(50));
+///
+/// // Create the service implementation
+/// let service = SidecarServiceImpl::new();
+///
+/// // Wrap the service with the concurrency limit middleware
+/// let service_with_limit = ConcurrencyLimit::new(service, limiter);
+///
+/// // Start the server with the middleware
+/// Server::builder()
+///     .add_service(service_with_limit)
+///     .serve(addr)
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The ConcurrencyLimit middleware will:
+/// - Allow up to 50 concurrent requests to process
+/// - Queue additional requests until a slot becomes available
+/// - Automatically release permits when requests complete
+/// - Prevent resource exhaustion from too many concurrent operations
+///
+/// This is particularly useful for:
+/// - Limiting concurrent database connections
+/// - Controlling concurrent file I/O operations
+/// - Managing memory-intensive operations
+/// - Preventing cascade failures under heavy load
+pub struct ConcurrencyLimitIntegrationExample;
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn test_concurrency_limit_creation() {
+        let limiter = Arc::new(ConcurrencyLimiter::new(50));
+        assert_eq!(limiter.max_concurrent(), 50);
+    }
+}

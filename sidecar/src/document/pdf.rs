@@ -155,7 +155,7 @@ impl PdfExtractor {
         String::from_utf8_lossy(text).to_string()
     }
 
-    fn extract_tj_operation(&self, operation: &lopdf::Operation, page_text: &mut String) {
+    fn extract_tj_operation(&self, operation: (), page_text: &mut String) {
         if let Some(Object::String(text, _)) = operation.operands.first() {
             let decoded_text = Self::decode_pdf_text(text);
             if !decoded_text.is_empty() {
@@ -167,7 +167,7 @@ impl PdfExtractor {
         }
     }
 
-    fn extract_tj_array_operation(&self, operation: &lopdf::Operation, page_text: &mut String) {
+    fn extract_tj_array_operation(&self, operation: (), page_text: &mut String) {
         for operand in &operation.operands {
             if let Object::String(text, _) = operand {
                 let decoded_text = Self::decode_pdf_text(text);

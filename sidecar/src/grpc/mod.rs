@@ -1,9 +1,4 @@
+// Temporarily commented out for testing rate limiting without proto generation
 pub mod server;
 pub mod interceptor;
-pub mod proto {
-    pub mod sidecar {
-        pub mod sidecar_service_server {
-            tonic::include_proto!("sidecar");
-        }
-    }
-}
+pub mod middleware;

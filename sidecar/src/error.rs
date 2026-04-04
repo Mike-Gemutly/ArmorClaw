@@ -5,7 +5,7 @@ pub type Result<T> = std::result::Result<T, SidecarError>;
 #[derive(Debug, Error)]
 pub enum SidecarError {
     #[error("Configuration error: {0}")]
-    Config(#[from] String),
+    Config(String),
     
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
@@ -30,4 +30,37 @@ pub enum SidecarError {
     
     #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
+    
+    #[error("HTTP error: {0}")]
+    HttpError(String),
+    
+    #[error("API error: {0}")]
+    ApiError(String),
+    
+    #[error("Access denied")]
+    AccessDenied,
+    
+    #[error("No such bucket: {0}")]
+    NoSuchBucket(String),
+    
+    #[error("No such key: {0}")]
+    NoSuchKey(String),
+    
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+    
+    #[error("Cloud storage error: {0}")]
+    CloudStorageError(String),
+}
+
+impl From<String> for SidecarError {
+    fn from(s: String) -> Self {
+        SidecarError::Config(s)
+    }
+}
+
+impl From<config::ConfigError> for SidecarError {
+    fn from(e: config::ConfigError) -> Self {
+        SidecarError::Config(e.to_string())
+    }
 }

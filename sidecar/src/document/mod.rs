@@ -14,6 +14,14 @@ pub fn validate_file_size(size: usize) -> Result<()> {
 
 pub mod pdf;
 pub mod docx;
+pub mod xlsx;
+pub mod ocr;
+pub mod diff;
+pub mod rag;
+pub mod html_diff;
+pub mod docx_diff;
+pub mod embeddings;
+//pub mod qdrant;
 
 pub use pdf::{
     PdfExtractor,
@@ -27,6 +35,52 @@ pub use docx::{
     DocxExtractor,
     DocxTextExtractionResult,
     extract_text_from_docx,
+};
+
+pub use xlsx::{
+    XlsxExtractor,
+    XlsxExtractionResult,
+    SheetData,
+    extract_data_from_xlsx,
+};
+
+pub use ocr::{
+    OcrExtractor,
+    OcrResult,
+    OcrConfig,
+    extract_text_with_ocr,
+    validate_language,
+    get_supported_languages,
+    detect_language_from_text,
+};
+
+pub use diff::{
+    DiffEngine,
+    DiffResult,
+    DiffOp,
+    compute_text_diff,
+};
+
+pub use rag::{
+    TextChunker,
+    TextChunk,
+    ChunkingStrategy,
+};
+
+pub use html_diff::{
+    HtmlDiffGenerator,
+};
+
+pub use docx_diff::{
+    DocxDiffGenerator,
+    generate_redline_document,
+};
+
+pub use embeddings::{
+    EmbeddingGenerator,
+    generate_text_embedding,
+    Embedder,
+    OpenAIEmbedder,
 };
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use crate::error::SidecarError;
 
 mod config;
 mod error;
@@ -10,7 +10,7 @@ mod utils;
 mod reliability;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), SidecarError> {
     tracing_subscriber::fmt::init();
     
     let config = config::SidecarConfig::from_env()?;
@@ -22,4 +22,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     
     grpc::server::run_server(config).await?;
+    
+    Ok(())
 }

@@ -1,0 +1,165 @@
+use tokio::sync::Semaphore;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tonic::body::BoxBody;
+use tonic::transport::Body;
+use tower::Service;
+use futures_util::future::BoxFuture;
+
+pub struct ConcurrencyLimiter {
+    semaphore: Arc<Semaphore>,
+    max_concurrent: usize,
+}
+
+impl ConcurrencyLimiter {
+    pub fn new(max_concurrent: usize) -> Self {
+        Self {
+            semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            max_concurrent,
+        }
+    }
+
+    pub fn max_concurrent(&self) -> usize {
+        self.max_concurrent
+    }
+
+    pub async fn acquire(&self) -> SemaphorePermit<'_> {
+        SemaphorePermit {
+            _permit: self.semaphore.acquire().await.unwrap(),
+        }
+    }
+}
+
+pub struct SemaphorePermit<'a> {
+    _permit: tokio::sync::SemaphorePermit<'a>,
+}
+
+pub struct ConcurrencyLimit<S> {
+    inner: S,
+    limiter: Arc<ConcurrencyLimiter>,
+}
+
+impl<S> ConcurrencyLimit<S> {
+    pub fn new(inner: S, limiter: Arc<ConcurrencyLimiter>) -> Self {
+        Self { inner, limiter }
+    }
+}
+
+impl<S> Clone for ConcurrencyLimit<S>
+where
+    S: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            limiter: self.limiter.clone(),
+        }
+    }
+}
+
+impl<S, Request> Service<Request> for ConcurrencyLimit<S>
+where
+    S: Service<Request> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    S::Error: Into<tonic::Status> + Send,
+    Request: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = futures::future::BoxFuture<'static, Result<S::Response, S::Error>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        let limiter = self.limiter.clone();
+        let mut inner = self.inner.clone();
+
+        Box::pin(async move {
+            let _permit = limiter.acquire().await;
+            inner.call(req).await
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::{sleep, Duration};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn test_concurrency_limiter_creation() {
+        let limiter = ConcurrencyLimiter::new(50);
+        assert_eq!(limiter.max_concurrent(), 50);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_limiter_enforces_limit() {
+    let limiter = Arc::new(ConcurrencyLimiter::new(3));
+    let active_requests = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+
+    let mut handles = vec![];
+
+    for i in 0..10 {
+        let limiter_clone = limiter.clone();
+        let active_requests_clone = active_requests.clone();
+        let max_active_clone = max_active.clone();
+
+        let handle = tokio::spawn(async move {
+            let _permit = limiter_clone.acquire().await;
+
+            let current = active_requests_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            max_active_clone.fetch_max(current, Ordering::SeqCst);
+
+            sleep(Duration::from_millis(100)).await;
+
+            active_requests_clone.fetch_sub(1, Ordering::SeqCst);
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    assert_eq!(max_active.load(Ordering::SeqCst), 3);
+}
+
+    #[tokio::test]
+    async fn test_concurrency_limiter_with_50_requests() {
+        let limiter = Arc::new(ConcurrencyLimiter::new(50));
+        let active_requests = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        for i in 0..100 {
+            let limiter_clone = limiter.clone();
+            let active_requests_clone = active_requests.clone();
+            let max_active_clone = max_active.clone();
+
+            let handle = tokio::spawn(async move {
+                let _permit = limiter_clone.acquire().await;
+
+                let current = active_requests_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active_clone.fetch_max(current, Ordering::SeqCst);
+
+                sleep(Duration::from_millis(10)).await;
+
+                active_requests_clone.fetch_sub(1, Ordering::SeqCst);
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert_eq!(max_active.load(Ordering::SeqCst), 50);
+    }
+}

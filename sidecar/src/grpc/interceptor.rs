@@ -1,13 +1,15 @@
-use crate::security::token::{validate_token, TokenError};
+use crate::error::SidecarError;
 use prometheus::{Histogram, IntCounter, Registry};
 use std::sync::Arc;
 use std::time::Instant;
 use tonic::{
-    metadata::{MetadataKey, MetadataMap},
-    service::{interceptor::Interceptor, Interceptor as TonicInterceptor},
+    metadata::{MetadataMap, MetadataValue},
+    service::Interceptor as TonicInterceptor,
     Status, Code,
 };
 use tracing::{debug, error, info, warn};
+
+use crate::security::token::{validate_token, TokenError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Version {
@@ -231,12 +233,12 @@ impl SecurityInterceptor {
         let request_id = metadata
             .get(METADATA_REQUEST_ID_KEY)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
 
         let operation = metadata
             .get(METADATA_OPERATION_KEY)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
 
         (request_id, operation)
     }
@@ -244,10 +246,10 @@ impl SecurityInterceptor {
 
 /// Implements the tonic Interceptor trait to intercept all gRPC requests.
 impl TonicInterceptor for SecurityInterceptor {
-    fn call(&mut self, mut req: tonic::Request<()>) -> Result<tonic::Response<()>, Status> {
+    fn call(&mut self, mut req: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
         let start_time = Instant::now();
         let metadata = req.metadata();
-        let method = req.method().to_string();
+        let method = "unknown";
 
         self.requests_total.inc();
 
@@ -272,12 +274,7 @@ impl TonicInterceptor for SecurityInterceptor {
                     "Request completed"
                 );
 
-                let mut response = req.into_response();
-                response.metadata_mut().insert(
-                    METADATA_SERVER_VERSION_KEY,
-                    MetadataValue::try_from(SERVER_VERSION).unwrap(),
-                );
-                Ok(response)
+                Ok(req)
             }
             Err(e) => {
                 self.request_errors_total.inc();
@@ -340,7 +337,7 @@ mod tests {
         let interceptor = SecurityInterceptor::new(secret, &registry).unwrap();
         let metadata = MetadataMap::new();
 
-        let (request_id, operation) = interceptor.extract_request_info(&metadata);
+        let (request_id, operation) = SecurityInterceptor::extract_request_info(&metadata);
         assert_eq!(request_id, "unknown");
         assert_eq!(operation, "unknown");
     }
@@ -354,8 +351,9 @@ mod tests {
 
         let result = interceptor.validate_metadata(&metadata);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code(), Code::Unauthenticated);
-        assert!(result.unwrap_err().message().contains("missing authentication token"));
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), Code::Unauthenticated);
+        assert!(err.message().contains("missing authentication token"));
     }
 
     #[test]
@@ -382,7 +380,7 @@ mod tests {
         let mut metadata = MetadataMap::new();
         metadata.insert(
             METADATA_TOKEN_KEY,
-            MetadataValue::try_from(&token).unwrap(),
+            MetadataValue::try_from(token.as_str()).unwrap(),
         );
 
         let result = interceptor.validate_metadata(&metadata);
@@ -406,13 +404,14 @@ mod tests {
         let mut metadata = MetadataMap::new();
         metadata.insert(
             METADATA_TOKEN_KEY,
-            MetadataValue::try_from(&token).unwrap(),
+            MetadataValue::try_from(token.as_str()).unwrap(),
         );
 
         let result = interceptor.validate_metadata(&metadata);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code(), Code::Unauthenticated);
-        assert!(result.unwrap_err().message().contains("invalid token signature"));
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), Code::Unauthenticated);
+        assert!(err.message().contains("invalid token signature"));
     }
 
     #[test]
@@ -440,12 +439,13 @@ mod tests {
         let mut metadata = MetadataMap::new();
         metadata.insert(
             METADATA_TOKEN_KEY,
-            MetadataValue::try_from(&token).unwrap(),
+            MetadataValue::try_from(token.as_str()).unwrap(),
         );
 
         let result = interceptor.validate_metadata(&metadata);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code(), Code::Unauthenticated);
-        assert!(result.unwrap_err().message().contains("expired"));
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), Code::Unauthenticated);
+        assert!(err.message().contains("expired"));
     }
 }
