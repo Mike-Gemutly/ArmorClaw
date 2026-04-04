@@ -7,6 +7,7 @@ mod connectors;
 mod document;
 mod security;
 mod utils;
+mod reliability;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

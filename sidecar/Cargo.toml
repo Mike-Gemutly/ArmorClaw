@@ -58,6 +58,7 @@ anyhow = "1.0"
 
 # Streaming
 async-stream = "0.3"
+futures = "0.3"
 
 # Configuration
 config = "0.14"

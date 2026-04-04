@@ -14,6 +14,13 @@ pub struct SidecarConfig {
     pub log_level: String,
     pub metrics_port: u16,
     pub shared_secret: String,
+    
+    // Circuit breaker configuration
+    pub circuit_breaker_failure_threshold: u32,
+    pub circuit_breaker_recovery_timeout_secs: u64,
+    
+    // Rate limiting configuration
+    pub rate_limit_max_requests_per_second: u32,
 }
 
 impl SidecarConfig {
@@ -29,6 +36,9 @@ impl SidecarConfig {
             .set_default("log_level", "info")?
             .set_default("metrics_port", "9090")?
             .set_default("shared_secret", "")?
+            .set_default("circuit_breaker_failure_threshold", "5")?
+            .set_default("circuit_breaker_recovery_timeout_secs", "30")?
+            .set_default("rate_limit_max_requests_per_second", "100")?
             .add_source(
                 config::Environment::with_prefix("ARMORCLAW_SIDECAR")
                     .separator("__")

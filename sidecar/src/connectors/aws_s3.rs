@@ -1,4 +1,5 @@
 use crate::error::{Result, SidecarError};
+use crate::reliability::S3Reliability;
 use async_stream::try_stream;
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
@@ -13,6 +14,7 @@ use sha2::{Digest, Sha256};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -206,9 +208,33 @@ impl<R> Drop for HashingReader<R> {
 
 /// S3 connector for uploading blobs to AWS S3.
 #[derive(Debug, Clone)]
-pub struct S3Connector;
+pub struct S3Connector {
+    reliability: Arc<S3Reliability>,
+}
 
 impl S3Connector {
+    /// Creates a new S3Connector with default reliability settings.
+    pub fn new() -> Self {
+        Self {
+            reliability: Arc::new(S3Reliability::new(5, 30, 100)),
+        }
+    }
+    
+    /// Creates a new S3Connector with custom reliability settings.
+    pub fn with_reliability_settings(
+        failure_threshold: u32,
+        recovery_timeout_secs: u64,
+        max_requests_per_second: u32,
+    ) -> Self {
+        Self {
+            reliability: Arc::new(S3Reliability::new(
+                failure_threshold,
+                recovery_timeout_secs,
+                max_requests_per_second,
+            )),
+        }
+    }
+    
     /// Creates an S3 client from upload request.
     ///
     /// Uses ephemeral credentials if provided in the request.
@@ -268,7 +294,18 @@ impl S3Connector {
     /// - File I/O fails
     /// - S3 operation fails
     /// - Hash computation fails
+    /// - Circuit breaker is open
+    /// - Rate limit exceeded
     pub async fn upload(&self, request: S3UploadRequest) -> Result<S3UploadResult> {
+        let request_clone = request.clone();
+        let reliability = self.reliability.clone();
+        
+        reliability.upload(async move {
+            Self::upload_internal(&request_clone).await
+        }).await
+    }
+    
+    async fn upload_internal(request: &S3UploadRequest) -> Result<S3UploadResult> {
         if request.content.is_none() && request.file_path.is_none() {
             return Err(SidecarError::InvalidRequest(
                 "Either content or file_path must be provided".to_string(),
@@ -569,7 +606,18 @@ impl S3Connector {
     /// Returns `SidecarError` if:
     /// - S3 operation fails (access denied, bucket not found, etc.)
     /// - Invalid request parameters
+    /// - Circuit breaker is open
+    /// - Rate limit exceeded
     pub async fn list_blobs(&self, request: S3ListRequest) -> Result<S3ListResult> {
+        let request_clone = request.clone();
+        let reliability = self.reliability.clone();
+        
+        reliability.list(async move {
+            Self::list_blobs_internal(&request_clone).await
+        }).await
+    }
+    
+    async fn list_blobs_internal(request: &S3ListRequest) -> Result<S3ListResult> {
         let region_provider = RegionProviderChain::first_try(Some(
             aws_sdk_s3::config::Region::new(request.region.clone()),
         ));
@@ -703,7 +751,18 @@ impl S3Connector {
     /// Returns `SidecarError` if:
     /// - Invalid URI format (must be "s3://bucket/key")
     /// - S3 operation fails (access denied, object not found, etc.)
+    /// - Circuit breaker is open
+    /// - Rate limit exceeded
     pub async fn delete_blob(&self, request: S3DeleteRequest) -> Result<S3DeleteResult> {
+        let request_clone = request.clone();
+        let reliability = self.reliability.clone();
+        
+        reliability.delete(async move {
+            Self::delete_blob_internal(&request_clone).await
+        }).await
+    }
+    
+    async fn delete_blob_internal(request: &S3DeleteRequest) -> Result<S3DeleteResult> {
         let region_provider = RegionProviderChain::first_try(Some(
             aws_sdk_s3::config::Region::new(request.region.clone()),
         ));

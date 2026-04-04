@@ -24,4 +24,10 @@ pub enum SidecarError {
     
     #[error("gRPC error: {0}")]
     Grpc(#[from] tonic::transport::Error),
+    
+    #[error("Circuit breaker open: {0}")]
+    CircuitBreakerOpen(String),
+    
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
 }
