@@ -3,6 +3,7 @@ use lopdf::dictionary;
 use lopdf::Document;
 use lopdf::Object;
 use std::collections::HashMap;
+use tracing::{warn, debug};
 
 pub struct PdfExtractor;
 
@@ -52,57 +53,28 @@ impl PdfExtractor {
         let mut metadata = HashMap::new();
 
         if let Ok(info) = doc.get_info() {
-            if let Some(Object::String(title, _)) = info.get(b"Title") {
-                metadata.insert(
-                    "title".to_string(),
-                    title.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(author, _)) = info.get(b"Author") {
-                metadata.insert(
-                    "author".to_string(),
-                    author.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(subject, _)) = info.get(b"Subject") {
-                metadata.insert(
-                    "subject".to_string(),
-                    subject.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(keywords, _)) = info.get(b"Keywords") {
-                metadata.insert(
-                    "keywords".to_string(),
-                    keywords.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(creator, _)) = info.get(b"Creator") {
-                metadata.insert(
-                    "creator".to_string(),
-                    creator.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(producer, _)) = info.get(b"Producer") {
-                metadata.insert(
-                    "producer".to_string(),
-                    producer.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(creation_date, _)) = info.get(b"CreationDate") {
-                metadata.insert(
-                    "creation_date".to_string(),
-                    creation_date.to_utf8_lossy().to_string(),
-                );
-            }
-            if let Some(Object::String(mod_date, _)) = info.get(b"ModDate") {
-                metadata.insert(
-                    "modification_date".to_string(),
-                    mod_date.to_utf8_lossy().to_string(),
-                );
-            }
+            Self::extract_string_field(&info, b"Title", "title", &mut metadata);
+            Self::extract_string_field(&info, b"Author", "author", &mut metadata);
+            Self::extract_string_field(&info, b"Subject", "subject", &mut metadata);
+            Self::extract_string_field(&info, b"Keywords", "keywords", &mut metadata);
+            Self::extract_string_field(&info, b"Creator", "creator", &mut metadata);
+            Self::extract_string_field(&info, b"Producer", "producer", &mut metadata);
+            Self::extract_string_field(&info, b"CreationDate", "creation_date", &mut metadata);
+            Self::extract_string_field(&info, b"ModDate", "modification_date", &mut metadata);
         }
 
         metadata
+    }
+
+    fn extract_string_field(
+        info: &lopdf::Dictionary,
+        pdf_key: &[u8],
+        field_name: &str,
+        metadata: &mut HashMap<String, String>,
+    ) {
+        if let Some(Object::String(value, _)) = info.get(pdf_key) {
+            metadata.insert(field_name.to_string(), value.to_utf8_lossy().to_string());
+        }
     }
 
     fn extract_text_from_pages(&self, doc: &Document) -> Result<String> {
@@ -117,12 +89,17 @@ impl PdfExtractor {
                 ))
             })?;
 
-            if let Ok(text_content) = self.extract_page_text(doc, page) {
-                if !text_content.is_empty() {
-                    if !extracted_text.is_empty() {
-                        extracted_text.push('\n');
+            match self.extract_page_text(doc, page) {
+                Ok(text_content) => {
+                    if !text_content.is_empty() {
+                        if !extracted_text.is_empty() {
+                            extracted_text.push('\n');
+                        }
+                        extracted_text.push_str(&text_content);
                     }
-                    extracted_text.push_str(&text_content);
+                }
+                Err(e) => {
+                    warn!("Failed to extract text from page {}: {}", page_num, e);
                 }
             }
         }
@@ -133,38 +110,69 @@ impl PdfExtractor {
     fn extract_page_text(&self, doc: &Document, page: &Object) -> Result<String> {
         let mut page_text = String::new();
 
-        if let Ok(contents) = doc.get_page_contents(page) {
-            for content_id in contents {
-                if let Ok(content) = doc.get_object(content_id) {
-                    if let Ok(operations) = content.get_content()? {
-                        for operation in operations {
-                            if operation.operator == "Tj" || operation.operator == "TJ" {
-                                if let Some(Object::String(text, _)) = operation.operands.first() {
-                                    let decoded_text = text.to_utf8_lossy().to_string();
-                                    if !decoded_text.is_empty() {
-                                        if !page_text.is_empty() {
-                                            page_text.push(' ');
-                                        }
-                                        page_text.push_str(&decoded_text);
-                                    }
-                                } else if operation.operator == "TJ" {
-                                    for operand in &operation.operands {
-                                        if let Object::String(text, _) = operand {
-                                            let decoded_text = text.to_utf8_lossy().to_string();
-                                            if !decoded_text.is_empty() {
-                                                page_text.push_str(&decoded_text);
+        match doc.get_page_contents(page) {
+            Ok(contents) => {
+                for content_id in contents {
+                    match doc.get_object(content_id) {
+                        Ok(content) => {
+                            match content.get_content() {
+                                Ok(operations) => {
+                                    for operation in operations {
+                                        match operation.operator.as_str() {
+                                            "Tj" => {
+                                                self.extract_tj_operation(&operation, &mut page_text);
                                             }
+                                            "TJ" => {
+                                                self.extract_tj_array_operation(&operation, &mut page_text);
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    debug!("Failed to get content operations: {}", e);
+                                }
                             }
+                        }
+                        Err(e) => {
+                            debug!("Failed to get content object: {}", e);
                         }
                     }
                 }
             }
+            Err(e) => {
+                debug!("Failed to get page contents: {}", e);
+            }
         }
 
         Ok(page_text)
+    }
+
+    fn decode_pdf_text(text: &[u8]) -> String {
+        String::from_utf8_lossy(text).to_string()
+    }
+
+    fn extract_tj_operation(&self, operation: &lopdf::Operation, page_text: &mut String) {
+        if let Some(Object::String(text, _)) = operation.operands.first() {
+            let decoded_text = Self::decode_pdf_text(text);
+            if !decoded_text.is_empty() {
+                if !page_text.is_empty() {
+                    page_text.push(' ');
+                }
+                page_text.push_str(&decoded_text);
+            }
+        }
+    }
+
+    fn extract_tj_array_operation(&self, operation: &lopdf::Operation, page_text: &mut String) {
+        for operand in &operation.operands {
+            if let Object::String(text, _) = operand {
+                let decoded_text = Self::decode_pdf_text(text);
+                if !decoded_text.is_empty() {
+                    page_text.push_str(&decoded_text);
+                }
+            }
+        }
     }
 }
 
