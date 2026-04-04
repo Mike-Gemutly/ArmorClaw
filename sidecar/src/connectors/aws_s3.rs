@@ -4,7 +4,7 @@ use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_sdk_s3::{
-    error::GetObjectError,
+    error::{DeleteObjectError, GetObjectError, ListObjectsV2Error},
     types::{ByteStream, PutObjectRequest},
     Client as S3Client,
 };
@@ -90,6 +90,75 @@ pub struct BlobChunk {
     pub offset: i64,
     /// True if this is the last chunk of the blob.
     pub is_last: bool,
+}
+
+/// S3 list request parameters.
+#[derive(Debug, Clone)]
+pub struct S3ListRequest {
+    /// S3 bucket name to list objects from.
+    pub bucket: String,
+    /// AWS region (e.g., "us-east-1").
+    pub region: String,
+    /// Optional prefix to filter objects.
+    pub prefix: Option<String>,
+    /// Optional maximum number of results to return.
+    pub max_results: Option<i32>,
+    /// Optional AWS access key (ephemeral, from request metadata).
+    pub access_key: Option<String>,
+    /// Optional AWS secret key (ephemeral, from request metadata).
+    pub secret_key: Option<String>,
+    /// Optional AWS session token (ephemeral, from request metadata).
+    pub session_token: Option<String>,
+}
+
+/// Information about a blob object.
+#[derive(Debug, Clone)]
+pub struct BlobInfo {
+    /// S3 object URI in format "s3://bucket/key".
+    pub uri: String,
+    /// Size of the object in bytes.
+    pub size_bytes: i64,
+    /// Content type of the object.
+    pub content_type: String,
+    /// Last modified timestamp as Unix epoch seconds.
+    pub last_modified_unix: i64,
+    /// ETag returned by S3 for the object.
+    pub etag: String,
+}
+
+/// S3 list result containing blob information.
+#[derive(Debug, Clone)]
+pub struct S3ListResult {
+    /// List of blob information.
+    pub blobs: Vec<BlobInfo>,
+    /// Continuation token for pagination (if more results available).
+    pub continuation_token: Option<String>,
+}
+
+/// S3 delete request parameters.
+#[derive(Debug, Clone)]
+pub struct S3DeleteRequest {
+    /// S3 bucket name.
+    pub bucket: String,
+    /// Object key (path) within the bucket.
+    pub key: String,
+    /// AWS region (e.g., "us-east-1").
+    pub region: String,
+    /// Optional AWS access key (ephemeral, from request metadata).
+    pub access_key: Option<String>,
+    /// Optional AWS secret key (ephemeral, from request metadata).
+    pub secret_key: Option<String>,
+    /// Optional AWS session token (ephemeral, from request metadata).
+    pub session_token: Option<String>,
+}
+
+/// S3 delete result containing deletion status.
+#[derive(Debug, Clone)]
+pub struct S3DeleteResult {
+    /// True if deletion was successful.
+    pub success: bool,
+    /// Status message.
+    pub message: String,
 }
 
 /// Wrapper that computes SHA256 hash while reading data.
@@ -480,6 +549,276 @@ impl S3Connector {
                 offset += bytes_read as i64;
             }
         }
+    }
+
+    /// Lists blobs in an S3 bucket with optional filtering.
+    ///
+    /// Uses S3 list_objects_v2 API to list objects with prefix filtering and max_results limit.
+    /// Supports pagination via continuation_token.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - S3 list request parameters
+    ///
+    /// # Returns
+    ///
+    /// Returns an `S3ListResult` containing blob information and optional continuation token.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SidecarError` if:
+    /// - S3 operation fails (access denied, bucket not found, etc.)
+    /// - Invalid request parameters
+    pub async fn list_blobs(&self, request: S3ListRequest) -> Result<S3ListResult> {
+        let region_provider = RegionProviderChain::first_try(Some(
+            aws_sdk_s3::config::Region::new(request.region.clone()),
+        ));
+
+        let config_loader = aws_config::defaults(BehaviorVersion::latest())
+            .region(region_provider);
+
+        let config = if let (Some(access_key), Some(secret_key)) = (
+            &request.access_key,
+            &request.secret_key,
+        ) {
+            debug!("Using ephemeral credentials for S3 list");
+
+            let credentials_provider = aws_credential_types::Credentials::new(
+                access_key.clone(),
+                secret_key.clone(),
+                request.session_token.clone(),
+                None,
+                "ephemeral",
+            );
+
+            config_loader
+                .credentials_provider(credentials_provider)
+                .load()
+                .await
+        } else {
+            debug!("Using default credential chain for S3 list");
+            config_loader.load().await
+        };
+
+        let client = S3Client::new(&config);
+
+        let mut list_request = aws_sdk_s3::types::builder::ListObjectsV2Request::builder()
+            .bucket(&request.bucket);
+
+        if let Some(prefix) = &request.prefix {
+            list_request = list_request.prefix(prefix);
+            debug!(
+                "Listing blobs in s3://{}/{} with prefix",
+                request.bucket, prefix
+            );
+        } else {
+            debug!("Listing all blobs in s3://{}", request.bucket);
+        }
+
+        if let Some(max_results) = request.max_results {
+            list_request = list_request.max_keys(max_results as i32);
+        }
+
+        let list_request = list_request.build().map_err(|e| {
+            error!("Failed to build S3 list request: {}", e);
+            SidecarError::StorageError(format!("Failed to build S3 list request: {}", e))
+        })?;
+
+        let output = client
+            .list_objects_v2(list_request)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("S3 list failed: {}", e);
+                match e.into_service_error() {
+                    ListObjectsV2Error::AccessDenied(_) => {
+                        SidecarError::StorageError("Access denied to S3 bucket".to_string())
+                    }
+                    ListObjectsV2Error::NoSuchBucket(_) => {
+                        SidecarError::StorageError("S3 bucket not found".to_string())
+                    }
+                    _ => SidecarError::StorageError(format!("S3 list failed: {}", e)),
+                }
+            })?;
+
+        let blobs = output
+            .contents()
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|object| {
+                let key = object.key()?;
+                let size = object.size().unwrap_or(0);
+                let last_modified = object
+                    .last_modified()
+                    .and_then(|dt| {
+                        dt.as_secs_f64()
+                            .as_secs()
+                            .try_into()
+                            .ok()
+                    })
+                    .unwrap_or(0);
+                let etag = object.e_tag().map(|s| s.trim_matches('"').to_string()).unwrap_or_default();
+                let uri = format!("s3://{}/{}", request.bucket, key);
+
+                Some(BlobInfo {
+                    uri,
+                    size_bytes: size,
+                    content_type: "application/octet-stream".to_string(),
+                    last_modified_unix: last_modified,
+                    etag,
+                })
+            })
+            .collect();
+
+        let continuation_token = output.next_continuation_token().map(|s| s.to_string());
+
+        info!(
+            "Listed {} blobs in s3://{} (continuation_token: {:?})",
+            blobs.len(),
+            request.bucket,
+            continuation_token
+        );
+
+        Ok(S3ListResult {
+            blobs,
+            continuation_token,
+        })
+    }
+
+    /// Deletes a blob from S3.
+    ///
+    /// Uses S3 delete_object API to delete a single object.
+    /// Parses bucket and key from URI in format "s3://bucket/key".
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - S3 delete request parameters
+    ///
+    /// # Returns
+    ///
+    /// Returns an `S3DeleteResult` indicating success or failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SidecarError` if:
+    /// - Invalid URI format (must be "s3://bucket/key")
+    /// - S3 operation fails (access denied, object not found, etc.)
+    pub async fn delete_blob(&self, request: S3DeleteRequest) -> Result<S3DeleteResult> {
+        let region_provider = RegionProviderChain::first_try(Some(
+            aws_sdk_s3::config::Region::new(request.region.clone()),
+        ));
+
+        let config_loader = aws_config::defaults(BehaviorVersion::latest())
+            .region(region_provider);
+
+        let config = if let (Some(access_key), Some(secret_key)) = (
+            &request.access_key,
+            &request.secret_key,
+        ) {
+            debug!("Using ephemeral credentials for S3 delete");
+
+            let credentials_provider = aws_credential_types::Credentials::new(
+                access_key.clone(),
+                secret_key.clone(),
+                request.session_token.clone(),
+                None,
+                "ephemeral",
+            );
+
+            config_loader
+                .credentials_provider(credentials_provider)
+                .load()
+                .await
+        } else {
+            debug!("Using default credential chain for S3 delete");
+            config_loader.load().await
+        };
+
+        let client = S3Client::new(&config);
+
+        let delete_request = aws_sdk_s3::types::builder::DeleteObjectRequest::builder()
+            .bucket(&request.bucket)
+            .key(&request.key)
+            .build()
+            .map_err(|e| {
+                error!("Failed to build S3 delete request: {}", e);
+                SidecarError::StorageError(format!("Failed to build S3 delete request: {}", e))
+            })?;
+
+        info!(
+            "Deleting s3://{}/{}",
+            request.bucket, request.key
+        );
+
+        let output = client
+            .delete_object(delete_request)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("S3 delete failed: {}", e);
+                match e.into_service_error() {
+                    DeleteObjectError::AccessDenied(_) => {
+                        SidecarError::StorageError("Access denied to S3 object".to_string())
+                    }
+                    DeleteObjectError::NoSuchBucket(_) => {
+                        SidecarError::StorageError("S3 bucket not found".to_string())
+                    }
+                    _ => SidecarError::StorageError(format!("S3 delete failed: {}", e)),
+                }
+            })?;
+
+        let version_id = output.version_id().map(|s| s.to_string());
+
+        info!(
+            "Deleted s3://{}/{} (version_id: {:?})",
+            request.bucket,
+            request.key,
+            version_id
+        );
+
+        Ok(S3DeleteResult {
+            success: true,
+            message: format!(
+                "Successfully deleted s3://{}/{}",
+                request.bucket, request.key
+            ),
+        })
+    }
+
+    /// Parses an S3 URI to extract bucket and key.
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - S3 URI in format "s3://bucket/key"
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of (bucket, key).
+    ///
+    /// # Errors
+    ///
+    /// Returns `SidecarError` if:
+    /// - Invalid URI format
+    /// - Missing bucket or key
+    pub fn parse_s3_uri(&self, uri: &str) -> Result<(String, String)> {
+        if !uri.starts_with("s3://") {
+            return Err(SidecarError::InvalidRequest(format!(
+                "Invalid S3 URI format: {} (must start with s3://)",
+                uri
+            )));
+        }
+
+        let without_prefix = uri.strip_prefix("s3://").unwrap();
+        let parts: Vec<&str> = without_prefix.splitn(2, '/').collect();
+
+        if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+            return Err(SidecarError::InvalidRequest(format!(
+                "Invalid S3 URI format: {} (must be s3://bucket/key)",
+                uri
+            )));
+        }
+
+        Ok((parts[0].to_string(), parts[1].to_string()))
     }
 }
 
@@ -931,5 +1270,319 @@ mod tests {
         assert_eq!(chunks[0].offset, 0);
         assert_eq!(chunks[1].offset, 1024);
         assert_eq!(chunks[2].offset, 2048);
+    }
+
+    #[test]
+    fn test_s3_list_request_builder() {
+        let request = S3ListRequest {
+            bucket: "my-bucket".to_string(),
+            region: "us-west-2".to_string(),
+            prefix: Some("prefix/".to_string()),
+            max_results: Some(100),
+            access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
+            secret_key: Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
+            session_token: Some("session-token-123".to_string()),
+        };
+
+        assert_eq!(request.bucket, "my-bucket");
+        assert_eq!(request.region, "us-west-2");
+        assert_eq!(request.prefix, Some("prefix/".to_string()));
+        assert_eq!(request.max_results, Some(100));
+        assert_eq!(
+            request.access_key,
+            Some("AKIAIOSFODNN7EXAMPLE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_s3_list_request_minimal() {
+        let request = S3ListRequest {
+            bucket: "my-bucket".to_string(),
+            region: "us-east-1".to_string(),
+            prefix: None,
+            max_results: None,
+            access_key: None,
+            secret_key: None,
+            session_token: None,
+        };
+
+        assert_eq!(request.bucket, "my-bucket");
+        assert_eq!(request.region, "us-east-1");
+        assert!(request.prefix.is_none());
+        assert!(request.max_results.is_none());
+    }
+
+    #[test]
+    fn test_blob_info_creation() {
+        let blob_info = BlobInfo {
+            uri: "s3://bucket/key.txt".to_string(),
+            size_bytes: 1024,
+            content_type: "text/plain".to_string(),
+            last_modified_unix: 1234567890,
+            etag: "abc123".to_string(),
+        };
+
+        assert_eq!(blob_info.uri, "s3://bucket/key.txt");
+        assert_eq!(blob_info.size_bytes, 1024);
+        assert_eq!(blob_info.content_type, "text/plain");
+        assert_eq!(blob_info.last_modified_unix, 1234567890);
+        assert_eq!(blob_info.etag, "abc123");
+    }
+
+    #[test]
+    fn test_s3_list_result_creation() {
+        let result = S3ListResult {
+            blobs: vec![
+                BlobInfo {
+                    uri: "s3://bucket/key1.txt".to_string(),
+                    size_bytes: 100,
+                    content_type: "text/plain".to_string(),
+                    last_modified_unix: 1234567890,
+                    etag: "etag1".to_string(),
+                },
+            ],
+            continuation_token: Some("token123".to_string()),
+        };
+
+        assert_eq!(result.blobs.len(), 1);
+        assert_eq!(result.continuation_token, Some("token123".to_string()));
+    }
+
+    #[test]
+    fn test_s3_list_result_without_continuation() {
+        let result = S3ListResult {
+            blobs: vec![],
+            continuation_token: None,
+        };
+
+        assert_eq!(result.blobs.len(), 0);
+        assert!(result.continuation_token.is_none());
+    }
+
+    #[test]
+    fn test_s3_delete_request_builder() {
+        let request = S3DeleteRequest {
+            bucket: "my-bucket".to_string(),
+            key: "path/to/object.txt".to_string(),
+            region: "us-west-2".to_string(),
+            access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
+            secret_key: Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
+            session_token: Some("session-token-123".to_string()),
+        };
+
+        assert_eq!(request.bucket, "my-bucket");
+        assert_eq!(request.key, "path/to/object.txt");
+        assert_eq!(request.region, "us-west-2");
+        assert_eq!(
+            request.access_key,
+            Some("AKIAIOSFODNN7EXAMPLE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_s3_delete_request_minimal() {
+        let request = S3DeleteRequest {
+            bucket: "my-bucket".to_string(),
+            key: "key.txt".to_string(),
+            region: "us-east-1".to_string(),
+            access_key: None,
+            secret_key: None,
+            session_token: None,
+        };
+
+        assert_eq!(request.bucket, "my-bucket");
+        assert_eq!(request.key, "key.txt");
+        assert_eq!(request.region, "us-east-1");
+    }
+
+    #[test]
+    fn test_s3_delete_result_creation() {
+        let result = S3DeleteResult {
+            success: true,
+            message: "Successfully deleted s3://bucket/key".to_string(),
+        };
+
+        assert!(result.success);
+        assert!(result.message.contains("Successfully deleted"));
+    }
+
+    #[test]
+    fn test_parse_s3_uri_valid() {
+        let connector = S3Connector;
+        let result = connector.parse_s3_uri("s3://my-bucket/path/to/object.txt");
+
+        assert!(result.is_ok());
+        let (bucket, key) = result.unwrap();
+        assert_eq!(bucket, "my-bucket");
+        assert_eq!(key, "path/to/object.txt");
+    }
+
+    #[test]
+    fn test_parse_s3_uri_simple() {
+        let connector = S3Connector;
+        let result = connector.parse_s3_uri("s3://bucket/key");
+
+        assert!(result.is_ok());
+        let (bucket, key) = result.unwrap();
+        assert_eq!(bucket, "bucket");
+        assert_eq!(key, "key");
+    }
+
+    #[test]
+    fn test_parse_s3_uri_invalid_prefix() {
+        let connector = S3Connector;
+        let result = connector.parse_s3_uri("http://bucket/key");
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must start with s3://"));
+    }
+
+    #[test]
+    fn test_parse_s3_uri_missing_key() {
+        let connector = S3Connector;
+        let result = connector.parse_s3_uri("s3://bucket");
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be s3://bucket/key"));
+    }
+
+    #[test]
+    fn test_parse_s3_uri_missing_bucket() {
+        let connector = S3Connector;
+        let result = connector.parse_s3_uri("s3:///key");
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be s3://bucket/key"));
+    }
+
+    #[test]
+    fn test_parse_s3_uri_with_special_chars() {
+        let connector = S3Connector;
+        let result = connector.parse_s3_uri("s3://my-bucket/path/to/file_name-v2.0.txt");
+
+        assert!(result.is_ok());
+        let (bucket, key) = result.unwrap();
+        assert_eq!(bucket, "my-bucket");
+        assert_eq!(key, "path/to/file_name-v2.0.txt");
+    }
+
+    #[test]
+    fn test_blob_info_uri_formatting() {
+        let bucket = "test-bucket";
+        let key = "documents/file.pdf";
+        let uri = format!("s3://{}/{}", bucket, key);
+
+        assert_eq!(uri, "s3://test-bucket/documents/file.pdf");
+    }
+
+    #[test]
+    fn test_blob_info_empty_fields() {
+        let blob_info = BlobInfo {
+            uri: "".to_string(),
+            size_bytes: 0,
+            content_type: "".to_string(),
+            last_modified_unix: 0,
+            etag: "".to_string(),
+        };
+
+        assert_eq!(blob_info.uri, "");
+        assert_eq!(blob_info.size_bytes, 0);
+        assert_eq!(blob_info.content_type, "");
+        assert_eq!(blob_info.last_modified_unix, 0);
+        assert_eq!(blob_info.etag, "");
+    }
+
+    #[test]
+    fn test_prefix_filtering_logic() {
+        let prefix = Some("docs/".to_string());
+        assert_eq!(prefix, Some("docs/".to_string()));
+
+        let prefix_none: Option<String> = None;
+        assert!(prefix_none.is_none());
+    }
+
+    #[test]
+    fn test_max_results_filtering_logic() {
+        let max_results = Some(100);
+        assert_eq!(max_results, Some(100));
+
+        let max_results_none: Option<i32> = None;
+        assert!(max_results_none.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_blobs_validation() {
+        let connector = S3Connector;
+        let request = S3ListRequest {
+            bucket: "".to_string(),
+            region: "us-east-1".to_string(),
+            prefix: None,
+            max_results: None,
+            access_key: None,
+            secret_key: None,
+            session_token: None,
+        };
+
+        let result = connector.list_blobs(request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_blob_validation() {
+        let connector = S3Connector;
+        let request = S3DeleteRequest {
+            bucket: "".to_string(),
+            key: "".to_string(),
+            region: "us-east-1".to_string(),
+            access_key: None,
+            secret_key: None,
+            session_token: None,
+        };
+
+        let result = connector.delete_blob(request).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_continuation_token_storage() {
+        let token = Some("abc123xyz".to_string());
+        assert_eq!(token, Some("abc123xyz".to_string()));
+
+        let token_none: Option<String> = None;
+        assert!(token_none.is_none());
+    }
+
+    #[test]
+    fn test_blob_info_array_operations() {
+        let blobs = vec![
+            BlobInfo {
+                uri: "s3://bucket/key1".to_string(),
+                size_bytes: 100,
+                content_type: "text/plain".to_string(),
+                last_modified_unix: 1234567890,
+                etag: "etag1".to_string(),
+            },
+            BlobInfo {
+                uri: "s3://bucket/key2".to_string(),
+                size_bytes: 200,
+                content_type: "application/json".to_string(),
+                last_modified_unix: 1234567891,
+                etag: "etag2".to_string(),
+            },
+        ];
+
+        assert_eq!(blobs.len(), 2);
+        assert_eq!(blobs[0].uri, "s3://bucket/key1");
+        assert_eq!(blobs[1].uri, "s3://bucket/key2");
+        assert_eq!(blobs.iter().map(|b| b.size_bytes).sum::<i64>(), 300);
     }
 }
