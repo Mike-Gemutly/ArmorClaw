@@ -9,10 +9,64 @@ use tonic::{
 };
 use tracing::{debug, error, info, warn};
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl Version {
+    pub fn parse(version_str: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = version_str.split('.').collect();
+        if parts.len() != 3 {
+            return Err(format!("invalid version format: {} (expected MAJOR.MINOR.PATCH)", version_str));
+        }
+
+        let major = parts[0].parse::<u32>()
+            .map_err(|e| format!("invalid major version: {}", e))?;
+        let minor = parts[1].parse::<u32>()
+            .map_err(|e| format!("invalid minor version: {}", e))?;
+        let patch = parts[2].parse::<u32>()
+            .map_err(|e| format!("invalid patch version: {}", e))?;
+
+        Ok(Version { major, minor, patch })
+    }
+
+    pub fn compare(&self, other: &Version) -> std::cmp::Ordering {
+        match self.major.cmp(&other.major) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+        match self.minor.cmp(&other.minor) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+        self.patch.cmp(&other.patch)
+    }
+
+    pub fn is_compatible(&self, min: &Version, max: &Version) -> bool {
+        self.compare(min) != std::cmp::Ordering::Less
+            && self.compare(max) != std::cmp::Ordering::Greater
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
 const METADATA_TOKEN_KEY: &str = "token";
 const METADATA_REQUEST_ID_KEY: &str = "request-id";
 const METADATA_TIMESTAMP_KEY: &str = "timestamp";
 const METADATA_OPERATION_KEY: &str = "operation";
+const METADATA_VERSION_KEY: &str = "x-sidecar-version";
+const METADATA_SERVER_VERSION_KEY: &str = "x-sidecar-server-version";
+
+const SERVER_VERSION: &str = "1.0.0";
+const MIN_CLIENT_VERSION: &str = "1.0.0";
+const MAX_CLIENT_VERSION: &str = "1.5.0";
 
 /// Security interceptor that validates ephemeral tokens on every request.
 ///
@@ -120,7 +174,50 @@ impl SecurityInterceptor {
             "Token validated successfully"
         );
 
+        self.validate_client_version(metadata)?;
+
         Ok(token_info.operation)
+    }
+
+    fn validate_client_version(&self, metadata: &MetadataMap) -> Result<(), Status> {
+        let client_version_str = metadata
+            .get(METADATA_VERSION_KEY)
+            .and_then(|value| value.to_str().ok());
+
+        if let Some(version_str) = client_version_str {
+            let client_version = Version::parse(version_str).map_err(|e| {
+                warn!("Request rejected: invalid client version {}", version_str);
+                Status::new(Code::InvalidArgument, e)
+            })?;
+
+            let min_version = Version::parse(MIN_CLIENT_VERSION).unwrap();
+            let max_version = Version::parse(MAX_CLIENT_VERSION).unwrap();
+
+            if !client_version.is_compatible(&min_version, &max_version) {
+                warn!(
+                    client_version = %client_version,
+                    min_version = %min_version,
+                    max_version = %max_version,
+                    "Request rejected: incompatible client version"
+                );
+                return Err(Status::new(
+                    Code::FailedPrecondition,
+                    format!(
+                        "incompatible client version {} (supported: {}-{})",
+                        client_version, min_version, max_version
+                    ),
+                ));
+            }
+
+            debug!(
+                client_version = %client_version,
+                "Client version validated"
+            );
+        } else {
+            debug!("No client version provided, skipping validation");
+        }
+
+        Ok(())
     }
 
     /// Extracts safe request information for logging (no sensitive data).
@@ -175,7 +272,12 @@ impl TonicInterceptor for SecurityInterceptor {
                     "Request completed"
                 );
 
-                Ok(req.into_response())
+                let mut response = req.into_response();
+                response.metadata_mut().insert(
+                    METADATA_SERVER_VERSION_KEY,
+                    MetadataValue::try_from(SERVER_VERSION).unwrap(),
+                );
+                Ok(response)
             }
             Err(e) => {
                 self.request_errors_total.inc();

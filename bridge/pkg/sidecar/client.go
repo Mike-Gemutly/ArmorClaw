@@ -167,6 +167,8 @@ func (c *Client) Connect(ctx context.Context) error {
 		grpc.WithContextDialer(dialer),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(callOptions...),
+		grpc.WithChainUnaryInterceptor(ClientVersionInterceptor),
+		grpc.WithChainStreamInterceptor(StreamClientVersionInterceptor),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff:           backoffConfig,
 			MinConnectTimeout: 5 * time.Second,

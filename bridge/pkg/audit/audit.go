@@ -29,6 +29,17 @@ const (
 	EventPIIProfileCreated EventType = "pii_profile_created"
 	EventPIIProfileUpdated EventType = "pii_profile_updated"
 	EventPIIProfileDeleted EventType = "pii_profile_deleted"
+
+	// Sidecar operation events
+	EventSidecarHealthCheck     EventType = "sidecar_health_check"
+	EventSidecarUploadBlob      EventType = "sidecar_upload_blob"
+	EventSidecarDownloadBlob    EventType = "sidecar_download_blob"
+	EventSidecarListBlobs       EventType = "sidecar_list_blobs"
+	EventSidecarDeleteBlob      EventType = "sidecar_delete_blob"
+	EventSidecarExtractText     EventType = "sidecar_extract_text"
+	EventSidecarProcessDocument EventType = "sidecar_process_document"
+	EventSidecarQueued          EventType = "sidecar_queued"
+	EventSidecarRetry           EventType = "sidecar_retry"
 )
 
 type Entry struct {
