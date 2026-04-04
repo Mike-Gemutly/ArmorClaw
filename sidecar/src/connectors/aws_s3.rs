@@ -17,28 +17,47 @@ use tokio::io::{AsyncRead, AsyncReadExt, BufReader, ReadBuf};
 use tokio::fs::File;
 use tracing::{debug, error, info};
 
+/// S3 upload request parameters.
+///
+/// Mutually exclusive: only one of `content` or `file_path` should be set.
 #[derive(Debug, Clone)]
 pub struct S3UploadRequest {
+    /// S3 bucket name to upload to.
     pub bucket: String,
+    /// Object key (path) within the bucket.
     pub key: String,
+    /// AWS region (e.g., "us-east-1").
     pub region: String,
+    /// Content type (e.g., "application/octet-stream").
     pub content_type: Option<String>,
+    /// In-memory content bytes. Mutually exclusive with `file_path`.
     pub content: Option<Vec<u8>>,
+    /// Local file path for streaming upload. Mutually exclusive with `content`.
     pub file_path: Option<PathBuf>,
+    /// Optional AWS access key (ephemeral, from request metadata).
     pub access_key: Option<String>,
+    /// Optional AWS secret key (ephemeral, from request metadata).
     pub secret_key: Option<String>,
+    /// Optional AWS session token (ephemeral, from request metadata).
     pub session_token: Option<String>,
 }
 
+/// S3 upload result containing metadata about the uploaded object.
 #[derive(Debug, Clone)]
 pub struct S3UploadResult {
+    /// S3 object URI in format "s3://bucket/key".
     pub blob_id: String,
+    /// ETag returned by S3 for the uploaded object.
     pub etag: String,
+    /// Size of the uploaded object in bytes.
     pub size_bytes: i64,
+    /// SHA256 hash of the uploaded content (computed during upload).
     pub content_hash_sha256: String,
+    /// Upload timestamp as Unix epoch seconds.
     pub timestamp_unix: i64,
 }
 
+/// Wrapper that computes SHA256 hash while reading data.
 #[derive(Debug)]
 struct HashingReader<R> {
     inner: R,
@@ -77,14 +96,19 @@ impl<R: AsyncRead + Unpin> AsyncRead for HashingReader<R> {
 impl<R> Drop for HashingReader<R> {
     fn drop(&mut self) {
         let hash = hex::encode(self.hasher.finalize());
-        *self.hash_output.lock().unwrap() = Some(hash);
+        *self.hash_output.lock().expect("HashingReader mutex poisoned") = Some(hash);
     }
 }
 
+/// S3 connector for uploading blobs to AWS S3.
 #[derive(Debug, Clone)]
 pub struct S3Connector;
 
 impl S3Connector {
+    /// Creates an S3 client from upload request.
+    ///
+    /// Uses ephemeral credentials if provided in the request.
+    /// Otherwise, uses the default AWS credential chain.
     async fn create_client(&self, request: &S3UploadRequest) -> Result<S3Client> {
         let region_provider = RegionProviderChain::first_try(Some(
             aws_sdk_s3::config::Region::new(request.region.clone()),
@@ -119,6 +143,27 @@ impl S3Connector {
         Ok(S3Client::new(&config))
     }
 
+    /// Uploads a blob to S3 with streaming and hash computation.
+    ///
+    /// Supports both in-memory content and file path streaming.
+    /// For large files, streaming from disk is recommended to avoid OOM.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - S3 upload request parameters
+    ///
+    /// # Returns
+    ///
+    /// Returns an `S3UploadResult` containing upload metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SidecarError` if:
+    /// - Neither content nor file_path is provided
+    /// - Both content and file_path are provided
+    /// - File I/O fails
+    /// - S3 operation fails
+    /// - Hash computation fails
     pub async fn upload(&self, request: S3UploadRequest) -> Result<S3UploadResult> {
         if request.content.is_none() && request.file_path.is_none() {
             return Err(SidecarError::InvalidRequest(
@@ -215,13 +260,19 @@ impl S3Connector {
 
         let content_hash_sha256 = Arc::try_unwrap(hash_output.clone())
             .ok()
-            .and_then(|m| m.lock().unwrap().take())
-            .unwrap_or_else(|| "".to_string());
+            .and_then(|m| m.lock().expect("Hash mutex poisoned").take())
+            .unwrap_or_else(|| {
+                error!("Failed to extract hash after upload");
+                "".to_string()
+            });
 
         let timestamp_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_else(|_| {
+                error!("System clock appears to be before Unix epoch, using 0");
+                0
+            });
 
         let etag = output
             .e_tag()
@@ -258,7 +309,7 @@ mod tests {
             let reader = HashingReader::new(&data[..], hash_output.clone());
             drop(reader);
         }
-        let hash = hash_output.lock().unwrap().as_ref().unwrap();
+        let hash = hash_output.lock().expect("Hash mutex poisoned").as_ref().unwrap();
         assert_eq!(
             hash,
             "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -279,176 +330,7 @@ mod tests {
             assert_eq!(reader.read(&mut buf).unwrap(), 11);
             drop(reader);
         }
-        let hash = hash_output.lock().unwrap().as_ref().unwrap();
-        assert!(hash.len() == 64);
-    }
-
-    #[test]
-    fn test_s3_upload_request_both_content_and_file() {
-        let request = S3UploadRequest {
-            bucket: "test-bucket".to_string(),
-            key: "test-key".to_string(),
-            region: "us-east-1".to_string(),
-            content_type: None,
-            content: Some(vec![1, 2, 3]),
-            file_path: Some(PathBuf::from("/tmp/test.txt")),
-            access_key: None,
-            secret_key: None,
-            session_token: None,
-        };
-
-        let connector = S3Connector;
-        drop(connector);
-        drop(request);
-    }
-
-    #[test]
-    fn test_s3_upload_request_neither_content_nor_file() {
-        let request = S3UploadRequest {
-            bucket: "test-bucket".to_string(),
-            key: "test-key".to_string(),
-            region: "us-east-1".to_string(),
-            content_type: None,
-            content: None,
-            file_path: None,
-            access_key: None,
-            secret_key: None,
-            session_token: None,
-        };
-
-        let connector = S3Connector;
-        drop(connector);
-        drop(request);
-    }
-
-    #[test]
-    fn test_s3_upload_result_creation() {
-        let result = S3UploadResult {
-            blob_id: "s3://test-bucket/test-key".to_string(),
-            etag: "\"abc123\"".to_string(),
-            size_bytes: 1024,
-            content_hash_sha256: "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146".to_string(),
-            timestamp_unix: 1234567890,
-        };
-
-        assert_eq!(result.blob_id, "s3://test-bucket/test-key");
-        assert_eq!(result.size_bytes, 1024);
-        assert!(result.content_hash_sha256.len() == 64);
-    }
-
-    #[test]
-    fn test_sha256_hash_computation_memory() {
-        let content = b"hello world";
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        let hash = hex::encode(hasher.finalize());
-
-        assert_eq!(
-            hash,
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_file_hash_computation() -> Result<()> {
-        let mut temp_file = tempfile::NamedTempFile::new()?;
-        writeln!(temp_file, "hello world")?;
-
-        let mut hasher = Sha256::new();
-        let file = File::open(temp_file.path()).await?;
-        let mut reader = BufReader::new(file);
-        let mut buffer = [0u8; 8192];
-
-        loop {
-            let bytes_read = reader.read(&mut buffer).await?;
-            if bytes_read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..bytes_read]);
-        }
-
-        let hash = hex::encode(hasher.finalize());
-
-        assert!(hash.len() == 64);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_s3_upload_request_builder() {
-        let request = S3UploadRequest {
-            bucket: "my-bucket".to_string(),
-            key: "path/to/object.txt".to_string(),
-            region: "us-west-2".to_string(),
-            content_type: Some("text/plain".to_string()),
-            content: Some(vec![1, 2, 3]),
-            file_path: None,
-            access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
-            secret_key: Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
-            session_token: Some("session-token-123".to_string()),
-        };
-
-        assert_eq!(request.bucket, "my-bucket");
-        assert_eq!(request.key, "path/to/object.txt");
-        assert_eq!(request.region, "us-west-2");
-        assert_eq!(request.content_type, Some("text/plain".to_string()));
-        assert_eq!(request.content, Some(vec![1, 2, 3]));
-        assert!(request.file_path.is_none());
-        assert_eq!(
-            request.access_key,
-            Some("AKIAIOSFODNN7EXAMPLE".to_string())
-        );
-        assert_eq!(
-            request.secret_key,
-            Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string())
-        );
-    }
-
-    #[test]
-    fn test_etag_trimming() {
-        let etag_with_quotes = "\"abc123def\"";
-        let trimmed = etag_with_quotes.trim_matches('"');
-        assert_eq!(trimmed, "abc123def");
-
-        let etag_without_quotes = "abc123def";
-        let trimmed = etag_without_quotes.trim_matches('"');
-        assert_eq!(trimmed, "abc123def");
-    }
-
-    #[test]
-    fn test_blob_id_formatting() {
-        let bucket = "my-bucket";
-        let key = "path/to/object.txt";
-        let blob_id = format!("s3://{}/{}", bucket, key);
-        assert_eq!(blob_id, "s3://my-bucket/path/to/object.txt");
-    }
-
-    #[test]
-    fn test_hashing_reader_empty_input() {
-        let data = b"";
-        let hash_output = Arc::new(Mutex::new(None));
-        {
-            let reader = HashingReader::new(&data[..], hash_output.clone());
-            drop(reader);
-        }
-        let hash = hash_output.lock().unwrap().as_ref().unwrap();
-        assert_eq!(
-            hash,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
-
-    #[test]
-    fn test_hashing_reader_large_input() {
-        let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
-        let hash_output = Arc::new(Mutex::new(None));
-        {
-            let mut reader = HashingReader::new(data.as_slice(), hash_output.clone());
-            let mut buf = [0u8; 100];
-            while reader.read(&mut buf).unwrap() > 0 {}
-            drop(reader);
-        }
-        let hash = hash_output.lock().unwrap().as_ref().unwrap();
+        let hash = hash_output.lock().expect("Hash mutex poisoned").as_ref().unwrap();
         assert!(hash.len() == 64);
     }
 
@@ -594,5 +476,136 @@ mod tests {
         assert_eq!(result.size_bytes, 100);
         assert_eq!(result.content_hash_sha256, "hash");
         assert_eq!(result.timestamp_unix, 1234567890);
+    }
+
+    #[test]
+    fn test_etag_trimming() {
+        let etag_with_quotes = "\"abc123def\"";
+        let trimmed = etag_with_quotes.trim_matches('"');
+        assert_eq!(trimmed, "abc123def");
+
+        let etag_without_quotes = "abc123def";
+        let trimmed = etag_without_quotes.trim_matches('"');
+        assert_eq!(trimmed, "abc123def");
+    }
+
+    #[test]
+    fn test_blob_id_formatting() {
+        let bucket = "my-bucket";
+        let key = "path/to/object.txt";
+        let blob_id = format!("s3://{}/{}", bucket, key);
+        assert_eq!(blob_id, "s3://my-bucket/path/to/object.txt");
+    }
+
+    #[test]
+    fn test_hashing_reader_empty_input() {
+        let data = b"";
+        let hash_output = Arc::new(Mutex::new(None));
+        {
+            let reader = HashingReader::new(&data[..], hash_output.clone());
+            drop(reader);
+        }
+        let hash = hash_output.lock().expect("Hash mutex poisoned").as_ref().unwrap();
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_hashing_reader_large_input() {
+        let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
+        let hash_output = Arc::new(Mutex::new(None));
+        {
+            let mut reader = HashingReader::new(data.as_slice(), hash_output.clone());
+            let mut buf = [0u8; 100];
+            while reader.read(&mut buf).unwrap() > 0 {}
+            drop(reader);
+        }
+        let hash = hash_output.lock().expect("Hash mutex poisoned").as_ref().unwrap();
+        assert!(hash.len() == 64);
+    }
+
+    #[tokio::test]
+    async fn test_file_hash_computation() -> Result<()> {
+        let mut temp_file = tempfile::NamedTempFile::new()?;
+        writeln!(temp_file, "hello world")?;
+
+        let mut hasher = Sha256::new();
+        let file = File::open(temp_file.path()).await?;
+        let mut reader = BufReader::new(file);
+        let mut buffer = [0u8; 8192];
+
+        loop {
+            let bytes_read = reader.read(&mut buffer).await?;
+            if bytes_read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..bytes_read]);
+        }
+
+        let hash = hex::encode(hasher.finalize());
+
+        assert!(hash.len() == 64);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sha256_hash_computation_memory() {
+        let content = b"hello world";
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        let hash = hex::encode(hasher.finalize());
+
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+    }
+
+    #[test]
+    fn test_s3_upload_request_builder() {
+        let request = S3UploadRequest {
+            bucket: "my-bucket".to_string(),
+            key: "path/to/object.txt".to_string(),
+            region: "us-west-2".to_string(),
+            content_type: Some("text/plain".to_string()),
+            content: Some(vec![1, 2, 3]),
+            file_path: None,
+            access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
+            secret_key: Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
+            session_token: Some("session-token-123".to_string()),
+        };
+
+        assert_eq!(request.bucket, "my-bucket");
+        assert_eq!(request.key, "path/to/object.txt");
+        assert_eq!(request.region, "us-west-2");
+        assert_eq!(request.content_type, Some("text/plain".to_string()));
+        assert_eq!(request.content, Some(vec![1, 2, 3]));
+        assert!(request.file_path.is_none());
+        assert_eq!(
+            request.access_key,
+            Some("AKIAIOSFODNN7EXAMPLE".to_string())
+        );
+        assert_eq!(
+            request.secret_key,
+            Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string())
+        );
+    }
+
+    #[test]
+    fn test_s3_upload_result_creation() {
+        let result = S3UploadResult {
+            blob_id: "s3://test-bucket/test-key".to_string(),
+            etag: "\"abc123\"".to_string(),
+            size_bytes: 1024,
+            content_hash_sha256: "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146".to_string(),
+            timestamp_unix: 1234567890,
+        };
+
+        assert_eq!(result.blob_id, "s3://test-bucket/test-key");
+        assert_eq!(result.size_bytes, 1024);
+        assert!(result.content_hash_sha256.len() == 64);
     }
 }
