@@ -181,6 +181,241 @@ pub fn extract_text_from_pdf(pdf_bytes: &[u8]) -> Result<PdfTextExtractionResult
     extractor.extract_from_bytes(pdf_bytes)
 }
 
+/// Splits a PDF by extracting specified page ranges
+///
+/// # Arguments
+/// * `pdf_bytes` - The source PDF bytes
+/// * `page_ranges` - Comma-separated page ranges (e.g., "1-3,5-7,9"). Pages are 1-indexed.
+///
+/// # Returns
+/// A new PDF containing only the specified pages
+///
+/// # Errors
+/// Returns error if:
+/// - PDF is empty or corrupted
+/// - Page range format is invalid
+/// - Page numbers are out of bounds
+pub fn split_pdf(pdf_bytes: &[u8], page_ranges: &str) -> Result<Vec<u8>> {
+    if pdf_bytes.is_empty() {
+        return Err(SidecarError::InvalidRequest(
+            "PDF content is empty".to_string(),
+        ));
+    }
+
+    let mut doc = Document::load_mem(pdf_bytes).map_err(|e| {
+        SidecarError::DocumentProcessingError(format!("Failed to load PDF: {}", e))
+    })?;
+
+    let pages = doc.get_pages();
+    let total_pages = pages.len();
+
+    if total_pages == 0 {
+        return Err(SidecarError::DocumentProcessingError(
+            "PDF has no pages".to_string(),
+        ));
+    }
+
+    let page_indices = parse_page_ranges(page_ranges, total_pages)?;
+
+    if page_indices.is_empty() {
+        return Err(SidecarError::InvalidRequest(
+            "No valid pages selected".to_string(),
+        ));
+    }
+
+    let mut selected_pages = Vec::new();
+    for (page_num, _) in &pages {
+        if page_indices.contains(page_num) {
+            if let Some(&page_id) = pages.get(page_num) {
+                selected_pages.push(page_id);
+            }
+        }
+    }
+
+    let mut new_doc = Document::with_version("1.5");
+    
+    for page_id in &selected_pages {
+        if let Ok(page_obj) = doc.get_object(*page_id) {
+            new_doc.insert_object(page_obj.clone());
+        }
+    }
+
+    if let Ok(info) = doc.get_info() {
+        let info_id = new_doc.insert_object(info.clone());
+        new_doc.set_info(info_id);
+    }
+
+    new_doc.save_to_bytes().map_err(|e| {
+        SidecarError::DocumentProcessingError(format!("Failed to save split PDF: {}", e))
+    })
+}
+
+/// Merges multiple PDFs into a single PDF
+///
+/// # Arguments
+/// * `pdf_bytes_list` - A slice of PDF bytes to merge
+///
+/// # Returns
+/// A single merged PDF containing all pages from all input PDFs
+///
+/// # Errors
+/// Returns error if:
+/// - Any PDF is empty or corrupted
+/// - No PDFs provided
+/// - Failed to merge documents
+pub fn merge_pdfs(pdf_bytes_list: &[&[u8]]) -> Result<Vec<u8>> {
+    if pdf_bytes_list.is_empty() {
+        return Err(SidecarError::InvalidRequest(
+            "No PDFs provided for merge".to_string(),
+        ));
+    }
+
+    let mut merged_doc = Document::with_version("1.5");
+
+    let first_pdf = &pdf_bytes_list[0];
+    if first_pdf.is_empty() {
+        return Err(SidecarError::InvalidRequest(
+            "First PDF is empty".to_string(),
+        ));
+    }
+
+    let first_doc = Document::load_mem(first_pdf).map_err(|e| {
+        SidecarError::DocumentProcessingError(format!(
+            "Failed to load first PDF: {}",
+            e
+        ))
+    })?;
+
+    if let Ok(info) = first_doc.get_info() {
+        let info_id = merged_doc.insert_object(info.clone());
+        merged_doc.set_info(info_id);
+    }
+
+    for (idx, pdf_bytes) in pdf_bytes_list.iter().enumerate() {
+        if pdf_bytes.is_empty() {
+            return Err(SidecarError::InvalidRequest(format!(
+                "PDF at index {} is empty",
+                idx
+            )));
+        }
+
+        let doc = Document::load_mem(pdf_bytes).map_err(|e| {
+            SidecarError::DocumentProcessingError(format!(
+                "Failed to load PDF at index {}: {}",
+                idx, e
+            ))
+        })?;
+
+        let pages = doc.get_pages();
+        for (_page_num, page_id) in pages.iter() {
+            if let Ok(page_obj) = doc.get_object(*page_id) {
+                merged_doc.insert_object(page_obj.clone());
+            }
+        }
+    }
+
+    merged_doc.save_to_bytes().map_err(|e| {
+        SidecarError::DocumentProcessingError(format!("Failed to save merged PDF: {}", e))
+    })
+}
+
+/// Parses page range string and returns set of page numbers (1-indexed)
+///
+/// # Arguments
+/// * `page_ranges` - Comma-separated ranges (e.g., "1-3,5-7,9")
+/// * `total_pages` - Total number of pages in the PDF
+///
+/// # Returns
+/// Sorted set of page numbers
+///
+/// # Errors
+/// Returns error if:
+/// - Range format is invalid
+/// - Page numbers are out of bounds
+fn parse_page_ranges(page_ranges: &str, total_pages: usize) -> Result<std::collections::HashSet<u32>> {
+    let mut pages = std::collections::HashSet::new();
+
+    for range_str in page_ranges.split(',') {
+        let range_str = range_str.trim();
+        
+        if range_str.is_empty() {
+            continue;
+        }
+
+        if range_str.contains('-') {
+            let parts: Vec<&str> = range_str.split('-').collect();
+            if parts.len() != 2 {
+                return Err(SidecarError::InvalidRequest(format!(
+                    "Invalid page range format: {}",
+                    range_str
+                )));
+            }
+
+            let start: u32 = parts[0].trim().parse().map_err(|_| {
+                SidecarError::InvalidRequest(format!(
+                    "Invalid start page number: {}",
+                    parts[0]
+                ))
+            })?;
+
+            let end: u32 = parts[1].trim().parse().map_err(|_| {
+                SidecarError::InvalidRequest(format!(
+                    "Invalid end page number: {}",
+                    parts[1]
+                ))
+            })?;
+
+            if start == 0 || end == 0 {
+                return Err(SidecarError::InvalidRequest(
+                    "Page numbers must be 1-indexed (not 0)".to_string(),
+                ));
+            }
+
+            if start > end {
+                return Err(SidecarError::InvalidRequest(format!(
+                    "Start page {} cannot be greater than end page {}",
+                    start, end
+                )));
+            }
+
+            if end > total_pages as u32 {
+                return Err(SidecarError::InvalidRequest(format!(
+                    "End page {} exceeds total pages {}",
+                    end, total_pages
+                )));
+            }
+
+            for page in start..=end {
+                pages.insert(page);
+            }
+        } else {
+            let page_num: u32 = range_str.parse().map_err(|_| {
+                SidecarError::InvalidRequest(format!(
+                    "Invalid page number: {}",
+                    range_str
+                ))
+            })?;
+
+            if page_num == 0 {
+                return Err(SidecarError::InvalidRequest(
+                    "Page numbers must be 1-indexed (not 0)".to_string(),
+                ));
+            }
+
+            if page_num > total_pages as u32 {
+                return Err(SidecarError::InvalidRequest(format!(
+                    "Page {} exceeds total pages {}",
+                    page_num, total_pages
+                )));
+            }
+
+            pages.insert(page_num);
+        }
+    }
+
+    Ok(pages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +612,227 @@ mod tests {
         let result = extract_text_from_pdf(&pdf_bytes).unwrap();
 
         assert!(!result.text.is_empty());
+    }
+
+    #[test]
+    fn test_split_pdf_single_page() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "1").unwrap();
+
+        assert!(!result.is_empty());
+        
+        let split_doc = Document::load_mem(&result).unwrap();
+        assert_eq!(split_doc.get_pages().len(), 1);
+    }
+
+    #[test]
+    fn test_split_pdf_page_range() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "1-2").unwrap();
+
+        assert!(!result.is_empty());
+        
+        let split_doc = Document::load_mem(&result).unwrap();
+        assert_eq!(split_doc.get_pages().len(), 2);
+    }
+
+    #[test]
+    fn test_split_pdf_multiple_ranges() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "1,2").unwrap();
+
+        assert!(!result.is_empty());
+        
+        let split_doc = Document::load_mem(&result).unwrap();
+        assert_eq!(split_doc.get_pages().len(), 2);
+    }
+
+    #[test]
+    fn test_split_pdf_empty_ranges() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("No valid pages selected"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_invalid_page_number() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "99");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("exceeds total pages"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_zero_indexed() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "0");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("1-indexed"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_invalid_range_format() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "1-2-3");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("Invalid page range format"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_start_greater_than_end() {
+        let pdf_bytes = create_multi_page_pdf_bytes();
+        let result = split_pdf(&pdf_bytes, "5-3");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("cannot be greater than"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_empty_input() {
+        let empty_pdf: Vec<u8> = vec![];
+        let result = split_pdf(&empty_pdf, "1");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("empty"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_invalid_pdf() {
+        let invalid_pdf: Vec<u8> = b"Not a PDF".to_vec();
+        let result = split_pdf(&invalid_pdf, "1");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::DocumentProcessingError(msg)) => {
+                assert!(msg.contains("Failed to load PDF"));
+            }
+            _ => panic!("Expected DocumentProcessingError"),
+        }
+    }
+
+    #[test]
+    fn test_merge_pdfs_two_pdfs() {
+        let pdf1 = create_simple_pdf_bytes();
+        let pdf2 = create_multi_page_pdf_bytes();
+        
+        let pdf_list = vec![pdf1.as_slice(), pdf2.as_slice()];
+        let result = merge_pdfs(&pdf_list).unwrap();
+
+        assert!(!result.is_empty());
+        
+        let merged_doc = Document::load_mem(&result).unwrap();
+        assert_eq!(merged_doc.get_pages().len(), 3);
+    }
+
+    #[test]
+    fn test_merge_pdfs_single_pdf() {
+        let pdf1 = create_simple_pdf_bytes();
+        
+        let pdf_list = vec![pdf1.as_slice()];
+        let result = merge_pdfs(&pdf_list).unwrap();
+
+        assert!(!result.is_empty());
+        
+        let merged_doc = Document::load_mem(&result).unwrap();
+        assert_eq!(merged_doc.get_pages().len(), 1);
+    }
+
+    #[test]
+    fn test_merge_pdfs_empty_list() {
+        let pdf_list: Vec<&[u8]> = vec![];
+        let result = merge_pdfs(&pdf_list);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("No PDFs provided"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_merge_pdfs_empty_pdf_in_list() {
+        let pdf1 = create_simple_pdf_bytes();
+        let empty_pdf: Vec<u8> = vec![];
+        
+        let pdf_list = vec![pdf1.as_slice(), empty_pdf.as_slice()];
+        let result = merge_pdfs(&pdf_list);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("empty"));
+            }
+            _ => panic!("Expected InvalidRequest error"),
+        }
+    }
+
+    #[test]
+    fn test_merge_pdfs_invalid_pdf_in_list() {
+        let pdf1 = create_simple_pdf_bytes();
+        let invalid_pdf: Vec<u8> = b"Not a PDF".to_vec();
+        
+        let pdf_list = vec![pdf1.as_slice(), invalid_pdf.as_slice()];
+        let result = merge_pdfs(&pdf_list);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::DocumentProcessingError(msg)) => {
+                assert!(msg.contains("Failed to load PDF"));
+            }
+            _ => panic!("Expected DocumentProcessingError"),
+        }
+    }
+
+    #[test]
+    fn test_merge_pdfs_preserves_metadata() {
+        let pdf1 = create_multi_page_pdf_bytes();
+        let pdf2 = create_simple_pdf_bytes();
+        
+        let pdf_list = vec![pdf1.as_slice(), pdf2.as_slice()];
+        let result = merge_pdfs(&pdf_list).unwrap();
+
+        assert!(!result.is_empty());
+        
+        let merged_doc = Document::load_mem(&result).unwrap();
+        let info = merged_doc.get_info().unwrap();
+        
+        assert!(info.contains_key(b"Title"));
     }
 }
