@@ -120,6 +120,16 @@ Script automatically detects deployment environment:
 - **Local/Hardware**: Uses local network IP, no TLS warnings
 - **Production**: Recommends TLS for public deployments
 
+## Platform Support
+
+| Platform | QR Generation | Manual Entry |
+|----------|---------------|--------------|
+| **Linux** | qrencode (apt install) | Full support |
+| **macOS** | qrencode (brew install) | Full support |
+| **Windows (Git Bash)** | qrencode (mingw) | Full support |
+| **Windows (PowerShell)** | URL display only | Copy-paste link |
+| **WSL** | qrencode (apt) | Full support |
+
 ## References
 
 - Script: `deploy/armorclaw-provision.sh`
