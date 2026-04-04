@@ -1,4 +1,5 @@
 use crate::error::{Result, SidecarError};
+use crate::document::{validate_file_size, MAX_FILE_SIZE};
 use docx_rs::{read_docx, Docx};
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -23,6 +24,8 @@ impl DocxExtractor {
                 "DOCX content is empty".to_string(),
             ));
         }
+
+        validate_file_size(docx_bytes.len())?;
 
         let cursor = Cursor::new(docx_bytes);
         let docx = read_docx(cursor).map_err(|e| {
@@ -401,6 +404,22 @@ mod tests {
             assert!(msg.contains("index") || msg.contains("out of bounds"));
         } else {
             panic!("Expected InvalidRequest error");
+        }
+    }
+
+    #[test]
+    fn test_extract_docx_too_large() {
+        use crate::document::MAX_FILE_SIZE;
+        let oversized_docx: Vec<u8> = vec![0u8; MAX_FILE_SIZE + 1];
+        let result = extract_text_from_docx(&oversized_docx);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+                assert!(msg.contains("5GB"));
+            }
+            _ => panic!("Expected InvalidRequest error for oversized file"),
         }
     }
 }

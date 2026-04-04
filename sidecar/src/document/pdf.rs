@@ -1,4 +1,5 @@
 use crate::error::{Result, SidecarError};
+use crate::document::{validate_file_size, MAX_FILE_SIZE};
 use lopdf::dictionary;
 use lopdf::Document;
 use lopdf::Object;
@@ -25,6 +26,8 @@ impl PdfExtractor {
                 "PDF content is empty".to_string(),
             ));
         }
+
+        validate_file_size(pdf_bytes.len())?;
 
         let doc = Document::load_mem(pdf_bytes).map_err(|e| {
             SidecarError::DocumentProcessingError(format!("Failed to load PDF: {}", e))
@@ -202,6 +205,8 @@ pub fn split_pdf(pdf_bytes: &[u8], page_ranges: &str) -> Result<Vec<u8>> {
         ));
     }
 
+    validate_file_size(pdf_bytes.len())?;
+
     let mut doc = Document::load_mem(pdf_bytes).map_err(|e| {
         SidecarError::DocumentProcessingError(format!("Failed to load PDF: {}", e))
     })?;
@@ -279,6 +284,8 @@ pub fn merge_pdfs(pdf_bytes_list: &[&[u8]]) -> Result<Vec<u8>> {
         ));
     }
 
+    validate_file_size(first_pdf.len())?;
+
     let first_doc = Document::load_mem(first_pdf).map_err(|e| {
         SidecarError::DocumentProcessingError(format!(
             "Failed to load first PDF: {}",
@@ -298,6 +305,8 @@ pub fn merge_pdfs(pdf_bytes_list: &[&[u8]]) -> Result<Vec<u8>> {
                 idx
             )));
         }
+
+        validate_file_size(pdf_bytes.len())?;
 
         let doc = Document::load_mem(pdf_bytes).map_err(|e| {
             SidecarError::DocumentProcessingError(format!(
@@ -834,5 +843,68 @@ mod tests {
         let info = merged_doc.get_info().unwrap();
         
         assert!(info.contains_key(b"Title"));
+    }
+
+    #[test]
+    fn test_extract_pdf_too_large() {
+        let oversized_pdf: Vec<u8> = vec![0u8; MAX_FILE_SIZE + 1];
+        let result = extract_text_from_pdf(&oversized_pdf);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+                assert!(msg.contains("5GB"));
+            }
+            _ => panic!("Expected InvalidRequest error for oversized file"),
+        }
+    }
+
+    #[test]
+    fn test_split_pdf_too_large() {
+        let oversized_pdf: Vec<u8> = vec![0u8; MAX_FILE_SIZE + 1];
+        let result = split_pdf(&oversized_pdf, "1");
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+            }
+            _ => panic!("Expected InvalidRequest error for oversized file"),
+        }
+    }
+
+    #[test]
+    fn test_merge_pdfs_too_large() {
+        let pdf1 = create_simple_pdf_bytes();
+        let oversized_pdf: Vec<u8> = vec![0u8; MAX_FILE_SIZE + 1];
+
+        let pdf_list = vec![pdf1.as_slice(), oversized_pdf.as_slice()];
+        let result = merge_pdfs(&pdf_list);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+            }
+            _ => panic!("Expected InvalidRequest error for oversized file"),
+        }
+    }
+
+    #[test]
+    fn test_merge_pdfs_first_too_large() {
+        let oversized_pdf: Vec<u8> = vec![0u8; MAX_FILE_SIZE + 1];
+        let pdf2 = create_simple_pdf_bytes();
+
+        let pdf_list = vec![oversized_pdf.as_slice(), pdf2.as_slice()];
+        let result = merge_pdfs(&pdf_list);
+
+        assert!(result.is_err());
+        match result {
+            Err(SidecarError::InvalidRequest(msg)) => {
+                assert!(msg.contains("exceeds maximum allowed size"));
+            }
+            _ => panic!("Expected InvalidRequest error for oversized file"),
+        }
     }
 }
