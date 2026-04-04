@@ -1192,6 +1192,45 @@ The Bridge provisions the agent and invites you to its dedicated room.
 
 ## Architecture
 
+The + ### Go Bridge (Control Plane)
+    + The Go Bridge is the control plane that orchestrates all operations:
+    + - Manages Matrix Conduit connections
+    + - Handles user authentication via Matrix
+    + - Routes requests to appropriate AI providers
+    + - Implements audit logging for all operations
+    + - Manages browser automation via Playwright
+    + - Coordinates with Rust Sidecar for heavy I/O
+
+    + ### Rust Office Sidecar (Data Plane)
+    + The Rust sidecar handles heavy I/O operations:
+    + - **Storage**: S3 upload/download/list/delete with streaming
+    + - **Documents**: PDF text extraction, split, merge
+    + - **Documents**: DOCX text extraction, editing
+    + - **Security**: Ephemeral token auth (30 min TTL)
+    + - **Reliability**: Circuit breaker, rate limiting
+    + - **Performance**: Handles files up to 5GB with streaming
+    + - **Communication**: gRPC over Unix Domain Socket
+    + - **Memory**: Bounded to ~2MB for download streams
+    + - **Integration**: PII detection and redaction
+
+    + **Key Features:**
+    + - Zero-copy streaming (no buffering)
+    + - Single-pass SHA256 hashing
+    + - 1MB chunk size for downloads
+    + - Circuit breaker (5 failures → open, 30s recovery)
+    + - Rate limiting (100 req/s)
+    + - In-memory request queueing (graceful degradation)
+    + - Prometheus metrics endpoint
+
+    + **Security:**
+    + - No persistent credential storage
+    + - No credential caching beyond request lifecycle
+    + - No direct cloud API calls without Go Bridge interception
+    + - All operations logged in Go Bridge audit.db
+    + - PII interception before sidecar calls
+    + - Unix domain socket with 0600 permissions
+
+
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                         THE VPS (Office)                              │
