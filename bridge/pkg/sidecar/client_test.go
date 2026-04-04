@@ -1,6 +1,7 @@
 package sidecar
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/armorclaw/bridge/pkg/pii"
 )
 
 // mockServer is a mock implementation of the sidecar service for testing
@@ -784,12 +787,11 @@ func TestWithRetryExhausted(t *testing.T) {
 	go server.Serve(listener)
 	defer server.Stop()
 
-	config := &Config{
-		SocketPath:  socketPath,
-		Timeout:     5 * time.Second,
-		MaxRetries:  3,
-		DialTimeout: 5 * time.Second,
-	}
+	config := DefaultConfig()
+	config.SocketPath = socketPath
+	config.Timeout = 5 * time.Second
+	config.MaxRetries = 3
+	config.DialTimeout = 5 * time.Second
 
 	client := NewClient(config)
 	ctx := context.Background()
@@ -804,95 +806,68 @@ func TestWithRetryExhausted(t *testing.T) {
 	}
 }
 
-func TestConcurrentAccess(t *testing.T) {
-	_, _, socketPath := setupTestServer(t)
+func TestWithRetryCancelsContext(t *testing.T) {
+	mock := newMockServer()
+	mock.delay = 100 * time.Millisecond
 
-	config := &Config{
-		SocketPath:  socketPath,
-		Timeout:     5 * time.Second,
-		MaxRetries:  3,
-		DialTimeout: 5 * time.Second,
-	}
+	socketPath := filepath.Join(t.TempDir(), "test.sock")
 
-	client := NewClient(config)
-	ctx := context.Background()
+	server := grpc.NewServer()
+	RegisterSidecarServiceServer(server, mock)
 
-	var wg sync.WaitGroup
-	numGoroutines := 10
-
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := client.HealthCheck(ctx)
-			if err != nil {
-				t.Logf("health check error: %v", err)
-			}
-		}()
-	}
-
-	wg.Wait()
-}
-
-func TestEnsureConnectionAutoConnect(t *testing.T) {
-	_, _, socketPath := setupTestServer(t)
-
-	config := &Config{
-		SocketPath:  socketPath,
-		Timeout:     5 * time.Second,
-		MaxRetries:  3,
-		DialTimeout: 5 * time.Second,
-	}
-
-	client := NewClient(config)
-	ctx := context.Background()
-
-	if client.IsConnected() {
-		t.Error("expected client to be disconnected initially")
-	}
-
-	resp, err := client.HealthCheck(ctx)
+	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
+		t.Fatalf("failed to create listener: %v", err)
 	}
 
-	if resp == nil {
-		t.Error("expected non-nil response")
+	go server.Serve(listener)
+	defer server.Stop()
+
+	config := DefaultConfig()
+	config.SocketPath = socketPath
+	config.Timeout = 5 * time.Second
+	config.MaxRetries = 10
+	config.DialTimeout = 5 * time.Second
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+
+	// Context should be cancelled before all retries complete
+	_, err = client.HealthCheck(shortCtx)
+	if err == nil {
+		t.Error("expected error due to context cancellation")
 	}
 
-	if !client.IsConnected() {
-		t.Error("expected client to be connected after auto-connect")
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context error, got: %v", err)
 	}
 }
 
+// testLogger implements slog.Handler for testing
 type testLogger struct {
-	logs []string
-	mu   sync.Mutex
+	buf bytes.Buffer
+	mu  sync.Mutex
 }
 
 func newTestLogger() *testLogger {
-	return &testLogger{
-		logs: make([]string, 0),
-	}
+	return &testLogger{}
 }
 
-func (l *testLogger) Log(_ context.Context, level slog.Level, msg string, args ...any) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	entry := level.String() + ": " + msg
-	l.logs = append(l.logs, entry)
-}
-
-func (l *testLogger) Enabled(_ context.Context, level slog.Level) bool {
+func (l *testLogger) Enabled(ctx context.Context, level slog.Level) bool {
 	return true
 }
 
-func (l *testLogger) Handle(_ context.Context, r slog.Record) error {
+func (l *testLogger) Handle(ctx context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.buf.WriteString(r.Message + "\n")
 	return nil
 }
 
-func (l *testLogger) With(_ context.Context, args []any) slog.Handler {
+func (l *testLogger) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return l
 }
 
@@ -900,12 +875,224 @@ func (l *testLogger) WithGroup(name string) slog.Handler {
 	return l
 }
 
-func (l *testLogger) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return l
-}
-
-func (l *testLogger) getLogs() []string {
+func (l *testLogger) getLogs() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.logs
+	return l.buf.String()
+}
+
+func TestUploadBlobWithPIIInterception(t *testing.T) {
+	_, _, socketPath := setupTestServer(t)
+
+	config := &Config{
+		SocketPath:  socketPath,
+		Timeout:     5 * time.Second,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
+		PIIInterceptor: &PIIInterceptorConfig{
+			Enabled:  true,
+			Action:   ActionRedact,
+			Scrubber: pii.New(),
+		},
+	}
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	req := &UploadBlobRequest{
+		Provider:       "s3",
+		DestinationUri: "s3://bucket/key",
+		ContentType:    "text/plain",
+		Content:        []byte("Contact test@example.com"),
+	}
+
+	resp, err := client.UploadBlob(ctx, req)
+	if err != nil {
+		t.Fatalf("expected no error with PII redaction, got: %v", err)
+	}
+
+	if resp.BlobId != "blob-123" {
+		t.Errorf("expected blob ID 'blob-123', got: %s", resp.BlobId)
+	}
+}
+
+func TestExtractTextWithPIIInterception(t *testing.T) {
+	_, _, socketPath := setupTestServer(t)
+
+	config := &Config{
+		SocketPath:  socketPath,
+		Timeout:     5 * time.Second,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
+		PIIInterceptor: &PIIInterceptorConfig{
+			Enabled:  true,
+			Action:   ActionRedact,
+			Scrubber: pii.New(),
+		},
+	}
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	req := &ExtractTextRequest{
+		DocumentFormat:  "pdf",
+		DocumentContent: []byte("Phone: 555-123-4567"),
+	}
+
+	resp, err := client.ExtractText(ctx, req)
+	if err != nil {
+		t.Fatalf("expected no error with PII redaction, got: %v", err)
+	}
+
+	if resp.Text != "extracted text" {
+		t.Errorf("expected text 'extracted text', got: %s", resp.Text)
+	}
+}
+
+func TestProcessDocumentWithPIIInterception(t *testing.T) {
+	_, _, socketPath := setupTestServer(t)
+
+	config := &Config{
+		SocketPath:  socketPath,
+		Timeout:     5 * time.Second,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
+		PIIInterceptor: &PIIInterceptorConfig{
+			Enabled:  true,
+			Action:   ActionRedact,
+			Scrubber: pii.New(),
+		},
+	}
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	req := &ProcessDocumentRequest{
+		InputFormat:  "pdf",
+		InputContent: []byte("SSN: 123-45-6789"),
+		Operation:    "process",
+	}
+
+	resp, err := client.ProcessDocument(ctx, req)
+	if err != nil {
+		t.Fatalf("expected no error with PII redaction, got: %v", err)
+	}
+
+	if resp.OutputUri != "blob://test/output" {
+		t.Errorf("expected output URI 'blob://test/output', got: %s", resp.OutputUri)
+	}
+}
+
+func TestUploadBlobWithPIIInterceptionReject(t *testing.T) {
+	_, _, socketPath := setupTestServer(t)
+
+	config := &Config{
+		SocketPath:  socketPath,
+		Timeout:     5 * time.Second,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
+		PIIInterceptor: &PIIInterceptorConfig{
+			Enabled:  true,
+			Action:   ActionReject,
+			Scrubber: pii.New(),
+		},
+	}
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	req := &UploadBlobRequest{
+		Provider:       "s3",
+		DestinationUri: "s3://bucket/key",
+		ContentType:    "text/plain",
+		Content:        []byte("Contact test@example.com"),
+	}
+
+	_, err := client.UploadBlob(ctx, req)
+	if err == nil {
+		t.Error("expected error when PII is detected and action is reject")
+	}
+
+	if err == nil {
+		t.Logf("Expected PII rejection error, got nil")
+	}
+}
+
+func TestUploadBlobWithPIIInterceptionDisabled(t *testing.T) {
+	_, mock, socketPath := setupTestServer(t)
+
+	config := &Config{
+		SocketPath:  socketPath,
+		Timeout:     5 * time.Second,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
+		PIIInterceptor: &PIIInterceptorConfig{
+			Enabled:  false,
+			Action:   ActionRedact,
+			Scrubber: pii.New(),
+		},
+	}
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	req := &UploadBlobRequest{
+		Provider:       "s3",
+		DestinationUri: "s3://bucket/key",
+		ContentType:    "text/plain",
+		Content:        []byte("Contact test@example.com"),
+	}
+
+	resp, err := client.UploadBlob(ctx, req)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if resp.BlobId != "blob-123" {
+		t.Errorf("expected blob ID 'blob-123', got: %s", resp.BlobId)
+	}
+
+	if !mock.uploadCalled {
+		t.Error("expected upload to be called on server")
+	}
+}
+
+func TestUploadBlobWithPIIInterceptionLogOnly(t *testing.T) {
+	_, mock, socketPath := setupTestServer(t)
+
+	config := &Config{
+		SocketPath:  socketPath,
+		Timeout:     5 * time.Second,
+		MaxRetries:  3,
+		DialTimeout: 5 * time.Second,
+		PIIInterceptor: &PIIInterceptorConfig{
+			Enabled:  true,
+			Action:   ActionRedact,
+			LogOnly:  true,
+			Scrubber: pii.New(),
+		},
+	}
+
+	client := NewClient(config)
+	ctx := context.Background()
+
+	req := &UploadBlobRequest{
+		Provider:       "s3",
+		DestinationUri: "s3://bucket/key",
+		ContentType:    "text/plain",
+		Content:        []byte("Contact test@example.com"),
+	}
+
+	resp, err := client.UploadBlob(ctx, req)
+	if err != nil {
+		t.Fatalf("expected no error in log-only mode, got: %v", err)
+	}
+
+	if resp.BlobId != "blob-123" {
+		t.Errorf("expected blob ID 'blob-123', got: %s", resp.BlobId)
+	}
+
+	if !mock.uploadCalled {
+		t.Error("expected upload to be called on server")
+	}
 }

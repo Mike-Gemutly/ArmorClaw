@@ -3,7 +3,9 @@ package sidecar
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -33,34 +35,37 @@ const (
 
 // Config holds configuration for the sidecar client
 type Config struct {
-	SocketPath  string        // Unix domain socket path
-	Timeout     time.Duration // Default operation timeout
-	MaxRetries  int           // Maximum retry attempts
-	DialTimeout time.Duration // Connection dial timeout
-	IdleTimeout time.Duration // Connection idle timeout
-	MaxMsgSize  int           // Maximum message size
+	SocketPath     string                // Unix domain socket path
+	Timeout        time.Duration         // Default operation timeout
+	MaxRetries     int                   // Maximum retry attempts
+	DialTimeout    time.Duration         // Connection dial timeout
+	IdleTimeout    time.Duration         // Connection idle timeout
+	MaxMsgSize     int                   // Maximum message size
+	PIIInterceptor *PIIInterceptorConfig // PII interception configuration
 }
 
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		SocketPath:  DefaultSocketPath,
-		Timeout:     DefaultTimeout,
-		MaxRetries:  DefaultMaxRetries,
-		DialTimeout: 10 * time.Second,
-		IdleTimeout: 5 * time.Minute,
-		MaxMsgSize:  DefaultMaxRecvMsgSize,
+		SocketPath:     DefaultSocketPath,
+		Timeout:        DefaultTimeout,
+		MaxRetries:     DefaultMaxRetries,
+		DialTimeout:    10 * time.Second,
+		IdleTimeout:    5 * time.Minute,
+		MaxMsgSize:     DefaultMaxRecvMsgSize,
+		PIIInterceptor: DefaultPIIInterceptorConfig(),
 	}
 }
 
 // Client is the gRPC client for communicating with the Rust sidecar
 type Client struct {
-	config     *Config
-	conn       *grpc.ClientConn
-	client     SidecarServiceClient
-	mu         sync.RWMutex
-	connClosed bool
-	logger     *slog.Logger
+	config         *Config
+	conn           *grpc.ClientConn
+	client         SidecarServiceClient
+	mu             sync.RWMutex
+	connClosed     bool
+	logger         *slog.Logger
+	piiInterceptor *PIIInterceptor
 }
 
 // NewClient creates a new sidecar client
@@ -69,10 +74,28 @@ func NewClient(config *Config) *Client {
 		config = DefaultConfig()
 	}
 
-	return &Client{
+	client := &Client{
 		config: config,
 		logger: slog.Default(),
 	}
+
+	if config.PIIInterceptor != nil && config.PIIInterceptor.Enabled {
+		// Set logger for PII interceptor if not already set
+		piiConfig := config.PIIInterceptor
+		if piiConfig.Logger == nil {
+			piiConfig = &PIIInterceptorConfig{
+				Enabled:    piiConfig.Enabled,
+				Action:     piiConfig.Action,
+				Scrubber:   piiConfig.Scrubber,
+				Logger:     slog.Default(),
+				LogOnly:    piiConfig.LogOnly,
+				StrictMode: piiConfig.StrictMode,
+			}
+		}
+		client.piiInterceptor = NewPIIInterceptor(piiConfig)
+	}
+
+	return client
 }
 
 // NewClientWithLogger creates a new sidecar client with a custom logger
@@ -84,10 +107,28 @@ func NewClientWithLogger(config *Config, logger *slog.Logger) *Client {
 		logger = slog.Default()
 	}
 
-	return &Client{
+	client := &Client{
 		config: config,
 		logger: logger,
 	}
+
+	if config.PIIInterceptor != nil && config.PIIInterceptor.Enabled {
+		// Use provided logger for PII interceptor
+		piiConfig := config.PIIInterceptor
+		if piiConfig.Logger == nil {
+			piiConfig = &PIIInterceptorConfig{
+				Enabled:    piiConfig.Enabled,
+				Action:     piiConfig.Action,
+				Scrubber:   piiConfig.Scrubber,
+				Logger:     logger,
+				LogOnly:    piiConfig.LogOnly,
+				StrictMode: piiConfig.StrictMode,
+			}
+		}
+		client.piiInterceptor = NewPIIInterceptor(piiConfig)
+	}
+
+	return client
 }
 
 // Connect establishes a connection to the sidecar via Unix Domain Socket
@@ -243,7 +284,15 @@ func (c *Client) withRetry(ctx context.Context, operation string, fn func(ctx co
 			"error", err,
 		)
 
-		// For non-context errors, continue retrying
+		// For non-context errors, close connection and retry
+		// This ensures we don't cache broken connections
+		if err := c.Close(); err != nil {
+			c.logger.Debug("error closing connection on retry",
+				"operation", operation,
+				"attempt", attempt+1,
+				"close_error", err,
+			)
+		}
 	}
 
 	return fmt.Errorf("operation '%s' failed after %d attempts: %w", operation, c.config.MaxRetries, lastErr)
@@ -292,7 +341,16 @@ func (c *Client) UploadBlob(ctx context.Context, req *UploadBlobRequest) (*Uploa
 		timeoutCtx, cancel := c.withTimeout(ctx)
 		defer cancel()
 
-		resp, err := c.client.UploadBlob(timeoutCtx, req)
+		interceptedReq := req
+		if c.piiInterceptor != nil {
+			intercepted, err := c.piiInterceptor.InterceptRequest(ctx, "UploadBlob", req)
+			if err != nil {
+				return fmt.Errorf("PII interception failed: %w", err)
+			}
+			interceptedReq = intercepted.(*UploadBlobRequest)
+		}
+
+		resp, err := c.client.UploadBlob(timeoutCtx, interceptedReq)
 		if err != nil {
 			return err
 		}
@@ -324,7 +382,7 @@ func (c *Client) DownloadBlob(ctx context.Context, req *DownloadBlobRequest) ([]
 		for {
 			chunk, err := stream.Recv()
 			if err != nil {
-				if err.Error() == "EOF" {
+				if errors.Is(err, io.EOF) {
 					return nil // End of stream
 				}
 				return err
@@ -412,7 +470,16 @@ func (c *Client) ExtractText(ctx context.Context, req *ExtractTextRequest) (*Ext
 		timeoutCtx, cancel := c.withTimeout(ctx)
 		defer cancel()
 
-		resp, err := c.client.ExtractText(timeoutCtx, req)
+		interceptedReq := req
+		if c.piiInterceptor != nil {
+			intercepted, err := c.piiInterceptor.InterceptRequest(ctx, "ExtractText", req)
+			if err != nil {
+				return fmt.Errorf("PII interception failed: %w", err)
+			}
+			interceptedReq = intercepted.(*ExtractTextRequest)
+		}
+
+		resp, err := c.client.ExtractText(timeoutCtx, interceptedReq)
 		if err != nil {
 			return err
 		}
@@ -436,7 +503,16 @@ func (c *Client) ProcessDocument(ctx context.Context, req *ProcessDocumentReques
 		timeoutCtx, cancel := c.withTimeout(ctx)
 		defer cancel()
 
-		resp, err := c.client.ProcessDocument(timeoutCtx, req)
+		interceptedReq := req
+		if c.piiInterceptor != nil {
+			intercepted, err := c.piiInterceptor.InterceptRequest(ctx, "ProcessDocument", req)
+			if err != nil {
+				return fmt.Errorf("PII interception failed: %w", err)
+			}
+			interceptedReq = intercepted.(*ProcessDocumentRequest)
+		}
+
+		resp, err := c.client.ProcessDocument(timeoutCtx, interceptedReq)
 		if err != nil {
 			return err
 		}

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package armorclaw.sidecar.v1;
 
-option go_package = "github.com/armorclaw/sidecar/proto;sidecar";
+option go_package = "github.com/armorclaw/bridge/pkg/sidecar/proto;sidecar";
 
 service SidecarService {
     // Health check
