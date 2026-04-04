@@ -179,30 +179,29 @@ impl<R> HashingReader<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> AsyncRead for HashingReader<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let inner = Pin::new(&mut self.inner);
-        let filled = inner.poll_read(cx, buf)?;
-        if let Poll::Ready(Ok(())) = filled {
-            let n = buf.filled().len();
-            if n > 0 {
-                self.hasher.update(buf.filled());
-            }
-        }
-        filled
-    }
-}
+ impl<R: AsyncRead + Unpin> AsyncRead for HashingReader<R> {
+     fn poll_read(
+         mut self: Pin<&mut Self>,
+         cx: &mut Context<'_>,
+         buf: &mut ReadBuf<'_>,
+     ) -> Poll<io::Result<()>> {
+         let inner = Pin::new(&mut self.inner);
+         inner.poll_read(cx, buf).map_ok(|_| {
+             let n = buf.filled().len();
+             if n > 0 {
+                 self.hasher.update(buf.filled());
+             }
+         })
+     }
+ }
 
-impl<R> Drop for HashingReader<R> {
-    fn drop(&mut self) {
-        let hash = hex::encode(self.hasher.finalize());
-        *self.hash_output.lock().expect("HashingReader mutex poisoned") = Some(hash);
-    }
-}
+ impl<R> Drop for HashingReader<R> {
+     fn drop(&mut self) {
+         let hasher = std::mem::take(&mut self.hasher);
+         let hash = hex::encode(hasher.finalize());
+         *self.hash_output.lock().expect("HashingReader mutex poisoned") = Some(hash);
+     }
+ }
 
 /// S3 connector for uploading blobs to AWS S3.
 #[derive(Debug, Clone)]
@@ -294,16 +293,17 @@ impl S3Connector {
     /// - Hash computation fails
     /// - Circuit breaker is open
     /// - Rate limit exceeded
-    pub async fn upload(&self, request: S3UploadRequest) -> Result<S3UploadResult> {
-        let request_clone = request.clone();
-        let reliability = self.reliability.clone();
-        
-        reliability.upload(async move {
-            Self::upload_internal(&request_clone).await
-        }).await
-    }
+     pub async fn upload(&self, request: S3UploadRequest) -> Result<S3UploadResult> {
+         let request_clone = request.clone();
+         let connector = self.clone();
+         let reliability = self.reliability.clone();
+
+         reliability.upload(async move {
+             Self::upload_internal(&connector, &request_clone).await
+         }).await
+     }
     
-    async fn upload_internal(&self, request: &S3UploadRequest) -> Result<S3UploadResult> {
+     async fn upload_internal(connector: &S3Connector, request: &S3UploadRequest) -> Result<S3UploadResult> {
          if request.content.is_none() && request.file_path.is_none() {
              return Err(SidecarError::InvalidRequest(
                  "Either content or file_path must be provided".to_string(),
@@ -316,41 +316,52 @@ impl S3Connector {
              ));
          }
 
-        let client = self.create_client(&request).await?;
-        let (byte_stream, size_bytes, hash_output) = if let Some(content) = request.content {
-             let mut hasher = Sha256::new();
-             hasher.update(&content);
-             let hash = hex::encode(hasher.finalize());
+         let client = connector.create_client(&request).await?;
 
-             let size = content.len() as i64;
-             debug!(
-                 "Uploading in-memory content of {} bytes to s3://{}/{}",
-                 size, request.bucket, request.key
-             );
+         let (byte_stream, size_bytes, hash_output): (ByteStream, i64, Arc<Mutex<Option<String>>>);
+          if let Some(content) = &request.content {
+               let mut hasher = Sha256::new();
+               hasher.update(content);
+               let hash = hex::encode(hasher.finalize());
 
-             (ByteStream::from(content), size, Arc::new(Mutex::new(Some(hash))))
-         } else if let Some(file_path) = request.file_path {
-             let metadata = tokio::fs::metadata(&file_path).await.map_err(|e| {
-                 SidecarError::Io(e)
-             })?;
-             let size = metadata.len() as i64;
-             debug!(
-                 "Streaming file {} ({} bytes) to s3://{}/{}",
-                 file_path.display(),
-                 size,
-                 request.bucket,
-                 request.key
-             );
+               let size = content.len() as i64;
+               debug!(
+                   "Uploading in-memory content of {} bytes to s3://{}/{}",
+                   size, request.bucket, request.key
+               );
 
-             let file = File::open(&file_path).await.map_err(|e| SidecarError::Io(e))?;
-             let hash_output = Arc::new(Mutex::new(None));
-             let hashing_reader = HashingReader::new(file, hash_output.clone());
-             let byte_stream = ByteStream::new(hashing_reader);
+               byte_stream = ByteStream::from(content.clone());
+               size_bytes = size;
+               hash_output = Arc::new(Mutex::new(Some(hash)));
+          } else if let Some(file_path) = &request.file_path {
+               let metadata = tokio::fs::metadata(&file_path).await.map_err(|e| {
+                   SidecarError::Io(e)
+               })?;
+               let size = metadata.len() as i64;
+               debug!(
+                   "Streaming file {} ({} bytes) to s3://{}/{}",
+                   file_path.display(),
+                   size,
+                   request.bucket,
+                   request.key
+               );
 
-             (byte_stream, size, hash_output)
-         } else {
-             unreachable!();
-         }
+               let mut file = File::open(&file_path).await.map_err(|e| SidecarError::Io(e))?;
+               let mut buffer = Vec::new();
+               file.read_to_end(&mut buffer).await.map_err(|e| SidecarError::Io(e))?;
+               let mut hasher = Sha256::new();
+               hasher.update(&buffer);
+               let hash = hex::encode(hasher.finalize());
+
+               let local_byte_stream = ByteStream::from(buffer);
+               let local_hash_output = Arc::new(Mutex::new(Some(hash)));
+
+               byte_stream = local_byte_stream;
+               size_bytes = size;
+               hash_output = local_hash_output;
+          } else {
+               unreachable!()
+          }
 
          info!(
              "Starting S3 upload: bucket={}, key={}, size={}",
@@ -365,18 +376,10 @@ impl S3Connector {
              .body(byte_stream)
              .send()
              .await
-             .map_err(|e| {
-                 error!("S3 upload failed: {}", e);
-                 match e.into_service_error() {
-                     SidecarError::AccessDenied => {
-                         SidecarError::StorageError("Access denied to S3 bucket".to_string())
-                     }
-                     SidecarError::NoSuchBucket(_) => {
-                         SidecarError::StorageError("S3 bucket not found".to_string())
-                     }
-                     _ => SidecarError::StorageError(format!("S3 upload failed: {}", e)),
-                 }
-             })?;
+               .map_err(|e| {
+                   error!("S3 upload failed: {}", e);
+                   SidecarError::StorageError(format!("S3 upload failed: {}", e))
+               })?;
 
          debug!(
              "S3 upload completed: bucket={}, key={}, etag={:?}",
@@ -490,52 +493,37 @@ impl S3Connector {
                 e
             })?;
 
-            let mut get_request = aws_sdk_s3::operation::get_object::GetObjectInput::builder()
-                .bucket(&request.bucket)
-                .key(&request.key);
+             let mut get_builder = client.get_object()
+                 .bucket(&request.bucket)
+                 .key(&request.key);
 
-            if let (Some(offset), Some(max_bytes)) = (request.offset_bytes, request.max_bytes) {
-                let range_header = format!("bytes={}-{}", offset, offset + max_bytes - 1);
-                get_request = get_request.range(range_header);
-                debug!(
-                    "Downloading range from s3://{}/{}: {}",
-                    request.bucket, request.key, range_header
-                );
-            } else if let Some(offset) = request.offset_bytes {
-                let range_header = format!("bytes={}-", offset);
-                get_request = get_request.range(range_header);
-                debug!(
-                    "Downloading from offset from s3://{}/{}: {}",
-                    request.bucket, request.key, range_header
-                );
-            } else {
-                debug!(
-                    "Downloading full object from s3://{}/{}",
-                    request.bucket, request.key
-                );
-            }
+             if let (Some(offset), Some(max_bytes)) = (request.offset_bytes, request.max_bytes) {
+                 let range_header = format!("bytes={}-{}", offset, offset + max_bytes - 1);
+                 get_builder = get_builder.range(range_header.clone());
+                 debug!(
+                     "Downloading range from s3://{}/{}: {}",
+                     request.bucket, request.key, range_header
+                 );
+             } else if let Some(offset) = request.offset_bytes {
+                 let range_header = format!("bytes={}-", offset);
+                 get_builder = get_builder.range(range_header.clone());
+                 debug!(
+                     "Downloading from offset from s3://{}/{}: {}",
+                     request.bucket, request.key, range_header
+                 );
+             } else {
+                 debug!(
+                     "Downloading full object from s3://{}/{}",
+                     request.bucket, request.key
+                 );
+             }
 
-            let get_request = get_request.build().map_err(|e| {
-                error!("Failed to build S3 request: {}", e);
-                SidecarError::StorageError(format!("Failed to build S3 request: {}", e))
-            })?;
-
-            let response = client
-                .get_object(get_request)
-                .send()
-                .await
-                .map_err(|e| {
-                    error!("S3 download failed: {}", e);
-                    match e.into_service_error() {
-                        SidecarError::NoSuchKey(_) => {
-                            SidecarError::StorageError("S3 object not found".to_string())
-                        }
-                        SidecarError::AccessDenied => {
-                            SidecarError::StorageError("Access denied to S3 object".to_string())
-                        }
-                        _ => SidecarError::StorageError(format!("S3 download failed: {}", e)),
-                    }
-                })?;
+             let response = get_builder.send()
+                 .await
+                 .map_err(|e| {
+                     error!("S3 download failed: {}", e);
+                     SidecarError::StorageError(format!("S3 download failed: {}", e))
+                 })?;
 
             let content_length = response.content_length.unwrap_or(0) as i64;
             debug!("S3 object size: {} bytes", content_length);
@@ -635,63 +623,44 @@ impl S3Connector {
             config_loader.load().await
         };
 
-        let client = S3Client::new(&config);
+         let client = S3Client::new(&config);
 
-        let mut list_request = aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Input::builder()
-            .bucket(&request.bucket);
+         let mut list_builder = client.list_objects_v2()
+             .bucket(&request.bucket);
 
-        if let Some(prefix) = &request.prefix {
-            list_request = list_request.prefix(prefix);
-            debug!(
-                "Listing blobs in s3://{}/{} with prefix",
-                request.bucket, prefix
-            );
-        } else {
-            debug!("Listing all blobs in s3://{}", request.bucket);
-        }
+         if let Some(prefix) = &request.prefix {
+             list_builder = list_builder.prefix(prefix);
+             debug!(
+                 "Listing blobs in s3://{}/{} with prefix",
+                 request.bucket, prefix
+             );
+         } else {
+             debug!("Listing all blobs in s3://{}", request.bucket);
+         }
 
-        if let Some(max_results) = request.max_results {
-            list_request = list_request.max_keys(max_results as i32);
-        }
+         if let Some(max_results) = request.max_results {
+             list_builder = list_builder.max_keys(max_results);
+         }
 
-        let list_request = list_request.build().map_err(|e| {
-            error!("Failed to build S3 list request: {}", e);
-            SidecarError::StorageError(format!("Failed to build S3 list request: {}", e))
-        })?;
+         let output = list_builder.send()
+             .await
+             .map_err(|e| {
+                 error!("S3 list failed: {}", e);
+                 SidecarError::StorageError(format!("S3 list failed: {}", e))
+             })?;
 
-        let output = client
-            .list_objects_v2(list_request)
-            .send()
-            .await
-            .map_err(|e| {
-                error!("S3 list failed: {}", e);
-                match e.into_service_error() {
-                    SidecarError::AccessDenied => {
-                        SidecarError::StorageError("Access denied to S3 bucket".to_string())
-                    }
-                    SidecarError::NoSuchBucket(_) => {
-                        SidecarError::StorageError("S3 bucket not found".to_string())
-                    }
-                    _ => SidecarError::StorageError(format!("S3 list failed: {}", e)),
-                }
-            })?;
-
-        let blobs = output
-            .contents()
-            .unwrap_or(&[])
-            .iter()
-            .filter_map(|object| {
+         let blobs: Vec<BlobInfo> = output
+             .contents()
+             .iter()
+             .filter_map(|object| {
                 let key = object.key()?;
                 let size = object.size().unwrap_or(0);
-                let last_modified = object
-                    .last_modified()
-                    .and_then(|dt| {
-                        dt.as_secs_f64()
-                            .as_secs()
-                            .try_into()
-                            .ok()
-                    })
-                    .unwrap_or(0);
+                 let last_modified = object
+                     .last_modified()
+                     .and_then(|dt| {
+                         (dt.as_secs_f64() as i64).try_into().ok()
+                     })
+                     .unwrap_or(0);
                 let etag = object.e_tag().map(|s| s.trim_matches('"').to_string()).unwrap_or_default();
                 let uri = format!("s3://{}/{}", request.bucket, key);
 
@@ -780,38 +749,22 @@ impl S3Connector {
             config_loader.load().await
         };
 
-        let client = S3Client::new(&config);
+         let client = S3Client::new(&config);
 
-        let delete_request = aws_sdk_s3::operation::delete_object::DeleteObjectInput::builder()
-            .bucket(&request.bucket)
-            .key(&request.key)
-            .build()
-            .map_err(|e| {
-                error!("Failed to build S3 delete request: {}", e);
-                SidecarError::StorageError(format!("Failed to build S3 delete request: {}", e))
-            })?;
+         info!(
+             "Deleting s3://{}/{}",
+             request.bucket, request.key
+         );
 
-        info!(
-            "Deleting s3://{}/{}",
-            request.bucket, request.key
-        );
-
-        let output = client
-            .delete_object(delete_request)
-            .send()
-            .await
-            .map_err(|e| {
-                error!("S3 delete failed: {}", e);
-                match e.into_service_error() {
-                    SidecarError::AccessDenied => {
-                        SidecarError::StorageError("Access denied to S3 object".to_string())
-                    }
-                    SidecarError::NoSuchBucket(_) => {
-                        SidecarError::StorageError("S3 bucket not found".to_string())
-                    }
-                    _ => SidecarError::StorageError(format!("S3 delete failed: {}", e)),
-                }
-            })?;
+         let output = client.delete_object()
+             .bucket(&request.bucket)
+             .key(&request.key)
+             .send()
+             .await
+             .map_err(|e| {
+                 error!("S3 delete failed: {}", e);
+                 SidecarError::StorageError(format!("S3 delete failed: {}", e))
+             })?;
 
         let version_id = output.version_id().map(|s| s.to_string());
 
