@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
+#[derive(Debug)]
 pub struct Metrics {
     registry: Registry,
     circuit_breaker_state: IntGaugeVec,
@@ -35,18 +36,18 @@ impl Metrics {
             &["operation"]
         ).expect("Failed to create circuit_breaker_failures metric");
         
-        let circuit_breaker_calls_total = Counter::new(
+        let circuit_breaker_calls_total = Counter::with_opts(
             prometheus::opts!(
                 "circuit_breaker_calls_total",
                 "Total number of calls through circuit breaker"
-            ),
+            )
         ).expect("Failed to create circuit_breaker_calls_total metric");
         
-        let circuit_breaker_errors_total = Counter::new(
+        let circuit_breaker_errors_total = Counter::with_opts(
             prometheus::opts!(
                 "circuit_breaker_errors_total",
                 "Total number of errors through circuit breaker"
-            ),
+            )
         ).expect("Failed to create circuit_breaker_errors_total metric");
         
         let rate_limit_allowed = IntGaugeVec::new(
@@ -57,11 +58,11 @@ impl Metrics {
             &["operation"]
         ).expect("Failed to create rate_limit_allowed metric");
         
-        let rate_limit_denied = Counter::new(
+        let rate_limit_denied = Counter::with_opts(
             prometheus::opts!(
                 "rate_limit_denied",
                 "Total number of requests denied by rate limiter"
-            ),
+            )
         ).expect("Failed to create rate_limit_denied metric");
         
         registry.register(Box::new(circuit_breaker_state.clone())).unwrap();
@@ -98,6 +99,7 @@ enum CircuitBreakerState {
     HalfOpen = 2,
 }
 
+#[derive(Debug)]
 pub struct CircuitBreaker {
     name: String,
     state: Arc<RwLock<CircuitBreakerState>>,
@@ -164,12 +166,12 @@ impl CircuitBreaker {
         }
         
         let result = operation.await;
-        
+
         match result {
-            Ok(value) => self.on_success().await,
-            Err(err) => self.on_failure().await,
+            Ok(ref _value) => self.on_success().await,
+            Err(ref _err) => self.on_failure().await,
         }
-        
+
         result.map_err(|e| SidecarError::StorageError(e.to_string()))
     }
     
@@ -229,6 +231,7 @@ impl CircuitBreaker {
     }
 }
 
+#[derive(Debug)]
 pub struct RateLimiter {
     name: String,
     max_requests: u32,
@@ -289,6 +292,7 @@ impl RateLimiter {
     }
 }
 
+#[derive(Debug)]
 pub struct S3Reliability {
     upload_circuit_breaker: Arc<CircuitBreaker>,
     download_circuit_breaker: Arc<CircuitBreaker>,

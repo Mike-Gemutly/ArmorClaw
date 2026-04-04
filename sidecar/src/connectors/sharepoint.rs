@@ -1,10 +1,9 @@
 use crate::error::SidecarError;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use async_trait::async_trait;
-use std::collections::HashMap;
+use tokio::sync::Mutex;
 
-#[async_trait]
 #[async_trait]
 pub trait CloudConnector: Send + Sync {
     async fn upload(&self, bucket: &str, key: &str, data: &[u8]) -> Result<String, SidecarError>;
@@ -23,7 +22,7 @@ pub struct SharePointConfig {
 pub struct SharePointConnector {
     client: Client,
     config: SharePointConfig,
-    access_token: Option<String>,
+    access_token: Mutex<Option<String>>,
 }
 
 impl SharePointConnector {
@@ -36,11 +35,11 @@ impl SharePointConnector {
         Ok(Self {
             client,
             config,
-            access_token: None,
+            access_token: Mutex::new(None),
         })
     }
 
-    pub async fn authenticate(&mut self) -> Result<(), SidecarError> {
+    async fn authenticate(&self) -> Result<(), SidecarError> {
         let token_url = format!(
             "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
             self.config.tenant_id
@@ -63,12 +62,13 @@ impl SharePointConnector {
         let token_response: TokenResponse = response.json().await
             .map_err(|e| SidecarError::AuthenticationError(format!("Invalid token response: {}", e)))?;
 
-        self.access_token = Some(token_response.access_token);
+        let mut token = self.access_token.lock().await;
+        *token = Some(token_response.access_token);
         Ok(())
     }
 
     async fn get_drive_item(&self, item_id: &str) -> Result<DriveItem, SidecarError> {
-        if self.access_token.is_none() {
+        if self.access_token.lock().await.is_none() {
             self.authenticate().await?;
         }
 
@@ -77,9 +77,10 @@ impl SharePointConnector {
             self.config.site_url
         );
 
+        let token = self.access_token.lock().await.clone().unwrap();
         let response = self.client
             .get(url)
-            .bearer_auth(self.access_token.as_ref().unwrap())
+            .bearer_auth(&token)
             .send()
             .await
             .map_err(|e| SidecarError::CloudStorageError(format!("Failed to get drive item: {}", e)))?;
@@ -88,7 +89,7 @@ impl SharePointConnector {
     }
 
     async fn upload(&self, bucket: &str, key: &str, data: &[u8]) -> Result<String, SidecarError> {
-        if self.access_token.is_none() {
+        if self.access_token.lock().await.is_none() {
             self.authenticate().await?;
         }
 
@@ -100,10 +101,11 @@ impl SharePointConnector {
             key
         );
 
+        let token = self.access_token.lock().await.clone().unwrap();
         let response = self.client
             .put(upload_url)
-            .bearer_auth(self.access_token.as_ref().unwrap())
-            .body(data)
+            .bearer_auth(&token)
+            .body(data.to_vec())
             .send()
             .await
             .map_err(|e| SidecarError::CloudStorageError(format!("Upload failed: {}", e)))?;
@@ -112,7 +114,7 @@ impl SharePointConnector {
     }
 
     async fn download(&self, bucket: &str, key: &str) -> Result<Vec<u8>, SidecarError> {
-        if self.access_token.is_none() {
+        if self.access_token.lock().await.is_none() {
             self.authenticate().await?;
         }
 
@@ -124,18 +126,23 @@ impl SharePointConnector {
             key
         );
 
+        let token = self.access_token.lock().await.clone().unwrap();
         let response = self.client
             .get(download_url)
-            .bearer_auth(self.access_token.as_ref().unwrap())
+            .bearer_auth(&token)
             .send()
             .await
             .map_err(|e| SidecarError::CloudStorageError(format!("Download failed: {}", e)))?;
 
-        Ok(response.bytes().await.map(|b| b.to_vec()))
+        let bytes = response.bytes().await.map_err(|e| {
+            SidecarError::CloudStorageError(format!("Failed to read response bytes: {}", e))
+        })?;
+
+        Ok(bytes.to_vec())
     }
 
     async fn list(&self, bucket: &str, prefix: &str) -> Result<Vec<String>, SidecarError> {
-        if self.access_token.is_none() {
+        if self.access_token.lock().await.is_none() {
             self.authenticate().await?;
         }
 
@@ -147,21 +154,23 @@ impl SharePointConnector {
             prefix
         );
 
+        let token = self.access_token.lock().await.clone().unwrap();
         let response = self.client
             .get(list_url)
-            .bearer_auth(self.access_token.as_ref().unwrap())
+            .bearer_auth(&token)
             .send()
             .await
             .map_err(|e| SidecarError::CloudStorageError(format!("List failed: {}", e)))?;
 
         let items: Vec<DriveItem> = response.json()
+            .await
             .map_err(|e| SidecarError::CloudStorageError(format!("Invalid list response: {}", e)))?;
 
         Ok(items.into_iter().map(|item| item.name).collect())
     }
 
     async fn delete(&self, bucket: &str, key: &str) -> Result<(), SidecarError> {
-        if self.access_token.is_none() {
+        if self.access_token.lock().await.is_none() {
             self.authenticate().await?;
         }
 
@@ -173,9 +182,10 @@ impl SharePointConnector {
             key
         );
 
+        let token = self.access_token.lock().await.clone().unwrap();
         self.client
             .delete(delete_url)
-            .bearer_auth(self.access_token.as_ref().unwrap())
+            .bearer_auth(&token)
             .send()
             .await
             .map_err(|e| SidecarError::CloudStorageError(format!("Delete failed: {}", e)))?;

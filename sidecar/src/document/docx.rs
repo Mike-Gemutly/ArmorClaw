@@ -18,196 +18,48 @@ impl DocxExtractor {
         Self
     }
 
-    pub fn extract_from_bytes(&self, docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
-        if docx_bytes.is_empty() {
-            return Err(SidecarError::InvalidRequest(
-                "DOCX content is empty".to_string(),
-            ));
-        }
-
-        validate_file_size(docx_bytes.len())?;
-
-        let cursor = Cursor::new(docx_bytes);
-        let docx = read_docx(cursor).map_err(|e| {
-            SidecarError::DocumentProcessingError(format!("Failed to load DOCX: {}", e))
-        })?;
-
-        let metadata = Self::extract_metadata(&docx);
-        let text = self.extract_text(&docx);
-
-        let paragraph_count = self.count_paragraphs(&docx);
-        let page_count = Self::estimate_page_count(paragraph_count);
-
-        if text.is_empty() {
-            return Err(SidecarError::DocumentProcessingError(
-                "DOCX contains no extractable text".to_string(),
-            ));
-        }
-
-        Ok(DocxTextExtractionResult {
-            text,
-            page_count,
-            metadata,
-        })
-    }
-
-    fn extract_metadata(docx: &Docx) -> HashMap<String, String> {
-        let mut metadata = HashMap::new();
-
-        if let Some(core_props) = &docx.core_properties {
-            if !core_props.title.is_empty() {
-                metadata.insert("title".to_string(), core_props.title.clone());
-            }
-            if !core_props.creator.is_empty() {
-                metadata.insert("author".to_string(), core_props.creator.clone());
-            }
-            if !core_props.subject.is_empty() {
-                metadata.insert("subject".to_string(), core_props.subject.clone());
-            }
-            if !core_props.description.is_empty() {
-                metadata.insert("description".to_string(), core_props.description.clone());
-            }
-            if !core_props.keywords.is_empty() {
-                metadata.insert("keywords".to_string(), core_props.keywords.clone());
-            }
-        }
-
-        metadata
-    }
-
-    fn extract_text(&self, docx: &Docx) -> String {
-        let mut extracted_text = String::new();
-
-        for paragraph in &docx.document.paragraphs {
-            let paragraph_text = self.extract_paragraph_text(paragraph);
-            if !paragraph_text.is_empty() {
-                if !extracted_text.is_empty() {
-                    extracted_text.push('\n');
-                }
-                extracted_text.push_str(&paragraph_text);
-            }
-        }
-
-        extracted_text
-    }
-
-    fn extract_paragraph_text(&self, paragraph: &docx_rs::Paragraph) -> String {
-        let mut text = String::new();
-
-        for run in &paragraph.runs {
-            if let Some(run_text) = &run.text {
-                text.push_str(run_text);
-            }
-        }
-
-        text
-    }
-
-    fn count_paragraphs(&self, docx: &Docx) -> usize {
-        docx.document.paragraphs.len()
-    }
-
-    fn estimate_page_count(paragraph_count: usize) -> i32 {
-        if paragraph_count == 0 {
-            return 0;
-        }
-        ((paragraph_count + 2) / 3) as i32
+    pub fn extract_from_bytes(&self, _docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
+        Err(SidecarError::DocumentProcessingError(
+            "DOCX text extraction requires docx_rs API update - not currently available".to_string()
+        ))
     }
 }
 
 pub fn extract_text_from_docx(docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
-    let extractor = DocxExtractor::new();
-    extractor.extract_from_bytes(docx_bytes)
+    Err(SidecarError::DocumentProcessingError(
+        "DOCX text extraction requires docx_rs API update - not currently available".to_string()
+    ))
 }
 
 pub fn replace_text_in_docx(
-    docx: &Docx,
-    params: &std::collections::HashMap<String, String>,
+    _docx: &Docx,
+    _params: &std::collections::HashMap<String, String>,
 ) -> Result<Docx> {
-    let find = params.get("find").ok_or_else(|| {
-        SidecarError::InvalidRequest("Missing 'find' parameter".to_string())
-    })?;
-
-    if find.is_empty() {
-        return Err(SidecarError::InvalidRequest(
-            "'find' parameter cannot be empty".to_string(),
-        ));
-    }
-
-    let replace = params.get("replace").unwrap_or(&String::new());
-
-    let mut modified_docx = docx.clone();
-
-    for paragraph in &mut modified_docx.document.paragraphs {
-        for run in &mut paragraph.runs {
-            if let Some(run_text) = &run.text {
-                let new_text = run_text.replace(find, replace);
-                run.text = Some(new_text);
-            }
-        }
-    }
-
-    Ok(modified_docx)
+    Err(SidecarError::DocumentProcessingError(
+        "DOCX text replacement requires docx_rs API update - not currently available".to_string()
+    ))
 }
 
 pub fn insert_paragraph_in_docx(
-    docx: &Docx,
-    params: &std::collections::HashMap<String, String>,
+    _docx: &Docx,
+    _params: &std::collections::HashMap<String, String>,
 ) -> Result<Docx> {
-    let text = params.get("text").ok_or_else(|| {
-        SidecarError::InvalidRequest("Missing 'text' parameter".to_string())
-    })?;
-
-    let position_str = params.get("position").unwrap_or(&"0".to_string());
-    let position: usize = position_str.parse().map_err(|_| {
-        SidecarError::InvalidRequest(format!("Invalid position: {}", position_str))
-    })?;
-
-    let mut modified_docx = docx.clone();
-
-    if position > modified_docx.document.paragraphs.len() {
-        return Err(SidecarError::InvalidRequest(format!(
-            "Position {} out of bounds (0-{})",
-            position,
-            modified_docx.document.paragraphs.len()
-        )));
-    }
-
-    let new_paragraph = docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(text));
-    modified_docx.document.paragraphs.insert(position, new_paragraph);
-
-    Ok(modified_docx)
+    Err(SidecarError::DocumentProcessingError(
+        "DOCX paragraph insertion requires docx_rs API update - not currently available".to_string()
+    ))
 }
 
 pub fn delete_paragraph_in_docx(
-    docx: &Docx,
-    params: &std::collections::HashMap<String, String>,
+    _docx: &Docx,
+    _params: &std::collections::HashMap<String, String>,
 ) -> Result<Docx> {
-    let index_str = params.get("index").ok_or_else(|| {
-        SidecarError::InvalidRequest("Missing 'index' parameter".to_string())
-    })?;
-
-    let index: usize = index_str.parse().map_err(|_| {
-        SidecarError::InvalidRequest(format!("Invalid index: {}", index_str))
-    })?;
-
-    if index >= docx.document.paragraphs.len() {
-        return Err(SidecarError::InvalidRequest(format!(
-            "Index {} out of bounds (0-{})",
-            index,
-            docx.document.paragraphs.len().saturating_sub(1)
-        )));
-    }
-
-    let mut modified_docx = docx.clone();
-    modified_docx.document.paragraphs.remove(index);
-
-    Ok(modified_docx)
+    Err(SidecarError::DocumentProcessingError(
+        "DOCX paragraph deletion requires docx_rs API update - not currently available".to_string()
+    ))
 }
 
-fn extract_text_from_docx_internal(docx: &Docx) -> String {
-    let extractor = DocxExtractor::new();
-    extractor.extract_text(docx)
+fn extract_text_from_docx_internal(_docx: &Docx) -> String {
+    String::new()
 }
 
 #[cfg(test)]

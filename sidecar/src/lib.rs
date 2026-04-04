@@ -2,12 +2,12 @@ pub mod grpc;
 pub mod security;
 pub mod config;
 pub mod error;
+pub mod reliability;
+pub mod document;
+pub mod utils;
 
-// Disabled modules - pending fixes
-// pub mod connectors; // TODO: AWS SDK v2 API changes require 73 fixes
-// pub mod document; // TODO: Implement document processing
-// pub mod utils; // TODO: Implement utilities
-// pub mod reliability; // TODO: Implement reliability wrappers
+// Disabled pending AWS SDK v2 migration (21 errors)
+// pub mod connectors;
 
 pub use config::SidecarConfig;
 pub use error::{SidecarError, Result};
