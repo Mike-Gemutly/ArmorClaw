@@ -43,6 +43,7 @@ zeroize = "1.7"
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.21"
+hex = "0.4"
 
 # Logging
 tracing = "0.1"
