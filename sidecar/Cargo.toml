@@ -1,0 +1,81 @@
+[package]
+name = "armorclaw-sidecar"
+version = "0.0.1"
+edition = "2021"
+authors = ["ArmorClaw Engineering <eng@armorclaw.com>"]
+description = "High-performance data plane for ArmorClaw enterprise operations"
+license = "MIT"
+
+[dependencies]
+# Async Runtime
+tokio = { version = "1.35", features = ["full", "net", "io-util", "sync", "time", "fs"] }
+
+# gRPC
+tonic = "0.10"
+prost = "0.12"
+prost-types = "0.12"
+
+# Middleware
+tower = { version = "0.4", features = ["limit", "timeout", "buffer", "util"] }
+tower-http = { version = "0.5", features = ["trace"] }
+
+# Cloud SDKs (Phase 1: S3 only)
+aws-sdk-s3 = "1.10"
+aws-config = "1.1"
+aws-credential-types = "1.1"
+
+# HTTP Client (for future connectors)
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], optional = true }
+reqwest-middleware = { version = "0.2", optional = true }
+reqwest-retry = { version = "0.3", optional = true }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Document Processing (Phase 1: PDF and DOCX only)
+lopdf = "0.31"
+docx-rs = "0.4"
+
+# Security
+secrecy = { version = "0.8", features = ["serde"] }
+zeroize = "1.7"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.21"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Metrics
+prometheus = "0.13"
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Configuration
+config = "0.14"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[dev-dependencies]
+tempfile = "3.9"
+mockall = "0.12"
+wiremock = "0.5"
+
+[[bin]]
+name = "armorclaw-sidecar"
+path = "src/main.rs"
+
+[features]
+default = []
+full-connectors = ["reqwest", "reqwest-middleware", "reqwest-retry"]
