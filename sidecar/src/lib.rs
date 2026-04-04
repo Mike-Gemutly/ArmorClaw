@@ -1,12 +1,13 @@
-pub mod grpc; // Re-enabled for rate limiting testing
-// pub mod connectors; // TODO: Fix compilation errors
-// pub mod document; // TODO: Fix compilation errors
-pub mod security; // TODO: Fix compilation errors
-// pub mod utils; // TODO: Fix compilation errors
-// pub mod reliability; // TODO: Fix compilation errors
-
+pub mod grpc;
+pub mod security;
 pub mod config;
 pub mod error;
+
+// Disabled modules - pending fixes
+// pub mod connectors; // TODO: AWS SDK v2 API changes require 73 fixes
+// pub mod document; // TODO: Implement document processing
+// pub mod utils; // TODO: Implement utilities
+// pub mod reliability; // TODO: Implement reliability wrappers
 
 pub use config::SidecarConfig;
 pub use error::{SidecarError, Result};

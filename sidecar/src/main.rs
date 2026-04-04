@@ -3,11 +3,7 @@ use crate::error::SidecarError;
 mod config;
 mod error;
 mod grpc;
-mod connectors;
-mod document;
 mod security;
-mod utils;
-mod reliability;
 
 #[tokio::main]
 async fn main() -> Result<(), SidecarError> {
