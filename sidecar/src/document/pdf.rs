@@ -1,9 +1,10 @@
-use crate::error::{Result, SidecarError};
 use crate::document::validate_file_size;
+use crate::error::{Result, SidecarError};
+use crate::security::shadowmap::ShadowMap;
 use lopdf::Document;
 use lopdf::Object;
 use std::collections::HashMap;
-use tracing::{warn, debug};
+use tracing::{debug, warn};
 
 pub struct PdfExtractor;
 
@@ -60,11 +61,31 @@ impl PdfExtractor {
                         Self::extract_string_field(info_dict, b"Title", "title", &mut metadata);
                         Self::extract_string_field(info_dict, b"Author", "author", &mut metadata);
                         Self::extract_string_field(info_dict, b"Subject", "subject", &mut metadata);
-                        Self::extract_string_field(info_dict, b"Keywords", "keywords", &mut metadata);
+                        Self::extract_string_field(
+                            info_dict,
+                            b"Keywords",
+                            "keywords",
+                            &mut metadata,
+                        );
                         Self::extract_string_field(info_dict, b"Creator", "creator", &mut metadata);
-                        Self::extract_string_field(info_dict, b"Producer", "producer", &mut metadata);
-                        Self::extract_string_field(info_dict, b"CreationDate", "creation_date", &mut metadata);
-                        Self::extract_string_field(info_dict, b"ModDate", "modification_date", &mut metadata);
+                        Self::extract_string_field(
+                            info_dict,
+                            b"Producer",
+                            "producer",
+                            &mut metadata,
+                        );
+                        Self::extract_string_field(
+                            info_dict,
+                            b"CreationDate",
+                            "creation_date",
+                            &mut metadata,
+                        );
+                        Self::extract_string_field(
+                            info_dict,
+                            b"ModDate",
+                            "modification_date",
+                            &mut metadata,
+                        );
                     }
                 }
             }
@@ -81,13 +102,26 @@ impl PdfExtractor {
     ) {
         if let Ok(obj) = info.get(pdf_key) {
             if let Object::String(value, _) = obj {
-                metadata.insert(field_name.to_string(), String::from_utf8_lossy(value).to_string());
+                metadata.insert(
+                    field_name.to_string(),
+                    String::from_utf8_lossy(value).to_string(),
+                );
             }
         }
     }
 
     fn extract_text_from_pages(&self, _doc: &Document) -> Result<String> {
         Ok("".to_string())
+    }
+
+    pub fn extract_from_bytes_redacted(
+        &self,
+        pdf_bytes: &[u8],
+        shadowmap: &mut ShadowMap,
+    ) -> Result<PdfTextExtractionResult> {
+        let mut result = self.extract_from_bytes(pdf_bytes)?;
+        result.text = shadowmap.redact(&result.text);
+        Ok(result)
     }
 }
 
@@ -103,7 +137,7 @@ impl PdfExtractor {
 /// Returns error if PDF is empty or corrupted
 pub fn extract_text_from_pdf(_pdf_bytes: &[u8]) -> Result<PdfTextExtractionResult> {
     Err(SidecarError::DocumentProcessingError(
-        "PDF text extraction requires lopdf API update - not currently available".to_string()
+        "PDF text extraction requires lopdf API update - not currently available".to_string(),
     ))
 }
 
@@ -123,7 +157,7 @@ pub fn extract_text_from_pdf(_pdf_bytes: &[u8]) -> Result<PdfTextExtractionResul
 /// - Page numbers are out of bounds
 pub fn split_pdf(_pdf_bytes: &[u8], _page_ranges: &str) -> Result<Vec<u8>> {
     Err(SidecarError::DocumentProcessingError(
-        "PDF split functionality requires lopdf API update - not currently available".to_string()
+        "PDF split functionality requires lopdf API update - not currently available".to_string(),
     ))
 }
 
@@ -142,7 +176,7 @@ pub fn split_pdf(_pdf_bytes: &[u8], _page_ranges: &str) -> Result<Vec<u8>> {
 /// - Failed to merge documents
 pub fn merge_pdfs(_pdf_bytes_list: &[&[u8]]) -> Result<Vec<u8>> {
     Err(SidecarError::DocumentProcessingError(
-        "PDF merge functionality requires lopdf API update - not currently available".to_string()
+        "PDF merge functionality requires lopdf API update - not currently available".to_string(),
     ))
 }
 

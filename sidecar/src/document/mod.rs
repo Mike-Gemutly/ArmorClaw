@@ -1,5 +1,7 @@
 use crate::error::{Result, SidecarError};
 
+pub use crate::security::shadowmap::{PiiCategory, ShadowMap};
+
 pub const MAX_FILE_SIZE: usize = 5 * 1024 * 1024 * 1024; // 5GB in bytes
 
 pub fn validate_file_size(size: usize) -> Result<()> {
@@ -35,6 +37,9 @@ pub use docx::{
     DocxExtractor,
     DocxTextExtractionResult,
     extract_text_from_docx,
+    replace_text_in_docx,
+    insert_paragraph_in_docx,
+    delete_paragraph_in_docx,
 };
 
 pub use xlsx::{
