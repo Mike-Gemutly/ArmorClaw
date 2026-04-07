@@ -1,4 +1,5 @@
 import type { GatewayClient } from "./server-methods/types.js";
+import { detectPromptInjection } from "./injection-detection.js";
 
 const CONTROL_PLANE_RATE_LIMIT_MAX_REQUESTS = 3;
 const CONTROL_PLANE_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -10,12 +11,42 @@ type Bucket = {
 
 const controlPlaneBuckets = new Map<string, Bucket>();
 
+export type InjectionDetectionResult = {
+  isSuspicious: boolean;
+  reasons: string[];
+  detectedAt: number;
+};
+
 function normalizePart(value: unknown, fallback: string): string {
   if (typeof value !== "string") {
     return fallback;
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : fallback;
+}
+
+export function checkPromptInjection(params: {
+  message: string;
+  client: GatewayClient | null;
+  nowMs?: number;
+}): InjectionDetectionResult {
+  const nowMs = params.nowMs ?? Date.now();
+  const key = resolveControlPlaneRateLimitKey(params.client);
+  const detection = detectPromptInjection(params.message);
+
+  const result: InjectionDetectionResult = {
+    isSuspicious: detection.isSuspicious,
+    reasons: detection.reasons,
+    detectedAt: nowMs,
+  };
+
+  if (detection.isSuspicious) {
+    console.warn(
+      `[SECURITY] Prompt injection detected - Key: ${key}, Reasons: ${detection.reasons.join(", ")}`,
+    );
+  }
+
+  return result;
 }
 
 export function resolveControlPlaneRateLimitKey(client: GatewayClient | null): string {

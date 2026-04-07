@@ -114,3 +114,14 @@ nul
 *.key
 revoke-cert.asc
 private-keys-v1.d/
+
+# Rust build artifacts
+sidecar/target/
+**/target/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib

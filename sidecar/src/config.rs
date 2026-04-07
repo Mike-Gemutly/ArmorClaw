@@ -1,4 +1,4 @@
-use config::{Config, ConfigError, File};
+use config::{Config, ConfigError};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -14,11 +14,11 @@ pub struct SidecarConfig {
     pub log_level: String,
     pub metrics_port: u16,
     pub shared_secret: String,
-    
+
     // Circuit breaker configuration
     pub circuit_breaker_failure_threshold: u32,
     pub circuit_breaker_recovery_timeout_secs: u64,
-    
+
     // Rate limiting configuration
     pub rate_limit_max_requests_per_second: u32,
 }
@@ -42,7 +42,7 @@ impl SidecarConfig {
             .add_source(
                 config::Environment::with_prefix("ARMORCLAW_SIDECAR")
                     .separator("__")
-                    .try_parsing(true)
+                    .try_parsing(true),
             )
             .build()?;
 

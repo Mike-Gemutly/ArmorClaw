@@ -398,6 +398,60 @@ func (c *Client) StopContainer(ctx context.Context, containerID string, options 
 	return nil
 }
 
+// TerminateContainer kills a container immediately (SIGKILL)
+// Scope required: ScopeRemove
+// This is different from StopContainer which tries graceful shutdown (SIGTERM)
+func (c *Client) TerminateContainer(ctx context.Context, containerID string) error {
+	dockerTracker.Event("terminate_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+
+	if c.client == nil {
+		err := errsys.NewBuilder("CTX-010").
+			Wrap(fmt.Errorf("docker client not initialized")).
+			WithFunction("TerminateContainer").
+			WithInputs(map[string]any{"container_id": containerID}).
+			Build()
+		dockerTracker.Failure("terminate_container", err, map[string]any{"reason": "client_not_initialized"})
+		return err
+	}
+	if !c.hasScope(ScopeRemove) {
+		err := errsys.NewBuilder("CTX-001").
+			Wrap(ErrInvalidOperation).
+			WithFunction("TerminateContainer").
+			WithInputs(map[string]any{"container_id": containerID}).
+			Build()
+		dockerTracker.Failure("terminate_container", err, map[string]any{"reason": "invalid_scope"})
+		return err
+	}
+
+	err := c.client.ContainerKill(ctx, containerID, "SIGKILL")
+	if err != nil {
+		code := "CTX-001"
+		errStr := err.Error()
+		if containsAny(errStr, "not found", "no such") {
+			code = "CTX-011"
+		}
+
+		if c.auditLogger != nil {
+			c.auditLogger.LogContainerError(ctx, containerID, errStr, code)
+		}
+
+		wrappedErr := errsys.NewBuilder(code).
+			Wrap(err).
+			WithFunction("TerminateContainer").
+			WithInputs(map[string]any{"container_id": containerID}).
+			Build()
+		dockerTracker.Failure("terminate_container", wrappedErr, map[string]any{"reason": "docker_api_error", "code": code})
+		return wrappedErr
+	}
+
+	if c.auditLogger != nil {
+		c.auditLogger.LogContainerStop(ctx, containerID, "terminated", 137)
+	}
+
+	dockerTracker.Success("terminate_container", map[string]any{"container_id": containerID[:min(12, len(containerID))]})
+	return nil
+}
+
 // ExecCreate creates an exec instance in a container
 // Scope required: ScopeExec
 func (c *Client) ExecCreate(ctx context.Context, containerID string, config container.ExecOptions) (string, error) {

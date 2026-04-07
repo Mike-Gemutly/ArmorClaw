@@ -34,7 +34,8 @@ struct PiiPattern {
 }
 
 fn is_valid_ipv4(s: &str) -> bool {
-    s.split('.').all(|octet| octet.parse::<u8>().is_ok())
+    let parts: Vec<&str> = s.split('.').collect();
+    parts.len() == 4 && parts.iter().all(|octet| octet.parse::<u8>().is_ok())
 }
 
 static PII_PATTERNS: Lazy<Vec<PiiPattern>> = Lazy::new(|| {

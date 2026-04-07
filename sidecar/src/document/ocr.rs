@@ -1,8 +1,10 @@
 use crate::error::{Result, SidecarError};
+use image::{DynamicImage, ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Cursor;
+use std::process::Command;
 
-/// OCR result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrResult {
     pub text: String,
@@ -11,12 +13,11 @@ pub struct OcrResult {
     pub metadata: HashMap<String, String>,
 }
 
-/// OCR configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrConfig {
     pub language: String,
     pub dpi: Option<u32>,
-    pub psm: Option<u32>, // Page segmentation mode
+    pub psm: Option<u32>,
 }
 
 impl Default for OcrConfig {
@@ -29,7 +30,6 @@ impl Default for OcrConfig {
     }
 }
 
-/// OCR extractor using Tesseract subprocess
 pub struct OcrExtractor {
     config: OcrConfig,
 }
@@ -39,12 +39,106 @@ impl OcrExtractor {
         Self { config }
     }
 
-    /// Extract text from image using OCR
     pub fn extract(&self, image_data: &[u8]) -> Result<OcrResult> {
-        // TODO: Implement Tesseract subprocess invocation
-        Err(SidecarError::InvalidRequest(
-            "OCR extraction not yet implemented. Task 33-34 pending.".to_string()
-        ))
+        let format = detect_image_format(image_data)?;
+
+        let img = ImageReader::with_format(Cursor::new(image_data), format)
+            .decode()
+            .map_err(|e| {
+                SidecarError::DocumentProcessingError(format!("Failed to decode image: {}", e))
+            })?;
+
+        let tesseract_available = self.check_tesseract_installed();
+
+        if !tesseract_available {
+            return Err(SidecarError::InvalidRequest(
+                "Tesseract OCR is not installed. Install with: apt-get install tesseract-ocr (Debian/Ubuntu) or brew install tesseract (macOS)".to_string()
+            ));
+        }
+
+        self.run_tesseract(&img)
+    }
+
+    fn check_tesseract_installed(&self) -> bool {
+        Command::new("tesseract").arg("--version").output().is_ok()
+    }
+
+    fn run_tesseract(&self, img: &DynamicImage) -> Result<OcrResult> {
+        let temp_input = tempfile::NamedTempFile::with_suffix(".png").map_err(|e| {
+            SidecarError::DocumentProcessingError(format!("Failed to create temp file: {}", e))
+        })?;
+
+        let input_path = temp_input.path().to_path_buf();
+
+        img.save(&input_path).map_err(|e| {
+            SidecarError::DocumentProcessingError(format!("Failed to save image: {}", e))
+        })?;
+
+        let output_base = input_path.with_extension("");
+
+        let mut cmd = Command::new("tesseract");
+        cmd.arg(input_path);
+        cmd.arg(&output_base);
+        cmd.arg("-l");
+        cmd.arg(&self.config.language);
+        cmd.arg("--psm");
+        cmd.arg(self.config.psm.unwrap_or(3).to_string());
+
+        let output = cmd.output().map_err(|e| {
+            SidecarError::DocumentProcessingError(format!("Failed to run tesseract: {}", e))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SidecarError::DocumentProcessingError(format!(
+                "Tesseract failed: {}",
+                stderr
+            )));
+        }
+
+        let output_file = format!("{}.txt", output_base.display());
+        let text = std::fs::read_to_string(&output_file).map_err(|e| {
+            SidecarError::DocumentProcessingError(format!("Failed to read OCR output: {}", e))
+        })?;
+
+        let _ = std::fs::remove_file(&output_file);
+
+        let confidence = self.estimate_confidence(&text);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("engine".to_string(), "tesseract".to_string());
+        metadata.insert("language".to_string(), self.config.language.clone());
+        metadata.insert("psm".to_string(), self.config.psm.unwrap_or(3).to_string());
+
+        Ok(OcrResult {
+            text: text.trim().to_string(),
+            confidence,
+            language: self.config.language.clone(),
+            metadata,
+        })
+    }
+
+    fn estimate_confidence(&self, text: &str) -> f32 {
+        if text.is_empty() {
+            return 0.0;
+        }
+
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.is_empty() {
+            return 0.0;
+        }
+
+        let valid_words: Vec<&str> = words
+            .iter()
+            .filter(|w| {
+                w.chars()
+                    .all(|c| c.is_alphanumeric() || c.is_whitespace() || "-'".contains(c))
+            })
+            .copied()
+            .collect();
+
+        let ratio = valid_words.len() as f32 / words.len() as f32;
+        0.5 + (ratio * 0.4)
     }
 }
 
@@ -54,13 +148,11 @@ impl Default for OcrExtractor {
     }
 }
 
-/// Extract text with OCR
 pub fn extract_text_with_ocr(image_data: &[u8], config: Option<OcrConfig>) -> Result<OcrResult> {
     let extractor = OcrExtractor::new(config.unwrap_or_default());
     extractor.extract(image_data)
 }
 
-/// Validate language code
 pub fn validate_language(lang: &str) -> Result<()> {
     let supported = get_supported_languages();
     if supported.contains(&lang.to_string()) {
@@ -73,7 +165,6 @@ pub fn validate_language(lang: &str) -> Result<()> {
     }
 }
 
-/// Get supported languages
 pub fn get_supported_languages() -> Vec<String> {
     vec![
         "eng".to_string(),
@@ -95,15 +186,67 @@ pub fn get_supported_languages() -> Vec<String> {
     ]
 }
 
-/// Detect language from text (simple heuristic)
 pub fn detect_language_from_text(text: &str) -> String {
-    // TODO: Implement proper language detection
-    // For now, default to English
     if text.is_empty() {
-        "eng".to_string()
-    } else {
-        "eng".to_string()
+        return "eng".to_string();
     }
+
+    let cyrillic = text
+        .chars()
+        .filter(|c| (*c >= 'а' && *c <= 'я') || (*c >= 'А' && *c <= 'Я'))
+        .count();
+    let cjk = text
+        .chars()
+        .filter(|c| (*c >= '\u{4E00}' && *c <= '\u{9FFF}'))
+        .count();
+    let latin = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
+
+    let total = cyrillic + cjk + latin;
+    if total == 0 {
+        return "eng".to_string();
+    }
+
+    if cyrillic as f32 / total as f32 > 0.5 {
+        return "rus".to_string();
+    }
+    if cjk as f32 / total as f32 > 0.5 {
+        return "chi_sim".to_string();
+    }
+    "eng".to_string()
+}
+
+fn detect_image_format(data: &[u8]) -> Result<ImageFormat> {
+    if data.len() < 8 {
+        return Err(SidecarError::DocumentProcessingError(
+            "Image data too small".to_string(),
+        ));
+    }
+
+    if data[0..8] == [137, 80, 78, 71, 13, 10, 26, 10] {
+        return Ok(ImageFormat::Png);
+    }
+
+    if data[0..2] == [0xFF, 0xD8] {
+        return Ok(ImageFormat::Jpeg);
+    }
+
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return Ok(ImageFormat::WebP);
+    }
+
+    if data[0..6] == [71, 73, 70, 56, 57, 97] || data[0..6] == [71, 73, 70, 56, 55, 97] {
+        return Ok(ImageFormat::Gif);
+    }
+
+    if &data[0..2] == b"BM" {
+        return Ok(ImageFormat::Bmp);
+    }
+
+    if &data[0..4] == b"II*\x00" || &data[0..4] == b"MM\x00*" {
+        return Ok(ImageFormat::Tiff);
+    }
+
+    Ok(ImageFormat::Png)
 }
 
 #[cfg(test)]
@@ -113,12 +256,21 @@ mod tests {
     #[test]
     fn test_ocr_extractor_creation() {
         let extractor = OcrExtractor::default();
-        assert!(extractor.extract(&[]).is_err()); // Stub implementation
+        assert_eq!(extractor.config.language, "eng");
+    }
+
+    #[test]
+    fn test_ocr_config_default() {
+        let config = OcrConfig::default();
+        assert_eq!(config.language, "eng");
+        assert_eq!(config.dpi, Some(300));
+        assert_eq!(config.psm, Some(3));
     }
 
     #[test]
     fn test_validate_language() {
         assert!(validate_language("eng").is_ok());
+        assert!(validate_language("spa").is_ok());
         assert!(validate_language("invalid").is_err());
     }
 
@@ -127,6 +279,68 @@ mod tests {
         let langs = get_supported_languages();
         assert!(langs.contains(&"eng".to_string()));
         assert!(langs.contains(&"spa".to_string()));
+        assert!(langs.contains(&"chi_sim".to_string()));
         assert!(langs.len() >= 10);
+    }
+
+    #[test]
+    fn test_detect_language_from_text_empty() {
+        let result = detect_language_from_text("");
+        assert_eq!(result, "eng");
+    }
+
+    #[test]
+    fn test_detect_language_from_text_english() {
+        let result = detect_language_from_text("Hello world this is English text");
+        assert_eq!(result, "eng");
+    }
+
+    #[test]
+    fn test_detect_language_from_text_russian() {
+        let result = detect_language_from_text("Привет мир это русский текст");
+        assert_eq!(result, "rus");
+    }
+
+    #[test]
+    fn test_detect_language_from_text_chinese() {
+        let result = detect_language_from_text("你好世界这是中文文本");
+        assert_eq!(result, "chi_sim");
+    }
+
+    #[test]
+    fn test_estimate_confidence_empty() {
+        let extractor = OcrExtractor::default();
+        let result = extractor.estimate_confidence("");
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_estimate_confidence_valid() {
+        let extractor = OcrExtractor::default();
+        let result = extractor.estimate_confidence("Hello world this is valid text");
+        assert!(result > 0.8);
+    }
+
+    #[test]
+    fn test_detect_image_format_png() {
+        let png_header = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+        let result = detect_image_format(&png_header);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ImageFormat::Png);
+    }
+
+    #[test]
+    fn test_detect_image_format_jpeg() {
+        let jpeg_header = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0];
+        let result = detect_image_format(&jpeg_header);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ImageFormat::Jpeg);
+    }
+
+    #[test]
+    fn test_detect_image_format_too_small() {
+        let small_data = vec![0, 1, 2];
+        let result = detect_image_format(&small_data);
+        assert!(result.is_err());
     }
 }

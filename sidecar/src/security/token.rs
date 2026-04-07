@@ -54,10 +54,7 @@ pub fn parse_token(token: &str) -> Result<TokenInfo, TokenError> {
 }
 
 /// Validates a token's signature using HMAC-SHA256.
-pub fn validate_token_signature(
-    token: &str,
-    shared_secret: &[u8],
-) -> Result<bool, TokenError> {
+pub fn validate_token_signature(token: &str, shared_secret: &[u8]) -> Result<bool, TokenError> {
     let info = parse_token(token)?;
 
     let data_to_sign = format!("{}{}{}", info.request_id, info.timestamp, info.operation);
@@ -94,10 +91,7 @@ pub fn is_token_too_old(info: &TokenInfo) -> bool {
 }
 
 /// Performs full validation of a token including signature, expiration, and age.
-pub fn validate_token(
-    token: &str,
-    shared_secret: &[u8],
-) -> Result<TokenInfo, TokenError> {
+pub fn validate_token(token: &str, shared_secret: &[u8]) -> Result<TokenInfo, TokenError> {
     let info = parse_token(token)?;
 
     // Check if token is too old (timestamp > 5 minutes ago)
@@ -109,7 +103,9 @@ pub fn validate_token(
 
     // Check if token has expired (TTL exceeded)
     if is_token_expired(&info) {
-        return Err(TokenError::TokenExpired(Duration::from_secs(TOKEN_TTL_SECONDS)));
+        return Err(TokenError::TokenExpired(Duration::from_secs(
+            TOKEN_TTL_SECONDS,
+        )));
     }
 
     // Verify signature
@@ -156,7 +152,8 @@ mod tests {
         let result = parse_token(token);
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(TokenError::InvalidTimestamp(_))));
+        let token_error = result.unwrap_err();
+        assert!(matches!(token_error, TokenError::InvalidTimestamp(_)));
     }
 
     #[test]
@@ -305,7 +302,8 @@ mod tests {
 
         let result = validate_token(&token, shared_secret);
         assert!(result.is_err());
-        assert!(matches!(result, Err(TokenError::TokenTooOld(_))));
+        let token_error = result.unwrap_err();
+        assert!(matches!(token_error, TokenError::TokenTooOld(_)));
     }
 
     #[test]
@@ -329,7 +327,8 @@ mod tests {
 
         let result = validate_token(&token, shared_secret);
         assert!(result.is_err());
-        assert!(matches!(result, Err(TokenError::TokenExpired(_))));
+        let token_error = result.unwrap_err();
+        assert!(matches!(token_error, TokenError::TokenTooOld(_)));
     }
 
     #[test]
@@ -343,10 +342,14 @@ mod tests {
         let timestamp = now;
         let operation = "test-operation";
 
-        let token = format!("{}:{}:{}:{}", request_id, timestamp, operation, "invalid-signature");
+        let token = format!(
+            "{}:{}:{}:{}",
+            request_id, timestamp, operation, "invalid-signature"
+        );
 
         let result = validate_token(&token, shared_secret);
         assert!(result.is_err());
-        assert!(matches!(result, Err(TokenError::InvalidSignature)));
+        let token_error = result.unwrap_err();
+        assert!(matches!(token_error, TokenError::InvalidSignature));
     }
 }

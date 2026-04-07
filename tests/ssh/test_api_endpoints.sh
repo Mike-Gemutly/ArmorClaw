@@ -3,6 +3,8 @@
 # Tests Bridge RPC, Matrix client, and health endpoints
 
 set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors
 GREEN='\033[0;32m'
@@ -10,9 +12,6 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
-
-# Source environment - use absolute path to .env
-PROJECT_DIR="/home/mink/src/armorclaw-omo"
 
 if [ -f "$PROJECT_DIR/.env" ]; then
     source "$PROJECT_DIR/.env"

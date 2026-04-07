@@ -22,6 +22,7 @@ import (
 	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/internal/skills"
 	"github.com/armorclaw/bridge/pkg/appservice"
+	"github.com/armorclaw/bridge/pkg/docker"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/eventlog"
 	"github.com/armorclaw/bridge/pkg/interfaces"
@@ -147,6 +148,7 @@ type Server struct {
 	shutdownCh      chan struct{}
 	rpcTransport    string
 	listenAddr      string
+	dockerClient    *docker.Client
 }
 
 type Config struct {
@@ -167,6 +169,7 @@ type Config struct {
 	EventBus        *eventbus.EventBus
 	HardeningStore  trust.Store
 	Metrics         *Metrics
+	DockerClient    *docker.Client
 }
 
 func New(cfg Config) (*Server, error) {
@@ -194,6 +197,7 @@ func New(cfg Config) (*Server, error) {
 		shutdownCh:      make(chan struct{}),
 		rpcTransport:    cfg.RPCTransport,
 		listenAddr:      cfg.ListenAddr,
+		dockerClient:    cfg.DockerClient,
 	}
 
 	s.registerHandlers()
@@ -871,6 +875,8 @@ func (s *Server) registerHandlers() {
 		"hardening.rotate_password": s.handleHardeningRotatePassword,
 		"health.check":              s.handleHealthCheck,
 		"mobile.heartbeat":          s.handleMobileHeartbeat,
+		"container.terminate":       s.handleTerminateContainer,
+		"container.list":            s.handleListContainers,
 	}
 
 	s.handlers = h

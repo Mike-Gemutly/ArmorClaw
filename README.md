@@ -139,80 +139,37 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 
 ## Deployment Skills for AI CLI Tools
 
-ArmorClaw includes deployment skills for AI CLI tools (Claude Code, OpenCode, Cursor, etc.) that help users deploy and manage ArmorClaw on VPS with cross-platform support.
+**What it is:** Built-in skills for AI assistants (Claude Code, OpenCode, Cursor) to deploy and manage ArmorClaw on your VPS.
 
-### Quick Reference
+**How to use:** Navigate to the project directory and tell your AI assistant what you want to do. Skills are auto-discovered from `.skills/`.
 
-| Skill | Purpose | Example |
+### Available Skills
+
+| Skill | Purpose | Command |
 |-------|---------|---------|
-| **Deploy** | Deploy ArmorClaw to VPS | `/deploy vps_ip=5.183.11.149 ssh_key=~/.ssh/id_rsa` |
-| **Status** | Check deployment health | `/status vps_ip=5.183.11.149` |
-| **Cloudflare** | Configure HTTPS | `/cloudflare domain=example.com mode=tunnel` |
-| **Provision** | Connect mobile device | `/provision vps_ip=5.183.11.149` |
+| **Deploy** | Deploy to VPS | `/deploy vps_ip=5.183.11.149 domain=armorclaw.example.com` |
+| **Status** | Check health | `/status vps_ip=5.183.11.149` |
+| **Cloudflare** | Setup HTTPS | `/cloudflare domain=example.com mode=tunnel` |
+| **Provision** | Connect mobile | `/provision vps_ip=5.183.11.149` |
 
-### Using with Your AI CLI Tool
-
-1. **Navigate to project directory:**
-   ```bash
-   cd /path/to/armorclaw-omo
-   ```
-
-2. **Tell your AI:**
-   ```
-   "Deploy ArmorClaw to VPS 5.183.11.149 with domain myvps.example.com"
-   ```
-
-3. **AI reads `.skills/deploy.yaml`** and executes deployment with appropriate confirmations.
-
-### Skills Directory Structure
-
-```
-.skills/
-├── deploy/          # VPS deployment skill
-├── status/          # Health checking skill
-├── cloudflare/      # Cloudflare HTTPS setup
-├── provision/       # Mobile device provisioning
-├── PLATFORM.md      # Cross-platform patterns
-├── TEMPLATE.yaml    # Skill schema template
-└── README.md        # Skills index
-```
-
-### Cross-Platform Support
-
-All skills work on:
-- **Linux** - Native OpenSSH, curl
-- **macOS** - Native OpenSSH, curl
-- **Windows (PowerShell)** - OpenSSH, Invoke-WebRequest
-- **Windows (Git Bash)** - OpenSSH, curl
-- **Windows (WSL)** - OpenSSH with `/mnt/c/` paths
-
-### Automation Levels
-
-| Level | Behavior | Example |
-|-------|----------|---------|
-| `auto` | Execute immediately | Health checks, status |
-| `confirm` | Ask user first | SSH connection, installer |
-| `guide` | Provide instructions | Account creation, DNS setup |
-
-### Example: Deploy to VPS
+### Quick Example
 
 ```bash
-# Tell your AI CLI tool:
-"Deploy ArmorClaw to VPS 5.183.11.149 with SSH key ~/.ssh/id_rsa and domain armorclaw.example.com"
+cd /path/to/armorclaw-omo
 
-# AI will:
-1. Detect your OS (Linux/macOS/Windows)
-2. Ask confirmation before SSH
-3. Ask confirmation before running installer
-4. Auto-verify services are ready
-5. Auto-display connection info
+# Tell your AI:
+"Deploy ArmorClaw to VPS 5.183.11.149 with domain armorclaw.example.com"
+
+# The AI will:
+# 1. Read .skills/deploy.yaml
+# 2. Ask for confirmation before SSH
+# 3. Run the installer
+# 4. Verify services are ready
+# 5. Display connection info
 ```
 
-### Documentation
-
-- **Full Documentation**: `doc/armorclaw.md` - Deployment Skills section
-- **Skills Index**: `.skills/README.md`
-- **Platform Patterns**: `.skills/PLATFORM.md`
+**Platforms:** Linux, macOS, Windows (PowerShell, Git Bash, WSL)  
+**Docs:** `.skills/README.md` | `doc/armorclaw.md`
 
 ---
 

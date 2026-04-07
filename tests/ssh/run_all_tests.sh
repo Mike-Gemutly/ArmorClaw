@@ -3,6 +3,8 @@
 # Supports all test categories with CLI interface
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors
 GREEN='\033[0;32m'
@@ -11,8 +13,6 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Source environment
-PROJECT_DIR="/home/mink/src/armorclaw-omo"
 EVIDENCE_DIR="$PROJECT_DIR/.sisyphus/evidence"
 
 if [ -f "$PROJECT_DIR/.env" ]; then

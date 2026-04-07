@@ -1,12 +1,7 @@
-use crate::error::SidecarError;
 use prometheus::{Histogram, IntCounter, Registry};
 use std::sync::Arc;
 use std::time::Instant;
-use tonic::{
-    metadata::{MetadataMap, MetadataValue},
-    service::Interceptor as TonicInterceptor,
-    Status, Code,
-};
+use tonic::{metadata::MetadataMap, service::Interceptor as TonicInterceptor, Code, Status};
 use tracing::{debug, error, info, warn};
 
 use crate::security::token::{validate_token, TokenError};
@@ -22,17 +17,27 @@ impl Version {
     pub fn parse(version_str: &str) -> Result<Self, String> {
         let parts: Vec<&str> = version_str.split('.').collect();
         if parts.len() != 3 {
-            return Err(format!("invalid version format: {} (expected MAJOR.MINOR.PATCH)", version_str));
+            return Err(format!(
+                "invalid version format: {} (expected MAJOR.MINOR.PATCH)",
+                version_str
+            ));
         }
 
-        let major = parts[0].parse::<u32>()
+        let major = parts[0]
+            .parse::<u32>()
             .map_err(|e| format!("invalid major version: {}", e))?;
-        let minor = parts[1].parse::<u32>()
+        let minor = parts[1]
+            .parse::<u32>()
             .map_err(|e| format!("invalid minor version: {}", e))?;
-        let patch = parts[2].parse::<u32>()
+        let patch = parts[2]
+            .parse::<u32>()
             .map_err(|e| format!("invalid patch version: {}", e))?;
 
-        Ok(Version { major, minor, patch })
+        Ok(Version {
+            major,
+            minor,
+            patch,
+        })
     }
 
     pub fn compare(&self, other: &Version) -> std::cmp::Ordering {
@@ -107,7 +112,9 @@ impl SecurityInterceptor {
                 "armorclaw_sidecar_request_duration_seconds",
                 "Request duration in seconds",
             )
-            .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]),
+            .buckets(vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+            ]),
         )?;
 
         registry.register(Box::new(requests_total.clone()))?;
@@ -233,12 +240,14 @@ impl SecurityInterceptor {
         let request_id = metadata
             .get(METADATA_REQUEST_ID_KEY)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
         let operation = metadata
             .get(METADATA_OPERATION_KEY)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
         (request_id, operation)
     }
@@ -297,6 +306,7 @@ mod tests {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tonic::metadata::MetadataValue;
 
     type HmacSha256 = Hmac<Sha256>;
 
@@ -399,7 +409,10 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        let token = format!("{}:{}:{}:{}", "test-request-id", now, "test-operation", "invalid-signature");
+        let token = format!(
+            "{}:{}:{}:{}",
+            "test-request-id", now, "test-operation", "invalid-signature"
+        );
 
         let mut metadata = MetadataMap::new();
         metadata.insert(
@@ -446,6 +459,6 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.code(), Code::Unauthenticated);
-        assert!(err.message().contains("expired"));
+        assert!(err.message().contains("too old"));
     }
 }

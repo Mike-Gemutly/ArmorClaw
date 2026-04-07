@@ -1,0 +1,10 @@
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR_ONE_LEVEL="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR_TWO_LEVELS="$(cd "$SCRIPT_DIR/../.." && pwd)"
+echo "SCRIPT_DIR: $SCRIPT_DIR"
+echo "PROJECT_DIR (one level): $PROJECT_DIR_ONE_LEVEL"
+echo "PROJECT_DIR (two levels): $PROJECT_DIR_TWO_LEVELS"
+echo ""
+echo ".env at one level: $(test -f "$PROJECT_DIR_ONE_LEVEL/.env" && echo "FOUND" || echo "NOT FOUND")"
+echo ".env at two levels: $(test -f "$PROJECT_DIR_TWO_LEVELS/.env" && echo "FOUND" || echo "NOT FOUND")"

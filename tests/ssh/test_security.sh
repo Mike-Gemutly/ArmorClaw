@@ -4,6 +4,8 @@
 # network policies, user permissions, and SQLcipher keystore
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors
 GREEN='\033[0;32m'
@@ -13,8 +15,6 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Source environment - use absolute path to .env
-PROJECT_DIR="/home/mink/src/armorclaw-omo"
 EVIDENCE_DIR="$PROJECT_DIR/.sisyphus/evidence"
 
 if [ -f "$PROJECT_DIR/.env" ]; then

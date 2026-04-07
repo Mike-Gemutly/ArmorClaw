@@ -1,4 +1,4 @@
-// Temporarily commented out for testing rate limiting without proto generation
+pub mod proto;
 pub mod server;
 pub mod interceptor;
 pub mod middleware;

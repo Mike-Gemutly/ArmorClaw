@@ -1,5 +1,5 @@
 use crate::error::{Result, SidecarError};
-use prometheus::{Counter, IntGauge, IntGaugeVec, Registry};
+use prometheus::{Counter, IntGaugeVec, Registry};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
@@ -93,7 +93,7 @@ impl Metrics {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum CircuitBreakerState {
+pub enum CircuitBreakerState {
     Closed = 0,
     Open = 1,
     HalfOpen = 2,
@@ -141,20 +141,12 @@ impl CircuitBreaker {
         E: std::error::Error + Send + Sync + 'static,
     {
         self.metrics.circuit_breaker_calls_total.inc();
-        
+
         {
             let state = self.state.read().await;
             if *state == CircuitBreakerState::Open {
                 if let Some(last_failure) = *self.last_failure_time.lock().await {
-                    if last_failure.elapsed() >= self.recovery_timeout {
-                        drop(state);
-                        *self.state.write().await = CircuitBreakerState::HalfOpen;
-                        let op_name = Metrics::operation_name(&self.name);
-                        self.metrics.circuit_breaker_state
-                            .with_label_values(&[&op_name])
-                            .set(CircuitBreakerState::HalfOpen as i64);
-                        info!("Circuit breaker {} transitioning to Half-Open", self.name);
-                    } else {
+                    if last_failure.elapsed() < self.recovery_timeout {
                         self.metrics.circuit_breaker_errors_total.inc();
                         return Err(SidecarError::CircuitBreakerOpen(format!(
                             "Circuit breaker {} is open",
@@ -164,7 +156,9 @@ impl CircuitBreaker {
                 }
             }
         }
-        
+
+        self.check_transition_to_half_open().await;
+
         let result = operation.await;
 
         match result {
@@ -200,6 +194,23 @@ impl CircuitBreaker {
             }
         }
     }
+
+    async fn check_transition_to_half_open(&self) {
+        let state = self.state.read().await;
+        if *state == CircuitBreakerState::Open {
+            if let Some(last_failure) = *self.last_failure_time.lock().await {
+                if last_failure.elapsed() >= self.recovery_timeout {
+                    drop(state);
+                    *self.state.write().await = CircuitBreakerState::HalfOpen;
+                    let op_name = Metrics::operation_name(&self.name);
+                    self.metrics.circuit_breaker_state
+                        .with_label_values(&[&op_name])
+                        .set(CircuitBreakerState::HalfOpen as i64);
+                    info!("Circuit breaker {} transitioning to Half-Open", self.name);
+                }
+            }
+        }
+    }
     
     async fn on_failure(&self) {
         self.metrics.circuit_breaker_errors_total.inc();
@@ -225,8 +236,8 @@ impl CircuitBreaker {
         }
     }
     
-    pub fn state(&self) -> CircuitBreakerState {
-        let state = self.state.blocking_read();
+    pub async fn state(&self) -> CircuitBreakerState {
+        let state = self.state.read().await;
         *state
     }
 }
@@ -398,9 +409,22 @@ impl S3Reliability {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
-    
+
+    // Simple error type for testing circuit breaker
+    #[derive(Debug, Clone)]
+    struct TestError(String);
+
+    impl fmt::Display for TestError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for TestError {}
+
     fn create_test_metrics() -> Arc<Metrics> {
         Arc::new(Metrics::new())
     }
@@ -409,74 +433,74 @@ mod tests {
     async fn test_circuit_breaker_closed_on_success() {
         let metrics = create_test_metrics();
         let cb = CircuitBreaker::new("test".to_string(), 3, 1, metrics);
-        
-        let result: std::result::Result<(), String> = cb.call(async { Ok(()) }).await;
-        
+
+        let result: Result<()> = cb.call::<_, (), TestError>(async { Ok::<(), TestError>(()) }).await;
+
         assert!(result.is_ok());
-        assert_eq!(cb.state(), CircuitBreakerState::Closed);
+        assert_eq!(cb.state().await, CircuitBreakerState::Closed);
     }
-    
+
     #[tokio::test]
     async fn test_circuit_breaker_opens_after_threshold() {
         let metrics = create_test_metrics();
         let cb = CircuitBreaker::new("test".to_string(), 3, 1, metrics);
-        
+
         for _ in 0..3 {
-            let result: std::result::Result<(), String> = cb.call(async { Err("error".to_string()) }).await;
-            assert!(result.is_err());
+            let _: Result<()> = cb.call::<_, (), TestError>(async { Err::<(), TestError>(TestError("error".to_string())) }).await;
         }
-        
-        assert_eq!(cb.state(), CircuitBreakerState::Open);
+
+        assert_eq!(cb.state().await, CircuitBreakerState::Open);
     }
-    
+
     #[tokio::test]
     async fn test_circuit_breaker_blocks_when_open() {
         let metrics = create_test_metrics();
         let cb = CircuitBreaker::new("test".to_string(), 3, 2, metrics);
-        
+
         for _ in 0..3 {
-            let _result: std::result::Result<(), String> = cb.call(async { Err("error".to_string()) }).await;
+            let _: Result<()> = cb.call::<_, (), TestError>(async { Err::<(), TestError>(TestError("error".to_string())) }).await;
         }
-        
-        let result: std::result::Result<(), String> = cb.call(async { Ok(()) }).await;
+
+        let result: Result<()> = cb.call::<_, (), TestError>(async { Ok::<(), TestError>(()) }).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SidecarError::CircuitBreakerOpen(_)));
     }
-    
+
     #[tokio::test]
     async fn test_circuit_breaker_transitions_to_half_open() {
         let metrics = create_test_metrics();
         let cb = CircuitBreaker::new("test".to_string(), 2, 1, metrics);
-        
+
         for _ in 0..2 {
-            let _result: std::result::Result<(), String> = cb.call(async { Err("error".to_string()) }).await;
+            let _: Result<()> = cb.call::<_, (), TestError>(async { Err::<(), TestError>(TestError("error".to_string())) }).await;
         }
-        
-        assert_eq!(cb.state(), CircuitBreakerState::Open);
-        
+
+        assert_eq!(cb.state().await, CircuitBreakerState::Open);
+
         tokio::time::sleep(Duration::from_secs(1) + Duration::from_millis(100)).await;
-        
-        let _result: std::result::Result<(), String> = cb.call(async { Ok(()) }).await;
-        
-        assert_eq!(cb.state(), CircuitBreakerState::HalfOpen);
+
+        let result: Result<()> = cb.call::<_, (), TestError>(async { Ok::<(), TestError>(()) }).await;
+
+        assert!(result.is_ok(), "Call should succeed after recovery timeout");
+        assert_eq!(cb.state().await, CircuitBreakerState::Closed, "Circuit should be closed after successful call in HalfOpen state");
     }
-    
+
     #[tokio::test]
     async fn test_circuit_breaker_resets_to_closed_on_half_open_success() {
         let metrics = create_test_metrics();
         let cb = CircuitBreaker::new("test".to_string(), 2, 1, metrics);
-        
+
         for _ in 0..2 {
-            let _result: std::result::Result<(), String> = cb.call(async { Err("error".to_string()) }).await;
+            let _: Result<()> = cb.call::<_, (), TestError>(async { Err::<(), TestError>(TestError("error".to_string())) }).await;
         }
-        
+
         tokio::time::sleep(Duration::from_secs(1) + Duration::from_millis(100)).await;
-        
-        let _result: std::result::Result<(), String> = cb.call(async { Ok(()) }).await;
-        
-        assert_eq!(cb.state(), CircuitBreakerState::Closed);
+
+        let _: Result<()> = cb.call::<_, (), TestError>(async { Ok::<(), TestError>(()) }).await;
+
+        assert_eq!(cb.state().await, CircuitBreakerState::Closed);
     }
-    
+
     #[tokio::test]
     async fn test_rate_limiter_allows_within_limit() {
         let metrics = create_test_metrics();
@@ -501,7 +525,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SidecarError::RateLimitExceeded(_)));
     }
-    
+
     #[tokio::test]
     async fn test_rate_limiter_resets_after_window() {
         let metrics = create_test_metrics();
@@ -516,7 +540,7 @@ mod tests {
         let result = limiter.acquire().await;
         assert!(result.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_s3_reliability_wraps_operations() {
         let reliability = S3Reliability::new(3, 10, 10);
@@ -527,21 +551,21 @@ mod tests {
         let result = reliability
             .upload(async move {
                 call_count_clone.fetch_add(1, Ordering::SeqCst);
-                Ok::<(), String>(())
+                Ok::<(), TestError>(())
             })
             .await;
         
         assert!(result.is_ok());
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
-    
+
     #[tokio::test]
     async fn test_s3_reliability_rate_limits() {
         let reliability = S3Reliability::new(3, 10, 2);
         
         let results = futures::future::join_all(
             (0..3)
-                .map(|_| reliability.upload(async { Ok::<(), String>(()) }))
+                .map(|_| reliability.upload(async { Ok::<(), TestError>(()) }))
         ).await;
         
         assert_eq!(results.len(), 3);
