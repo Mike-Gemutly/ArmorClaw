@@ -3,7 +3,9 @@
 //! TDD tests for placeholder parsing functionality.
 //! Tests cover all examples from Wave 0 and error scenarios.
 
-use rust_vault::blindfill::placeholder::{parse_placeholders, PlaceholderParseError};
+use rust_vault::blindfill::placeholder::{
+    parse_placeholders, replace_placeholders, Placeholder, PlaceholderParseError,
+};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -11,12 +13,21 @@ use std::collections::HashMap;
 // ============================================================================
 
 #[test]
-fn test_parse_single_payment_card_number() {
-    let input = "{{secret:payment.card_number}}";
+fn test_replace_placeholders_simple() {
+    let input = "{{VAULT:payment.card_number:a1b2c3d4}}";
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "payment.card_number:a1b2c3d4".to_string(),
+        "4242424242424242".to_string(),
+    );
+
     let result = parse_placeholders(input);
     assert!(result.is_ok());
+
     let placeholders = result.unwrap();
-    assert_eq!(placeholders, vec!["payment.card_number"]);
+    let output = replace_placeholders(input, &placeholders, &secrets).unwrap();
+
+    assert_eq!(output, "4242424242424242");
 }
 
 #[test]
@@ -114,21 +125,41 @@ fn test_parse_bank_routing_number() {
 // ============================================================================
 
 #[test]
-fn test_parse_multiple_placeholders() {
-    let input = "{{secret:payment.card_number}} {{secret:payment.cvv}}";
+fn test_replace_placeholders_multiple() {
+    let input = "{{VAULT:payment.card_number:a1b2c3d4}} {{VAULT:payment.cvv:e5f6g7h8}}";
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "payment.card_number:a1b2c3d4".to_string(),
+        "4242424242424242".to_string(),
+    );
+    secrets.insert("payment.cvv:e5f6g7h8".to_string(), "123".to_string());
+
     let result = parse_placeholders(input);
     assert!(result.is_ok());
+
     let placeholders = result.unwrap();
-    assert_eq!(placeholders, vec!["payment.card_number", "payment.cvv"]);
+    let output = replace_placeholders(input, &placeholders, &secrets).unwrap();
+
+    assert_eq!(output, "4242424242424242 123");
 }
 
 #[test]
-fn test_parse_multiple_placeholders_with_text() {
-    let input = "Card: {{secret:payment.card_number}}, CVV: {{secret:payment.cvv}}";
+fn test_replace_placeholders_with_text() {
+    let input = "Card: {{VAULT:payment.card_number:a1b2c3d4}}, CVV: {{VAULT:payment.cvv:e5f6g7h8}}";
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "payment.card_number:a1b2c3d4".to_string(),
+        "4242424242424242".to_string(),
+    );
+    secrets.insert("payment.cvv:e5f6g7h8".to_string(), "123".to_string());
+
     let result = parse_placeholders(input);
     assert!(result.is_ok());
+
     let placeholders = result.unwrap();
-    assert_eq!(placeholders, vec!["payment.card_number", "payment.cvv"]);
+    let output = replace_placeholders(input, &placeholders, &secrets).unwrap();
+
+    assert_eq!(output, "Card: 4242424242424242, CVV: 123");
 }
 
 #[test]
@@ -370,9 +401,12 @@ fn test_empty_string() {
 
 #[test]
 fn test_replace_placeholders_simple() {
-    let input = "{{secret:payment.card_number}}";
+    let input = "{{VAULT:payment.card_number:a1b2c3d4}}";
     let mut secrets = HashMap::new();
-    secrets.insert("payment.card_number".to_string(), "4242424242424242".to_string());
+    secrets.insert(
+        "payment.card_number:a1b2c3d4".to_string(),
+        "4242424242424242".to_string(),
+    );
 
     let result = parse_placeholders(input);
     assert!(result.is_ok());
@@ -385,10 +419,13 @@ fn test_replace_placeholders_simple() {
 
 #[test]
 fn test_replace_placeholders_multiple() {
-    let input = "{{secret:payment.card_number}} {{secret:payment.cvv}}";
+    let input = "{{VAULT:payment.card_number:a1b2c3d4}} {{VAULT:payment.cvv:e5f6g7h8}}";
     let mut secrets = HashMap::new();
-    secrets.insert("payment.card_number".to_string(), "4242424242424242".to_string());
-    secrets.insert("payment.cvv".to_string(), "123".to_string());
+    secrets.insert(
+        "payment.card_number:a1b2c3d4".to_string(),
+        "4242424242424242".to_string(),
+    );
+    secrets.insert("payment.cvv:e5f6g7h8".to_string(), "123".to_string());
 
     let result = parse_placeholders(input);
     assert!(result.is_ok());
@@ -401,7 +438,7 @@ fn test_replace_placeholders_multiple() {
 
 #[test]
 fn test_replace_placeholder_missing_secret() {
-    let input = "{{secret:payment.card_number}}";
+    let input = "{{VAULT:payment.card_number:a1b2c3d4}}";
     let secrets = HashMap::new();
 
     let result = parse_placeholders(input);
@@ -413,7 +450,7 @@ fn test_replace_placeholder_missing_secret() {
     assert!(output.is_err());
     match output {
         Err(PlaceholderParseError::SecretNotFound(secret)) => {
-            assert_eq!(secret, "payment.card_number");
+            assert_eq!(secret, "payment.card_number:a1b2c3d4");
         }
         _ => panic!("Expected SecretNotFound error"),
     }
@@ -421,10 +458,13 @@ fn test_replace_placeholder_missing_secret() {
 
 #[test]
 fn test_replace_placeholders_with_text() {
-    let input = "Card: {{secret:payment.card_number}}, CVV: {{secret:payment.cvv}}";
+    let input = "Card: {{VAULT:payment.card_number:a1b2c3d4}}, CVV: {{VAULT:payment.cvv:e5f6g7h8}}";
     let mut secrets = HashMap::new();
-    secrets.insert("payment.card_number".to_string(), "4242424242424242".to_string());
-    secrets.insert("payment.cvv".to_string(), "123".to_string());
+    secrets.insert(
+        "payment.card_number:a1b2c3d4".to_string(),
+        "4242424242424242".to_string(),
+    );
+    secrets.insert("payment.cvv:e5f6g7h8".to_string(), "123".to_string());
 
     let result = parse_placeholders(input);
     assert!(result.is_ok());
@@ -433,22 +473,4 @@ fn test_replace_placeholders_with_text() {
     let output = replace_placeholders(input, &placeholders, &secrets).unwrap();
 
     assert_eq!(output, "Card: 4242424242424242, CVV: 123");
-}
-
-// Helper function for replacement tests
-fn replace_placeholders(
-    input: &str,
-    placeholders: &[String],
-    secrets: &HashMap<String, String>,
-) -> Result<String, PlaceholderParseError> {
-    let mut output = input.to_string();
-    for placeholder in placeholders {
-        if let Some(secret) = secrets.get(placeholder) {
-            let placeholder_str = format!("{{{{secret:{}}}}}", placeholder);
-            output = output.replace(&placeholder_str, secret);
-        } else {
-            return Err(PlaceholderParseError::SecretNotFound(placeholder.clone()));
-        }
-    }
-    Ok(output)
 }

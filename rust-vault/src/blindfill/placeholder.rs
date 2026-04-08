@@ -108,14 +108,18 @@ pub fn parse_placeholders(input: &str) -> Result<Vec<Placeholder>, PlaceholderPa
                 // Check for VAULT: prefix (case-sensitive for security)
                 let prefix: String = chars.by_ref().take(6).collect();
                 if prefix != "VAULT:" {
-                    if prefix.starts_with(' ') || prefix.starts_with('\t') || prefix.starts_with('\n') {
+                    if prefix.starts_with(' ')
+                        || prefix.starts_with('\t')
+                        || prefix.starts_with('\n')
+                    {
                         return Err(PlaceholderParseError::InvalidFormat(
-                            "whitespace not allowed in placeholder".to_string()
+                            "whitespace not allowed in placeholder".to_string(),
                         ));
                     }
-                    return Err(PlaceholderParseError::InvalidFormat(
-                        format!("missing 'VAULT:' prefix at position {} (found: {})", start_pos, prefix)
-                    ));
+                    return Err(PlaceholderParseError::InvalidFormat(format!(
+                        "missing 'VAULT:' prefix at position {} (found: {})",
+                        start_pos, prefix
+                    )));
                 }
                 pos += 6;
 
@@ -142,17 +146,19 @@ pub fn parse_placeholders(input: &str) -> Result<Vec<Placeholder>, PlaceholderPa
                 }
 
                 if !found_closing {
-                    return Err(PlaceholderParseError::InvalidFormat(
-                        format!("missing closing delimiter '}}' at position {}", start_pos)
-                    ));
+                    return Err(PlaceholderParseError::InvalidFormat(format!(
+                        "missing closing delimiter '}}' at position {}",
+                        start_pos
+                    )));
                 }
 
                 // Split content into field:hash
                 let parts: Vec<&str> = content.splitn(2, ':').collect();
                 if parts.len() != 2 {
-                    return Err(PlaceholderParseError::InvalidFormat(
-                        format!("placeholder must be in format {{VAULT:field:hash}}, found: {{VAULT:{}}}", content)
-                    ));
+                    return Err(PlaceholderParseError::InvalidFormat(format!(
+                        "placeholder must be in format {{VAULT:field:hash}}, found: {{VAULT:{}}}",
+                        content
+                    )));
                 }
 
                 let field = parts[0].trim();
@@ -171,44 +177,56 @@ pub fn parse_placeholders(input: &str) -> Result<Vec<Placeholder>, PlaceholderPa
                 // Validate field doesn't contain whitespace
                 if field.contains(' ') || field.contains('\t') || field.contains('\n') {
                     return Err(PlaceholderParseError::InvalidFormat(
-                        "whitespace not allowed in field name".to_string()
+                        "whitespace not allowed in field name".to_string(),
                     ));
                 }
 
                 // Validate field doesn't contain nested placeholders
                 if field.contains("{{") || field.contains("}}") {
                     return Err(PlaceholderParseError::NestedPlaceholder(
-                        "nested placeholders not allowed".to_string()
+                        "nested placeholders not allowed".to_string(),
                     ));
                 }
 
                 // Validate hash is lowercase hexadecimal only
-                if !hash.chars().all(|c| c.is_ascii_hexdigit() && c.is_ascii_lowercase()) {
-                    return Err(PlaceholderParseError::InvalidHash(
-                        format!("hash must be lowercase hexadecimal, found: {}", hash)
-                    ));
+                if !hash
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && c.is_ascii_lowercase())
+                {
+                    return Err(PlaceholderParseError::InvalidHash(format!(
+                        "hash must be lowercase hexadecimal, found: {}",
+                        hash
+                    )));
                 }
 
                 // Validate hash doesn't contain nested placeholders
                 if hash.contains("{{") || hash.contains("}}") {
                     return Err(PlaceholderParseError::NestedPlaceholder(
-                        "nested placeholders not allowed".to_string()
+                        "nested placeholders not allowed".to_string(),
                     ));
                 }
 
                 // Validate against conditionals and loops
                 let lower_field = field.to_lowercase();
-                if lower_field == "if" || lower_field == "else" || lower_field == "endif"
-                    || lower_field.starts_with("if ") || lower_field.starts_with("else ") || lower_field.starts_with("endif ") {
+                if lower_field == "if"
+                    || lower_field == "else"
+                    || lower_field == "endif"
+                    || lower_field.starts_with("if ")
+                    || lower_field.starts_with("else ")
+                    || lower_field.starts_with("endif ")
+                {
                     return Err(PlaceholderParseError::ConditionalNotSupported(
-                        "conditionals not supported".to_string()
+                        "conditionals not supported".to_string(),
                     ));
                 }
 
-                if lower_field == "for" || lower_field == "endfor"
-                    || lower_field.starts_with("for ") || lower_field.starts_with("endfor ") {
+                if lower_field == "for"
+                    || lower_field == "endfor"
+                    || lower_field.starts_with("for ")
+                    || lower_field.starts_with("endfor ")
+                {
                     return Err(PlaceholderParseError::LoopNotSupported(
-                        "loops not supported".to_string()
+                        "loops not supported".to_string(),
                     ));
                 }
 
@@ -227,12 +245,33 @@ pub fn parse_placeholders(input: &str) -> Result<Vec<Placeholder>, PlaceholderPa
 
     if input.contains("}}") && !input.contains("{{") {
         return Err(PlaceholderParseError::InvalidFormat(
-            "missing opening delimiter".to_string()
+            "missing opening delimiter".to_string(),
         ));
     }
 
     Ok(placeholders)
 }
+
+/// Replaces placeholders in input text with their corresponding secret values.
+pub fn replace_placeholders(
+    input: &str,
+    placeholders: &[Placeholder],
+    secrets: &HashMap<String, String>,
+) -> Result<String, PlaceholderParseError> {
+    let mut result = input.to_string();
+    for placeholder in placeholders {
+        let key = format!("{}:{}", placeholder.field, placeholder.hash);
+        match secrets.get(&key) {
+            Some(value) => {
+                let pattern = format!("{{{{VAULT:{}:{}}}}}", placeholder.field, placeholder.hash);
+                result = result.replace(&pattern, value);
+            }
+            None => return Err(PlaceholderParseError::SecretNotFound(key)),
+        }
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +459,9 @@ mod tests {
             field: "payment.card_number".to_string(),
             hash: "a1b2c3d4e5f6".to_string(),
         };
-        assert_eq!(placeholder.to_string(), "{{VAULT:payment.card_number:a1b2c3d4e5f6}}");
+        assert_eq!(
+            placeholder.to_string(),
+            "{{VAULT:payment.card_number:a1b2c3d4e5f6}}"
+        );
     }
 }

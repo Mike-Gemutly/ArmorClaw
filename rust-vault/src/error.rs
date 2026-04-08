@@ -49,16 +49,19 @@ impl From<tonic::Status> for VaultError {
 impl From<PlaceholderParseError> for VaultError {
     fn from(err: PlaceholderParseError) -> Self {
         match err {
-            PlaceholderParseError::InvalidFormat(msg) => {
+            PlaceholderParseError::InvalidFormat(msg) => VaultError::InvalidPlaceholderFormat(msg),
+            PlaceholderParseError::SecretNotFound(secret) => VaultError::SecretNotFound(secret),
+            PlaceholderParseError::NestedPlaceholder(msg)
+            | PlaceholderParseError::ConditionalNotSupported(msg)
+            | PlaceholderParseError::LoopNotSupported(msg) => {
                 VaultError::InvalidPlaceholderFormat(msg)
             }
-            PlaceholderParseError::SecretNotFound(secret) => {
-                VaultError::SecretNotFound(secret)
+            PlaceholderParseError::InvalidHash(msg) => VaultError::InvalidPlaceholderFormat(msg),
+            PlaceholderParseError::EmptyFieldName => {
+                VaultError::InvalidPlaceholderFormat("empty field name".to_string())
             }
-            PlaceholderParseError::NestedPlaceholder(msg) |
-            PlaceholderParseError::ConditionalNotSupported(msg) |
-            PlaceholderParseError::LoopNotSupported(msg) => {
-                VaultError::InvalidPlaceholderFormat(msg)
+            PlaceholderParseError::EmptyHash => {
+                VaultError::InvalidPlaceholderFormat("empty hash".to_string())
             }
         }
     }
