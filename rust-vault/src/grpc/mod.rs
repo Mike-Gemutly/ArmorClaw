@@ -1,3 +1,4 @@
+pub mod governance;
 pub mod server;
 pub mod middleware;
 

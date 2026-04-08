@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package vault.governance.v1;
+
+option go_package = "github.com/armorclaw/bridge/pkg/vault/proto;governance";
+
+// Governance provides the gRPC control plane for ephemeral token lifecycle
+// and vault event streaming.
+//
+// This service manages short-lived tokens that grant scoped access to secrets
+// without exposing plaintext values to callers. Tokens are consumed exactly
+// once and automatically expire after their TTL.
+//
+// Token lifecycle:
+//   1. IssueEphemeralToken — vault stores plaintext, returns token_id
+//   2. ConsumeEphemeralToken — caller redeems token_id, receives plaintext
+//   3. Token is destroyed after successful consumption or TTL expiry
+//
+// Security:
+//   - Tokens are single-use (consumed on first redeem)
+//   - All tokens have a bounded TTL (ttl_ms)
+//   - ZeroizeToolSecrets provides emergency cleanup capability
+//   - All operations are auditable via SubscribeEvents
+service Governance {
+    // Issue an ephemeral token that wraps a plaintext secret.
+    //
+    // The vault stores the plaintext in memory (never persisted to disk)
+    // and returns a token_id that can be redeemed exactly once within the
+    // specified TTL window.
+    //
+    // Errors:
+    //   - INVALID_ARGUMENT: Missing required fields (token_id, plaintext)
+    //   - RESOURCE_EXHAUSTED: Too many active tokens for this session
+    //   - INTERNAL: Vault memory allocation failure
+    rpc IssueEphemeralToken(IssueTokenRequest) returns (IssueTokenResponse);
+
+    // Consume (redeem) an ephemeral token to retrieve the plaintext secret.
+    //
+    // The token is destroyed after successful consumption. A second
+    // consumption attempt for the same token_id will fail.
+    //
+    // Errors:
+    //   - NOT_FOUND: token_id does not exist or was already consumed
+    //   - DEADLINE_EXCEEDED: Token TTL has expired
+    //   - PERMISSION_DENIED: session_id does not match the issuing session
+    //   - INVALID_ARGUMENT: Missing required fields (token_id, session_id)
+    rpc ConsumeEphemeralToken(ConsumeTokenRequest) returns (ConsumeTokenResponse);
+
+    // Zeroize (securely erase) all secrets held for a given tool/session.
+    //
+    // This is an emergency cleanup operation. All in-memory secrets
+    // associated with the tool_name and session_id are overwritten with
+    // zeros and then freed. The operation is irreversible.
+    //
+    // Errors:
+    //   - NOT_FOUND: No secrets found for the given tool_name + session_id
+    //   - INVALID_ARGUMENT: Missing required fields (tool_name, session_id)
+    rpc ZeroizeToolSecrets(ZeroizeRequest) returns (ZeroizeResponse);
+
+    // Subscribe to a stream of vault events.
+    //
+    // Returns a server-streaming response of VaultEventStream messages.
+    // Events include token issuance, consumption, expiry, and zeroization.
+    // The optional session_id field filters events to a specific session.
+    //
+    // Errors:
+    //   - INVALID_ARGUMENT: Malformed subscription request
+    //   - UNAVAILABLE: Vault event subsystem is not initialized
+    rpc SubscribeEvents(SubscribeRequest) returns (stream VaultEventStream);
+}
+
+// Request to issue a new ephemeral token.
+message IssueTokenRequest {
+    string token_id = 1;     // Unique identifier for this token (caller-generated)
+    string plaintext = 2;    // The secret value to wrap (never logged)
+    string session_id = 3;   // Session that owns this token
+    string tool_name = 4;    // Tool that requested this token
+    int64 ttl_ms = 5;        // Time-to-live in milliseconds (e.g. 1800000 = 30 min)
+}
+
+// Response from token issuance.
+message IssueTokenResponse {
+    bool success = 1;        // true if the token was stored successfully
+}
+
+// Request to consume (redeem) an ephemeral token.
+message ConsumeTokenRequest {
+    string token_id = 1;     // The token_id to redeem
+    string session_id = 2;   // Session that owns this token (must match issuer)
+    string tool_name = 3;    // Tool consuming this token
+}
+
+// Response from token consumption containing the unwrapped plaintext.
+message ConsumeTokenResponse {
+    string plaintext = 1;    // The decrypted secret value
+}
+
+// Request to zeroize all secrets for a tool/session pair.
+message ZeroizeRequest {
+    string tool_name = 1;    // Tool whose secrets should be destroyed
+    string session_id = 2;   // Session whose secrets should be destroyed
+}
+
+// Response from zeroization indicating how many secrets were destroyed.
+message ZeroizeResponse {
+    int32 secrets_destroyed = 1;  // Count of secrets securely erased
+}
+
+// Request to subscribe to vault events.
+message SubscribeRequest {
+    string session_id = 1;   // Optional: filter events to this session only
+}
+
+// A single event emitted by the vault event stream.
+message VaultEventStream {
+    string event_type = 1;   // Event kind: "issued", "consumed", "expired", "zeroized"
+    string session_id = 2;   // Session that triggered the event
+    int64 timestamp = 3;     // Event timestamp (Unix milliseconds)
+    string payload = 4;      // Structured event payload (JSON-encoded)
+}

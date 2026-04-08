@@ -1,7 +1,7 @@
 # ArmorClaw v1 Test Suite
 # Tests verify containment guarantees and hardening posture
 
-.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets test-container-setup
+.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets test-container-setup generate-proto
 
 # Decrypt test files with secrets before running tests
 decrypt-test-secrets:
@@ -104,6 +104,17 @@ clean:
 	@docker stop test-sec 2>/dev/null || true
 	@docker rm test-sec 2>/dev/null || true
 	@echo "✅ Clean complete"
+
+# Generate Go protobuf stubs from rust-vault proto definitions
+generate-proto:
+	@echo "Generating Go protobuf stubs..."
+	@mkdir -p bridge/pkg/vault/proto
+	PATH="$(HOME)/.local/bin:$(HOME)/go/bin:$$PATH" protoc \
+		--go_out=bridge/pkg/vault/proto --go_opt=paths=source_relative \
+		--go-grpc_out=bridge/pkg/vault/proto --go-grpc_opt=paths=source_relative \
+		-I rust-vault/proto \
+		rust-vault/proto/governance.proto
+	@echo "✅ Go stubs generated in bridge/pkg/vault/proto/"
 
 # Quick smoke test (hardening only, fastest feedback)
 smoke: test-hardening
