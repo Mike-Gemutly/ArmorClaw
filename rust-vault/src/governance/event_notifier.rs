@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tokio::sync::broadcast;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream;
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +107,7 @@ impl EventNotifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_stream::StreamExt;
 
     #[tokio::test]
     async fn slow_consumer_detection_returns_events_missed() {
