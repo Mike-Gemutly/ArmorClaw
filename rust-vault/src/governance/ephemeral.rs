@@ -1,8 +1,93 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use thiserror::Error;
 use tokio::time::{Duration, Instant};
 use zeroize::Zeroizing;
+
+use prometheus::{IntCounter, IntCounterVec, IntGauge, Opts};
+
+// ── Prometheus metrics ─────────────────────────────────────────────────────
+
+fn blindfill_issued() -> &'static IntCounterVec {
+    static M: OnceLock<IntCounterVec> = OnceLock::new();
+    M.get_or_init(|| {
+        let counter = IntCounterVec::new(
+            Opts::new("armorclaw_vault_blindfill_issued_total", "Total blindfill tokens issued"),
+            &["tool"],
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(counter.clone()));
+        counter
+    })
+}
+
+fn blindfill_consumed() -> &'static IntCounterVec {
+    static M: OnceLock<IntCounterVec> = OnceLock::new();
+    M.get_or_init(|| {
+        let counter = IntCounterVec::new(
+            Opts::new("armorclaw_vault_blindfill_consumed_total", "Total blindfill tokens consumed"),
+            &["tool"],
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(counter.clone()));
+        counter
+    })
+}
+
+fn blindfill_consume_failed() -> &'static IntCounterVec {
+    static M: OnceLock<IntCounterVec> = OnceLock::new();
+    M.get_or_init(|| {
+        let counter = IntCounterVec::new(
+            Opts::new(
+                "armorclaw_vault_blindfill_consume_failed_total",
+                "Total failed blindfill token consumptions",
+            ),
+            &["tool", "error"],
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(counter.clone()));
+        counter
+    })
+}
+
+fn blindfill_expired() -> &'static IntCounter {
+    static M: OnceLock<IntCounter> = OnceLock::new();
+    M.get_or_init(|| {
+        let counter = IntCounter::new(
+            "armorclaw_vault_blindfill_expired_total",
+            "Total blindfill tokens expired during cleanup",
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(counter.clone()));
+        counter
+    })
+}
+
+fn blindfill_zeroized() -> &'static IntCounter {
+    static M: OnceLock<IntCounter> = OnceLock::new();
+    M.get_or_init(|| {
+        let counter = IntCounter::new(
+            "armorclaw_vault_blindfill_zeroized_total",
+            "Total blindfill tokens proactively zeroized",
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(counter.clone()));
+        counter
+    })
+}
+
+fn blindfill_active_tokens() -> &'static IntGauge {
+    static M: OnceLock<IntGauge> = OnceLock::new();
+    M.get_or_init(|| {
+        let gauge = IntGauge::new(
+            "armorclaw_vault_blindfill_active_tokens",
+            "Current number of active blindfill tokens in the store",
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(gauge.clone()));
+        gauge
+    })
+}
 
 /// Errors for ephemeral token operations.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -57,7 +142,13 @@ impl EphemeralTokenStore {
                 loop {
                     interval.tick().await;
                     if let Ok(mut map) = tokens_clone.write() {
+                        let before = map.len();
                         map.retain(|_, entry| entry.created_at.elapsed() <= entry.ttl);
+                        let expired = before - map.len();
+                        if expired > 0 {
+                            blindfill_expired().inc_by(expired as u64);
+                            blindfill_active_tokens().set(map.len() as i64);
+                        }
                     }
                 }
             });
@@ -92,10 +183,19 @@ impl EphemeralTokenStore {
             created_at: Instant::now(),
             ttl,
         };
-        self.tokens
-            .write()
-            .map_err(|_| TokenError::TokenNotFound)?
-            .insert(key, entry);
+        tracing::info!(
+            token_id = %token_id,
+            tool = %tool_name,
+            session = %session_id,
+            ttl_ms = ttl.as_millis(),
+            "Ephemeral token issued"
+        );
+        {
+            let mut map = self.tokens.write().map_err(|_| TokenError::TokenNotFound)?;
+            map.insert(key, entry);
+            blindfill_active_tokens().set(map.len() as i64);
+        }
+        blindfill_issued().with_label_values(&[tool_name]).inc();
         Ok(())
     }
 
@@ -109,37 +209,57 @@ impl EphemeralTokenStore {
         session_id: &str,
         tool_name: &str,
     ) -> Result<String, TokenError> {
-        let mut map = self
-            .tokens
-            .write()
-            .map_err(|_| TokenError::TokenNotFound)?;
+        let mut map = match self.tokens.write() {
+            Ok(guard) => guard,
+            Err(_) => {
+                blindfill_consume_failed()
+                    .with_label_values(&[tool_name, "lock_error"])
+                    .inc();
+                return Err(TokenError::TokenNotFound);
+            }
+        };
 
-        // Linear scan by token_id — acceptable: token count is small
         let found_key = map
             .keys()
             .find(|k| k.token_id == token_id)
             .cloned();
 
         let key = match found_key {
-            None => return Err(TokenError::TokenNotFound),
+            None => {
+                blindfill_consume_failed()
+                    .with_label_values(&[tool_name, "token_not_found"])
+                    .inc();
+                return Err(TokenError::TokenNotFound);
+            }
             Some(k) => k,
         };
 
         if key.session_id != session_id {
+            blindfill_consume_failed()
+                .with_label_values(&[tool_name, "unauthorized"])
+                .inc();
             return Err(TokenError::Unauthorized);
         }
 
         if key.tool_name != tool_name {
+            blindfill_consume_failed()
+                .with_label_values(&[tool_name, "wrong_tool"])
+                .inc();
             return Err(TokenError::WrongTool);
         }
 
         let entry = map.get(&key).expect("key exists (just found it)");
         if entry.created_at.elapsed() > entry.ttl {
+            blindfill_consume_failed()
+                .with_label_values(&[tool_name, "expired"])
+                .inc();
             return Err(TokenError::Expired);
         }
 
-        // entry removal drops Zeroizing<String> → secure memory wipe
         let entry = map.remove(&key).expect("key exists (just found it)");
+        tracing::info!(token_id = %token_id, tool = %tool_name, "Ephemeral token consumed");
+        blindfill_consumed().with_label_values(&[tool_name]).inc();
+        blindfill_active_tokens().set(map.len() as i64);
         Ok(entry.plaintext.to_string())
     }
 
@@ -153,7 +273,13 @@ impl EphemeralTokenStore {
             map.retain(|key, _| {
                 !(key.tool_name == tool_name && key.session_id == session_id)
             });
-            (before - map.len()) as u32
+            let count = (before - map.len()) as u32;
+            if count > 0 {
+                blindfill_zeroized().inc_by(count as u64);
+                blindfill_active_tokens().set(map.len() as i64);
+            }
+            tracing::info!(tool = %tool_name, session = %session_id, count = count, "Tool secrets zeroized");
+            count
         } else {
             0
         }

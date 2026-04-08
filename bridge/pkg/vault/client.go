@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
@@ -21,6 +22,35 @@ import (
 
 // DefaultVaultSocketPath is the default Unix domain socket path for the vault keystore.
 const DefaultVaultSocketPath = "/run/armorclaw/keystore.sock"
+
+var (
+	vaultIssueDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "armorclaw_vault_grpc_issue_duration_seconds",
+		Help:    "Duration of IssueBlindFillToken gRPC calls",
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	})
+	vaultConsumeDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "armorclaw_vault_grpc_consume_duration_seconds",
+		Help:    "Duration of ConsumeTokenForSidecar gRPC calls",
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	})
+	vaultZeroizeDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "armorclaw_vault_grpc_zeroize_duration_seconds",
+		Help:    "Duration of ZeroizeToolSecrets gRPC calls",
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	})
+	vaultErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "armorclaw_vault_grpc_errors_total",
+		Help: "Total gRPC errors from vault governance client",
+	}, []string{"method", "code"})
+)
+
+func init() {
+	prometheus.MustRegister(vaultIssueDuration)
+	prometheus.MustRegister(vaultConsumeDuration)
+	prometheus.MustRegister(vaultZeroizeDuration)
+	prometheus.MustRegister(vaultErrorsTotal)
+}
 
 // VaultGovernanceClient wraps the generated Governance gRPC client with
 // connection lifecycle management and high-level convenience methods.
@@ -72,6 +102,7 @@ func NewGovernanceClient(socketPath string) (*VaultGovernanceClient, error) {
 // IssueBlindFillToken generates a UUID token_id and delegates to IssueEphemeralToken.
 // Returns the token_id on success so the caller can later pass it to ConsumeTokenForSidecar.
 func (c *VaultGovernanceClient) IssueBlindFillToken(ctx context.Context, sessionID, toolName, secret string, ttl time.Duration) (string, error) {
+	start := time.Now()
 	tokenID := uuid.New().String()
 
 	ttlMs := ttl.Milliseconds()
@@ -82,7 +113,9 @@ func (c *VaultGovernanceClient) IssueBlindFillToken(ctx context.Context, session
 		ToolName:  toolName,
 		TtlMs:     ttlMs,
 	})
+	vaultIssueDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
+		vaultErrorsTotal.WithLabelValues("IssueBlindFillToken", grpc.Code(err).String()).Inc()
 		return "", fmt.Errorf("issue blind fill token: %w", err)
 	}
 
@@ -95,12 +128,15 @@ func (c *VaultGovernanceClient) IssueBlindFillToken(ctx context.Context, session
 //   - PERMISSION_DENIED → wrapped "session does not own this token"
 //   - DEADLINE_EXCEEDED → wrapped "token TTL expired"
 func (c *VaultGovernanceClient) ConsumeTokenForSidecar(ctx context.Context, tokenID, sessionID, toolName string) (string, error) {
+	start := time.Now()
 	resp, err := c.client.ConsumeEphemeralToken(ctx, &pb.ConsumeTokenRequest{
 		TokenId:   tokenID,
 		SessionId: sessionID,
 		ToolName:  toolName,
 	})
+	vaultConsumeDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
+		vaultErrorsTotal.WithLabelValues("ConsumeTokenForSidecar", grpc.Code(err).String()).Inc()
 		return "", fmt.Errorf("consume token: %w", err)
 	}
 
@@ -110,11 +146,14 @@ func (c *VaultGovernanceClient) ConsumeTokenForSidecar(ctx context.Context, toke
 // ZeroizeToolSecrets securely erases all in-memory secrets for the given tool/session pair.
 // Returns the number of secrets destroyed.
 func (c *VaultGovernanceClient) ZeroizeToolSecrets(ctx context.Context, toolName, sessionID string) (uint32, error) {
+	start := time.Now()
 	resp, err := c.client.ZeroizeToolSecrets(ctx, &pb.ZeroizeRequest{
 		ToolName:  toolName,
 		SessionId: sessionID,
 	})
+	vaultZeroizeDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
+		vaultErrorsTotal.WithLabelValues("ZeroizeToolSecrets", grpc.Code(err).String()).Inc()
 		return 0, fmt.Errorf("zeroize tool secrets: %w", err)
 	}
 

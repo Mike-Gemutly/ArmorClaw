@@ -2,11 +2,51 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 
+use prometheus::{IntCounterVec, IntGauge, Opts};
 use tokio::sync::broadcast;
 use tokio_stream::Stream;
+
+fn events_emitted() -> &'static IntCounterVec {
+    static M: OnceLock<IntCounterVec> = OnceLock::new();
+    M.get_or_init(|| {
+        let counter = IntCounterVec::new(
+            Opts::new("armorclaw_vault_events_emitted_total", "Total vault events emitted"),
+            &["type"],
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(counter.clone()));
+        counter
+    })
+}
+
+fn events_missed_total() -> &'static IntGauge {
+    static M: OnceLock<IntGauge> = OnceLock::new();
+    M.get_or_init(|| {
+        let gauge = IntGauge::new(
+            "armorclaw_vault_events_missed_total",
+            "Number of events missed by slow consumers (last observed lag)",
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(gauge.clone()));
+        gauge
+    })
+}
+
+fn events_subscribers_gauge() -> &'static IntGauge {
+    static M: OnceLock<IntGauge> = OnceLock::new();
+    M.get_or_init(|| {
+        let gauge = IntGauge::new(
+            "armorclaw_vault_events_subscribers",
+            "Current number of active event subscribers",
+        )
+        .expect("metric creation must succeed");
+        let _ = prometheus::register(Box::new(gauge.clone()));
+        gauge
+    })
+}
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -64,11 +104,20 @@ impl Stream for SecureEventStream {
         match std::pin::pin!(recv).poll(cx) {
             Poll::Ready(Ok(event)) => Poll::Ready(Some(Ok(event))),
             Poll::Ready(Err(broadcast::error::RecvError::Lagged(n))) => {
-                Poll::Ready(Some(Err(StreamError::EventsMissed(n as usize))))
+                let missed_count = n as usize;
+                events_missed_total().set(n as i64);
+                tracing::warn!(missed = missed_count, "Slow consumer: events missed");
+                Poll::Ready(Some(Err(StreamError::EventsMissed(missed_count))))
             }
             Poll::Ready(Err(broadcast::error::RecvError::Closed)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+impl Drop for SecureEventStream {
+    fn drop(&mut self) {
+        events_subscribers_gauge().dec();
     }
 }
 
@@ -90,12 +139,19 @@ impl EventNotifier {
 
     pub fn subscribe(&self) -> SecureEventStream {
         self.subscribers.fetch_add(1, Ordering::Relaxed);
+        events_subscribers_gauge().inc();
         SecureEventStream {
             rx: self.sender.subscribe(),
         }
     }
 
     pub fn notify(&self, event: VaultEvent) {
+        events_emitted().with_label_values(&[&event.event_type]).inc();
+        tracing::debug!(
+            event_type = %event.event_type,
+            session = %event.session_id,
+            "Vault event emitted"
+        );
         let _ = self.sender.send(event);
     }
 

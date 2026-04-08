@@ -89,6 +89,7 @@ impl Governance for VaultGovernanceService {
         &self,
         request: Request<IssueTokenRequest>,
     ) -> Result<Response<IssueTokenResponse>, Status> {
+        tracing::debug!(rpc = "IssueEphemeralToken", "Governance RPC called");
         let req = request.into_inner();
 
         let ttl = tokio::time::Duration::from_millis(req.ttl_ms as u64);
@@ -120,7 +121,10 @@ impl Governance for VaultGovernanceService {
         let plaintext = self
             .token_store
             .consume_token(&req.token_id, &req.session_id, &req.tool_name)
-            .map_err(token_error_to_status)?;
+            .map_err(|err| {
+                tracing::warn!(token_id = %req.token_id, error = %err, "Token consume failed");
+                token_error_to_status(err)
+            })?;
 
         let timestamp = Self::now_timestamp_ms();
         self.event_notifier.notify(VaultEvent::new(
