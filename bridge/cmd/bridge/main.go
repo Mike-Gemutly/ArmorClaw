@@ -45,6 +45,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
+	"github.com/armorclaw/bridge/pkg/vault"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -2236,6 +2237,27 @@ func runBridgeServer(cliCfg cliConfig) {
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Initialize vault governance client when v6_microkernel is enabled
+	var vaultClient *vault.VaultGovernanceClient
+	var vaultEventBridge *vault.VaultEventBridge
+
+	if cfg.Vault.V6Microkernel {
+		log.Println("[VAULT] v6 microkernel enabled, connecting to vault governance...")
+		var err error
+		vaultClient, err = vault.NewGovernanceClient(cfg.Vault.SocketPath)
+		if err != nil {
+			log.Printf("[VAULT] Failed to connect to vault governance: %v (degrading gracefully)", err)
+		} else {
+			if eventBus != nil {
+				vaultEventBridge = vault.NewVaultEventBridge(vaultClient, eventBus)
+				go vaultEventBridge.StartSyncLoop(shutdownCtx)
+				log.Println("[VAULT] Vault governance client connected, event bridge started")
+			} else {
+				log.Println("[VAULT] Vault governance client connected (event bus unavailable, event bridge skipped)")
+			}
+		}
+	}
+
 	// Initialize high-throughput event bus for Matrix event streaming
 	var matrixBus *events.MatrixEventBus
 	var matrixAdapter *adapter.MatrixAdapter
@@ -2712,6 +2734,16 @@ func runBridgeServer(cliCfg cliConfig) {
 		if eventBus != nil {
 			log.Println("Stopping event bus...")
 			eventBus.Stop()
+		}
+
+		// Stop vault event bridge and close vault client
+		if vaultEventBridge != nil {
+			log.Println("[VAULT] Stopping vault event bridge...")
+			vaultEventBridge.Stop()
+		}
+		if vaultClient != nil {
+			log.Println("[VAULT] Closing vault governance client...")
+			vaultClient.Close()
 		}
 
 		// Stop health monitor
