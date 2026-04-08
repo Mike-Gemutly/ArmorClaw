@@ -351,3 +351,9 @@ tls_cert = ""
 
 # TLS key file (optional, for wss://)
 tls_key = ""
+
+# Rust Vault Governance (v6 Microkernel Architecture)
+# Controls ephemeral token management and ToolSidecar lifecycle hooks
+[vault]
+v6_microkernel = false  # Set to true to enable v6 microkernel architecture
+socket_path = "/run/armorclaw/keystore.sock"  # UDS path for vault governance gRPC

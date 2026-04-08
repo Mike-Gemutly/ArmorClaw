@@ -116,6 +116,9 @@ type Config struct {
 
 	// Logging configuration
 	Logging LoggingConfig `toml:"logging"`
+
+	// Vault configuration (Rust Vault governance)
+	Vault VaultConfig `toml:"vault"`
 }
 
 // ServerConfig holds server-specific configuration
@@ -750,6 +753,17 @@ type ProvisioningConfig struct {
 	DataDir string `toml:"data_dir" env:"ARMORCLAW_PROVISIONING_DATA_DIR"`
 }
 
+// VaultConfig holds configuration for the Rust Vault governance integration
+type VaultConfig struct {
+	// V6Microkernel enables the v6 microkernel architecture with vault governance,
+	// ephemeral tokens, and ToolSidecar lifecycle hooks.
+	// When false, legacy execution paths are used (default).
+	V6Microkernel bool `toml:"v6_microkernel" env:"ARMORCLAW_V6_MICROKERNEL"`
+
+	// SocketPath is the path to the Rust Vault governance gRPC socket
+	SocketPath string `toml:"socket_path" env:"ARMORCLAW_VAULT_SOCKET"`
+}
+
 // ErrorSystemConfig holds error handling system configuration
 type ErrorSystemConfig struct {
 	// Enabled controls whether the error system is active
@@ -971,6 +985,10 @@ func DefaultConfig() *Config {
 			Format: "text",
 			Output: "stdout",
 			File:   "",
+		},
+		Vault: VaultConfig{
+			V6Microkernel: false,
+			SocketPath:    "/run/armorclaw/keystore.sock",
 		},
 	}
 }

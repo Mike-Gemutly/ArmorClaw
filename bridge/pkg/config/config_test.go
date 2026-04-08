@@ -3,6 +3,8 @@ package config
 
 import (
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -161,5 +163,38 @@ func TestDefaultAuthIsToken(t *testing.T) {
 
 	if cfg.Server.Auth != "token" {
 		t.Errorf("Expected default auth to be 'token', got: %s", cfg.Server.Auth)
+	}
+}
+
+func TestV6MicrokernelDefaultFalse(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.Vault.V6Microkernel {
+		t.Error("Vault.V6Microkernel should default to false")
+	}
+
+	if cfg.Vault.SocketPath != "/run/armorclaw/keystore.sock" {
+		t.Errorf("Vault.SocketPath should default to '/run/armorclaw/keystore.sock', got %s", cfg.Vault.SocketPath)
+	}
+}
+
+func TestV6MicrokernelTOMLParsing(t *testing.T) {
+	input := `
+[vault]
+v6_microkernel = true
+socket_path = "/custom/vault.sock"
+`
+
+	cfg := DefaultConfig()
+	if _, err := toml.Decode(input, cfg); err != nil {
+		t.Fatalf("failed to parse vault TOML: %v", err)
+	}
+
+	if !cfg.Vault.V6Microkernel {
+		t.Error("expected v6_microkernel = true from TOML")
+	}
+
+	if cfg.Vault.SocketPath != "/custom/vault.sock" {
+		t.Errorf("expected socket_path '/custom/vault.sock', got %s", cfg.Vault.SocketPath)
 	}
 }
