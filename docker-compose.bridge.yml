@@ -241,12 +241,15 @@ services:
       - openclaw_tmp:/tmp
 
     # No network access - all communication via bridge socket
-    network_mode: none
+    networks:
+      - armorclaw-isolated
 
     environment:
       - ARMORCLAW_BRIDGE_SOCKET=/run/armorclaw/bridge.sock
       - ARMORCLAW_MATRIX_ROOM=${ARMORCLAW_MATRIX_ROOM:-}
       - ARMORCLAW_VERBOSE=${ARMORCLAW_VERBOSE:-false}
+      - HTTP_PROXY=http://go-bridge:3128
+      - NO_PROXY=localhost,127.0.0.1,go-bridge
 
     # Read-only filesystem except /tmp
     read_only: true
@@ -297,6 +300,10 @@ networks:
   matrix-net:
     external: true
     name: armorclaw-matrix
+
+  armorclaw-isolated:
+    external: true
+    name: armorclaw-isolated
 
 # ========================================
 # Volumes
