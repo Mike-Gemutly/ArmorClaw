@@ -25,6 +25,15 @@ import (
 	"github.com/armorclaw/bridge/pkg/translator"
 )
 
+// VaultClient abstracts the vault governance client for tool lifecycle hooks.
+// The concrete *vault.VaultGovernanceClient satisfies this interface.
+type VaultClient interface {
+	// IssueBlindFillToken generates an ephemeral token for blind-fill injection.
+	IssueBlindFillToken(ctx context.Context, sessionID, toolName, secret string, ttl time.Duration) (string, error)
+	// ZeroizeToolSecrets securely erases all in-memory secrets for a tool/session pair.
+	ZeroizeToolSecrets(ctx context.Context, toolName, sessionID string) (uint32, error)
+}
+
 const (
 	// DefaultConsentTimeout is default time to wait for user approval
 	DefaultConsentTimeout = 60 * time.Second
@@ -42,6 +51,8 @@ type MCPRouter struct {
 	translator    *translator.RPCToMCPTranslator
 	logger        *logger.Logger
 	consentNotify func(ctx context.Context, request *pii.AccessRequest) error
+	vaultClient   VaultClient
+	v6Microkernel bool
 }
 
 // Provisioner interface for ToolSidecar operations
@@ -52,23 +63,14 @@ type Provisioner interface {
 
 // Config holds MCPRouter configuration
 type Config struct {
-	// SkillGate is the PII interception and validation gate
-	SkillGate interfaces.SkillGate
-
-	// Provisioner creates ToolSidecar containers for execution
-	Provisioner Provisioner
-
-	// ConsentManager handles HITL consent for PII operations
+	SkillGate      interfaces.SkillGate
+	Provisioner    Provisioner
 	ConsentManager *pii.HITLConsentManager
-
-	// Auditor logs all tool calls for compliance
-	Auditor *audit.AuditLog
-
-	// Logger is the structured logger
-	Logger *logger.Logger
-
-	// ConsentNotify is callback to send consent notifications via Matrix
-	ConsentNotify func(ctx context.Context, request *pii.AccessRequest) error
+	Auditor        *audit.AuditLog
+	Logger         *logger.Logger
+	ConsentNotify  func(ctx context.Context, request *pii.AccessRequest) error
+	VaultClient    VaultClient
+	V6Microkernel  bool
 }
 
 // New creates a new MCPRouter
@@ -105,6 +107,8 @@ func New(cfg Config) (*MCPRouter, error) {
 		translator:    translator.NewRPCToMCPTranslator(),
 		logger:        cfg.Logger,
 		consentNotify: cfg.ConsentNotify,
+		vaultClient:   cfg.VaultClient,
+		v6Microkernel: cfg.V6Microkernel,
 	}, nil
 }
 
@@ -310,9 +314,53 @@ func (r *MCPRouter) executeTool(
 	sanitizedCall *interfaces.ToolCall,
 	originalCall *interfaces.ToolCall,
 ) (*MCPResponse, error) {
-	// Create execution context with timeout
 	execCtx, cancel := context.WithTimeout(ctx, DefaultToolExecutionTimeout)
 	defer cancel()
+
+	sessionID := "mcp_session"
+	toolName := sanitizedCall.ToolName
+
+	// Pre-execution: issue ephemeral tokens for blind-fill (security lifecycle hook)
+	if r.v6Microkernel && r.vaultClient != nil {
+		for key, value := range sanitizedCall.Arguments {
+			if str, ok := value.(string); ok && len(str) > 0 {
+				tokenID, err := r.vaultClient.IssueBlindFillToken(execCtx, sessionID, toolName, str, 10*time.Second)
+				if err != nil {
+					r.logger.Warn("failed to issue blind fill token",
+						"tool", toolName,
+						"key", key,
+						"error", err,
+					)
+				} else {
+					r.logger.Info("blind fill token issued",
+						"tool", toolName,
+						"key", key,
+						"token_id", tokenID,
+					)
+				}
+			}
+		}
+	}
+
+	// Post-execution: zeroize secrets regardless of success/failure (security lifecycle hook)
+	if r.v6Microkernel && r.vaultClient != nil {
+		defer func() {
+			zCtx, zCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer zCancel()
+			count, err := r.vaultClient.ZeroizeToolSecrets(zCtx, toolName, sessionID)
+			if err != nil {
+				r.logger.Warn("failed to zeroize tool secrets",
+					"tool", toolName,
+					"error", err,
+				)
+			} else {
+				r.logger.Info("zeroized tool secrets",
+					"tool", toolName,
+					"count", count,
+				)
+			}
+		}()
+	}
 
 	// Step 4.1: Spawn ToolSidecar
 	toolsidecar, err := r.provisioner.SpawnToolSidecar(execCtx, sanitizedCall.ToolName, "mcp_session")
