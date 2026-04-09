@@ -1,6 +1,7 @@
 package studio
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -13,12 +14,12 @@ import (
 //=============================================================================
 
 const (
-	ErrInvalidParams  = -32602
-	ErrInternal       = -32603
-	ErrNotFound       = -32001
-	ErrValidation     = -32002
-	ErrUnauthorized   = -32003
-	ErrConflict       = -32004
+	ErrInvalidParams = -32602
+	ErrInternal      = -32603
+	ErrNotFound      = -32001
+	ErrValidation    = -32002
+	ErrUnauthorized  = -32003
+	ErrConflict      = -32004
 )
 
 //=============================================================================
@@ -83,13 +84,15 @@ type RPCHandler struct {
 	profileManager  *ProfileManager
 	approvalManager *ApprovalManager
 	mcpRegistry     McpRegistry
+	factory         *AgentFactory
 	log             *logger.Logger
 }
 
 // RPCHandlerConfig holds configuration for the RPC handler
 type RPCHandlerConfig struct {
-	Store  Store
-	Logger *logger.Logger
+	Store   Store
+	Logger  *logger.Logger
+	Factory *AgentFactory
 }
 
 // NewRPCHandler creates a new RPC handler
@@ -112,6 +115,7 @@ func NewRPCHandler(cfg RPCHandlerConfig) *RPCHandler {
 		profileManager:  NewProfileManager(cfg.Store),
 		approvalManager: approvalManager,
 		mcpRegistry:     mcpRegistry,
+		factory:         cfg.Factory,
 		log:             log,
 	}
 }
@@ -639,11 +643,11 @@ func (h *RPCHandler) handleSpawnAgent(req *RPCRequest) *RPCResponse {
 	requiresApproval := h.piiRegistry.GetFieldsRequiringApproval(def.PIIAccess)
 	if len(requiresApproval) > 0 {
 		return SuccessResponse(map[string]interface{}{
-			"status":             "approval_required",
-			"message":            "Agent requires approval for sensitive PII access",
-			"requires_approval":  requiresApproval,
-			"definition":         def,
-			"instruction":        "Use pii.request to request access, then retry spawn",
+			"status":            "approval_required",
+			"message":           "Agent requires approval for sensitive PII access",
+			"requires_approval": requiresApproval,
+			"definition":        def,
+			"instruction":       "Use pii.request to request access, then retry spawn",
 		})
 	}
 
@@ -668,17 +672,53 @@ func (h *RPCHandler) handleSpawnAgent(req *RPCRequest) *RPCResponse {
 		"name", def.Name,
 		"by", req.UserID)
 
-	// TODO: Actually spawn the container via AgentFactory (Phase 4)
-	// For now, mark as running
+	// Spawn container via AgentFactory (Phase 4)
+	if h.factory != nil {
+		spawnResult, spawnErr := h.factory.Spawn(context.Background(), &SpawnRequest{
+			DefinitionID:    def.ID,
+			TaskDescription: params.TaskDescription,
+			UserID:          req.UserID,
+		})
+		if spawnErr != nil {
+			instance.Status = StatusFailed
+			now := time.Now()
+			instance.CompletedAt = &now
+			h.store.UpdateInstance(instance)
+			return ErrorResponse(ErrInternal, "Failed to spawn container: "+spawnErr.Error())
+		}
+
+		// Use the real instance from the factory (it has the real ContainerID)
+		instance = spawnResult.Instance
+
+		// Build response with any factory warnings
+		warnings := []string{}
+		if len(spawnResult.Warnings) > 0 {
+			warnings = spawnResult.Warnings
+		}
+
+		return SuccessResponse(map[string]interface{}{
+			"instance":   instance,
+			"definition": def,
+			"profile":    GetProfile(def.ResourceTier),
+			"warnings":   warnings,
+			"message":    "Agent instance spawned successfully",
+		})
+	}
+
+	// Fallback: no factory available (development mode)
+	h.log.Warn("agent_spawn_no_factory",
+		"instance_id", instance.ID,
+		"definition_id", def.ID,
+		"message", "AgentFactory not configured, using stub spawn")
 	instance.Status = StatusRunning
 	instance.ContainerID = "pending-container-" + instance.ID
 	h.store.UpdateInstance(instance)
 
 	return SuccessResponse(map[string]interface{}{
-		"instance":    instance,
-		"definition":  def,
-		"profile":     GetProfile(def.ResourceTier),
-		"message":     "Agent instance spawned successfully",
+		"instance":   instance,
+		"definition": def,
+		"profile":    GetProfile(def.ResourceTier),
+		"message":    "Agent instance spawned successfully",
 	})
 }
 
@@ -760,7 +800,14 @@ func (h *RPCHandler) handleStopInstance(req *RPCRequest) *RPCResponse {
 		return ErrorResponse(ErrValidation, "Instance is not running")
 	}
 
-	// TODO: Actually stop the container via AgentFactory (Phase 4)
+	// Stop container via AgentFactory (Phase 4)
+	if h.factory != nil {
+		stopErr := h.factory.Stop(context.Background(), instance.ID, 30*time.Second)
+		if stopErr != nil {
+			h.log.Error("container_stop_failed", "instance_id", instance.ID, "error", stopErr)
+		}
+	}
+
 	now := time.Now()
 	instance.Status = StatusCancelled
 	instance.CompletedAt = &now

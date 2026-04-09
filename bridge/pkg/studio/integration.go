@@ -18,18 +18,18 @@ import (
 // DockerClientAdapter wraps the bridge's Docker client to implement
 // the studio's DockerClient interface
 type DockerClientAdapter struct {
-	createFunc    func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, name string) (string, error)
-	startFunc     func(ctx context.Context, containerID string) error
-	stopFunc      func(ctx context.Context, containerID string, timeout time.Duration) error
-	removeFunc    func(ctx context.Context, containerID string, force bool) error
-	inspectFunc   func(ctx context.Context, containerID string) (*ContainerInfo, error)
-	listFunc      func(ctx context.Context, all bool) ([]types.Container, error)
+	createFunc  func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, name string) (string, error)
+	startFunc   func(ctx context.Context, containerID string) error
+	stopFunc    func(ctx context.Context, containerID string, timeout time.Duration) error
+	removeFunc  func(ctx context.Context, containerID string, force bool) error
+	inspectFunc func(ctx context.Context, containerID string) (*ContainerInfo, error)
+	listFunc    func(ctx context.Context, all bool) ([]types.Container, error)
 }
 
 // ContainerInfo contains container state information
 type ContainerInfo struct {
-	ID      string
-	Running bool
+	ID       string
+	Running  bool
 	ExitCode int
 }
 
@@ -140,12 +140,22 @@ func NewIntegration(cfg IntegrationConfig) (*StudioIntegration, error) {
 		return nil, fmt.Errorf("failed to create studio store: %w", err)
 	}
 
-	// 2. Create RPC handler
+	// 2. Create factory FIRST (before RPC handler, so it can be injected)
+	var factory *AgentFactory
+	if cfg.DockerClient != nil {
+		factory = NewAgentFactory(FactoryConfig{
+			DockerClient: cfg.DockerClient,
+			Store:        store,
+		})
+	}
+
+	// 3. Create RPC handler with factory
 	rpcHandler := NewRPCHandler(RPCHandlerConfig{
-		Store: store,
+		Store:   store,
+		Factory: factory,
 	})
 
-	// 3. Create command handler (if Matrix adapter provided)
+	// 4. Create command handler (if Matrix adapter provided)
 	var commandHandler *CommandHandler
 	if cfg.MatrixAdapter != nil {
 		wizardTimeout := cfg.WizardTimeout
@@ -163,15 +173,6 @@ func NewIntegration(cfg IntegrationConfig) (*StudioIntegration, error) {
 			Matrix:        cfg.MatrixAdapter,
 			CommandPrefix: prefix,
 			WizardTimeout: 0,
-		})
-	}
-
-	// 4. Create factory (if Docker client provided)
-	var factory *AgentFactory
-	if cfg.DockerClient != nil {
-		factory = NewAgentFactory(FactoryConfig{
-			DockerClient: cfg.DockerClient,
-			Store:        store,
 		})
 	}
 
