@@ -20,6 +20,8 @@ pub struct QdrantClient {
 impl QdrantClient {
     pub async fn new(url: &str, collection_name: &str) -> Result<Self, SidecarError> {
         let client = Qdrant::from_url(url)
+            .timeout(5u64)
+            .connect_timeout(3u64)
             .build()
             .map_err(|e| SidecarError::StorageError(format!("Failed to connect to Qdrant: {}", e)))?;
 

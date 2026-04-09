@@ -84,17 +84,17 @@ pub struct EmbeddingGenerator {
 }
 
 impl EmbeddingGenerator {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String) -> Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .unwrap();
+            .map_err(|e| SidecarError::HttpError(format!("Failed to create HTTP client: {}", e)))?;
 
-        Self {
+        Ok(Self {
             client,
             api_key,
             model: "text-embedding-ada-002".to_string(),
-        }
+        })
     }
 
     pub async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>> {
@@ -135,7 +135,7 @@ impl EmbeddingGenerator {
 }
 
 pub async fn generate_text_embedding(text: &str, api_key: &str) -> Result<Vec<f32>> {
-    EmbeddingGenerator::new(api_key.to_string()).generate_embedding(text).await
+    EmbeddingGenerator::new(api_key.to_string())?.generate_embedding(text).await
 }
 
 #[cfg(test)]
@@ -145,14 +145,15 @@ mod tests {
     #[test]
     fn test_embedding_generator_new() {
         let generator = EmbeddingGenerator::new("test_key".to_string());
-        assert_eq!(generator.model, "text-embedding-ada-002");
+        assert!(generator.is_ok());
+        assert_eq!(generator.unwrap().model, "text-embedding-ada-002");
     }
 
     #[test]
     fn test_empty_embedding() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(async {
-            EmbeddingGenerator::new("test_key".to_string()).generate_embedding("").await
+            EmbeddingGenerator::new("test_key".to_string())?.generate_embedding("").await
         });
         assert!(result.is_ok());
         let embedding = result.unwrap();
@@ -161,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_with_model() {
-        let mut generator = EmbeddingGenerator::new("test_key".to_string());
+        let mut generator = EmbeddingGenerator::new("test_key".to_string()).unwrap();
         generator.with_model("text-embedding-ada-003");
         assert_eq!(generator.model, "text-embedding-ada-003");
     }
