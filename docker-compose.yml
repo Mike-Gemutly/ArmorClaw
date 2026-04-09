@@ -60,6 +60,35 @@ services:
       - bridge-net
 
   # ========================================
+  # Qdrant Vector Database
+  # ========================================
+  # Vector database for RAG and split-storage features.
+  # Internal-only — no host port exposure.
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: armorclaw-qdrant
+    restart: unless-stopped
+
+    # Internal ports only — NOT exposed to host
+    expose:
+      - "6333"  # REST API
+      - "6334"  # gRPC
+
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+    networks:
+      - bridge-net
+      - armorclaw-vault
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ========================================
   # Caddy Reverse Proxy (Sentinel Mode Only)
   # ========================================
   # This service only starts when --profile sentinel is specified
@@ -118,6 +147,12 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
+  armorclaw-vault:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
 
 volumes:
   caddy_data:
@@ -126,3 +161,6 @@ volumes:
   caddy_config:
     driver: local
     name: armorclaw-caddy-config
+  qdrant_data:
+    driver: local
+    name: armorclaw-qdrant-data

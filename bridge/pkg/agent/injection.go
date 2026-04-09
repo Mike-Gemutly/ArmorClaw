@@ -3,10 +3,13 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/armorclaw/bridge/pkg/trust"
 )
 
 type PIIRequest struct {
@@ -26,6 +29,7 @@ type PIIInjector struct {
 	listener   net.Listener
 	mu         sync.Mutex
 	stopped    bool
+	guard      *trust.TrustedProxyGuard
 }
 
 func NewPIIInjector(socketPath, secret string, mapping *PIIMapping) *PIIInjector {
@@ -102,6 +106,14 @@ func (i *PIIInjector) handleConnections() {
 }
 
 func (i *PIIInjector) handleConnection(conn net.Conn) {
+	if i.guard != nil {
+		if err := i.guard.Check(conn.RemoteAddr()); err != nil {
+			slog.Warn("trusted_proxy_guard_rejected", "error", err)
+			conn.Close()
+			return
+		}
+	}
+
 	defer conn.Close()
 
 	var req PIIRequest

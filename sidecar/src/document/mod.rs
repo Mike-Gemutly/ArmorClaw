@@ -23,7 +23,7 @@ pub mod rag;
 pub mod html_diff;
 pub mod docx_diff;
 pub mod embeddings;
-//pub mod qdrant;
+pub mod qdrant;
 
 pub use pdf::{
     PdfExtractor,

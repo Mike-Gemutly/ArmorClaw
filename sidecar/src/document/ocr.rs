@@ -3,7 +3,9 @@ use image::{DynamicImage, ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::path::Path;
 use std::process::Command;
+use tract_onnx::prelude::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrResult {
@@ -13,11 +15,24 @@ pub struct OcrResult {
     pub metadata: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OcrBackend {
+    #[serde(rename = "tesseract")]
+    Tesseract,
+    #[serde(rename = "onnx")]
+    Onnx,
+    #[serde(rename = "auto")]
+    #[default]
+    Auto,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrConfig {
     pub language: String,
     pub dpi: Option<u32>,
     pub psm: Option<u32>,
+    #[serde(default)]
+    pub backend: OcrBackend,
 }
 
 impl Default for OcrConfig {
@@ -26,6 +41,7 @@ impl Default for OcrConfig {
             language: "eng".to_string(),
             dpi: Some(300),
             psm: Some(3),
+            backend: OcrBackend::Auto,
         }
     }
 }
@@ -215,6 +231,144 @@ pub fn detect_language_from_text(text: &str) -> String {
     "eng".to_string()
 }
 
+const ONNX_FALLBACK_THRESHOLD: usize = 50;
+
+pub struct OnnxBackend {
+    model: RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>,
+    model_path: String,
+}
+
+impl OnnxBackend {
+    pub fn new(model_path: &str) -> Result<Self> {
+        if !Path::new(model_path).exists() {
+            return Err(SidecarError::DocumentProcessingError(format!(
+                "ONNX model not found at: {}",
+                model_path
+            )));
+        }
+
+        let model = tract_onnx::onnx()
+            .model_for_path(model_path)
+            .map_err(|e| {
+                SidecarError::DocumentProcessingError(format!("Failed to load ONNX model: {}", e))
+            })?
+            .into_optimized()
+            .map_err(|e| {
+                SidecarError::DocumentProcessingError(format!(
+                    "Failed to optimize ONNX model: {}",
+                    e
+                ))
+            })?
+            .into_runnable()
+            .map_err(|e| {
+                SidecarError::DocumentProcessingError(format!(
+                    "Failed to make ONNX model runnable: {}",
+                    e
+                ))
+            })?;
+
+        Ok(Self {
+            model,
+            model_path: model_path.to_string(),
+        })
+    }
+
+    pub fn model_path(&self) -> &str {
+        &self.model_path
+    }
+
+    pub fn extract(&self, image_data: &[u8]) -> Result<OcrResult> {
+        let img = ImageReader::with_format(Cursor::new(image_data), ImageFormat::Png)
+            .decode()
+            .map_err(|e| {
+                SidecarError::DocumentProcessingError(format!(
+                    "Failed to decode image for ONNX: {}",
+                    e
+                ))
+            })?;
+
+        let rgb = img.to_rgb8();
+        let resized =
+            image::imageops::resize(&rgb, 320, 320, image::imageops::FilterType::Triangle);
+
+        let tensor: Tensor =
+            tract_ndarray::Array4::from_shape_fn((1, 3, 320, 320), |(_, c, y, x)| {
+                resized[(x as _, y as _)][c] as f32 / 255.0
+            })
+            .into();
+
+        let result = self.model.run(tvec!(tensor.into())).map_err(|e| {
+            SidecarError::DocumentProcessingError(format!("ONNX inference failed: {}", e))
+        })?;
+
+        let text = extract_text_from_onnx_output(&result);
+
+        let confidence = estimate_confidence_from_text(&text);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("engine".to_string(), "onnx".to_string());
+        metadata.insert("model_path".to_string(), self.model_path.clone());
+
+        Ok(OcrResult {
+            text,
+            confidence,
+            language: "auto".to_string(),
+            metadata,
+        })
+    }
+}
+
+fn extract_text_from_onnx_output(outputs: &[TValue]) -> String {
+    if outputs.is_empty() {
+        return String::new();
+    }
+
+    match outputs[0].to_array_view::<f32>() {
+        Ok(view) => {
+            let mut chars = Vec::new();
+            for &val in view.iter() {
+                let idx = val.round() as usize;
+                if idx == 0 {
+                    break;
+                }
+                if let Some(c) = char::from_u32(idx as u32 + 0x20) {
+                    if c.is_ascii_graphic() || c.is_ascii_whitespace() {
+                        chars.push(c);
+                    }
+                }
+            }
+            chars.into_iter().collect()
+        }
+        Err(_) => String::new(),
+    }
+}
+
+fn estimate_confidence_from_text(text: &str) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return 0.0;
+    }
+    let valid: Vec<&str> = words
+        .iter()
+        .filter(|w| {
+            w.chars()
+                .all(|c| c.is_alphanumeric() || c.is_whitespace() || "-'".contains(c))
+        })
+        .copied()
+        .collect();
+    0.5 + (valid.len() as f32 / words.len() as f32 * 0.4)
+}
+
+pub fn should_fallback_to_tesseract(onnx_text: &str, tesseract_available: bool) -> bool {
+    if !tesseract_available {
+        return false;
+    }
+    onnx_text.len() < ONNX_FALLBACK_THRESHOLD
+}
+
 fn detect_image_format(data: &[u8]) -> Result<ImageFormat> {
     if data.len() < 8 {
         return Err(SidecarError::DocumentProcessingError(
@@ -342,5 +496,80 @@ mod tests {
         let small_data = vec![0, 1, 2];
         let result = detect_image_format(&small_data);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ocr_backend_serialization() {
+        let tesseract = OcrBackend::Tesseract;
+        let onnx = OcrBackend::Onnx;
+        let auto = OcrBackend::Auto;
+
+        assert_eq!(serde_json::to_string(&tesseract).unwrap(), r#""tesseract""#);
+        assert_eq!(serde_json::to_string(&onnx).unwrap(), r#""onnx""#);
+        assert_eq!(serde_json::to_string(&auto).unwrap(), r#""auto""#);
+    }
+
+    #[test]
+    fn test_ocr_backend_deserialization() {
+        let tesseract: OcrBackend = serde_json::from_str(r#""tesseract""#).unwrap();
+        let onnx: OcrBackend = serde_json::from_str(r#""onnx""#).unwrap();
+        let auto: OcrBackend = serde_json::from_str(r#""auto""#).unwrap();
+
+        assert!(matches!(tesseract, OcrBackend::Tesseract));
+        assert!(matches!(onnx, OcrBackend::Onnx));
+        assert!(matches!(auto, OcrBackend::Auto));
+    }
+
+    #[test]
+    fn test_ocr_config_with_backend() {
+        let config = OcrConfig {
+            language: "eng".to_string(),
+            dpi: Some(300),
+            psm: Some(3),
+            backend: OcrBackend::Onnx,
+        };
+        assert!(matches!(config.backend, OcrBackend::Onnx));
+
+        let default_config = OcrConfig::default();
+        assert!(matches!(default_config.backend, OcrBackend::Auto));
+    }
+
+    #[test]
+    fn test_onnx_backend_missing_model_returns_error() {
+        let result = OnnxBackend::new("/nonexistent/path/model.onnx");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_onnx_backend_extract_missing_model() {
+        let backend = OnnxBackend::new("/nonexistent/path/model.onnx");
+        assert!(backend.is_err());
+    }
+
+    #[test]
+    fn test_auto_fallback_threshold_short_text() {
+        let short_text = "hi";
+        assert!(should_fallback_to_tesseract(short_text, true));
+    }
+
+    #[test]
+    fn test_auto_fallback_threshold_long_text() {
+        let long_text =
+            "This is a sufficiently long piece of extracted text that should not trigger fallback.";
+        assert!(!should_fallback_to_tesseract(long_text, true));
+    }
+
+    #[test]
+    fn test_auto_fallback_tesseract_unavailable() {
+        let short_text = "hi";
+        assert!(!should_fallback_to_tesseract(short_text, false));
+    }
+
+    #[test]
+    fn test_confidence_estimation_with_metadata() {
+        let extractor = OcrExtractor::default();
+        let result = extractor.estimate_confidence("hello world");
+        assert!(result > 0.5);
+        assert!(result <= 1.0);
     }
 }

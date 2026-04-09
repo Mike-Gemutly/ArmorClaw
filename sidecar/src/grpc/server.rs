@@ -1,4 +1,9 @@
 use crate::config::SidecarConfig;
+use crate::connectors::{S3Connector, S3UploadRequest, S3DownloadRequest, S3ListRequest, S3DeleteRequest};
+use crate::document::{
+    extract_text_from_pdf, extract_text_from_docx, extract_data_from_xlsx,
+    extract_text_with_ocr,
+};
 use crate::error::{Result, SidecarError};
 use crate::grpc::interceptor::SecurityInterceptor;
 use crate::grpc::proto::sidecar_service_server::{SidecarService, SidecarServiceServer};
@@ -6,20 +11,74 @@ use crate::grpc::proto::{
     HealthCheckRequest, HealthCheckResponse, UploadBlobRequest, UploadBlobResponse,
     DownloadBlobRequest, BlobChunk, ListBlobsRequest, ListBlobsResponse,
     DeleteBlobRequest, DeleteBlobResponse, ExtractTextRequest, ExtractTextResponse,
-    ProcessDocumentRequest, ProcessDocumentResponse, sidecar_service_server::SidecarService as SidecarServiceTrait,
+    ProcessDocumentRequest, ProcessDocumentResponse, BlobInfo,
+    sidecar_service_server::SidecarService as SidecarServiceTrait,
 };
 use prometheus::Registry;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::{Request, Response, Status};
 use tracing::{info, error, warn};
 
-#[derive(Debug, Default)]
-pub struct SidecarServiceImpl {}
+/// Parses an S3 URI ("s3://bucket/key") into (bucket, key).
+fn parse_s3_uri(uri: &str) -> std::result::Result<(String, String), String> {
+    let uri = uri.trim();
+    if !uri.starts_with("s3://") {
+        return Err(format!("Invalid S3 URI: expected s3://bucket/key, got: {}", uri));
+    }
+    let without_scheme = &uri[5..];
+    let slash_pos = without_scheme
+        .find('/')
+        .ok_or_else(|| format!("Invalid S3 URI: no key component in: {}", uri))?;
+    let bucket = without_scheme[..slash_pos].to_string();
+    let key = without_scheme[slash_pos + 1..].to_string();
+    if bucket.is_empty() {
+        return Err(format!("Invalid S3 URI: empty bucket in: {}", uri));
+    }
+    Ok((bucket, key))
+}
+
+/// Maps a SidecarError to an appropriate gRPC Status.
+fn sidecar_error_to_status(e: SidecarError) -> Status {
+    match &e {
+        SidecarError::InvalidRequest(msg) => Status::invalid_argument(msg),
+        SidecarError::AuthenticationFailed(msg) | SidecarError::AuthenticationError(msg) => {
+            Status::unauthenticated(msg)
+        }
+        SidecarError::AccessDenied => Status::permission_denied(e.to_string()),
+        SidecarError::NoSuchBucket(msg) | SidecarError::NoSuchKey(msg) => {
+            Status::not_found(msg)
+        }
+        SidecarError::StorageError(msg)
+        | SidecarError::CloudStorageError(msg)
+        | SidecarError::ApiError(msg) => Status::internal(msg),
+        SidecarError::DocumentProcessingError(msg) => Status::internal(msg),
+        SidecarError::CircuitBreakerOpen(msg) => Status::unavailable(msg),
+        SidecarError::RateLimitExceeded(msg) => {
+            Status::resource_exhausted(msg)
+        }
+        SidecarError::Io(msg) => Status::internal(msg.to_string()),
+        _ => Status::internal(e.to_string()),
+    }
+}
+
+#[derive(Debug)]
+pub struct SidecarServiceImpl {
+    s3_connector: Option<Arc<S3Connector>>,
+}
 
 type DownloadBlobStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<BlobChunk, tonic::Status>>;
+
+impl SidecarServiceImpl {
+    pub fn new(s3_connector: Option<S3Connector>) -> Self {
+        Self {
+            s3_connector: s3_connector.map(Arc::new),
+        }
+    }
+}
 
 #[tonic::async_trait]
 impl SidecarServiceTrait for SidecarServiceImpl {
@@ -43,37 +102,99 @@ impl SidecarServiceTrait for SidecarServiceImpl {
 
     async fn upload_blob(
         &self,
-        _request: Request<UploadBlobRequest>,
+        request: Request<UploadBlobRequest>,
     ) -> std::result::Result<Response<UploadBlobResponse>, Status> {
-        warn!("UploadBlob called - placeholder implementation");
+        let req = request.into_inner();
+        info!(destination_uri = %req.destination_uri, "UploadBlob called");
 
-        let response = UploadBlobResponse {
-            blob_id: "placeholder-id".to_string(),
-            etag: "placeholder-etag".to_string(),
-            size_bytes: 0,
-            content_hash_sha256: "placeholder-hash".to_string(),
-            timestamp_unix: chrono::Utc::now().timestamp(),
+        let connector = self.s3_connector.as_ref()
+            .ok_or_else(|| Status::unimplemented("S3 connector not configured"))?;
+
+        let (bucket, key) = parse_s3_uri(&req.destination_uri)
+            .map_err(|e| Status::invalid_argument(e))?;
+
+        let region = req.provider_config.get("region")
+            .cloned()
+            .unwrap_or_else(|| "us-east-1".to_string());
+
+        let upload_req = S3UploadRequest {
+            bucket,
+            key,
+            region,
+            content_type: if req.content_type.is_empty() { None } else { Some(req.content_type) },
+            content: if req.content.is_empty() { None } else { Some(req.content) },
+            file_path: if req.local_file_path.is_empty() { None } else { Some(req.local_file_path.into()) },
+            access_key: req.provider_config.get("access_key").cloned(),
+            secret_key: req.provider_config.get("secret_key").cloned(),
+            session_token: req.provider_config.get("session_token").cloned(),
         };
 
-        Ok(Response::new(response))
+        let result = connector.upload(upload_req)
+            .await
+            .map_err(sidecar_error_to_status)?;
+
+        Ok(Response::new(UploadBlobResponse {
+            blob_id: result.blob_id,
+            etag: result.etag,
+            size_bytes: result.size_bytes,
+            content_hash_sha256: result.content_hash_sha256,
+            timestamp_unix: result.timestamp_unix,
+        }))
     }
 
     async fn download_blob(
         &self,
-        _request: Request<DownloadBlobRequest>,
+        request: Request<DownloadBlobRequest>,
     ) -> std::result::Result<Response<DownloadBlobStream>, Status> {
-        warn!("DownloadBlob called - placeholder implementation");
+        let req = request.into_inner();
+        info!(source_uri = %req.source_uri, "DownloadBlob called");
+
+        let connector = self.s3_connector.as_ref()
+            .ok_or_else(|| Status::unimplemented("S3 connector not configured"))?;
+
+        let (bucket, key) = parse_s3_uri(&req.source_uri)
+            .map_err(|e| Status::invalid_argument(e))?;
+
+        let region = req.provider_config.get("region")
+            .cloned()
+            .unwrap_or_else(|| "us-east-1".to_string());
+
+        let download_req = S3DownloadRequest {
+            bucket,
+            key,
+            region,
+            offset_bytes: if req.offset_bytes == 0 { None } else { Some(req.offset_bytes) },
+            max_bytes: if req.max_bytes == 0 { None } else { Some(req.max_bytes) },
+            access_key: req.provider_config.get("access_key").cloned(),
+            secret_key: req.provider_config.get("secret_key").cloned(),
+            session_token: req.provider_config.get("session_token").cloned(),
+        };
+
+        let stream = connector.download_stream(download_req);
 
         let (tx, rx) = tokio::sync::mpsc::channel(4);
 
-        let chunk = BlobChunk {
-            data: vec![],
-            offset: 0,
-            is_last: true,
-        };
-
         tokio::spawn(async move {
-            let _ = tx.send(Ok(chunk)).await;
+            use futures::StreamExt;
+            let mut stream = std::pin::pin!(stream);
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(chunk) => {
+                        let grpc_chunk = BlobChunk {
+                            data: chunk.data,
+                            offset: chunk.offset,
+                            is_last: chunk.is_last,
+                        };
+                        if tx.send(Ok(grpc_chunk)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(sidecar_error_to_status(e))).await;
+                        break;
+                    }
+                }
+            }
         });
 
         Ok(Response::new(DownloadBlobStream::new(rx)))
@@ -81,61 +202,255 @@ impl SidecarServiceTrait for SidecarServiceImpl {
 
     async fn list_blobs(
         &self,
-        _request: Request<ListBlobsRequest>,
+        request: Request<ListBlobsRequest>,
     ) -> std::result::Result<Response<ListBlobsResponse>, Status> {
-        warn!("ListBlobs called - placeholder implementation");
+        let req = request.into_inner();
+        info!(prefix = %req.prefix, "ListBlobs called");
 
-        let response = ListBlobsResponse {
-            blobs: vec![],
-            continuation_token: String::new(),
+        let connector = self.s3_connector.as_ref()
+            .ok_or_else(|| Status::unimplemented("S3 connector not configured"))?;
+
+        let region = req.provider_config.get("region")
+            .cloned()
+            .unwrap_or_else(|| "us-east-1".to_string());
+
+        let bucket = req.provider_config.get("bucket")
+            .cloned()
+            .unwrap_or_else(|| req.provider.clone());
+
+        let list_req = S3ListRequest {
+            bucket,
+            region,
+            prefix: if req.prefix.is_empty() { None } else { Some(req.prefix) },
+            max_results: if req.max_results == 0 { None } else { Some(req.max_results) },
+            access_key: req.provider_config.get("access_key").cloned(),
+            secret_key: req.provider_config.get("secret_key").cloned(),
+            session_token: req.provider_config.get("session_token").cloned(),
         };
 
-        Ok(Response::new(response))
+        let result = connector.list_blobs(list_req)
+            .await
+            .map_err(sidecar_error_to_status)?;
+
+        let blobs: Vec<BlobInfo> = result.blobs.into_iter().map(|b| BlobInfo {
+            uri: b.uri,
+            size_bytes: b.size_bytes,
+            content_type: b.content_type,
+            last_modified_unix: b.last_modified_unix,
+            etag: b.etag,
+        }).collect();
+
+        Ok(Response::new(ListBlobsResponse {
+            blobs,
+            continuation_token: result.continuation_token.unwrap_or_default(),
+        }))
     }
 
     async fn delete_blob(
         &self,
-        _request: Request<DeleteBlobRequest>,
+        request: Request<DeleteBlobRequest>,
     ) -> std::result::Result<Response<DeleteBlobResponse>, Status> {
-        warn!("DeleteBlob called - placeholder implementation");
+        let req = request.into_inner();
+        info!(uri = %req.uri, "DeleteBlob called");
 
-        let response = DeleteBlobResponse {
-            success: true,
-            message: "placeholder".to_string(),
+        let connector = self.s3_connector.as_ref()
+            .ok_or_else(|| Status::unimplemented("S3 connector not configured"))?;
+
+        let (bucket, key) = parse_s3_uri(&req.uri)
+            .map_err(|e| Status::invalid_argument(e))?;
+
+        let region = req.provider_config.get("region")
+            .cloned()
+            .unwrap_or_else(|| "us-east-1".to_string());
+
+        let delete_req = S3DeleteRequest {
+            bucket,
+            key,
+            region,
+            access_key: req.provider_config.get("access_key").cloned(),
+            secret_key: req.provider_config.get("secret_key").cloned(),
+            session_token: req.provider_config.get("session_token").cloned(),
         };
 
-        Ok(Response::new(response))
+        let result = connector.delete_blob(delete_req)
+            .await
+            .map_err(sidecar_error_to_status)?;
+
+        Ok(Response::new(DeleteBlobResponse {
+            success: result.success,
+            message: result.message,
+        }))
     }
 
     async fn extract_text(
         &self,
-        _request: Request<ExtractTextRequest>,
+        request: Request<ExtractTextRequest>,
     ) -> std::result::Result<Response<ExtractTextResponse>, Status> {
-        warn!("ExtractText called - placeholder implementation");
+        let req = request.into_inner();
+        info!(document_format = %req.document_format, "ExtractText called");
 
-        let response = ExtractTextResponse {
-            text: String::new(),
-            page_count: 0,
-            metadata: std::collections::HashMap::new(),
-        };
+        if req.document_content.is_empty() {
+            return Err(Status::invalid_argument("document_content is empty"));
+        }
 
-        Ok(Response::new(response))
+        match req.document_format.as_str() {
+            "pdf" | "application/pdf" => {
+                let result = extract_text_from_pdf(&req.document_content)
+                    .map_err(sidecar_error_to_status)?;
+                Ok(Response::new(ExtractTextResponse {
+                    text: result.text,
+                    page_count: result.page_count,
+                    metadata: result.metadata,
+                }))
+            }
+            "docx" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+                let result = extract_text_from_docx(&req.document_content)
+                    .map_err(sidecar_error_to_status)?;
+                Ok(Response::new(ExtractTextResponse {
+                    text: result.text,
+                    page_count: result.page_count,
+                    metadata: result.metadata,
+                }))
+            }
+            "xlsx" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
+                let result = extract_data_from_xlsx(&req.document_content)
+                    .map_err(sidecar_error_to_status)?;
+                let mut text_parts = Vec::new();
+                for sheet in &result.sheets {
+                    text_parts.push(format!("=== Sheet: {} ===", sheet.name));
+                    for row in &sheet.rows {
+                        let cells: Vec<String> = row.iter()
+                            .map(|c| c.as_deref().unwrap_or("").to_string())
+                            .collect();
+                        text_parts.push(cells.join("\t"));
+                    }
+                    text_parts.push(String::new());
+                }
+                let text = text_parts.join("\n");
+                let sheet_count = result.sheets.len() as i32;
+                Ok(Response::new(ExtractTextResponse {
+                    text,
+                    page_count: sheet_count,
+                    metadata: result.metadata,
+                }))
+            }
+            "image/png" | "image/jpeg" | "image/tiff" | "image/bmp" | "image/gif" => {
+                let lang = req.options.get("language").cloned();
+                let config = lang.map(|l| crate::document::OcrConfig {
+                    language: l,
+                    dpi: req.options.get("dpi").and_then(|d| d.parse().ok()),
+                    psm: req.options.get("psm").and_then(|p| p.parse().ok()),
+                    ..Default::default()
+                });
+                let result = extract_text_with_ocr(&req.document_content, config)
+                    .map_err(sidecar_error_to_status)?;
+                let mut metadata = result.metadata;
+                metadata.insert("confidence".to_string(), format!("{:.2}", result.confidence));
+                metadata.insert("language".to_string(), result.language);
+                Ok(Response::new(ExtractTextResponse {
+                    text: result.text,
+                    page_count: 1,
+                    metadata,
+                }))
+            }
+            other => {
+                Err(Status::invalid_argument(format!(
+                    "Unsupported document format: '{}'. Supported: pdf, docx, xlsx, image/png, image/jpeg, image/tiff, image/bmp, image/gif",
+                    other
+                )))
+            }
+        }
     }
 
     async fn process_document(
         &self,
-        _request: Request<ProcessDocumentRequest>,
+        request: Request<ProcessDocumentRequest>,
     ) -> std::result::Result<Response<ProcessDocumentResponse>, Status> {
-        warn!("ProcessDocument called - placeholder implementation");
+        let req = request.into_inner();
+        info!(
+            operation = %req.operation,
+            input_format = %req.input_format,
+            "ProcessDocument called"
+        );
 
-        let response = ProcessDocumentResponse {
-            output_uri: String::new(),
-            output_content: vec![],
-            output_format: String::new(),
-            metadata: std::collections::HashMap::new(),
-        };
+        if req.input_content.is_empty() {
+            return Err(Status::invalid_argument("input_content is empty"));
+        }
 
-        Ok(Response::new(response))
+        match req.operation.as_str() {
+            "extract_text" => {
+                match req.input_format.as_str() {
+                    "pdf" | "application/pdf" => {
+                        let result = extract_text_from_pdf(&req.input_content)
+                            .map_err(sidecar_error_to_status)?;
+                        Ok(Response::new(ProcessDocumentResponse {
+                            output_uri: req.input_uri,
+                            output_content: result.text.into_bytes(),
+                            output_format: "text/plain".to_string(),
+                            metadata: result.metadata,
+                        }))
+                    }
+                    "docx" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+                        let result = extract_text_from_docx(&req.input_content)
+                            .map_err(sidecar_error_to_status)?;
+                        Ok(Response::new(ProcessDocumentResponse {
+                            output_uri: req.input_uri,
+                            output_content: result.text.into_bytes(),
+                            output_format: "text/plain".to_string(),
+                            metadata: result.metadata,
+                        }))
+                    }
+                    "xlsx" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
+                        let result = extract_data_from_xlsx(&req.input_content)
+                            .map_err(sidecar_error_to_status)?;
+                        let output_content = serde_json::to_vec(&result)
+                            .map_err(|e| Status::internal(format!("Failed to serialize XLSX data: {}", e)))?;
+                        Ok(Response::new(ProcessDocumentResponse {
+                            output_uri: req.input_uri,
+                            output_content,
+                            output_format: "application/json".to_string(),
+                            metadata: result.metadata,
+                        }))
+                    }
+                    "image/png" | "image/jpeg" | "image/tiff" | "image/bmp" | "image/gif" => {
+                        let lang = req.operation_params.get("language").cloned();
+                        let config = lang.map(|l| crate::document::OcrConfig {
+                            language: l,
+                            dpi: req.operation_params.get("dpi").and_then(|d| d.parse().ok()),
+                            psm: req.operation_params.get("psm").and_then(|p| p.parse().ok()),
+                            ..Default::default()
+                        });
+                        let result = extract_text_with_ocr(&req.input_content, config)
+                            .map_err(sidecar_error_to_status)?;
+                        let mut metadata = result.metadata;
+                        metadata.insert("confidence".to_string(), format!("{:.2}", result.confidence));
+                        Ok(Response::new(ProcessDocumentResponse {
+                            output_uri: req.input_uri,
+                            output_content: result.text.into_bytes(),
+                            output_format: "text/plain".to_string(),
+                            metadata,
+                        }))
+                    }
+                    other => Err(Status::invalid_argument(format!(
+                        "Unsupported input format for extract_text: '{}'", other
+                    ))),
+                }
+            }
+            "convert" => {
+                Ok(Response::new(ProcessDocumentResponse {
+                    output_uri: req.input_uri,
+                    output_content: req.input_content,
+                    output_format: req.input_format,
+                    metadata: std::collections::HashMap::new(),
+                }))
+            }
+            other => {
+                Err(Status::invalid_argument(format!(
+                    "Unsupported operation: '{}'. Supported: extract_text, convert",
+                    other
+                )))
+            }
+        }
     }
 }
 
@@ -155,7 +470,17 @@ pub async fn run_server(config: SidecarConfig) -> Result<()> {
 
     info!("Security interceptor initialized with metrics");
 
-    let impl_service = SidecarServiceImpl::default();
+    let s3_connector = if std::env::var("AWS_ACCESS_KEY_ID").is_ok()
+        || std::env::var("AWS_SECRET_ACCESS_KEY").is_ok()
+    {
+        info!("S3 connector initialized (AWS credentials detected)");
+        Some(S3Connector::new())
+    } else {
+        warn!("S3 connector not configured (no AWS credentials found)");
+        None
+    };
+
+    let impl_service = SidecarServiceImpl::new(s3_connector);
 
     let addr = format!("unix://{}", socket_path.display());
 

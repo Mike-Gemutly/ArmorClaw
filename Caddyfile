@@ -1,4 +1,16 @@
 {$MATRIX_DOMAIN:matrix.localhost} {
+    # Bridge API routes
+    handle /api* {
+        reverse_proxy armorclaw-sentinel:8080
+    }
+    handle /health {
+        respond "OK" 200
+    }
+    handle /discover {
+        reverse_proxy armorclaw-sentinel:8080
+    }
+
+    # Matrix routes (existing)
     handle /_matrix/* {
         reverse_proxy matrix:6167
     }

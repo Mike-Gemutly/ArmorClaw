@@ -1,9 +1,8 @@
 use crate::document::{validate_file_size, MAX_FILE_SIZE};
 use crate::error::{Result, SidecarError};
 use crate::security::shadowmap::ShadowMap;
-use docx_rs::{read_docx, DocumentChild, Docx};
+use docx_rs::{read_docx, DocumentChild, Docx, ParagraphChild, RunChild};
 use std::collections::HashMap;
-use std::io::Cursor;
 
 pub struct DocxExtractor;
 
@@ -19,11 +18,27 @@ impl DocxExtractor {
         Self
     }
 
-    pub fn extract_from_bytes(&self, _docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
-        Err(SidecarError::DocumentProcessingError(
-            "DOCX text extraction requires docx_rs API update - not currently available"
-                .to_string(),
-        ))
+    pub fn extract_from_bytes(&self, docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
+        if docx_bytes.is_empty() {
+            return Err(SidecarError::InvalidRequest(
+                "DOCX content is empty".to_string(),
+            ));
+        }
+
+        validate_file_size(docx_bytes.len())?;
+
+        let docx = read_docx(docx_bytes).map_err(|e| {
+            SidecarError::DocumentProcessingError(format!("Failed to read DOCX: {}", e))
+        })?;
+
+        let text = extract_text_from_docx_internal(&docx);
+        let metadata = HashMap::new();
+
+        Ok(DocxTextExtractionResult {
+            text,
+            page_count: 0,
+            metadata,
+        })
     }
 
     pub fn extract_from_bytes_redacted(
@@ -38,13 +53,28 @@ impl DocxExtractor {
 }
 
 pub fn extract_text_from_docx(docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
-    use crate::document::{MAX_FILE_SIZE, validate_file_size};
+    use crate::document::{validate_file_size, MAX_FILE_SIZE};
 
     validate_file_size(docx_bytes.len())?;
 
-    Err(SidecarError::DocumentProcessingError(
-        "DOCX text extraction requires docx_rs 0.4 API - write_docx function removed. Use external library or update implementation.".to_string()
-    ))
+    if docx_bytes.is_empty() {
+        return Err(SidecarError::InvalidRequest(
+            "DOCX content is empty".to_string(),
+        ));
+    }
+
+    let docx = read_docx(docx_bytes).map_err(|e| {
+        SidecarError::DocumentProcessingError(format!("Failed to read DOCX: {}", e))
+    })?;
+
+    let text = extract_text_from_docx_internal(&docx);
+    let metadata = HashMap::new();
+
+    Ok(DocxTextExtractionResult {
+        text,
+        page_count: 0,
+        metadata,
+    })
 }
 
 pub fn replace_text_in_docx(
@@ -75,8 +105,82 @@ pub fn delete_paragraph_in_docx(
     ))
 }
 
-fn extract_text_from_docx_internal(_docx: &Docx) -> String {
-    String::new()
+fn extract_text_from_docx_internal(docx: &Docx) -> String {
+    let mut paragraphs_text = Vec::new();
+
+    for child in &docx.document.children {
+        match child {
+            DocumentChild::Paragraph(para) => {
+                let para_text = extract_text_from_paragraph(para);
+                if !para_text.is_empty() {
+                    paragraphs_text.push(para_text);
+                }
+            }
+            DocumentChild::Table(table) => {
+                let table_text = extract_text_from_table(table);
+                if !table_text.is_empty() {
+                    paragraphs_text.push(table_text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    paragraphs_text.join("\n")
+}
+
+fn extract_text_from_paragraph(para: &docx_rs::Paragraph) -> String {
+    let mut text = String::new();
+    for child in &para.children {
+        match child {
+            ParagraphChild::Run(run) => {
+                text.push_str(&extract_text_from_run(run));
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
+fn extract_text_from_run(run: &docx_rs::Run) -> String {
+    let mut text = String::new();
+    for child in &run.children {
+        if let RunChild::Text(t) = child {
+            text.push_str(&t.text);
+        }
+    }
+    text
+}
+
+fn extract_text_from_table(table: &docx_rs::Table) -> String {
+    use docx_rs::{TableCellContent, TableChild, TableRowChild};
+
+    let mut rows = Vec::new();
+    for table_child in &table.rows {
+        match table_child {
+            TableChild::TableRow(row) => {
+                let mut cells = Vec::new();
+                for row_child in &row.cells {
+                    match row_child {
+                        TableRowChild::TableCell(cell) => {
+                            let mut cell_text = String::new();
+                            for content in &cell.children {
+                                match content {
+                                    TableCellContent::Paragraph(para) => {
+                                        cell_text.push_str(&extract_text_from_paragraph(para));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            cells.push(cell_text);
+                        }
+                    }
+                }
+                rows.push(cells.join("\t"));
+            }
+        }
+    }
+    rows.join("\n")
 }
 
 #[cfg(test)]
@@ -116,9 +220,11 @@ mod tests {
     // TODO: Update test to use docx-rs 0.4 API - paragraphs field removed
     fn test_replace_text_simple() {
         let mut docx = Docx::default();
-        docx.document.children.push(DocumentChild::Paragraph(Box::new(
-            docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("Hello WORLD")),
-        )));
+        docx.document
+            .children
+            .push(DocumentChild::Paragraph(Box::new(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("Hello WORLD")),
+            )));
 
         let mut params = std::collections::HashMap::new();
         params.insert("find".to_string(), "world".to_string());
@@ -272,5 +378,74 @@ mod tests {
             }
             _ => panic!("Expected InvalidRequest error for oversized file"),
         }
+    }
+
+    #[test]
+    fn test_extract_text_from_docx_internal_single_paragraph() {
+        let mut docx = Docx::default();
+        docx.document
+            .children
+            .push(DocumentChild::Paragraph(Box::new(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("Hello world")),
+            )));
+
+        let text = extract_text_from_docx_internal(&docx);
+        assert_eq!(text, "Hello world");
+    }
+
+    #[test]
+    fn test_extract_text_from_docx_internal_multiple_paragraphs() {
+        let mut docx = Docx::default();
+        docx.document
+            .children
+            .push(DocumentChild::Paragraph(Box::new(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("First paragraph")),
+            )));
+        docx.document
+            .children
+            .push(DocumentChild::Paragraph(Box::new(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("Second paragraph")),
+            )));
+
+        let text = extract_text_from_docx_internal(&docx);
+        assert_eq!(text, "First paragraph\nSecond paragraph");
+    }
+
+    #[test]
+    fn test_extract_text_from_docx_internal_multiple_runs() {
+        let mut docx = Docx::default();
+        docx.document
+            .children
+            .push(DocumentChild::Paragraph(Box::new(
+                docx_rs::Paragraph::new()
+                    .add_run(docx_rs::Run::new().add_text("Hello "))
+                    .add_run(docx_rs::Run::new().add_text("world")),
+            )));
+
+        let text = extract_text_from_docx_internal(&docx);
+        assert_eq!(text, "Hello world");
+    }
+
+    #[test]
+    fn test_extract_text_from_docx_internal_empty_docx() {
+        let docx = Docx::default();
+        let text = extract_text_from_docx_internal(&docx);
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn test_extract_text_from_paragraph() {
+        let para = docx_rs::Paragraph::new()
+            .add_run(docx_rs::Run::new().add_text("Hello "))
+            .add_run(docx_rs::Run::new().add_text("world"));
+        let text = extract_text_from_paragraph(&para);
+        assert_eq!(text, "Hello world");
+    }
+
+    #[test]
+    fn test_extract_text_from_run() {
+        let run = docx_rs::Run::new().add_text("test text");
+        let text = extract_text_from_run(&run);
+        assert_eq!(text, "test text");
     }
 }

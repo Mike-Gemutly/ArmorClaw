@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/keystore"
+	"github.com/armorclaw/bridge/pkg/trust"
 	"golang.org/x/time/rate"
 )
 
@@ -23,7 +25,7 @@ const (
 	DefaultSocketPath = "/run/armorclaw/bridge.sock"
 
 	// Connection limits
-	DefaultMaxConnections = 100
+	DefaultMaxConnections    = 100
 	DefaultConnectionTimeout = 5 * time.Minute
 
 	// Rate limiting (events per second)
@@ -32,9 +34,9 @@ const (
 )
 
 var (
-	ErrServerClosed    = errors.New("server closed")
-	ErrInvalidMessage  = errors.New("invalid message format")
-	ErrUnauthorized     = errors.New("unauthorized access")
+	ErrServerClosed      = errors.New("server closed")
+	ErrInvalidMessage    = errors.New("invalid message format")
+	ErrUnauthorized      = errors.New("unauthorized access")
 	ErrContainerNotFound = errors.New("container not found")
 )
 
@@ -42,8 +44,8 @@ var (
 type MessageType string
 
 const (
-	MessageTypeRequest  MessageType = "request"
-	MessageTypeResponse MessageType = "response"
+	MessageTypeRequest      MessageType = "request"
+	MessageTypeResponse     MessageType = "response"
 	MessageTypeNotification MessageType = "notification"
 )
 
@@ -54,7 +56,7 @@ type Message struct {
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  interface{}     `json:"result,omitempty"`
-	Error   *RPCError        `json:"error,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
 	Type    MessageType     `json:"type,omitempty"`
 }
 
@@ -67,12 +69,12 @@ type RPCError struct {
 
 // ErrorCode constants
 const (
-	CodeParseError     = -32700
-	CodeInvalidRequest = -32600
-	CodeMethodNotFound = -32601
-	CodeInvalidParams  = -32602
-	CodeInternalError  = -32603
-	CodeUnauthorized    = -32000
+	CodeParseError        = -32700
+	CodeInvalidRequest    = -32600
+	CodeMethodNotFound    = -32601
+	CodeInvalidParams     = -32602
+	CodeInternalError     = -32603
+	CodeUnauthorized      = -32000
 	CodeContainerNotFound = -32001
 )
 
@@ -88,10 +90,11 @@ type Server struct {
 	wg         sync.WaitGroup
 
 	// Connection management
-	rateLimiter        *rate.Limiter
-	maxConnections     int
-	activeConnections  int
-	connectionTimeout  time.Duration
+	rateLimiter       *rate.Limiter
+	maxConnections    int
+	activeConnections int
+	connectionTimeout time.Duration
+	guard             *trust.TrustedProxyGuard
 }
 
 // ContainerSession represents an active container connection
@@ -235,6 +238,15 @@ func (s *Server) acceptConnections() {
 // handleConnection handles a single connection
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
+
+	if s.guard != nil {
+		if err := s.guard.Check(conn.RemoteAddr()); err != nil {
+			slog.Warn("trusted_proxy_guard_rejected", "error", err)
+			conn.Close()
+			return
+		}
+	}
+
 	defer func() {
 		conn.Close()
 		s.mu.Lock()
@@ -352,10 +364,10 @@ func (s *Server) handleStatus(msg *Message) *Message {
 		JSONRPC: "2.0",
 		ID:      msg.ID,
 		Result: map[string]interface{}{
-			"version":     "1.0.0",
-			"state":       "running",
-			"socket":      s.socketPath,
-			"containers":  len(s.containers),
+			"version":    "1.0.0",
+			"state":      "running",
+			"socket":     s.socketPath,
+			"containers": len(s.containers),
 		},
 	}
 }

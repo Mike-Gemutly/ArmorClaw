@@ -1,7 +1,16 @@
 use crate::error::SidecarError;
 use std::collections::HashMap;
 use serde_json::Value;
-use qdrant_client::qdrant::{CreateCollection, VectorsConfig, PointStruct, UpsertPoints, SearchPoints, ScoredPoint};
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{
+    CreateCollectionBuilder,
+    Distance,
+    PointStruct,
+    ScoredPoint,
+    SearchPointsBuilder,
+    UpsertPointsBuilder,
+    VectorParamsBuilder,
+};
 
 pub struct QdrantClient {
     client: Qdrant,
@@ -11,7 +20,8 @@ pub struct QdrantClient {
 impl QdrantClient {
     pub async fn new(url: &str, collection_name: &str) -> Result<Self, SidecarError> {
         let client = Qdrant::from_url(url)
-            .map_err(|e| SidecarError::DatabaseError(format!("Failed to connect to Qdrant: {}", e)))?;
+            .build()
+            .map_err(|e| SidecarError::StorageError(format!("Failed to connect to Qdrant: {}", e)))?;
 
         Ok(Self {
             client,
@@ -20,30 +30,13 @@ impl QdrantClient {
     }
 
     pub async fn create_collection(&self, vector_size: usize) -> Result<(), SidecarError> {
-        let vector_params = qdrant_client::qdrant::VectorParams {
-            size: vector_size as u64,
-            distance: Some(qdrant_client::qdrant::Distance::Cosine.into()),
-            hnsw_config: None,
-            quantization_config: None,
-            on_disk: None,
-        };
-
-        let collection_params = CreateCollection {
-            collection_name: self.collection_name.clone(),
-            vectors_config: Some(VectorsConfig::Params(vector_params)),
-            hnsw_config: None,
-            optimizers_config: None,
-            wal_config: None,
-            quantization_config: None,
-            init_from: None,
-            on_disk_payload: None,
-            replication_factor: None,
-            write_consistency_factor: None,
-            sparse_vectors_config: None,
-        };
-
-        self.client.create_collection(collection_params).await
-            .map_err(|e| SidecarError::DatabaseError(format!("Failed to create collection: {}", e)))?;
+        self.client
+            .create_collection(
+                CreateCollectionBuilder::new(&self.collection_name)
+                    .vectors_config(VectorParamsBuilder::new(vector_size as u64, Distance::Cosine)),
+            )
+            .await
+            .map_err(|e| SidecarError::StorageError(format!("Failed to create collection: {}", e)))?;
 
         Ok(())
     }
@@ -54,22 +47,16 @@ impl QdrantClient {
         vectors: Vec<f32>,
         payload: HashMap<String, Value>,
     ) -> Result<(), SidecarError> {
-        let points = vec![PointStruct {
-            id: qdrant_client::qdrant::PointId::from(id),
-            vector: Some(qdrant_client::qdrant::Vector::from(vectors)),
-            payload: payload.into_iter().map(|(k, v)| (k, Some(v.into()))).collect(),
-            shard_key: None,
-        }];
+        let json_payload: Value = payload.into_iter().collect();
+        let qdrant_payload = qdrant_client::Payload::try_from(json_payload)
+            .map_err(|e| SidecarError::StorageError(format!("Invalid payload: {}", e)))?;
 
-        let upsert_request = UpsertPoints {
-            collection_name: self.collection_name.clone(),
-            points,
-            wait: None,
-            ordering: None,
-        };
+        let points = vec![PointStruct::new(id, vectors, qdrant_payload)];
 
-        self.client.upsert_points_blocking(upsert_request).await
-            .map_err(|e| SidecarError::DatabaseError(format!("Failed to upsert vectors: {}", e)))?;
+        self.client
+            .upsert_points(UpsertPointsBuilder::new(&self.collection_name, points))
+            .await
+            .map_err(|e| SidecarError::StorageError(format!("Failed to upsert vectors: {}", e)))?;
 
         Ok(())
     }
@@ -79,28 +66,22 @@ impl QdrantClient {
         query_vector: Vec<f32>,
         limit: usize,
     ) -> Result<Vec<ScoredPoint>, SidecarError> {
-        let search_request = SearchPoints {
-            collection_name: self.collection_name.clone(),
-            vector: Some(qdrant_client::qdrant::Vector::from(query_vector)),
-            limit: limit as u64,
-            offset: None,
-            with_payload: None,
-            with_vectors: None,
-            score_threshold: None,
-            filter: None,
-            params: None,
-            hnsw_ef: None,
-        };
-
-        let result = self.client.search_points(search_request).await
-            .map_err(|e| SidecarError::DatabaseError(format!("Search failed: {}", e)))?;
+        let result = self.client
+            .search_points(
+                SearchPointsBuilder::new(&self.collection_name, query_vector, limit as u64)
+                    .with_payload(true),
+            )
+            .await
+            .map_err(|e| SidecarError::StorageError(format!("Search failed: {}", e)))?;
 
         Ok(result.result)
     }
 
     pub async fn delete_collection(&self) -> Result<(), SidecarError> {
-        self.client.delete_collection(self.collection_name.clone()).await
-            .map_err(|e| SidecarError::DatabaseError(format!("Failed to delete collection: {}", e)))?;
+        self.client
+            .delete_collection(&self.collection_name)
+            .await
+            .map_err(|e| SidecarError::StorageError(format!("Failed to delete collection: {}", e)))?;
 
         Ok(())
     }

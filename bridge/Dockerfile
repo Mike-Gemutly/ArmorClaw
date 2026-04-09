@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc-dev \
     libsqlcipher-dev \
+    libyara-dev \
     pkg-config \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -36,6 +37,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlcipher0 \
+    libyara4 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

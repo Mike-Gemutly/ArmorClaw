@@ -149,6 +149,7 @@ type Server struct {
 	rpcTransport    string
 	listenAddr      string
 	dockerClient    *docker.Client
+	guard           *trust.TrustedProxyGuard
 }
 
 type Config struct {
@@ -170,6 +171,7 @@ type Config struct {
 	HardeningStore  trust.Store
 	Metrics         *Metrics
 	DockerClient    *docker.Client
+	Guard           *trust.TrustedProxyGuard
 }
 
 func New(cfg Config) (*Server, error) {
@@ -198,6 +200,7 @@ func New(cfg Config) (*Server, error) {
 		rpcTransport:    cfg.RPCTransport,
 		listenAddr:      cfg.ListenAddr,
 		dockerClient:    cfg.DockerClient,
+		guard:           cfg.Guard,
 	}
 
 	s.registerHandlers()
@@ -1019,6 +1022,14 @@ func (s *Server) Run(socketPath string) error {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
+	if s.guard != nil {
+		if err := s.guard.Check(conn.RemoteAddr()); err != nil {
+			slog.Warn("trusted_proxy_guard_rejected", "error", err)
+			conn.Close()
+			return
+		}
+	}
+
 	defer conn.Close()
 
 	// Read JSON-RPC request

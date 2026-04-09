@@ -54,6 +54,9 @@ pub enum SidecarError {
 
     #[error("PII redaction error: {0}")]
     PiiRedactionError(String),
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 impl From<String> for SidecarError {
