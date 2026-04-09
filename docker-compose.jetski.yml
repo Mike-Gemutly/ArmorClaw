@@ -1,0 +1,80 @@
+# Docker Compose: Jetski Browser Sidecar
+# Part of Topology Separation (G-06)
+#
+# Lightweight headless browser (Lightpanda + Go Observer shield).
+# Can be restarted independently of the main stack.
+#
+# Usage:
+#   docker compose -f docker-compose.jetski.yml up -d
+#   Or combined with full stack:
+#   docker compose -f docker-compose.yml -f docker-compose.jetski.yml up -d
+#
+# Network Topology:
+#   - browser-net: Dedicated network for jetski <-> agent CDP/RPC
+#   - bridge-net:  Internal network for bridge <-> agent communication
+
+services:
+  # ========================================
+  # Jetski Browser Sidecar
+  # ========================================
+  # 128MB headless browser wrapping Lightpanda engine
+  # inside a Go-based CDP/RPC shield (the Observer).
+  #
+  # Ports:
+  #   9222 - CDP WebSocket (agent connect)
+  #   9223 - RPC API (engine control)
+  jetski:
+    build: ./jetski
+    container_name: jetski
+    restart: unless-stopped
+
+    ports:
+      - "9222:9222"  # CDP WebSocket
+      - "9223:9223"  # RPC API
+
+    networks:
+      - browser-net
+      - bridge-net
+
+    environment:
+      - JETSKI_CDP_PORT=9222
+      - JETSKI_ENGINE_PORT=9223
+      - JETSKI_ENGINE_PATH=/usr/local/bin/lightpanda
+      - JETSKI_LOG_LEVEL=${JETSKI_LOG_LEVEL:-INFO}
+      - JETSKI_PROXY_LIST=${JETSKI_PROXY_LIST:-}
+      - JETSKI_SESSION_DIR=/app/sessions
+
+    # Security hardening
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9222/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  browser-net:
+    driver: bridge
+    name: armorclaw-browser
+    ipam:
+      config:
+        - subnet: 172.23.0.0/16
+
+  bridge-net:
+    external: true
+    name: armorclaw-bridge
