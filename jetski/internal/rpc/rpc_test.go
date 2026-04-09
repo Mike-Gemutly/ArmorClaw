@@ -10,7 +10,7 @@ import (
 )
 
 func TestRPCStatusReturnsSessionInfo(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -38,7 +38,7 @@ func TestRPCStatusReturnsSessionInfo(t *testing.T) {
 }
 
 func TestRPCSessionCreateReturnsID(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -67,7 +67,7 @@ func TestRPCSessionCreateReturnsID(t *testing.T) {
 }
 
 func TestRPCSessionCreateIncrementsActiveCount(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -92,7 +92,7 @@ func TestRPCSessionCreateIncrementsActiveCount(t *testing.T) {
 }
 
 func TestRPCSessionCloseRemovesSession(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -134,7 +134,7 @@ func TestRPCSessionCloseRemovesSession(t *testing.T) {
 }
 
 func TestRPCSessionCloseInvalidID(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -148,7 +148,7 @@ func TestRPCSessionCloseInvalidID(t *testing.T) {
 }
 
 func TestRPCHealthReturnsDetailedInfo(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -176,7 +176,7 @@ func TestRPCHealthReturnsDetailedInfo(t *testing.T) {
 }
 
 func TestRPCHealthUptimeIncreases(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	time.Sleep(10 * time.Millisecond)
 
 	ts := httptest.NewServer(srv.Handler())
@@ -194,7 +194,7 @@ func TestRPCHealthUptimeIncreases(t *testing.T) {
 }
 
 func TestRPCUnknownPathReturns404(t *testing.T) {
-	srv := NewServer()
+	srv := NewServer(nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

@@ -81,7 +81,7 @@ func main() {
 	go handleShutdown(sigChan, cancel, pi, proxyMgr, log)
 
 	engineURL := fmt.Sprintf("ws://127.0.0.1:%s", cfg.Browser.EnginePort)
-	cdpProxy := cdp.NewProxy(engineURL, router, piiScanner)
+	cdpProxy := cdp.NewProxy(engineURL, router, piiScanner, cfg.Security.EncryptSession)
 	cdpProxy.SetRecorder(func(method string, params json.RawMessage) {
 		sonar.RecordFrame(sonarBuf, method, params, "")
 	})
@@ -133,7 +133,7 @@ func main() {
 
 	rpcServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, "9223"),
-		Handler:      rpc.NewServer().Handler(),
+		Handler:      rpc.NewServer(nil).Handler(),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 	}

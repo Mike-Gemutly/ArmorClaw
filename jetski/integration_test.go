@@ -33,7 +33,7 @@ func TestIntegration_FullRequestFlow(t *testing.T) {
 
 	router := cdp.NewMethodRouter(cdp.NewTranslator())
 	engineURL := "ws://127.0.0.1:9223"
-	proxy := cdp.NewProxy(engineURL, router, nil)
+	proxy := cdp.NewProxy(engineURL, router, nil, false)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

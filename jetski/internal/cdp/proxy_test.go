@@ -137,7 +137,7 @@ func TestMethodRouter_HandlerInvocation(t *testing.T) {
 
 func TestProxy_NewProxy(t *testing.T) {
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy("ws://localhost:9222", router, nil)
+	proxy := NewProxy("ws://localhost:9222", router, nil, false)
 
 	if proxy == nil {
 		t.Fatal("NewProxy should return a non-nil proxy")
@@ -157,7 +157,7 @@ func TestProxy_BidirectionalMessageForwarding(t *testing.T) {
 	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
 
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy(wsURL, router, nil)
+	proxy := NewProxy(wsURL, router, nil, false)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestProxy_PingPong(t *testing.T) {
 	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
 
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy(wsURL, router, nil)
+	proxy := NewProxy(wsURL, router, nil, false)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestProxy_PingPong(t *testing.T) {
 
 func TestProxy_Stop(t *testing.T) {
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy("ws://localhost:9222", router, nil)
+	proxy := NewProxy("ws://localhost:9222", router, nil, false)
 
 	proxy.Stop()
 
@@ -302,7 +302,7 @@ func TestProxy_RecorderCallback(t *testing.T) {
 	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
 
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy(wsURL, router, nil)
+	proxy := NewProxy(wsURL, router, nil, false)
 
 	var recorded []string
 	proxy.SetRecorder(func(method string, params json.RawMessage) {
@@ -353,7 +353,7 @@ func TestProxy_RecorderCallback(t *testing.T) {
 
 func TestProxy_SetRecorder_Nil(t *testing.T) {
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy("ws://localhost:9222", router, nil)
+	proxy := NewProxy("ws://localhost:9222", router, nil, false)
 
 	proxy.SetRecorder(nil)
 
@@ -384,7 +384,7 @@ func (m *mockPIIScanner) ScanJSONMessage(jsonStr string) ([]security.PIIFinding,
 func TestPII_NewProxyWithScanner(t *testing.T) {
 	router := NewMethodRouter(NewTranslator())
 	mock := newMockPIIScanner()
-	proxy := NewProxy("ws://localhost:9222", router, mock)
+	proxy := NewProxy("ws://localhost:9222", router, mock, false)
 
 	if proxy == nil {
 		t.Fatal("NewProxy should return a non-nil proxy")
@@ -396,7 +396,7 @@ func TestPII_NewProxyWithScanner(t *testing.T) {
 
 func TestPII_NilScannerAllowed(t *testing.T) {
 	router := NewMethodRouter(NewTranslator())
-	proxy := NewProxy("ws://localhost:9222", router, nil)
+	proxy := NewProxy("ws://localhost:9222", router, nil, false)
 
 	if proxy == nil {
 		t.Fatal("NewProxy should return a non-nil proxy")
@@ -413,7 +413,7 @@ func TestPII_ScannerCalledOnForwardToEngine(t *testing.T) {
 
 	router := NewMethodRouter(NewTranslator())
 	mock := newMockPIIScanner()
-	proxy := NewProxy(wsURL, router, mock)
+	proxy := NewProxy(wsURL, router, mock, false)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -450,7 +450,7 @@ func TestPII_DetectionLogsWarning(t *testing.T) {
 
 	router := NewMethodRouter(NewTranslator())
 	scanner := security.NewPIIScanner()
-	proxy := NewProxy(wsURL, router, scanner)
+	proxy := NewProxy(wsURL, router, scanner, false)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -495,7 +495,7 @@ func TestPII_NoWarningForCleanMessage(t *testing.T) {
 
 	router := NewMethodRouter(NewTranslator())
 	scanner := security.NewPIIScanner()
-	proxy := NewProxy(wsURL, router, scanner)
+	proxy := NewProxy(wsURL, router, scanner, false)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -537,7 +537,7 @@ func TestPII_EmailDetectionLogsWarning(t *testing.T) {
 
 	router := NewMethodRouter(NewTranslator())
 	scanner := security.NewPIIScanner()
-	proxy := NewProxy(wsURL, router, scanner)
+	proxy := NewProxy(wsURL, router, scanner, false)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {

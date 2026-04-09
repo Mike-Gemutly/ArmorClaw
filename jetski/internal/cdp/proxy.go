@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
@@ -50,27 +51,29 @@ type PIIScanner interface {
 }
 
 type Proxy struct {
-	mu         sync.Mutex
-	clientConn *websocket.Conn
-	engineConn *websocket.Conn
-	engineURL  string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	router     *MethodRouter
-	errorChan  chan error
-	recorder   MessageRecorder
-	piiScanner PIIScanner
+	mu           sync.Mutex
+	clientConn   *websocket.Conn
+	engineConn   *websocket.Conn
+	engineURL    string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	router       *MethodRouter
+	errorChan    chan error
+	recorder     MessageRecorder
+	piiScanner   PIIScanner
+	tetheredMode bool
 }
 
-func NewProxy(engineURL string, router *MethodRouter, piiScanner PIIScanner) *Proxy {
+func NewProxy(engineURL string, router *MethodRouter, piiScanner PIIScanner, tetheredMode bool) *Proxy {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Proxy{
-		engineURL:  engineURL,
-		ctx:        ctx,
-		cancel:     cancel,
-		router:     router,
-		errorChan:  make(chan error, 10),
-		piiScanner: piiScanner,
+		engineURL:    engineURL,
+		ctx:          ctx,
+		cancel:       cancel,
+		router:       router,
+		errorChan:    make(chan error, 10),
+		piiScanner:   piiScanner,
+		tetheredMode: tetheredMode,
 	}
 }
 
@@ -157,6 +160,8 @@ func (p *Proxy) forwardToEngine() {
 					log.Printf("[JETSKI PROXY]: Failed to unmarshal message: %v", err)
 					continue
 				}
+
+				data = p.ScrubPII(data)
 
 				if p.piiScanner != nil {
 					if findings, err := p.piiScanner.ScanJSONMessage(string(data)); err == nil {
@@ -317,4 +322,31 @@ func (p *Proxy) Stop() {
 
 func (p *Proxy) Errors() <-chan error {
 	return p.errorChan
+}
+
+func ScrubPII(data []byte, patterns map[string]*regexp.Regexp) []byte {
+	result := data
+	for piiType, pattern := range patterns {
+		replacement := "[REDACTED_" + piiType + "]"
+		result = pattern.ReplaceAll(result, []byte(replacement))
+	}
+	return result
+}
+
+func (p *Proxy) ScrubPII(data []byte) []byte {
+	if !p.tetheredMode {
+		return data
+	}
+	return ScrubPII(data, scrubPatterns)
+}
+
+var scrubPatterns map[string]*regexp.Regexp
+
+func init() {
+	scrubPatterns = map[string]*regexp.Regexp{
+		"SSN":         regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
+		"CREDIT_CARD": regexp.MustCompile(`\b(?:\d{4}[-\s]?){3}\d{4}\b`),
+		"EMAIL":       regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`),
+		"PASSWORD":    regexp.MustCompile(`(?i)(password|passwd|pwd)["\']?\s*[:=]\s*["\']?[^\s"']{8,}`),
+	}
 }

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/armorclaw/jetski/internal/approval"
 )
 
 type Server struct {
@@ -14,12 +16,14 @@ type Server struct {
 	sessions  map[string]struct{}
 	mu        sync.RWMutex
 	counter   atomic.Int64
+	ac        *approval.ApprovalClient
 }
 
-func NewServer() *Server {
+func NewServer(ac *approval.ApprovalClient) *Server {
 	return &Server{
 		startTime: time.Now(),
 		sessions:  make(map[string]struct{}),
+		ac:        ac,
 	}
 }
 
@@ -29,6 +33,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/rpc/session/create", s.handleSessionCreate)
 	mux.HandleFunc("/rpc/session/close", s.handleSessionClose)
 	mux.HandleFunc("/rpc/health", s.handleHealth)
+	if s.ac != nil {
+		approval.RegisterApprovalHandlers(mux, s.ac)
+	}
 	return mux
 }
 

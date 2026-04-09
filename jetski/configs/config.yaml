@@ -67,3 +67,13 @@ logging:
   output: "stdout"
   # Enable structured logging
   structured: false
+
+approval:
+  enabled: false
+  bridgeURL: "http://127.0.0.1:8080"
+  roomID: ""
+  timeout: 60s
+  sensitiveOperations:
+    - session_create
+    - navigation
+    - file_download

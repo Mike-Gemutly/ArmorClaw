@@ -15,6 +15,7 @@ type Config struct {
 	Security SecurityConfig `yaml:"security"`
 	Network  NetworkConfig  `yaml:"network"`
 	Logging  LoggingConfig  `yaml:"logging"`
+	Approval ApprovalConfig `yaml:"approval"`
 }
 
 type ServerConfig struct {
@@ -68,6 +69,14 @@ type LoggingConfig struct {
 	Structured bool   `yaml:"structured"`
 }
 
+type ApprovalConfig struct {
+	Enabled             bool          `yaml:"enabled"`
+	BridgeURL           string        `yaml:"bridgeURL"`
+	RoomID              string        `yaml:"roomID"`
+	Timeout             time.Duration `yaml:"timeout"`
+	SensitiveOperations []string      `yaml:"sensitiveOperations"`
+}
+
 var defaultConfig = Config{
 	Server: ServerConfig{
 		Port:         "9222",
@@ -109,6 +118,16 @@ var defaultConfig = Config{
 		Format:     "text",
 		Output:     "stdout",
 		Structured: false,
+	},
+	Approval: ApprovalConfig{
+		Enabled:   false,
+		BridgeURL: "http://127.0.0.1:8080",
+		Timeout:   60 * time.Second,
+		SensitiveOperations: []string{
+			"session_create",
+			"navigation",
+			"file_download",
+		},
 	},
 }
 
