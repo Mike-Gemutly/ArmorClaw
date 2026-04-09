@@ -6,48 +6,12 @@ import (
 	"testing"
 )
 
-func TestSessionEncryptionRoundTrip(t *testing.T) {
-	session := Session{
-		ID:        "test-session-123",
-		UserAgent: "Mozilla/5.0",
-		Cookies:   []byte("session-cookie-data"),
-	}
-
-	passphrase := "test-passphrase-123"
-
-	encrypted, err := EncryptSession(session, passphrase)
-	if err != nil {
-		t.Fatalf("EncryptSession() failed: %v", err)
-	}
-
-	if len(encrypted) == 0 {
-		t.Fatal("Expected encrypted data to not be empty")
-	}
-
-	decrypted, err := DecryptSession(encrypted, passphrase)
-	if err != nil {
-		t.Fatalf("DecryptSession() failed: %v", err)
-	}
-
-	if decrypted.ID != session.ID {
-		t.Errorf("Expected decrypted ID to match, got %s want %s", decrypted.ID, session.ID)
-	}
-
-	if decrypted.UserAgent != session.UserAgent {
-		t.Errorf("Expected decrypted UserAgent to match, got %s want %s", decrypted.UserAgent, session.UserAgent)
-	}
-
-	if string(decrypted.Cookies) != string(session.Cookies) {
-		t.Error("Expected decrypted Cookies to match")
-	}
-}
-
-func TestSessionFilePermissions(t *testing.T) {
+func TestSaveSession(t *testing.T) {
 	tempDir := t.TempDir()
 	sessionPath := filepath.Join(tempDir, "test-session.enc")
 
 	session := Session{
-		ID:        "test-session-perms",
+		ID:        "test-session-save",
 		UserAgent: "Mozilla/5.0",
 		Cookies:   []byte("cookie-data"),
 	}
@@ -59,35 +23,9 @@ func TestSessionFilePermissions(t *testing.T) {
 		t.Fatalf("SaveSession() failed: %v", err)
 	}
 
-	info, err := os.Stat(sessionPath)
-	if err != nil {
-		t.Fatalf("Failed to stat session file: %v", err)
-	}
-
-	mode := info.Mode().Perm()
-	if mode != 0600 {
-		t.Errorf("Expected file permissions 0600, got %04o", mode)
-	}
-}
-
-func TestSessionDecryptionWithWrongPassphrase(t *testing.T) {
-	session := Session{
-		ID:        "test-session-wrong-pass",
-		UserAgent: "Mozilla/5.0",
-		Cookies:   []byte("cookie-data"),
-	}
-
-	correctPassphrase := "correct-passphrase"
-	wrongPassphrase := "wrong-passphrase"
-
-	encrypted, err := EncryptSession(session, correctPassphrase)
-	if err != nil {
-		t.Fatalf("EncryptSession() failed: %v", err)
-	}
-
-	_, err = DecryptSession(encrypted, wrongPassphrase)
-	if err == nil {
-		t.Error("Expected decryption to fail with wrong passphrase")
+	dbPath := sessionPath[:len(sessionPath)-4] + ".db"
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Fatal("Expected database file to be created")
 	}
 }
 
@@ -114,14 +52,35 @@ func TestLoadSession(t *testing.T) {
 	}
 
 	if loadedSession.ID != originalSession.ID {
-		t.Errorf("Expected loaded ID to match, got %s want %s", loadedSession.ID, originalSession.ID)
+		t.Errorf("Expected loaded ID to match, got %q want %q", loadedSession.ID, originalSession.ID)
 	}
 
 	if loadedSession.UserAgent != originalSession.UserAgent {
-		t.Errorf("Expected loaded UserAgent to match, got %s want %s", loadedSession.UserAgent, originalSession.UserAgent)
+		t.Errorf("Expected loaded UserAgent to match, got %q want %q", loadedSession.UserAgent, originalSession.UserAgent)
 	}
 
 	if string(loadedSession.Cookies) != string(originalSession.Cookies) {
 		t.Error("Expected loaded Cookies to match")
+	}
+}
+
+func TestLoadSessionWrongPassphrase(t *testing.T) {
+	tempDir := t.TempDir()
+	sessionPath := filepath.Join(tempDir, "test-wrong-pass.enc")
+
+	session := Session{
+		ID:        "test-wrong-pass",
+		UserAgent: "Mozilla/5.0",
+		Cookies:   []byte("cookie-data"),
+	}
+
+	err := SaveSession(sessionPath, session, "correct-passphrase")
+	if err != nil {
+		t.Fatalf("SaveSession() failed: %v", err)
+	}
+
+	_, err = LoadSession(sessionPath, "wrong-passphrase")
+	if err == nil {
+		t.Fatal("Expected error when loading with wrong passphrase")
 	}
 }

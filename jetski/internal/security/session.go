@@ -1,13 +1,8 @@
 package security
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
-	"os"
-	"path/filepath"
-
-	"filippo.io/age"
+	"strings"
 )
 
 type Session struct {
@@ -17,78 +12,39 @@ type Session struct {
 	ExpiresAt int64
 }
 
-func EncryptSession(session Session, passphrase string) ([]byte, error) {
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-
-	if err := encoder.Encode(session); err != nil {
-		return nil, fmt.Errorf("failed to encode session: %w", err)
-	}
-
-	recipient, err := age.NewScryptRecipient(passphrase)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create scrypt recipient: %w", err)
-	}
-
-	encrypted := &bytes.Buffer{}
-	w, err := age.Encrypt(encrypted, recipient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create encryptor: %w", err)
-	}
-
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		return nil, fmt.Errorf("failed to write encrypted data: %w", err)
-	}
-
-	if err := w.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close encryptor: %w", err)
-	}
-
-	return encrypted.Bytes(), nil
-}
-
-func DecryptSession(encrypted []byte, passphrase string) (*Session, error) {
-	identity, err := age.NewScryptIdentity(passphrase)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create scrypt identity: %w", err)
-	}
-
-	r, err := age.Decrypt(bytes.NewReader(encrypted), identity)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create decryptor: %w", err)
-	}
-
-	var session Session
-	decoder := gob.NewDecoder(r)
-	if err := decoder.Decode(&session); err != nil {
-		return nil, fmt.Errorf("failed to decode session: %w", err)
-	}
-
-	return &session, nil
-}
-
 func SaveSession(filePath string, session Session, passphrase string) error {
-	encrypted, err := EncryptSession(session, passphrase)
+	dbPath := strings.TrimSuffix(filePath, ".enc") + ".db"
+
+	store, err := NewSQLCipherSessionStore(dbPath, passphrase)
 	if err != nil {
 		return err
 	}
+	defer store.Close()
 
-	if err := os.MkdirAll(filepath.Dir(filePath), 0700); err != nil {
-		return fmt.Errorf("failed to create session directory: %w", err)
-	}
-
-	if err := os.WriteFile(filePath, encrypted, 0600); err != nil {
-		return fmt.Errorf("failed to write session file: %w", err)
+	if err := store.CreateSession(session); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
 	}
 
 	return nil
 }
 
 func LoadSession(filePath string, passphrase string) (*Session, error) {
-	encrypted, err := os.ReadFile(filePath)
+	dbPath := strings.TrimSuffix(filePath, ".enc") + ".db"
+
+	store, err := NewSQLCipherSessionStore(dbPath, passphrase)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read session file: %w", err)
+		return nil, err
+	}
+	defer store.Close()
+
+	sessions, err := store.ListSessions()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	return DecryptSession(encrypted, passphrase)
+	if len(sessions) == 0 {
+		return nil, ErrSessionNotFound
+	}
+
+	return &sessions[0], nil
 }
