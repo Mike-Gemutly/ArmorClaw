@@ -1,6 +1,7 @@
 package cdp
 
 import (
+	"log"
 	"strings"
 )
 
@@ -21,14 +22,16 @@ const (
 )
 
 type MethodRouter struct {
-	routes    []MethodRoute
-	defaults  map[string]RouteAction
-	wildcards []MethodRoute
+	routes     []MethodRoute
+	defaults   map[string]RouteAction
+	wildcards  []MethodRoute
+	translator *Translator
 }
 
-func NewMethodRouter() *MethodRouter {
+func NewMethodRouter(translator *Translator) *MethodRouter {
 	r := &MethodRouter{
-		defaults: make(map[string]RouteAction),
+		defaults:   make(map[string]RouteAction),
+		translator: translator,
 	}
 	r.configureDefaults()
 	r.configureRoutes()
@@ -123,15 +126,24 @@ func (r *MethodRouter) Route(method string) *MethodRoute {
 }
 
 func (r *MethodRouter) handleMouseClick(msg *CDPMessage) (*CDPMessage, error) {
-	return msg, nil
+	return r.translate(msg)
 }
 
 func (r *MethodRouter) handleKeyInput(msg *CDPMessage) (*CDPMessage, error) {
-	return msg, nil
+	return r.translate(msg)
 }
 
 func (r *MethodRouter) handleTextInsert(msg *CDPMessage) (*CDPMessage, error) {
-	return msg, nil
+	return r.translate(msg)
+}
+
+func (r *MethodRouter) translate(msg *CDPMessage) (*CDPMessage, error) {
+	result, err := r.translator.Translate(msg)
+	if err != nil {
+		log.Printf("[JETSKI ROUTER]: translation failed for %s: %v", msg.Method, err)
+		return msg, nil
+	}
+	return result, nil
 }
 
 func (r *MethodRouter) handleUnsupported(msg *CDPMessage) (*CDPMessage, error) {
