@@ -2543,8 +2543,11 @@ func runBridgeServer(cliCfg cliConfig) {
 			ApprovalEngine: approvalEngine,
 			TrustEngine:    trustEngine,
 		})
-		matrixAdapter.SetStudioCommandHandler(secretaryHandler)
-		log.Println("Secretary command handler wired to Matrix adapter")
+		matrixAdapter.SetStudioCommandHandler(&compositeStudioHandler{
+			studio:    studioService,
+			secretary: secretaryHandler,
+		})
+		log.Println("Studio command handler wired to Matrix adapter")
 	}
 
 	// Log RPC dependency status
@@ -3418,4 +3421,24 @@ func (s *studioMatrixAdapter) SendFormattedMessage(ctx context.Context, roomID, 
 
 func (s *studioMatrixAdapter) ReplyToEvent(ctx context.Context, roomID, eventID, message string) error {
 	return s.adapter.ReplyToEvent(ctx, roomID, eventID, message)
+}
+
+// compositeStudioHandler tries studio commands first, then secretary commands
+type compositeStudioHandler struct {
+	studio    *studio.StudioIntegration
+	secretary *secretary.SecretaryCommandHandler
+}
+
+func (c *compositeStudioHandler) HandleMatrixMessage(ctx context.Context, roomID, userID, eventID, text string) bool {
+	// Try studio commands (!agent *) first
+	if c.studio != nil {
+		if c.studio.HandleMatrixMessage(ctx, roomID, userID, eventID, text) {
+			return true
+		}
+	}
+	// Try secretary commands (!secretary *) second
+	if c.secretary != nil {
+		return c.secretary.HandleMatrixMessage(ctx, roomID, userID, eventID, text)
+	}
+	return false
 }
