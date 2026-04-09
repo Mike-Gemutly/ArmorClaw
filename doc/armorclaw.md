@@ -18,7 +18,7 @@
 | Add or change RPC methods | `bridge/pkg/rpc/server.go` and `docs/reference/rpc-api.md` |
 | Change agent state transitions | `bridge/pkg/agent/state.go` and `bridge/pkg/agent/state_machine.go` |
 | Modify Matrix event handling | `bridge/internal/adapter/` and `bridge/pkg/matrix/` |
-| Update JetSki CDP proxy | `jetski/internal/cdp/proxy.go` and `jetski/internal/cdp/pii_scanner.go` |
+| Update JetSki CDP proxy | `jetski/internal/cdp/proxy.go` and `jetski/internal/security/pii_scanner.go` |
 | Change keystore encryption | `bridge/pkg/keystore/keystore.go` (Go) and `rust-vault/src/db/` (Rust) |
 | Add browser skills | `container/openclaw-src/skills/` and `browser-service/src/` |
 | Modify container hardening | `container/Dockerfile.openclaw`, `container/seccomp-profile.json`, `container/apparmor-profile` |
@@ -35,25 +35,27 @@
 4. [Go Bridge Component](#go-bridge-component)
 5. [SQLCipher Keystore](#sqlcipher-keystore)
 6. [Rust Vault Sidecar](#rust-vault-sidecar)
-6.5. [Phase 2: Secure Document Pipeline](#phase-2-secure-document-pipeline)
-7. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
-8. [Security Architecture](#security-architecture)
-9. [Component Integration Patterns](#component-integration-patterns)
-10. [Agent Studio](#agent-studio)
-11. [Browser Service](#browser-service)
-11.5. [Jetski Browser Sidecar](#jetski-browser-sidecar)
-12. [Rust Office Sidecar](#rust-office-sidecar)
-13. [ArmorChat Android Client](#armorchat-android-client)
-14. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
-15. [RPC API Reference](#rpc-api-reference)
-16. [Event Types Reference](#event-types-reference)
-17. [Configuration Reference](#configuration-reference)
-18. [Deployment Modes](#deployment-modes)
-19. [Testing & Verification](#testing--verification)
+7. [Phase 2: Secure Document Pipeline](#phase-2-secure-document-pipeline)
+8. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
+9. [Security Architecture](#security-architecture)
+10. [Component Integration Patterns](#component-integration-patterns)
+11. [Agent Studio](#agent-studio)
+12. [Browser Service](#browser-service)
+13. [Jetski Browser Sidecar](#jetski-browser-sidecar)
+14. [Rust Office Sidecar](#rust-office-sidecar)
+15. [ArmorChat Android Client](#armorchat-android-client)
+16. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
+17. [RPC API Reference](#rpc-api-reference)
+18. [Event Types Reference](#event-types-reference)
+19. [Configuration Reference](#configuration-reference)
+20. [Deployment Modes](#deployment-modes)
+21. [Testing & Verification](#testing--verification)
 
 ---
 
+<component id="executive-summary">
 ## Executive Summary
+</component>
 
 ### What is ArmorClaw?
 
@@ -86,18 +88,38 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **TTL Proxy Guard** | Ephemeral tokens (30 min TTL) for sidecar communication |
 | **Jetski CDP Proxy** | Tethered Mode browser proxy with PII scrubbing and encrypted sessions |
 
+<component id="component-overview">
 ### Component Overview
+
+<component id="component-overview">
+</component>
 
 | Component | Language | Purpose | Entry Point |
 |-----------|----------|---------|-------------|
+|<component id="go-bridge>|
 | **Go Bridge** | Go | Central orchestrator, RPC server, container manager | `bridge/cmd/bridge/main.go` |
+|</component>
+|<component id="keystore>|
 | **SQLCipher Keystore** | Go | Encrypted credential storage with hardware binding | `bridge/pkg/keystore/keystore.go` |
+|</component>
+|<component id="matrix-conduit>|
 | **Matrix Conduit** | Rust | Matrix homeserver for E2EE messaging | Conduit binary |
+|</component>
+|<component id="browser-service>|
 | **Browser Service** | TypeScript | Playwright-based browser automation | `browser-service/src/index.ts` |
+|</component>
+|<component id="openclaw-runtime>|
 | **OpenClaw Runtime** | TypeScript/Node | AI agent runtime in containers | `container/openclaw-src/openclaw.mjs` |
+|</component>
+|<component id="license-server>|
 | **License Server** | Go | Enterprise license validation | `license-server/main.go` |
+|</component>
+|<component id="armorchard>|
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
+|</component>
+|<component id="jetski-sidecar>|
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
+|</component>
 
 ---
 
@@ -2423,25 +2445,130 @@ bash tests/ssh/run_all_tests.sh --all --output json
 ### Primary Documentation
 - **README.md** - System overview and quick start
 - **ARMORCLAW.md** - AI-powered deployment skills introduction
-- **doc/armorclaw.md** - This document (comprehensive architecture)
-
-### Skills Documentation
-- `.skills/README.md` - Skills index
-- `.skills/PLATFORM.md` - Cross-platform patterns
-- `.skills/*/SKILL.md` - Individual skill documentation
-
-### Deployment Documentation
-- `deploy/README.md` - Deployment scripts reference
-- `deploy/install.sh` - One-command installer
+- **AGENTS.md** - Agent OS orchestration guidance
+- **CLAUDE.md** - Claude Code development standards
 
 ### Review Documentation
-- `review.md` - Code review findings
 - `applications/ArmorChat-review.md` - Android client review
 - `applications/ArmorTerminal-review.md` - Terminal client review
+- `DEPLOYMENT_SKILLS_REVIEW.md` - Deployment skills audit
 
 ### Jetski Documentation
 - **Jetski Sidecar**: `jetski/README.md` - Browser sidecar documentation
 - **Jetski Integration Plan**: `.sisyphus/plans/jetski-integration.md` - Integration plan and status
+
+---
+
+## Local Development Guide
+
+ArmorClaw provides a complete local development environment using Docker Desktop. This enables developers to run, test, and modify the system without provisioning a VPS.
+
+### Quick Start
+
+```bash
+# 1. Install Docker Desktop (https://www.docker.com/products/docker-desktop)
+# 2. Clone the repository
+git clone https://github.com/Gemutly/ArmorClaw.git
+cd armorclaw
+
+# 3. Start all services
+docker-compose up -d
+
+# 4. Verify deployment
+curl http://localhost:8080/health
+# Should return health status
+
+# 5. View logs
+docker-compose logs -f bridge
+```
+
+### Development Workflow
+
+| Action | Command |
+|--------|---------|
+| Start all services | `docker-compose up -d` |
+| Stop all services | `docker-compose down` |
+| View logs (all services) | `docker-compose logs -f` |
+| View logs (specific service) | `docker-compose logs -f bridge` |
+| Restart service | `docker-compose restart bridge` |
+| Rebuild service | `docker-compose up -d --build bridge` |
+| Execute command in container | `docker exec -it armorclaw-bridge bash` |
+| Clean up | `docker system prune -a --volumes -f` |
+
+### Hot Reload Development
+
+For Bridge development, you can enable hot-reloading:
+
+```bash
+# Install inotify-tools (Linux)
+sudo apt-get install inotify-tools
+
+# Watch for changes and rebuild
+while inotifywait -e modify -r bridge/; do
+  docker-compose up -d --build bridge
+done
+```
+
+### Running Tests Locally
+
+```bash
+# Run all test suites
+make test-all
+
+# Run specific test suites
+make test-hardening
+make test-secrets
+make test-exploits
+make test-e2e
+
+# Quick smoke test (hardening only)
+make smoke
+
+# Run Go unit tests
+cd bridge
+go test ./...
+
+# Run Rust Vault tests
+cd rust-vault
+cargo test --all
+
+# Run JetSki tests
+cd jetski
+go test ./...
+```
+
+### Environment Variables for Development
+
+Create a `.env` file in the project root:
+
+```bash
+ARMORCLAW_ENV=development
+LOG_LEVEL=debug
+# Add any API keys needed for testing:
+# OPENROUTER_API_KEY=sk-or-...
+# OPENAI_API_KEY=sk-...
+```
+
+### Ports Used in Local Development
+
+| Port | Service | Protocol |
+|------|---------|----------|
+| 8080 | Bridge API (TCP) | HTTP |
+| 6167 | Matrix Conduit | HTTP |
+| 80 | Caddy HTTP Proxy | HTTP |
+| 443 | Caddy HTTPS Proxy | HTTPS |
+| 9222 | JetSki CDP Proxy (agent-facing) | WebSocket |
+| 9223 | JetSki RPC API | HTTP/JSON-RPC |
+| 9333 | Lightpanda Engine | CDP over WebSocket |
+
+---
+
+## Review Documentation
+
+See the [Document Index](#document-index) for links to all review documents including:
+- `applications/ArmorChat-review.md` - Android client architecture review
+- `applications/ArmorTerminal-review.md` - Terminal client review
+- `DEPLOYMENT_SKILLS_REVIEW.md` - Deployment skills audit
 
 ---
 
