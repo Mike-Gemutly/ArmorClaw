@@ -47,15 +47,15 @@ type RoleAssignment struct {
 
 // Token represents a provisioning token
 type Token struct {
-	ID           string      `json:"id"`
-	Status       TokenStatus `json:"status"`
-	Config       *Config     `json:"config"`
-	Signature    string      `json:"signature"`
-	CreatedAt    time.Time   `json:"created_at"`
-	ExpiresAt    time.Time   `json:"expires_at"`
-	ClaimedAt    *time.Time  `json:"claimed_at,omitempty"`
-	ClaimedBy    *DeviceInfo `json:"claimed_by,omitempty"`
-	OneTimeUse   bool        `json:"one_time_use"`
+	ID         string      `json:"id"`
+	Status     TokenStatus `json:"status"`
+	Config     *Config     `json:"config"`
+	Signature  string      `json:"signature"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ExpiresAt  time.Time   `json:"expires_at"`
+	ClaimedAt  *time.Time  `json:"claimed_at,omitempty"`
+	ClaimedBy  *DeviceInfo `json:"claimed_by,omitempty"`
+	OneTimeUse bool        `json:"one_time_use"`
 }
 
 // Config represents the configuration to be provisioned
@@ -530,6 +530,22 @@ func (m *Manager) GetUserRole(userID string) AdminRole {
 	}
 
 	return RoleNone
+}
+
+// StartSetupToken creates a provisioning token and returns the QR deep link + expiry time.
+func (m *Manager) StartSetupToken(ctx context.Context) (string, string, error) {
+	token, err := m.StartToken(ctx, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to start token: %w", err)
+	}
+
+	qrData, err := m.GetQRData(token)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate QR data: %w", err)
+	}
+
+	expiresAt := time.Unix(token.Config.ExpiresAt, 0).UTC().Format(time.RFC3339)
+	return qrData, expiresAt, nil
 }
 
 // generateTokenID generates a random token ID

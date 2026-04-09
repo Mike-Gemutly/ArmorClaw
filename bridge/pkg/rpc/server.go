@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -62,6 +63,7 @@ type StudioService interface {
 
 type ProvisioningManager interface {
 	GetUserRole(userID string) provisioning.AdminRole
+	StartSetupToken(ctx context.Context) (qrDeepLink string, expiresAt string, err error)
 }
 
 type AppService interface {
@@ -1040,9 +1042,63 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	defer conn.Close()
 
+	br := bufio.NewReader(conn)
+
+	// Intercept HTTP requests before JSON-RPC decode
+	if peek, err := br.Peek(20); err == nil {
+		peekStr := string(peek)
+		if strings.HasPrefix(peekStr, "GET /health ") || strings.HasPrefix(peekStr, "GET /health?") {
+			// Consume the full HTTP request headers
+			for {
+				line, err := br.ReadString('\n')
+				if err != nil || line == "\r\n" || line == "\n" {
+					break
+				}
+			}
+			fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}\n")
+			return
+		}
+		if strings.HasPrefix(peekStr, "GET ") {
+			// Consume the full HTTP request headers
+			for {
+				line, err := br.ReadString('\n')
+				if err != nil || line == "\r\n" || line == "\n" {
+					break
+				}
+			}
+			fmt.Fprintf(conn, "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"not_found\"}\n")
+			return
+		}
+		if strings.HasPrefix(peekStr, "POST /setup") {
+			// Consume the full HTTP request (headers + body)
+			for {
+				line, err := br.ReadString('\n')
+				if err != nil || line == "\r\n" || line == "\n" {
+					break
+				}
+			}
+			// Skip any remaining body bytes (POST /setup has no required body)
+
+			if s.provisioningMgr == nil {
+				fmt.Fprintf(conn, "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"unavailable\",\"error\":\"provisioning not configured\"}\n")
+				return
+			}
+
+			qrLink, expiresAt, err := s.provisioningMgr.StartSetupToken(context.Background())
+			if err != nil {
+				fmt.Fprintf(conn, "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"error\",\"error\":\"%s\"}\n", err.Error())
+				return
+			}
+
+			resp := fmt.Sprintf(`{"status":"ok","admin_created":true,"deep_link":"%s","expires_at":"%s"}`, qrLink, expiresAt)
+			fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n%s\n", resp)
+			return
+		}
+	}
+
 	// Read JSON-RPC request
 	var req Request
-	decoder := json.NewDecoder(conn)
+	decoder := json.NewDecoder(br)
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("rpc_decode_error", "error", err)
 		return
