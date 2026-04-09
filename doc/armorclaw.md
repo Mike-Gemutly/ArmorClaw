@@ -2,9 +2,9 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 4.8.0
+> **Version**: 4.9.0
 >
-> **Last Updated**: 2026-04-05
+> **Last Updated**: 2026-04-08
 
 ---
 
@@ -16,11 +16,13 @@
 4. [Go Bridge Component](#go-bridge-component)
 5. [SQLCipher Keystore](#sqlcipher-keystore)
 6. [Rust Vault Sidecar](#rust-vault-sidecar)
+6.5. [Phase 2: Secure Document Pipeline](#phase-2-secure-document-pipeline)
 7. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
 8. [Security Architecture](#security-architecture)
 9. [Component Integration Patterns](#component-integration-patterns)
 10. [Agent Studio](#agent-studio)
 11. [Browser Service](#browser-service)
+11.5. [Jetski Browser Sidecar](#jetski-browser-sidecar)
 12. [Rust Office Sidecar](#rust-office-sidecar)
 13. [ArmorChat Android Client](#armorchat-android-client)
 14. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
@@ -60,6 +62,10 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **No-Code Agent Studio** | Define agents via chat commands or dashboard |
 | **21 Browser Skills** | Chrome DevTools MCP integration for web automation |
 | **Sentinel Mode** | Automatic VPS deployment with Let's Encrypt TLS |
+| **Split-Storage RAG** | Document chunks stored separately from vector embeddings |
+| **YARA Content Disarm** | Malicious content detected and neutralized before processing |
+| **TTL Proxy Guard** | Ephemeral tokens (30 min TTL) for sidecar communication |
+| **Jetski CDP Proxy** | Tethered Mode browser proxy with PII scrubbing and encrypted sessions |
 
 ### Component Overview
 
@@ -72,6 +78,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **OpenClaw Runtime** | TypeScript/Node | AI agent runtime in containers | `container/openclaw-src/openclaw.mjs` |
 | **License Server** | Go | Enterprise license validation | `license-server/main.go` |
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
+| **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
 
 ---
 
@@ -128,10 +135,11 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 │                         THE VPS (Office)                              │
 │                                                                       │
 │  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐           │
-│  │ ArmorClaw   │◀────▶│  OpenClaw   │◀────▶│  Playwright │           │
-│  │ Bridge      │      │  (Agent)    │      │  (Browser)  │           │
-│  │ (Orchestr.) │      │             │      │             │           │
+│  │ ArmorClaw   │◀────▶│  OpenClaw   │◀────▶│   Jetski    │           │
+│  │ Bridge      │      │  (Agent)    │ CDP  │ CDP Proxy   │           │
+│  │ (Orchestr.) │      │             │ :9222│ (Tethered)  │           │
 │  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘           │
+│         │                    │                     │                   │
 │         │                    │  ▲                  │                   │
 │         │                    │  │                  │                   │
 │         │   BlindFill Engine │  │                  │                   │
@@ -144,6 +152,14 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 │         │    │ - Network BlindFill│                 │                   │
 │         │    │ - Circuit Breaking │                 │                   │
 │         │    └───────────────────┘                  │                   │
+│         │                                         │                   │
+│         │    ┌───────────────────┐                 │                   │
+│         │    │ Phase 2 Pipeline  │                 │                   │
+│         │    │ - Split-Storage   │                 │                   │
+│         │    │ - YARA CDR        │                 │                   │
+│         │    │ - TTL Proxy Guard │                 │                   │
+│         │    └───────────────────┘                 │                   │
+│         │                                         │                   │
 └─────────┼────────────────────┼─────────────────────┼───────────────────┘
           │                    │                     │
           │ Secure Matrix Tunnel (E2EE)             │
@@ -182,6 +198,21 @@ armorclaw-omo/
 ├── browser-service/          # TypeScript/Playwright automation
 │   └── src/                  # HTTP API + Playwright wrapper
 │
+├── jetski/                    # Go CDP proxy with Tethered Mode security
+│   ├── cmd/observer/main.go  # Primary entry point
+│   ├── internal/cdp/          # CDP proxy, router, PII scanner
+│   ├── internal/rpc/          # RPC API (port 9223)
+│   ├── internal/security/     # SQLCipher sessions, PII scrubbing
+│   ├── internal/approval/     # Matrix HITL approval client
+│   ├── internal/sonar/        # Telemetry recorder
+│   ├── lighthouse/            # Nav-Chart REST API (Go sub-project)
+│   ├── jetski-chartmaker/     # Browser interaction recorder (TypeScript CLI)
+│   ├── configs/config.yaml    # Configuration
+│   ├── Dockerfile             # Container build
+│   └── go.mod                 # Standalone module (github.com/armorclaw/jetski)
+│
+├── go.work                    # Multi-module Go workspace
+│
 ├── container/openclaw-src/   # OpenClaw agent runtime
 │   ├── extensions/           # 39 platform adapters
 │   └── skills/               # Browser skills
@@ -213,6 +244,9 @@ armorclaw-omo/
 | **Docker Socket** | Docker Engine API | Container lifecycle management | `/var/run/docker.sock` |
 | **HTTP/WebSocket** | REST + WebSocket | Health checks, metrics, real-time events | 8080 |
 | **WebRTC** | ICE/STUN/TURN | Voice/video calls | Dynamic |
+| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation control | 9222 |
+| **Jetski RPC** | JSON-RPC 2.0 (HTTP) | Jetski sidecar status, sessions, health | 9223 |
+| **Lightpanda Engine** | CDP over WebSocket | Headless browser engine | 9333 |
 
 ---
 
@@ -892,9 +926,84 @@ The Rust Vault enforces **strict placeholder masking** to prevent agents from ev
    # Verify CDP is enabled
    curl http://localhost:9222/json/list
    
-   # Check resourceType filtering
-   # Should only intercept XHR and Fetch requests
-   ```
+    # Check resourceType filtering
+    # Should only intercept XHR and Fetch requests
+    ```
+
+---
+
+## Phase 2: Secure Document Pipeline
+
+### Purpose
+
+Phase 2 added a **secure document processing pipeline** to ArmorClaw, providing enterprise-grade document handling with security controls at every stage. It implements:
+
+- **Split-Storage RAG** - Documents are split into chunks; embeddings stored separately from content in Qdrant
+- **YARA Content Disarm & Reconstruct (CDR)** - Malicious content detected and neutralized before processing
+- **TTL Proxy Guard** - Ephemeral authentication tokens (30-minute TTL) for sidecar communication
+
+### Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Document   │────▶│  YARA CDR   │────▶│   Split     │
+│  Ingestion  │     │  Scanner     │     │   Storage   │
+└─────────────┘     └──────────────┘     └──────┬──────┘
+                                               │
+                                    ┌──────────┴──────────┐
+                                    ▼                     ▼
+                             ┌─────────────┐      ┌─────────────┐
+                             │  Qdrant     │      │  Content    │
+                             │  Embeddings │      │  Store      │
+                             │  (vectors)  │      │  (chunks)   │
+                             └─────────────┘      └─────────────┘
+```
+
+### Components
+
+#### Split-Storage RAG
+
+| Feature | Description |
+|---------|-------------|
+| **Chunking** | Documents split into semantically meaningful chunks |
+| **Embedding Separation** | Vector embeddings stored in Qdrant, content stored separately |
+| **Retrieval** | Embedding similarity search retrieves relevant chunks |
+| **Provider** | Uses OpenAI embeddings (no ONNX migration) |
+
+#### YARA Content Disarm & Reconstruct
+
+| Feature | Description |
+|---------|-------------|
+| **Rule Matching** | YARA rules scan incoming documents for malicious patterns |
+| **Disarm** | Detected threats neutralized before processing |
+| **Reconstruct** | Safe content reconstructed for downstream use |
+| **Integration** | Requires CGO + libyara-dev |
+
+#### TTL Proxy Guard
+
+| Feature | Description |
+|---------|-------------|
+| **Token TTL** | 30-minute ephemeral tokens |
+| **Validation** | HMAC-SHA256 signatures |
+| **Replay Prevention** | Timestamp validation (5-minute max age) |
+| **Scope** | Sidecar communication only |
+
+### Security Guarantees
+
+- ✅ No persistent credentials in sidecar memory
+- ✅ No credential caching beyond request lifecycle
+- ✅ All document processing logged in Go Bridge audit trail
+- ✅ PII interception before sidecar calls
+- ✅ YARA rules validated before deployment
+- ✅ TTL tokens cannot be reused after expiry
+
+### Backlog Items
+
+| Item | Priority | Description |
+|------|----------|-------------|
+| PH2.1 | Medium | qdrant-client-rs v1.7 builder pattern migration |
+| PH2.2 | High | pdf.rs `.unwrap()` panic fix |
+| PH2.3 | Low | lopdf text extraction gap |
 
 ---
 
@@ -1410,8 +1519,168 @@ The Browser Service provides **Playwright-based browser automation** for web bro
 PENDING → RUNNING → COMPLETED
                  → FAILED
                  → CANCELLED
-                 → AWAITING_PII
+                  → AWAITING_PII
 ```
+
+---
+
+## Jetski Browser Sidecar
+
+### Purpose
+
+Jetski is a **Go-based CDP (Chrome DevTools Protocol) proxy** that provides secure browser automation for ArmorClaw agents. It sits between AI agents and the browser engine, implementing **Tethered Mode** security with PII scrubbing, encrypted sessions, and human-in-the-loop approval.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **CDP Proxy** | WebSocket proxy between agents (port 9222) and Lightpanda engine (port 9333) |
+| **Translator** | CDP method translation and routing |
+| **PII Scanner** | Active scrubbing of SSN, credit card, email, password patterns |
+| **SQLCipher Sessions** | Encrypted session storage (PBKDF2-HMAC-SHA512, 256k iterations) |
+| **Matrix HITL Approval** | Human-in-the-loop approval for sensitive browser operations (60s timeout) |
+| **Sonar Telemetry** | Session monitoring and event recording |
+| **RPC API** | Status, sessions, health, and approval endpoints on port 9223 |
+
+### Architecture
+
+```
+┌─────────────┐     CDP :9222    ┌─────────────┐     CDP     ┌─────────────┐
+│   Agent     │◀────────────────▶│   Jetski    │◀──────────▶│ Lightpanda  │
+│  (OpenClaw) │   WebSocket      │ CDP Proxy   │  :9333     │  Engine      │
+└─────────────┘                  └──────┬──────┘             └─────────────┘
+                                        │
+                         ┌──────────────┼──────────────┐
+                         ▼              ▼              ▼
+                  ┌────────────┐ ┌───────────┐ ┌────────────┐
+                  │ PII Scanner│ │ SQLCipher │ │  Matrix    │
+                  │ (scrub)    │ │ Sessions  │ │  HITL      │
+                  └────────────┘ └───────────┘ └────────────┘
+                         │              │              │
+                         ▼              ▼              ▼
+                  ┌────────────┐ ┌───────────┐ ┌────────────┐
+                  │ Clean CDP  │ │ Encrypted │ │ User       │
+                  │ Traffic    │ │ Storage   │ │ Approval   │
+                  └────────────┘ └───────────┘ └────────────┘
+```
+
+### Component Structure
+
+```
+jetski/
+├── cmd/observer/main.go       # Primary entry point - wires all components
+├── internal/
+│   ├── cdp/
+│   │   ├── proxy.go           # CDP WebSocket proxy with PII scrubbing
+│   │   ├── router.go          # Method router with Translator injection
+│   │   └── pii_scanner.go     # 4-pattern PII detection (SSN, CC, email, password)
+│   ├── rpc/
+│   │   └── rpc.go             # JSON-RPC 2.0 server (port 9223)
+│   ├── security/
+│   │   ├── sqlcipher_session.go  # SQLCipher session store (PBKDF2, key zeroization)
+│   │   └── session.go         # Session management (rewritten from age to SQLCipher)
+│   ├── approval/
+│   │   └── matrix_client.go   # Matrix HITL approval client (channel-based, 60s timeout)
+│   └── sonar/
+│       └── recorder.go        # Telemetry event recorder
+├── lighthouse/                # Nav-Chart REST API (Go sub-project)
+├── jetski-chartmaker/         # Browser interaction recorder (TypeScript CLI)
+├── configs/config.yaml        # Configuration file
+├── Dockerfile                 # Container build (real SHA256)
+└── go.mod                     # Standalone module (github.com/armorclaw/jetski)
+```
+
+### RPC API (Port 9223)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/rpc` | `status` | Get observer status |
+| `/rpc` | `sessions` | List active sessions |
+| `/rpc` | `health` | Health check |
+| `/rpc` | `approval.request` | Request HITL approval |
+| `/rpc` | `approval.respond` | Respond to approval request |
+
+### Tethered Mode
+
+Tethered Mode is the security enforcement layer in Jetski. When enabled:
+
+1. **PII Scrubbing**: All CDP traffic is scanned for PII patterns (SSN, credit card, email, password). Detected values are replaced with `[REDACTED_TYPE]` tokens.
+2. **SQLCipher Sessions**: Browser sessions are encrypted using SQLCipher with PBKDF2-HMAC-SHA512 key derivation (256,000 iterations). Keys are zeroized from memory after use.
+3. **Matrix HITL Approval**: Sensitive browser operations (form submissions with PII, navigation to financial sites) require human approval via Matrix. Pending requests timeout after 60 seconds.
+4. **Free-Ride Mode**: When Tethered Mode is disabled, CDP traffic passes through without scrubbing (for development/testing).
+
+### Configuration
+
+**File**: `jetski/configs/config.yaml`
+
+```yaml
+engine:
+  url: "http://localhost:9333"
+rpc:
+  port: 9223
+approval:
+  bridgeURL: "http://127.0.0.1:8080"
+  timeout: "60s"
+```
+
+### Ports
+
+| Port | Service | Protocol |
+|------|---------|----------|
+| 9222 | CDP WebSocket (agent-facing) | WebSocket |
+| 9223 | RPC API (management) | HTTP/JSON-RPC |
+| 9333 | Lightpanda engine | CDP over WebSocket |
+
+### Sub-Projects
+
+#### Lighthouse (Nav-Chart API)
+
+- **Language**: Go (`github.com/armorclaw/lighthouse`)
+- **Purpose**: REST API for navigation chart data
+- **Files**: 17 Go source files
+- **Port**: 8081 (planned)
+
+#### Chartmaker (TypeScript CLI)
+
+- **Language**: TypeScript (`@armorclaw/jetski-chartmaker`)
+- **Purpose**: Record and replay browser interactions
+- **Files**: 13 TypeScript source files
+- **Build**: `npm install && npm run build`
+
+### Docker Integration
+
+**Compose File**: `docker-compose.jetski.yml`
+**Network**: `browser-net` (172.23.0.0/16)
+**Memory Limit**: 150MB
+**Integration**: Included via `docker-compose.yml` with `include` directive
+
+### Testing
+
+| Test Suite | File | Tests | Status |
+|------------|------|-------|--------|
+| Router/Translator | `internal/cdp/router_test.go` | 4 | ✅ Pass |
+| Proxy/PII Scanner | `internal/cdp/proxy_test.go` | 6 | ✅ Pass |
+| PII Scrubbing | `internal/cdp/pii_scrub_test.go` | 8 | ✅ Pass |
+| RPC API | `internal/rpc/rpc_test.go` | 8 | ✅ Pass |
+| Sonar Telemetry | `internal/sonar/sonar_test.go` | 4 | ✅ Pass |
+| SQLCipher Sessions | `internal/security/sqlcipher_session_test.go` | 10 | ✅ Pass |
+| Session Round-trip | `internal/security/session_test.go` | 3 | ✅ Pass |
+| Matrix HITL Approval | `internal/approval/matrix_client_test.go` | 12 | ✅ Pass |
+| E2E Tethered Mode | `tests/e2e_tethered_test.go` | 5 | ✅ Pass |
+
+**Total**: 60 tests, all passing
+
+### Relationship to browser-service
+
+Jetski **complements** (does not replace) the existing `browser-service/`:
+
+| Aspect | browser-service | jetski |
+|--------|----------------|--------|
+| **Level** | Playwright automation API | CDP protocol proxy |
+| **Purpose** | High-level browser tasks | Low-level browser control |
+| **Security** | Job queue + PII approval | net.Conn level PII scrubbing |
+| **Language** | TypeScript | Go |
+| **Engine** | Playwright (Chromium) | Lightpanda |
 
 ---
 
@@ -2150,6 +2419,10 @@ bash tests/ssh/run_all_tests.sh --all --output json
 - `review.md` - Code review findings
 - `applications/ArmorChat-review.md` - Android client review
 - `applications/ArmorTerminal-review.md` - Terminal client review
+
+### Jetski Documentation
+- **Jetski Sidecar**: `jetski/README.md` - Browser sidecar documentation
+- **Jetski Integration Plan**: `.sisyphus/plans/jetski-integration.md` - Integration plan and status
 
 ---
 

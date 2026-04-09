@@ -1,13 +1,13 @@
 # ArmorClaw: The VPS Secretary Platform
 
-[![Version](https://img.shields.io/badge/version-v4.7.0-blue)](https://github.com/Gemutly/ArmorClaw)
+[![Version](https://img.shields.io/badge/version-v4.8.0-blue)](https://github.com/Gemutly/ArmorClaw)
 [![Status](https://img.shields.io/badge/status-production%20 ready-green)](https://github.com/Gemutly/ArmorClaw)
 
 **Run AI agents on your VPS. Control from your phone.**
 
 ArmorClaw runs AI agents 24/7 on your server. They browse websites, fill forms, and manage tasks—while you approve sensitive actions via your phone.
 
-**🛡️ v4.7.0 Highlights:** **Sentinel Mode** (automatic VPS deployment with Let's Encrypt TLS), **Native/Sentinel deployment modes**, and **21 Browser Skills** for Chrome DevTools MCP integration.
+**🛡️ v4.8.0 Highlights:** **Jetski Browser Sidecar** (CDP proxy with Tethered Mode security), **Secure Document Pipeline** (Split-Storage RAG, YARA CDR, TTL Proxy Guard), **Sentinel Mode**, and **21 Browser Skills** for Chrome DevTools MCP integration.
 
 ---
 
@@ -337,6 +337,12 @@ Watch it browse, gather information, and report back.
 │    Agent    │  Isolated container
 │  OpenClaw   │
 └──────┬──────┘
+       │ CDP (port 9222)
+       ▼
+┌─────────────┐
+│   Jetski    │  Browser sidecar
+│ CDP Proxy   │  (Tethered Mode)
+└──────┬──────┘
        │
        ▼
 ┌─────────────┐
@@ -348,6 +354,7 @@ Watch it browse, gather information, and report back.
 **Key components:**
 - **ArmorClaw Bridge** - Orchestrator on your VPS
 - **OpenClaw** - Agent runtime (runs in isolated containers)
+- **Jetski** - CDP proxy with Tethered Mode security (PII scrubbing, SQLCipher sessions, Matrix HITL)
 - **ArmorChat** - Mobile control app
 
 ---
@@ -690,6 +697,10 @@ ArmorClaw uses the Docker socket to create isolated agent containers. This is sa
 | **Container Isolation** | Each agent in hardened, isolated container |
 | **HITL Approval** | Human-in-the-loop for sensitive operations |
 | **Audit Logging** | All operations logged for compliance |
+| **Split-Storage RAG** | Documents split into chunks, embeddings stored separately from content |
+| **YARA Content Disarm** | Malicious content detected and neutralized before processing |
+| **TTL Proxy Guard** | Ephemeral tokens (30 min TTL) for sidecar communication |
+| **Tethered Mode** | Jetski CDP proxy with active PII scrubbing and encrypted sessions |
 
 ### Agent Container Security
 
@@ -1149,43 +1160,63 @@ The Bridge provisions the agent and invites you to its dedicated room.
 
 ## Architecture
 
-The + ### Go Bridge (Control Plane)
-    + The Go Bridge is the control plane that orchestrates all operations:
-    + - Manages Matrix Conduit connections
-    + - Handles user authentication via Matrix
-    + - Routes requests to appropriate AI providers
-    + - Implements audit logging for all operations
-    + - Manages browser automation via Playwright
-    + - Coordinates with Rust Sidecar for heavy I/O
+### Go Bridge (Control Plane)
 
-    + ### Rust Office Sidecar (Data Plane)
-    + The Rust sidecar handles heavy I/O operations:
-    + - **Storage**: S3 upload/download/list/delete with streaming
-    + - **Documents**: PDF text extraction, split, merge
-    + - **Documents**: DOCX text extraction, editing
-    + - **Security**: Ephemeral token auth (30 min TTL)
-    + - **Reliability**: Circuit breaker, rate limiting
-    + - **Performance**: Handles files up to 5GB with streaming
-    + - **Communication**: gRPC over Unix Domain Socket
-    + - **Memory**: Bounded to ~2MB for download streams
-    + - **Integration**: PII detection and redaction
+The Go Bridge is the control plane that orchestrates all operations:
 
-    + **Key Features:**
-    + - Zero-copy streaming (no buffering)
-    + - Single-pass SHA256 hashing
-    + - 1MB chunk size for downloads
-    + - Circuit breaker (5 failures → open, 30s recovery)
-    + - Rate limiting (100 req/s)
-    + - In-memory request queueing (graceful degradation)
-    + - Prometheus metrics endpoint
+- Manages Matrix Conduit connections
+- Handles user authentication via Matrix
+- Routes requests to appropriate AI providers
+- Implements audit logging for all operations
+- Manages browser automation via Playwright
+- Coordinates with Rust Sidecar for heavy I/O
 
-    + **Security:**
-    + - No persistent credential storage
-    + - No credential caching beyond request lifecycle
-    + - No direct cloud API calls without Go Bridge interception
-    + - All operations logged in Go Bridge audit.db
-    + - PII interception before sidecar calls
-    + - Unix domain socket with 0600 permissions
+### Rust Office Sidecar (Data Plane)
+
+The Rust sidecar handles heavy I/O operations:
+
+- **Storage**: S3 upload/download/list/delete with streaming
+- **Documents**: PDF text extraction, split, merge
+- **Documents**: DOCX text extraction, editing
+- **Security**: Ephemeral token auth (30 min TTL)
+- **Reliability**: Circuit breaker, rate limiting
+- **Performance**: Handles files up to 5GB with streaming
+- **Communication**: gRPC over Unix Domain Socket
+- **Memory**: Bounded to ~2MB for download streams
+- **Integration**: PII detection and redaction
+
+**Key Features:**
+
+- Zero-copy streaming (no buffering)
+- Single-pass SHA256 hashing
+- 1MB chunk size for downloads
+- Circuit breaker (5 failures → open, 30s recovery)
+- Rate limiting (100 req/s)
+- In-memory request queueing (graceful degradation)
+- Prometheus metrics endpoint
+
+**Security:**
+
+- No persistent credential storage
+- No credential caching beyond request lifecycle
+- No direct cloud API calls without Go Bridge interception
+- All operations logged in Go Bridge audit.db
+- PII interception before sidecar calls
+- Unix domain socket with 0600 permissions
+
+### Jetski Browser Sidecar
+
+Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents and the browser engine:
+
+- CDP WebSocket proxy with PII scrubbing at the net.Conn level
+- SQLCipher session encryption (PBKDF2-HMAC-SHA512, 256k iterations)
+- Matrix HITL approval for sensitive browser operations (60s timeout)
+- Active PII scrubbing (SSN, credit card, email, password patterns)
+- Sonar telemetry for session monitoring
+- RPC API on port 9223 (status, sessions, health, approval)
+- Lightpanda engine on port 9333
+- Lighthouse sub-project for Nav-Chart REST API
+- Chartmaker sub-project (TypeScript CLI) for recording browser interactions
 
 
 ```
@@ -1220,6 +1251,8 @@ The + ### Go Bridge (Control Plane)
 * **No-Code Agent Studio:** Define agents via chat or Dashboard—no coding required
 * **BlindFill™ Security:** Agents request sensitive data via references, never see raw values
 * **Secure Browser Automation:** Remote control via Matrix protocol
+* **Secure Document Pipeline:** Split-Storage RAG, YARA CDR, TTL Proxy Guard
+* **Tethered Browser Proxy:** Jetski CDP proxy with PII scrubbing, SQLCipher sessions, Matrix HITL approval
 
 ---
 
@@ -1232,6 +1265,7 @@ The + ### Go Bridge (Control Plane)
 * **Full Index:** [docs/index.md](docs/index.md)
 * **Tests:** [tests/integration/](tests/integration/) (v4.4.0+)
 * **GitHub Actions:** [Actions](https://github.com/Gemutly/ArmorClaw/actions) (CI/CD pipelines)
+* **Jetski Sidecar:** [jetski/README.md](jetski/README.md)
 
 ---
 
