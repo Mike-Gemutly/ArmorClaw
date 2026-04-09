@@ -17,13 +17,6 @@
 #   │  │  └─────────────┘  └─────────────┘  └─────────────┘      │ │
 #   │  └──────────────────────────────────────────────────────────┘ │
 #   └─────────────────────────────────────────────────────────────┘
-
-# Include sub-stacks for Matrix and specific Bridge adapters
-include:
-  - docker-compose.matrix.yml
-  - docker-compose.bridge.yml
-  - docker-compose.jetski.yml
-
 services:
   # Overriding/Defining the Core Bridge Service with Lessons Learned
   armorclaw-sentinel:
@@ -132,9 +125,6 @@ services:
           memory: 64M
 
 networks:
-  matrix-net:
-    external: true
-    name: armorclaw-matrix
   bridge-net:
     driver: bridge
     internal: true
