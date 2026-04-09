@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"jetski-browser/internal/subprocess"
+	"github.com/armorclaw/jetski/internal/subprocess"
 )
 
 // TestNewReporter tests Reporter creation

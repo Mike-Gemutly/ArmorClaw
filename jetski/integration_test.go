@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"jetski-browser/internal/cdp"
-	"jetski-browser/internal/network"
-	"jetski-browser/internal/security"
-	"jetski-browser/internal/subprocess"
+	"github.com/armorclaw/jetski/internal/cdp"
+	"github.com/armorclaw/jetski/internal/network"
+	"github.com/armorclaw/jetski/internal/security"
+	"github.com/armorclaw/jetski/internal/subprocess"
 
 	"github.com/gorilla/websocket"
 )

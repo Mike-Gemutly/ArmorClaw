@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"jetski-browser/internal/cdp"
-	"jetski-browser/internal/network"
-	"jetski-browser/internal/security"
-	"jetski-browser/internal/subprocess"
-	"jetski-browser/pkg/config"
-	"jetski-browser/pkg/logger"
+	"github.com/armorclaw/jetski/internal/cdp"
+	"github.com/armorclaw/jetski/internal/network"
+	"github.com/armorclaw/jetski/internal/security"
+	"github.com/armorclaw/jetski/internal/subprocess"
+	"github.com/armorclaw/jetski/pkg/config"
+	"github.com/armorclaw/jetski/pkg/logger"
 
 	"github.com/gorilla/websocket"
 )

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"jetski-browser/internal/subprocess"
+	"github.com/armorclaw/jetski/internal/subprocess"
 )
 
 // Reporter generates and saves WreckageReports to disk

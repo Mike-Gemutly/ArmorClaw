@@ -1,4 +1,4 @@
-module jetski-browser
+module github.com/armorclaw/jetski
 
 go 1.25.0
 
