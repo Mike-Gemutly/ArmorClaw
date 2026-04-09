@@ -24,6 +24,9 @@
 | Modify container hardening | `container/Dockerfile.openclaw`, `container/seccomp-profile.json`, `container/apparmor-profile` |
 | Update Android client | `applications/ArmorChat/app/` |
 | Change deployment scripts | `deploy/` and `.skills/` |
+| Modify MCP Router / tool routing | `bridge/pkg/mcp/router.go` and `bridge/pkg/interfaces/skillgate.go` |
+| Change vault governance integration | `bridge/pkg/vault/proto/` and `rust-vault/src/governance/` |
+| Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (currently stub) |
 
 ---
 
@@ -42,14 +45,18 @@
 11. [Agent Studio](#agent-studio)
 12. [Browser Service](#browser-service)
 13. [Jetski Browser Sidecar](#jetski-browser-sidecar)
-14. [Rust Office Sidecar](#rust-office-sidecar)
-15. [ArmorChat Android Client](#armorchat-android-client)
-16. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
-17. [RPC API Reference](#rpc-api-reference)
-18. [Event Types Reference](#event-types-reference)
-19. [Configuration Reference](#configuration-reference)
-20. [Deployment Modes](#deployment-modes)
-21. [Testing & Verification](#testing--verification)
+14. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
+15. [Rust Office Sidecar](#rust-office-sidecar)
+16. [ArmorChat Android Client](#armorchat-android-client)
+17. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
+18. [RPC API Reference](#rpc-api-reference)
+19. [Event Types Reference](#event-types-reference)
+20. [Configuration Reference](#configuration-reference)
+21. [Deployment Modes](#deployment-modes)
+22. [Testing & Verification](#testing--verification)
+23. [Local Development Guide](#local-development-guide)
+24. [Document Index](#document-index)
+25. [Review Documentation](#review-documentation)
 
 ---
 
@@ -119,6 +126,9 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 |</component>
 |<component id="jetski-sidecar>|
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
+|</component>
+|<component id="rust-vault>|
+| **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill library | `rust-vault/src/lib.rs` |
 |</component>
 
 ---
@@ -229,6 +239,9 @@ armorclaw-omo/
 │   │   ├── provisioning/     # Mobile provisioning
 │   │   ├── trust/            # Zero-trust verification
 │   │   ├── audit/            # Audit logging
+│   │   ├── mcp/              # MCP Router with SkillGate (v6 microkernel)
+│   │   ├── vault/proto/      # Governance gRPC client (v6 microkernel)
+│   │   ├── toolsidecar/      # Tool sidecar provisioning (stub)
 │   │   └── ... (50 more)
 │   └── internal/             # Internal implementation (19 packages)
 │       ├── adapter/          # Matrix/Slack adapters
@@ -236,8 +249,14 @@ armorclaw-omo/
 │       ├── skills/           # Built-in skills
 │       └── agent/            # Agent runtime
 │
-├── browser-service/          # TypeScript/Playwright automation
-│   └── src/                  # HTTP API + Playwright wrapper
+├── rust-vault/               # Rust security enclave (library crate, not a deployed service)
+│   ├── src/
+│   │   ├── blindfill/        # BlindFill placeholder parser + CDP interceptor (library)
+│   │   ├── db/               # SQLCipher vault + matrix state databases
+│   │   ├── governance/       # gRPC governance service (ephemeral tokens)
+│   │   └── grpc/             # gRPC server with mTLS auth
+│   ├── proto/governance.proto
+│   └── tests/                # 118 tests (config, vault, placeholder, CDP, mTLS)
 │
 ├── jetski/                    # Go CDP proxy with Tethered Mode security
 │   ├── cmd/observer/main.go  # Primary entry point
@@ -283,11 +302,12 @@ armorclaw-omo/
 | **JSON-RPC 2.0 (Native)** | Unix domain socket | Internal component communication | `/run/armorclaw/bridge.sock` |
 | **JSON-RPC 2.0 (Sentinel)** | TCP | Public API access (via Caddy proxy) | `0.0.0.0:8080` |
 | **Docker Socket** | Docker Engine API | Container lifecycle management | `/var/run/docker.sock` |
+| **gRPC (v6 Vault)** | gRPC over Unix socket | Vault governance: ephemeral tokens, zeroization (v6 only) | `/run/armorclaw/rust-vault.sock` |
 | **HTTP/WebSocket** | REST + WebSocket | Health checks, metrics, real-time events | 8080 |
 | **WebRTC** | ICE/STUN/TURN | Voice/video calls | Dynamic |
-| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation control | 9222 |
+| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation (agent → Jetski) | 9222 |
 | **Jetski RPC** | JSON-RPC 2.0 (HTTP) | Jetski sidecar status, sessions, health | 9223 |
-| **Lightpanda Engine** | CDP over WebSocket | Headless browser engine | 9333 |
+| **Lightpanda Engine** | CDP over WebSocket | Headless browser engine (Jetski internal) | 9333 |
 
 ---
 
@@ -390,6 +410,13 @@ type Server struct {
 | `pkg/budget/` | AI spend budget tracking |
 | `pkg/governor/` | Rate limiting and throttling |
 | `pkg/metrics/` | Metrics collection |
+
+#### v6 Microkernel (feature-flagged, off by default)
+| Package | Purpose |
+|---------|---------|
+| `pkg/mcp/` | MCP Router — routes tool calls through SkillGate, consent, and vault governance |
+| `pkg/vault/proto/` | Generated gRPC client for Rust Vault governance (ephemeral tokens, zeroization) |
+| `pkg/toolsidecar/` | Tool sidecar provisioning — isolated tool execution containers (stub) |
 
 ### Initialization Flow
 
@@ -618,9 +645,33 @@ The Rust Vault is a **security-hardened cryptographic enclave** that provides he
 
 - **State Bifurcation** - Separate persistent secrets (vault.db) from ephemeral crypto state (matrix_state.db)
 - **Network-Layer BlindFill** - Inject secrets at network layer via Chrome DevTools Protocol
-- **gRPC Circuit Breaking** - Rate limit and protect against DoS attacks
+- **gRPC Governance** - Ephemeral token lifecycle management with zeroization
 - **Zeroization** - All secrets zeroized in memory after use
 - **mTLS Authentication** - gRPC over Unix domain sockets with certificate validation
+
+### Runtime Model: Library, Not a Service
+
+> **Important architectural note**: The Rust Vault is a **library crate** (`rust-vault/src/lib.rs`), not a deployed Docker service. It is not referenced in any `docker-compose*.yml` file and has no container image. The Go Bridge imports its compiled artifacts via FFI or uses the generated gRPC proto stubs in `bridge/pkg/vault/proto/`.
+
+This means:
+- The Rust Vault does **not** run as a standalone process alongside the Bridge
+- There is **no runtime port conflict** with Jetski (see below)
+- The `CdpInterceptor` in `rust-vault/src/blindfill/cdp_interceptor.rs` provides **placeholder parsing and resolution logic**, not an active WebSocket listener
+- The governance gRPC service (`rust-vault/src/governance/`) is activated only when the v6 microkernel flag is enabled
+
+### Relationship to Jetski Browser Sidecar
+
+The Rust Vault and Jetski both touch CDP interception, but at different abstraction levels:
+
+| Aspect | Rust Vault CdpInterceptor | Jetski CDP Proxy |
+|--------|--------------------------|-----------------|
+| **Type** | Rust library function | Standalone Go binary (Docker container) |
+| **What it does** | Generates `Fetch.enable` params, resolves `{{VAULT:field:hash}}` placeholders | Full WebSocket proxy between agent and Lightpanda engine |
+| **Port usage** | None (library, no listener) | Listens on 9222 (CDP), 9223 (RPC) |
+| **PII handling** | Placeholder format validation | Active net.Conn-level PII scrubbing |
+| **Runtime state** | Compiles, 118 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
+
+**In practice**: Jetski is the **active CDP security layer**. The Rust Vault's CDP interceptor represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level.
 
 ### Architecture
 
@@ -1474,6 +1525,45 @@ Bridge ← Conduit: GET /_matrix/client/v3/sync?filter={}&since={token}
 - **Budget**: `budget.alert`, `budget.limit`, `budget.updated`
 - **Platform**: `platform.connected`, `platform.disconnected`, `platform.message`, `platform.error`
 
+### Bridge ↔ Rust Vault
+
+**Communication Pattern**: gRPC over Unix domain socket (when v6 microkernel enabled)
+
+**Key Components:**
+- **Vault Governance Client** (`bridge/pkg/vault/proto/governance_grpc.pb.go`): Generated gRPC stubs
+- **Governance Service** (`rust-vault/src/governance/`): Ephemeral token lifecycle, event streaming
+- **MCP Router** (`bridge/pkg/mcp/router.go`): Consumes vault client for token issuance/zeroization
+
+**Data Flow (v6 microkernel only):**
+```
+Bridge → Rust Vault: IssueEphemeralToken (grant scoped secret access)
+Bridge → Rust Vault: ConsumeEphemeralToken (one-time use, then invalidated)
+Bridge → Rust Vault: ZeroizeToolSecrets (secure memory erasure)
+Rust Vault → Bridge: SubscribeEvents (gRPC stream for governance events)
+```
+
+**Important**: This integration is **inactive by default** (`v6_microkernel = false`). When disabled, the MCP Router skips all vault governance calls and falls back to direct SkillGate behavior.
+
+### Bridge ↔ Jetski
+
+**Communication Pattern**: CDP WebSocket + JSON-RPC HTTP
+
+**Key Components:**
+- **Jetski Container** (`docker-compose.jetski.yml`): Standalone Docker service
+- **CDP Proxy** (`jetski/internal/cdp/proxy.go`): Agent-facing on port 9222
+- **RPC API** (`jetski/internal/rpc/rpc.go`): Management on port 9223
+- **Bridge Browser Queue** (`bridge/pkg/queue/browser_queue.go`): Dispatches jobs to agents
+
+**Data Flow:**
+```
+OpenClaw Agent → Jetski:9222 (CDP WebSocket connect)
+Jetski → Lightpanda:9333 (proxied CDP)
+Bridge → Jetski:9223 (RPC: status, sessions, health)
+Jetski → Matrix (HITL approval requests)
+```
+
+**Network**: Jetski runs on `browser-net` (172.23.0.0/16) and `bridge-net` (armorclaw-bridge), enabling both agent-to-Jetski CDP and Bridge-to-Jetski RPC communication.
+
 ---
 
 ## Agent Studio
@@ -1570,6 +1660,8 @@ PENDING → RUNNING → COMPLETED
 ### Purpose
 
 Jetski is a **Go-based CDP (Chrome DevTools Protocol) proxy** that provides secure browser automation for ArmorClaw agents. It sits between AI agents and the browser engine, implementing **Tethered Mode** security with PII scrubbing, encrypted sessions, and human-in-the-loop approval.
+
+> **Architectural role**: Jetski is the **active CDP security layer** in the deployed system. It supersedes the Rust Vault's Phase 1 CDP interception design by operating as a full WebSocket proxy with richer security (PII scrubbing at the `net.Conn` level, SQLCipher-encrypted sessions, and Matrix HITL approval). The Rust Vault's `CdpInterceptor` remains as a library providing placeholder resolution logic, but does not run as a separate process.
 
 ### Key Features
 
@@ -1722,6 +1814,123 @@ Jetski **complements** (does not replace) the existing `browser-service/`:
 | **Security** | Job queue + PII approval | net.Conn level PII scrubbing |
 | **Language** | TypeScript | Go |
 | **Engine** | Playwright (Chromium) | Lightpanda |
+
+---
+
+## v6 Microkernel Governance (Feature-Flagged)
+
+### Purpose
+
+The v6 microkernel is a **future governance layer** that adds ephemeral token lifecycle management, vault governance, and tool isolation to ArmorClaw. It is fully implemented in code but **disabled by default** — the system operates in v4.x mode where the MCP Router bypasses vault governance entirely.
+
+### Activation
+
+```bash
+# Enable v6 microkernel (requires Rust Vault governance service running)
+export ARMORCLAW_V6_MICROKERNEL=true
+
+# Or via TOML configuration
+[vault]
+v6_microkernel = true
+socket_path = "/run/armorclaw/rust-vault.sock"
+```
+
+**Default**: `v6_microkernel = false` (see `bridge/pkg/config/config.go:990`)
+
+### Architecture (v6 mode)
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                       v6 Microkernel Architecture                     │
+│                                                                       │
+│  ┌─────────────┐     ┌──────────────┐     ┌──────────────────────┐   │
+│  │ MCP Router  │────▶│ SkillGate    │────▶│ ToolSidecar          │   │
+│  │ (router.go) │     │ (PII check)  │     │ (isolated container) │   │
+│  └──────┬──────┘     └──────────────┘     └──────────────────────┘   │
+│         │                                  ▲ v6Microkernel=true     │
+│         │                                  │                         │
+│         ▼                                  │                         │
+│  ┌──────────────┐   gRPC/Unix   ┌─────────┴──────────┐              │
+│  │ Vault Client │──────────────▶│ Rust Vault          │              │
+│  │ (proto/)     │              │ Governance Service   │              │
+│  └──────────────┘              │ - IssueEphemeralTok │              │
+│                                │ - ConsumeEphemeral  │              │
+│                                │ - ZeroizeToolSecrets│              │
+│                                │ - SubscribeEvents   │              │
+│                                └────────────────────┘              │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+#### MCP Router (`bridge/pkg/mcp/router.go`)
+
+Routes all MCP `tools/call` requests through a security pipeline:
+
+1. **SkillGate validation** — PII interception and redaction
+2. **HITL consent workflow** — Human approval for PII operations
+3. **ToolSidecar provisioning** — Isolated execution (when v6 enabled)
+4. **Vault governance** — Ephemeral token issuance + zeroization (when v6 enabled)
+5. **Audit logging** — Compliance trail
+
+```go
+type MCPRouter struct {
+    skillGate     interfaces.SkillGate
+    consentMgr    *pii.HITLConsentManager
+    auditor       *audit.AuditLog
+    translator    *translator.RPCToMCPTranslator
+    vaultClient   VaultClient    // nil when v6_microkernel=false
+    v6Microkernel bool           // false by default
+}
+```
+
+#### Vault Governance Client (`bridge/pkg/vault/proto/`)
+
+Generated gRPC client stubs from `governance.proto`. Provides four methods:
+
+| Method | Purpose |
+|--------|---------|
+| `IssueEphemeralToken` | Create short-lived token granting scoped secret access |
+| `ConsumeEphemeralToken` | One-time use — token invalidated after consumption |
+| `ZeroizeToolSecrets` | Securely erase all in-memory secrets for a tool/session |
+| `SubscribeEvents` | gRPC server stream for governance events |
+
+**Token lifecycle**: Issue → Consume (one-time) → Expire (TTL) → Zeroize
+
+#### ToolSidecar (`bridge/pkg/toolsidecar/`)
+
+> **Status: Stub** — The interface and data structures exist, but container spawning is not yet implemented. Full implementation is planned for a future phase.
+
+```go
+type ToolSidecar struct {
+    ID        string
+    SkillName string
+    SessionID string
+    CreatedAt time.Time
+    Status    string
+}
+```
+
+### Behavior: v6 On vs Off
+
+| Aspect | v6 Microkernel OFF (default) | v6 Microkernel ON |
+|--------|----------------------------|-------------------|
+| **Vault governance** | Skipped entirely | Active — ephemeral tokens, zeroization |
+| **Tool isolation** | Skills execute in-process | ToolSidecar containers (when implemented) |
+| **Secret access** | Direct keystore retrieval | Vault-issued ephemeral tokens |
+| **Event streaming** | No governance events | gRPC stream from Rust Vault |
+| **Backward compat** | Full v4.x behavior | Enhanced security model |
+
+### Test Coverage
+
+4 dedicated tests in `bridge/pkg/mcp/router_test.go`:
+- `TestExecuteTool_V6MicrokernelIssuesAndZeroizes` — verifies token issuance + zeroization
+- `TestExecuteTool_V6MicrokernelOffSkipsVault` — verifies vault bypass when disabled
+- Edge case tests for token lifecycle and consent integration
+
+### Relationship to v4.x Documentation
+
+This section documents code that exists in the repository but is **not active** in the current v4.10.0 release. The rest of this document describes the active v4.x architecture. When `v6_microkernel` is enabled, the MCP Router adds the governance layer described here on top of the existing v4.x components.
 
 ---
 
