@@ -25,6 +25,7 @@ type MatrixAdapter interface {
 // CommandHandler handles Matrix commands for the Agent Studio
 type CommandHandler struct {
 	store          Store
+	factory        *AgentFactory
 	skillRegistry  *SkillRegistry
 	piiRegistry    *PIIRegistry
 	profileManager *ProfileManager
@@ -35,13 +36,14 @@ type CommandHandler struct {
 	wizards  map[string]*WizardState // keyed by userID
 
 	// Configuration
-	prefix   string // Command prefix, default "!"
-	timeout  time.Duration
+	prefix  string // Command prefix, default "!"
+	timeout time.Duration
 }
 
 // CommandHandlerConfig holds configuration
 type CommandHandlerConfig struct {
 	Store         Store
+	Factory       *AgentFactory
 	Matrix        MatrixAdapter
 	CommandPrefix string
 	WizardTimeout time.Duration
@@ -61,6 +63,7 @@ func NewCommandHandler(cfg CommandHandlerConfig) *CommandHandler {
 
 	return &CommandHandler{
 		store:          cfg.Store,
+		factory:        cfg.Factory,
 		skillRegistry:  NewSkillRegistry(cfg.Store),
 		piiRegistry:    NewPIIRegistry(cfg.Store),
 		profileManager: NewProfileManager(cfg.Store),
@@ -531,7 +534,7 @@ func (h *CommandHandler) handleWizardConfirm(ctx context.Context, roomID, userID
 	}
 
 	// Use the RPC handler
-	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store})
+	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store, Factory: h.factory})
 	resp := handler.Handle(req)
 
 	h.wizardMu.Lock()
@@ -645,7 +648,7 @@ func (h *CommandHandler) handleSpawnAgent(ctx context.Context, roomID, userID st
 		UserID: userID,
 	}
 
-	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store})
+	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store, Factory: h.factory})
 	resp := handler.Handle(req)
 
 	if resp.Error != nil {
@@ -687,7 +690,7 @@ func (h *CommandHandler) handleStopInstance(ctx context.Context, roomID, userID 
 		UserID: userID,
 	}
 
-	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store})
+	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store, Factory: h.factory})
 	resp := handler.Handle(req)
 
 	if resp.Error != nil {
@@ -715,7 +718,7 @@ func (h *CommandHandler) handleDeleteAgent(ctx context.Context, roomID, userID s
 		UserID: userID,
 	}
 
-	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store})
+	handler := NewRPCHandler(RPCHandlerConfig{Store: h.store, Factory: h.factory})
 	resp := handler.Handle(req)
 
 	if resp.Error != nil {

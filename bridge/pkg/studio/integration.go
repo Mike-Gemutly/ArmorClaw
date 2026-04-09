@@ -170,6 +170,7 @@ func NewIntegration(cfg IntegrationConfig) (*StudioIntegration, error) {
 
 		commandHandler = NewCommandHandler(CommandHandlerConfig{
 			Store:         store,
+			Factory:       factory,
 			Matrix:        cfg.MatrixAdapter,
 			CommandPrefix: prefix,
 			WizardTimeout: 0,
