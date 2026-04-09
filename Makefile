@@ -1,7 +1,7 @@
 # ArmorClaw v1 Test Suite
 # Tests verify containment guarantees and hardening posture
 
-.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets test-container-setup generate-proto
+.PHONY: test test-hardening test-secrets test-exploits test-e2e test-all clean decrypt-test-secrets test-container-setup generate-proto up down health reset logs vps-up vps-down vps-health vps-reset
 
 # Decrypt test files with secrets before running tests
 decrypt-test-secrets:
@@ -120,3 +120,41 @@ generate-proto:
 smoke: test-hardening
 	@echo ""
 	@echo "✅ Smoke test passed"
+
+# ========================================
+# VPS Operations
+# ========================================
+
+# Start all services (Matrix + Bridge)
+vps-up:
+	@./deploy/scripts/setup.sh
+
+# Stop all services and clean state
+vps-down:
+	@./deploy/scripts/reset.sh
+
+# Check service health without starting
+vps-health:
+	@echo "=== Service Health Check ==="
+	@curl -sf http://localhost:6167/_matrix/client/versions >/dev/null 2>&1 && \
+		echo "Matrix: OK (6167)" || echo "Matrix: DOWN (6167)"
+	@curl -sf http://localhost:8081/health >/dev/null 2>&1 && \
+		echo "Bridge: OK (8081)" || echo "Bridge: DOWN (8081)"
+	@docker ps --format "table {{.Names}}\t{{.Status}}" --filter "name=armorclaw" 2>/dev/null || true
+
+# Nuclear reset — stop everything, clean volumes
+vps-reset:
+	@./deploy/scripts/reset.sh
+
+# Tail all ArmorClaw logs
+logs:
+	@echo "=== Tailing ArmorClaw Logs ==="
+	@docker compose -f docker-compose.yml -f docker-compose.matrix.yml logs -f --tail=50 2>/dev/null || \
+		docker-compose -f docker-compose.yml -f docker-compose.matrix.yml logs -f --tail=50 2>/dev/null || \
+		echo "No compose services running"
+
+# Aliases
+up: vps-up
+down: vps-down
+health: vps-health
+reset: vps-reset
