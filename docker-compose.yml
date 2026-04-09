@@ -22,6 +22,7 @@
 include:
   - docker-compose.matrix.yml
   - docker-compose.bridge.yml
+  - docker-compose.jetski.yml
 
 services:
   # Overriding/Defining the Core Bridge Service with Lessons Learned
