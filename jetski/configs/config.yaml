@@ -1,0 +1,69 @@
+server:
+  # CDP WebSocket server port
+  port: "9222"
+  # Server host address
+  host: "0.0.0.0"
+  # HTTP read timeout
+  readTimeout: 30s
+  # HTTP write timeout
+  writeTimeout: 30s
+
+browser:
+  # Path to the Lightpanda engine binary
+  enginePath: "/usr/local/bin/lightpanda"
+  # Port for the Lightpanda engine
+  enginePort: "9223"
+  # Enable health checking
+  healthCheck: true
+  # Interval between health checks
+  checkInterval: 5s
+  # Watchdog configuration
+  watchdog:
+    # Enable watchdog
+    enabled: true
+    # Health check interval
+    checkInterval: 5s
+    # Maximum failures before restart
+    maxFailures: 3
+    # Auto-restart on failure
+    autoRestart: true
+    # Delay before restart
+    restartDelay: 5s
+
+security:
+  # Session encryption passphrase (leave empty for Free-Ride mode)
+  passphrase: ""
+  # Directory for session storage
+  sessionDir: "./sessions"
+  # Enable PII scanning
+  piiScanning: true
+  # Encrypt session files (requires passphrase)
+  encryptSession: false
+
+network:
+  # List of proxy URLs (comma-separated)
+  proxyList: []
+  # Enable proxy rotation
+  proxyEnabled: false
+  # URL for proxy health checks
+  proxyHealthCheckURL: "http://www.google.com"
+  # Interval between proxy health checks
+  proxyHealthInterval: 60s
+  # Circuit breaker configuration
+  circuitBreaker:
+    # Number of failures before opening circuit
+    failureThreshold: 3
+    # Time to wait before trying half-open
+    resetTimeout: 30s
+    # Number of successes needed to close circuit
+    halfOpenThreshold: 1
+
+logging:
+  # Log level: DEBUG, INFO, WARN, ERROR
+  level: "INFO"
+  # Log format: text, json
+  format: "text"
+  # Log output: stdout, stderr, or file path
+  output: "stdout"
+  # Enable structured logging
+  structured: false

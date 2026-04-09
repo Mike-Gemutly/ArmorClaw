@@ -1,0 +1,144 @@
+#jetski-helm {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 320px;
+  background: rgba(10, 25, 47, 0.95);
+  border: 1px solid #00D4FF;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 212, 255, 0.3);
+  z-index: 2147483647;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #E0F7FF;
+}
+
+#helm-header {
+  cursor: move;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #0A1929 0%, #05111D 100%);
+  border-bottom: 1px solid #00D4FF;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.helm-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #00D4FF;
+}
+
+#helm-close {
+  background: none;
+  border: none;
+  color: #00D4FF;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#helm-close:hover {
+  color: #00A3CC;
+}
+
+#helm-content {
+  padding: 14px;
+}
+
+#helm-mode {
+  margin-bottom: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px 6px;
+  background: rgba(0, 212, 255, 0.1);
+  color: #00D4FF;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.mode-btn:hover {
+  background: rgba(0, 212, 255, 0.2);
+}
+
+.mode-btn.active {
+  background: #00D4FF;
+  color: #0A1929;
+  border-color: #00D4FF;
+}
+
+#helm-status {
+  padding: 10px;
+  background: rgba(0, 212, 255, 0.1);
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 12px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+}
+
+#helm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#helm-save {
+  flex: 1;
+  padding: 10px;
+  background: #00D4FF;
+  color: #0A1929;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+#helm-save:hover {
+  background: #00B8E6;
+  transform: translateY(-1px);
+}
+
+#helm-clear {
+  padding: 10px 16px;
+  background: rgba(255, 107, 107, 0.15);
+  color: #FF6B6B;
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+#helm-clear:hover {
+  background: rgba(255, 107, 107, 0.25);
+}
+
+#helm-recorded-count {
+  margin-top: 10px;
+  font-size: 11px;
+  color: rgba(224, 247, 255, 0.6);
+  text-align: right;
+  font-weight: 500;
+}
+
+button:active {
+  transform: translateY(1px);
+}

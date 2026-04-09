@@ -8,8 +8,9 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.6
+	github.com/hillu/go-yara/v4 v4.3.4
 	github.com/mutecomm/go-sqlcipher/v4 v4.4.2
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pion/rtp v1.8.3
@@ -52,7 +53,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/hillu/go-yara/v4 v4.3.4 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect

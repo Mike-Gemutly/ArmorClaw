@@ -1,0 +1,137 @@
+{
+  "title": "Jetski Nav-Chart",
+  "description": "Navigation chart for Jetski browser automation",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version"
+    },
+    "target_domain": {
+      "type": "string",
+      "format": "uri",
+      "description": "Target website domain"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "generated_by": {
+          "type": "string",
+          "const": "@armorclaw/jetski-chartmaker"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": ["generated_by", "timestamp"]
+    },
+    "action_map": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Action"
+      }
+    }
+  },
+  "required": ["version", "target_domain", "action_map"],
+  "definitions": {
+    "Selector": {
+      "description": "3-tier fallback selector matrix",
+      "type": "object",
+      "properties": {
+        "primary_css": {
+          "type": "string",
+          "description": "Tier 1: CSS selector (data-automation-id preferred)"
+        },
+        "secondary_xpath": {
+          "type": "string",
+          "description": "Tier 2: XPath selector"
+        },
+        "fallback_js": {
+          "type": "string",
+          "description": "Tier 3: JavaScript expression"
+        }
+      },
+      "required": ["primary_css"]
+    },
+    "FrameRouting": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS selector to locate iframe"
+        },
+        "name": {
+          "type": "string",
+          "description": "iframe name attribute"
+        },
+        "origin": {
+          "type": "string",
+          "description": "Cross-origin detection"
+        }
+      }
+    },
+    "WaitCondition": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["waitForVisible", "waitForHidden", "waitForTimeout", "waitForSelector"]
+        },
+        "selector": {
+          "$ref": "#/definitions/Selector"
+        },
+        "timeout": {
+          "type": "integer",
+          "default": 5000,
+          "description": "Timeout in milliseconds"
+        }
+      },
+      "required": ["type"]
+    },
+    "Action": {
+      "type": "object",
+      "properties": {
+        "action_type": {
+          "type": "string",
+          "enum": ["click", "input", "navigate", "wait", "assert"]
+        },
+        "frame_routing": {
+          "$ref": "#/definitions/FrameRouting"
+        },
+        "selector": {
+          "$ref": "#/definitions/Selector"
+        },
+        "value": {
+          "type": "string",
+          "description": "Input value for 'input' actions"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL for 'navigate' actions"
+        },
+        "post_action_wait": {
+          "$ref": "#/definitions/WaitCondition"
+        },
+        "assertion": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["equals", "includes", "matches", "exists"]
+            },
+            "expected": {
+              "type": ["string", "number", "boolean"]
+            }
+          }
+        }
+      },
+      "required": ["action_type"]
+    }
+  }
+}

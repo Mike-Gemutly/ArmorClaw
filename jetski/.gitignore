@@ -1,0 +1,36 @@
+# ==========================================
+# Jetski Standalone .gitignore
+# ==========================================
+
+# Go build artifacts
+/bin/
+/obj/
+*.test
+*.prof
+/cmd/observer/observer
+
+# Zig & Lightpanda build artifacts
+zig-cache/
+zig-out/
+.zig-cache/
+
+# Docker & Environment
+.env
+.env.local
+.dockerignore
+docker-compose.override.yml
+
+# IDE & OS Files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 🚨 CRITICAL: SECURITY EXCLUSIONS 🚨
+# Never commit the unencrypted Free-Ride mode session states
+/sessions/
+*.acsb  # Ignore local Protobuf bundles (prevent PII leakage)
+
+# Logs
+/logs/
+*.log

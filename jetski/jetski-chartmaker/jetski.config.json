@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "defaultTimeout": 5000,
+  "screenshotOnFailure": true,
+  "sessionDir": "sessions",
+  "chartsDir": "charts"
+}

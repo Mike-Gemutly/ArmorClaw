@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "target_domain": "https://stripe.com",
+  "metadata": {
+    "generated_by": "@armorclaw/jetski-chartmaker",
+    "timestamp": "2026-04-07T00:00:00Z",
+    "session_id": "stripe-checkout-chart-v1.0.4"
+  },
+  "action_map": {
+    "click_pay": {
+      "action_type": "click",
+      "selector": {
+        "primary_css": "button[type='submit']",
+        "secondary_xpath": "//button[@type='submit']",
+        "fallback_js": "document.querySelector('button[type=\"submit\"]')"
+      },
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 2000
+      }
+    },
+    "enter_card_details": {
+      "action_type": "input",
+      "frame_routing": {
+        "selector": "iframe[name^='__privateStripeFrame'], iframe[data-elements-stripefield]",
+        "name": "Elements Card Number",
+        "origin": "https://js.stripe.com"
+      },
+      "selector": {
+        "primary_css": "input[name='cardnumber'], input[data-elements-stable-field-name='cardNumber']",
+        "secondary_xpath": "//input[@name='cardnumber'] | //input[@data-elements-stable-field-name='cardNumber']",
+        "fallback_js": "document.querySelector(\"input[name='cardnumber'], input[data-elements-stable-field-name='cardNumber']\")"
+      },
+      "value": "{card_number}",
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 500
+      }
+    },
+    "enter_cvc": {
+      "action_type": "input",
+      "frame_routing": {
+        "selector": "iframe[name^='__privateStripeFrame'], iframe[data-elements-stripefield]",
+        "name": "Elements CVC",
+        "origin": "https://js.stripe.com"
+      },
+      "selector": {
+        "primary_css": "input[name='cvc'], input[data-elements-stable-field-name='cardCvc']",
+        "secondary_xpath": "//input[@name='cvc'] | //input[@data-elements-stable-field-name='cardCvc']",
+        "fallback_js": "document.querySelector(\"input[name='cvc'], input[data-elements-stable-field-name='cardCvc']\")"
+      },
+      "value": "{cvc}",
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 500
+      }
+    },
+    "enter_expiry": {
+      "action_type": "input",
+      "frame_routing": {
+        "selector": "iframe[name^='__privateStripeFrame'], iframe[data-elements-stripefield]",
+        "name": "Elements Expiry",
+        "origin": "https://js.stripe.com"
+      },
+      "selector": {
+        "primary_css": "input[name='exp-date'], input[data-elements-stable-field-name='cardExpiry']",
+        "secondary_xpath": "//input[@name='exp-date'] | //input[@data-elements-stable-field-name='cardExpiry']",
+        "fallback_js": "document.querySelector(\"input[name='exp-date'], input[data-elements-stable-field-name='cardExpiry']\")"
+      },
+      "value": "{expiry}",
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 500
+      }
+    },
+    "enter_zip": {
+      "action_type": "input",
+      "selector": {
+        "primary_css": "input[name='zip'], input[name='postal_code'], input[placeholder*='Zip']",
+        "secondary_xpath": "//input[@name='zip'] | //input[@name='postal_code'] | //input[contains(@placeholder, 'Zip')]",
+        "fallback_js": "document.querySelector(\"input[name='zip'], input[name='postal_code'], input[placeholder*='Zip']\")"
+      },
+      "value": "{zip}",
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 500
+      }
+    },
+    "submit_payment": {
+      "action_type": "click",
+      "selector": {
+        "primary_css": "button[type='submit']:not([disabled]), button.SubmitButton",
+        "secondary_xpath": "//button[@type='submit' and not(@disabled)] | //button[contains(@class, 'SubmitButton')]",
+        "fallback_js": "document.querySelector(\"button[type='submit']:not([disabled]), button.SubmitButton\")"
+      },
+      "post_action_wait": {
+        "type": "waitForSelector",
+        "selector": {
+          "primary_css": ".success-message, [data-test='payment-success']"
+        },
+        "timeout": 10000
+      }
+    },
+    "handle_success": {
+      "action_type": "assert",
+      "selector": {
+        "primary_css": ".success-message, [data-test='payment-success'], .PaymentSuccess",
+        "secondary_xpath": "//*[contains(@class, 'success-message')] | //*[@data-test='payment-success'] | //*[contains(@class, 'PaymentSuccess')]",
+        "fallback_js": "document.querySelector(\".success-message, [data-test='payment-success'], .PaymentSuccess\")"
+      },
+      "assertion": {
+        "type": "exists",
+        "expected": true
+      }
+    },
+    "handle_error": {
+      "action_type": "assert",
+      "selector": {
+        "primary_css": ".error-message, [data-test='payment-error'], .PaymentError",
+        "secondary_xpath": "//*[contains(@class, 'error-message')] | //*[@data-test='payment-error'] | //*[contains(@class, 'PaymentError')]",
+        "fallback_js": "document.querySelector(\".error-message, [data-test='payment-error'], .PaymentError\")"
+      },
+      "assertion": {
+        "type": "exists",
+        "expected": false
+      }
+    }
+  }
+}

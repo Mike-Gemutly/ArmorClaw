@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stripe-like Checkout Page</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f7f9fc;
+      color: #32325d;
+    }
+    .checkout-container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      margin: 0 0 20px;
+      font-size: 28px;
+      font-weight: 400;
+    }
+    .product-info {
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #e6ebf1;
+    }
+    .product-name {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+    .product-price {
+      font-size: 24px;
+      font-weight: 700;
+      color: #32325d;
+    }
+    .card-form {
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #6b7c93;
+    }
+    input[type="text"],
+    input[type="email"] {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #e6ebf1;
+      border-radius: 4px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    input:focus {
+      outline: none;
+      border-color: #635bff;
+      box-shadow: 0 0 0 3px rgba(99, 91, 255, 0.1);
+    }
+    .iframe-container {
+      border: 1px solid #e6ebf1;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    iframe {
+      width: 100%;
+      height: 100px;
+      border: none;
+    }
+    .pay-button {
+      width: 100%;
+      padding: 15px;
+      background-color: #635bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    .pay-button:hover {
+      background-color: #5851ea;
+    }
+    .pay-button:disabled {
+      background-color: #a0a3b0;
+      cursor: not-allowed;
+    }
+    .secure-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 20px;
+      color: #6b7c93;
+      font-size: 14px;
+    }
+    .secure-badge span {
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="checkout-container">
+    <h1>Complete your purchase</h1>
+
+    <div class="product-info">
+      <div class="product-name">Jetski Chartmaker License</div>
+      <div class="product-price">$49.00</div>
+    </div>
+
+    <div class="card-form">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="you@example.com" data-automation-id="email-input">
+      </div>
+
+      <div class="form-group">
+        <label>Card information</label>
+        <div class="iframe-container">
+          <iframe id="stripe-card-element" data-automation-id="card-iframe" title="Card information" srcdoc="
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <style>
+                body {
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+                  padding: 10px;
+                  margin: 0;
+                }
+                .card-input {
+                  width: 100%;
+                  padding: 10px;
+                  border: none;
+                  font-size: 16px;
+                  outline: none;
+                }
+                .card-input::placeholder {
+                  color: #aab7c4;
+                }
+              </style>
+            </head>
+            <body>
+              <input type='text' class='card-input' placeholder='4242 4242 4242 4242' id='card-number' data-automation-id='card-number-input'>
+              <script>
+                document.getElementById('card-number').addEventListener('click', function() {
+                  console.log('Card number clicked in iframe');
+                });
+                document.getElementById('card-number').addEventListener('input', function() {
+                  console.log('Card number input:', this.value);
+                });
+              </script>
+            </body>
+            </html>
+          "></iframe>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="cardholder-name">Cardholder name</label>
+        <input type="text" id="cardholder-name" placeholder="John Doe" data-automation-id="cardholder-input">
+      </div>
+    </div>
+
+    <button class="pay-button" id="pay-button" data-automation-id="pay-button">
+      Pay $49.00
+    </button>
+
+    <div class="secure-badge">
+      <span>🔒</span> Secured by Stripe
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('pay-button').addEventListener('click', function() {
+      const email = document.getElementById('email').value;
+      const cardholderName = document.getElementById('cardholder-name').value;
+
+      if (!email) {
+        alert('Please enter your email');
+        return;
+      }
+
+      this.textContent = 'Processing...';
+      this.disabled = true;
+
+      setTimeout(() => {
+        this.textContent = 'Payment successful!';
+        this.style.backgroundColor = '#3ecf8e';
+
+        setTimeout(() => {
+          alert('Payment successful! Thank you for your purchase.');
+        }, 500);
+      }, 1500);
+    });
+
+    document.getElementById('email').addEventListener('input', function() {
+      console.log('Email input:', this.value);
+    });
+
+    document.getElementById('cardholder-name').addEventListener('input', function() {
+      console.log('Cardholder name:', this.value);
+    });
+  </script>
+</body>
+</html>

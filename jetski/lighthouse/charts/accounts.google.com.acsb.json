@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "target_domain": "https://accounts.google.com",
+  "metadata": {
+    "generated_by": "@armorclaw/jetski-chartmaker",
+    "timestamp": "2026-04-07T05:45:00.000Z",
+    "session_id": "google-oauth-session",
+    "total_actions": 6
+  },
+  "action_map": {
+    "click_create_account": {
+      "action_type": "click",
+      "selector": {
+        "primary_css": "[data-id='link-to-create-account']",
+        "secondary_xpath": "//*[@data-id='link-to-create-account']",
+        "fallback_js": "document.querySelector('[data-id=\"link-to-create-account\"]')"
+      },
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 2000
+      }
+    },
+    "enter_email": {
+      "action_type": "input",
+      "selector": {
+        "primary_css": "#identifierId",
+        "secondary_xpath": "//*[@id='identifierId']",
+        "fallback_js": "document.querySelector('#identifierId')"
+      },
+      "value": "{{EMAIL}}"
+    },
+    "click_next_email": {
+      "action_type": "click",
+      "selector": {
+        "primary_css": "#identifierNext",
+        "secondary_xpath": "//*[@id='identifierNext']",
+        "fallback_js": "document.querySelector('#identifierNext')"
+      },
+      "post_action_wait": {
+        "type": "waitForVisible",
+        "selector": {
+          "primary_css": "input[type='password'][name='Passwd']"
+        },
+        "timeout": 5000
+      }
+    },
+    "enter_password": {
+      "action_type": "input",
+      "selector": {
+        "primary_css": "input[type='password'][name='Passwd']",
+        "secondary_xpath": "//input[@type='password'][@name='Passwd']",
+        "fallback_js": "document.querySelector('input[type=\"password\"][name=\"Passwd\"]')"
+      },
+      "value": "{{PASSWORD}}"
+    },
+    "click_next_password": {
+      "action_type": "click",
+      "selector": {
+        "primary_css": "#passwordNext",
+        "secondary_xpath": "//*[@id='passwordNext']",
+        "fallback_js": "document.querySelector('#passwordNext')"
+      },
+      "post_action_wait": {
+        "type": "waitForVisible",
+        "selector": {
+          "primary_css": "[data-id='submit-approve']"
+        },
+        "timeout": 5000
+      }
+    },
+    "click_accept": {
+      "action_type": "click",
+      "selector": {
+        "primary_css": "[data-id='submit-approve']",
+        "secondary_xpath": "//*[@data-id='submit-approve']",
+        "fallback_js": "document.querySelector('[data-id=\"submit-approve\"]')"
+      },
+      "post_action_wait": {
+        "type": "waitForTimeout",
+        "timeout": 3000
+      }
+    }
+  }
+}

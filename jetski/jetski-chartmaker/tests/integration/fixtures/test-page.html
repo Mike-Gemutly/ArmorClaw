@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Page for Jetski Chartmaker</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .button-group {
+      margin: 20px 0;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      background-color: #007bff;
+      color: white;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    input[type="text"] {
+      padding: 8px;
+      margin: 5px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .form-group {
+      margin: 20px 0;
+    }
+    #result {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: #f8f9fa;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Test Page for Jetski Chartmaker</h1>
+
+  <div class="button-group">
+    <button id="test-button-1" data-automation-id="primary-button">Click Me</button>
+    <button id="test-button-2" class="secondary-btn">Secondary Button</button>
+    <button class="tertiary-btn">Tertiary Button</button>
+  </div>
+
+  <div class="form-group">
+    <label for="test-input">Enter text:</label>
+    <input type="text" id="test-input" placeholder="Type here...">
+  </div>
+
+  <div class="form-group">
+    <label for="test-input-2">Another input:</label>
+    <input type="text" id="test-input-2" class="special-input" placeholder="Special input">
+  </div>
+
+  <div id="result">
+    Result will appear here...
+  </div>
+
+  <script>
+    document.getElementById('test-button-1').addEventListener('click', function() {
+      document.getElementById('result').textContent = 'Button 1 clicked!';
+    });
+
+    document.getElementById('test-button-2').addEventListener('click', function() {
+      document.getElementById('result').textContent = 'Button 2 clicked!';
+    });
+
+    document.querySelector('.tertiary-btn').addEventListener('click', function() {
+      document.getElementById('result').textContent = 'Tertiary button clicked!';
+    });
+
+    document.getElementById('test-input').addEventListener('change', function() {
+      document.getElementById('result').textContent = 'Input 1 value: ' + this.value;
+    });
+
+    document.getElementById('test-input-2').addEventListener('change', function() {
+      document.getElementById('result').textContent = 'Input 2 value: ' + this.value;
+    });
+  </script>
+</body>
+</html>
