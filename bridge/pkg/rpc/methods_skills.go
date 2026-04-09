@@ -6,10 +6,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/armorclaw/bridge/pkg/mcp"
 )
 
 // handleSkillsExecute executes a skill with PETG validation
 func (s *Server) handleSkillsExecute(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	// v6 microkernel path: route through MCP router
+	if s.mcpRouter != nil {
+		name, arguments, err := s.translator.ToMCP(req.Params)
+		if err != nil {
+			return nil, &ErrorObj{Code: InvalidParams, Message: err.Error()}
+		}
+		mcpResp, err := s.mcpRouter.HandleToolsCall(ctx, &mcp.MCPToolsCallRequest{
+			JSONRPC: req.JSONRPC,
+			ID:      req.ID,
+			Params: &mcp.MCPParams{
+				Name:      name,
+				Arguments: arguments,
+			},
+		})
+		if err != nil {
+			return nil, &ErrorObj{Code: InternalError, Message: err.Error()}
+		}
+		if mcpResp.Error != nil {
+			return nil, &ErrorObj{Code: mcpResp.Error.Code, Message: mcpResp.Error.Message}
+		}
+		return mcpResp.Result, nil
+	}
+
+	// Legacy path (untouched)
 	if s.skillMgr == nil {
 		return nil, &ErrorObj{
 			Code:    InternalError,
@@ -68,7 +94,7 @@ func (s *Server) handleSkillsList(ctx context.Context, req *Request) (interface{
 			Message: "Failed to list skills",
 		}
 	}
-	
+
 	// Format response
 	skillData := make([]map[string]interface{}, len(skillList))
 	for i, skill := range skillList {
@@ -182,8 +208,8 @@ func (s *Server) handleSkillsAllow(ctx context.Context, req *Request) (interface
 
 	return map[string]interface{}{
 		"skill_name": params.SkillName,
-		"status":      "allowed",
-		"message":     fmt.Sprintf("Skill '%s' has been allowed", params.SkillName),
+		"status":     "allowed",
+		"message":    fmt.Sprintf("Skill '%s' has been allowed", params.SkillName),
 	}, nil
 }
 
@@ -226,8 +252,8 @@ func (s *Server) handleSkillsBlock(ctx context.Context, req *Request) (interface
 
 	return map[string]interface{}{
 		"skill_name": params.SkillName,
-		"status":      "blocked",
-		"message":     fmt.Sprintf("Skill '%s' has been blocked", params.SkillName),
+		"status":     "blocked",
+		"message":    fmt.Sprintf("Skill '%s' has been blocked", params.SkillName),
 	}, nil
 }
 
@@ -242,8 +268,8 @@ func (s *Server) handleSkillsAllowlistAdd(ctx context.Context, req *Request) (in
 
 	// Parse parameters
 	var params struct {
-		Type  string `json:"type"`   // "ip" or "cidr"
-		Value string `json:"value"`  // IP address or CIDR
+		Type  string `json:"type"`  // "ip" or "cidr"
+		Value string `json:"value"` // IP address or CIDR
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -301,8 +327,8 @@ func (s *Server) handleSkillsAllowlistRemove(ctx context.Context, req *Request) 
 
 	// Parse parameters
 	var params struct {
-		Type  string `json:"type"`   // "ip" or "cidr"
-		Value string `json:"value"`  // IP address or CIDR
+		Type  string `json:"type"`  // "ip" or "cidr"
+		Value string `json:"value"` // IP address or CIDR
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -355,8 +381,8 @@ func (s *Server) handleSkillsAllowlistList(ctx context.Context, req *Request) (i
 	// Get allowlist
 	ips, cidrs := s.skillMgr.GetAllowlist()
 	return map[string]interface{}{
-		"ips":    ips,
-		"cidrs":  cidrs,
+		"ips":   ips,
+		"cidrs": cidrs,
 		"counts": map[string]int{
 			"ips":   len(ips),
 			"cidrs": len(cidrs),

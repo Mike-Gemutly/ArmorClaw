@@ -56,6 +56,12 @@ import (
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/appservice"
+	"github.com/armorclaw/bridge/pkg/audit"
+	"github.com/armorclaw/bridge/pkg/governor"
+	"github.com/armorclaw/bridge/pkg/mcp"
+	"github.com/armorclaw/bridge/pkg/pii"
+	"github.com/armorclaw/bridge/pkg/toolsidecar"
+	"github.com/armorclaw/bridge/pkg/translator"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 
 	"github.com/charmbracelet/huh"
@@ -2407,6 +2413,9 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Provisioning manager initialized")
 	}
 
+	// Create Docker client adapter for toolsidecar (v6 microkernel)
+	toolsidecarDocker := &toolsidecarDockerAdapter{client: dockerClient}
+
 	// Create Studio service
 	var studioService *studio.StudioIntegration
 	studioDataPath := filepath.Join(filepath.Dir(cfg.Keystore.DBPath), "studio")
@@ -2458,6 +2467,44 @@ func runBridgeServer(cliCfg cliConfig) {
 		studioService = nil
 	} else {
 		log.Println("Studio service initialized")
+	}
+
+	// Initialize v6 MCP Router (if enabled)
+	var mcpRouter *mcp.MCPRouter
+	var mcpTranslator *translator.RPCToMCPTranslator
+	if cfg.Vault.V6Microkernel {
+		log.Println("Initializing v6 Microkernel MCP Router...")
+		mcpTranslator = translator.NewRPCToMCPTranslator()
+
+		gov := governor.NewGovernor(nil, nil)
+		prov, provErr := toolsidecar.NewProvisioner(toolsidecar.Config{
+			DockerClient: toolsidecarDocker,
+		})
+		if provErr != nil {
+			log.Printf("V6 Microkernel disabled: toolsidecar provisioner: %v", provErr)
+		} else {
+			consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{
+				Timeout: 60 * time.Second,
+			})
+			auditor, auditErr := audit.NewAuditLog(audit.DefaultConfig())
+			if auditErr != nil {
+				log.Printf("V6 Microkernel disabled: audit log: %v", auditErr)
+			} else {
+				mcpRouter, err = mcp.New(mcp.Config{
+					SkillGate:      gov,
+					Provisioner:    prov,
+					ConsentManager: consentMgr,
+					Auditor:        auditor,
+					V6Microkernel:  true,
+				})
+				if err != nil {
+					log.Printf("V6 Microkernel disabled: %v", err)
+					mcpRouter = nil
+				} else {
+					log.Println("v6 Microkernel MCP Router initialized")
+				}
+			}
+		}
 	}
 
 	// Initialize Rolodex service for contact management
@@ -2578,6 +2625,8 @@ func runBridgeServer(cliCfg cliConfig) {
 		EventBus:        eventBus,
 		HardeningStore:  hardeningStore,
 		Metrics:         metrics,
+		MCPRouter:       mcpRouter,
+		Translator:      mcpTranslator,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -3441,4 +3490,28 @@ func (c *compositeStudioHandler) HandleMatrixMessage(ctx context.Context, roomID
 		return c.secretary.HandleMatrixMessage(ctx, roomID, userID, eventID, text)
 	}
 	return false
+}
+
+type toolsidecarDockerAdapter struct {
+	client *docker.Client
+}
+
+func (a *toolsidecarDockerAdapter) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig any, platform any, name string) (container.CreateResponse, error) {
+	id, err := a.client.CreateContainer(ctx, config, hostConfig, nil, nil)
+	if err != nil {
+		return container.CreateResponse{}, err
+	}
+	return container.CreateResponse{ID: id}, nil
+}
+
+func (a *toolsidecarDockerAdapter) ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error {
+	return a.client.StartContainer(ctx, containerID)
+}
+
+func (a *toolsidecarDockerAdapter) ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error {
+	return a.client.StopContainer(ctx, containerID, options)
+}
+
+func (a *toolsidecarDockerAdapter) ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error {
+	return a.client.RemoveContainer(ctx, containerID, options.Force)
 }

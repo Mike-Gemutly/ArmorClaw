@@ -27,8 +27,10 @@ import (
 	"github.com/armorclaw/bridge/pkg/eventlog"
 	"github.com/armorclaw/bridge/pkg/interfaces"
 	"github.com/armorclaw/bridge/pkg/keystore"
+	"github.com/armorclaw/bridge/pkg/mcp"
 	"github.com/armorclaw/bridge/pkg/provisioning"
 	"github.com/armorclaw/bridge/pkg/studio"
+	"github.com/armorclaw/bridge/pkg/translator"
 	"github.com/armorclaw/bridge/pkg/trust"
 )
 
@@ -139,6 +141,8 @@ type Server struct {
 	provisioningMgr ProvisioningManager
 	skillMgr        SkillManager
 	skillGate       interfaces.SkillGate
+	mcpRouter       *mcp.MCPRouter
+	translator      *translator.RPCToMCPTranslator
 	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
@@ -172,6 +176,8 @@ type Config struct {
 	Metrics         *Metrics
 	DockerClient    *docker.Client
 	Guard           *trust.TrustedProxyGuard
+	MCPRouter       *mcp.MCPRouter
+	Translator      *translator.RPCToMCPTranslator
 }
 
 func New(cfg Config) (*Server, error) {
@@ -201,6 +207,8 @@ func New(cfg Config) (*Server, error) {
 		listenAddr:      cfg.ListenAddr,
 		dockerClient:    cfg.DockerClient,
 		guard:           cfg.Guard,
+		mcpRouter:       cfg.MCPRouter,
+		translator:      cfg.Translator,
 	}
 
 	s.registerHandlers()
