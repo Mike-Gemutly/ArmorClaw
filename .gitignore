@@ -126,3 +126,4 @@ sidecar/target/
 *.so
 *.dylibsidecar/target/
 **/target/
+.aider*
