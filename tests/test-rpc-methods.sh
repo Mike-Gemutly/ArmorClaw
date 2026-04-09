@@ -9,11 +9,12 @@ CONFIG_FILE="/tmp/armorclaw-config-$$.toml"
 BRIDGE_PID=""
 FAILED=0
 
-# Cleanup function
 cleanup() {
     if [[ -n "$BRIDGE_PID" ]]; then
+        # SIGTERM first, then SIGKILL after 2s — prevents CI hang on deadlocked Go shutdown
         kill "$BRIDGE_PID" 2>/dev/null || true
-        wait "$BRIDGE_PID" 2>/dev/null || true
+        sleep 2
+        kill -9 "$BRIDGE_PID" 2>/dev/null || true
     fi
     rm -f "$SOCKET_PATH" "$CONFIG_FILE" 2>/dev/null || true
     rm -rf "$KEYSTORE_DIR" 2>/dev/null || true
