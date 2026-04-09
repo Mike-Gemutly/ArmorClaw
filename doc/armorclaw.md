@@ -2,9 +2,28 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 4.9.0
+> **Version**: 4.10.0
 >
-> **Last Updated**: 2026-04-08
+> **Last Updated**: 2026-04-09
+
+---
+
+## Context Routing Rules
+
+> **RULE**: Before modifying any subsystem, you MUST read the source files listed below. Do not plan changes from this document alone.
+
+| Task | Required Reading |
+|------|-----------------|
+| Modify PII injection / BlindFill | `bridge/pkg/pii/` and `rust-vault/src/blindfill/placeholder.rs` |
+| Add or change RPC methods | `bridge/pkg/rpc/server.go` and `docs/reference/rpc-api.md` |
+| Change agent state transitions | `bridge/pkg/agent/state.go` and `bridge/pkg/agent/state_machine.go` |
+| Modify Matrix event handling | `bridge/internal/adapter/` and `bridge/pkg/matrix/` |
+| Update JetSki CDP proxy | `jetski/internal/cdp/proxy.go` and `jetski/internal/cdp/pii_scanner.go` |
+| Change keystore encryption | `bridge/pkg/keystore/keystore.go` (Go) and `rust-vault/src/db/` (Rust) |
+| Add browser skills | `container/openclaw-src/skills/` and `browser-service/src/` |
+| Modify container hardening | `container/Dockerfile.openclaw`, `container/seccomp-profile.json`, `container/apparmor-profile` |
+| Update Android client | `applications/ArmorChat/app/` |
+| Change deployment scripts | `deploy/` and `.skills/` |
 
 ---
 
