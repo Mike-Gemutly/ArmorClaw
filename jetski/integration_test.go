@@ -31,9 +31,9 @@ func TestIntegration_FullRequestFlow(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	router := cdp.NewMethodRouter()
+	router := cdp.NewMethodRouter(cdp.NewTranslator())
 	engineURL := "ws://127.0.0.1:9223"
-	proxy := cdp.NewProxy(engineURL, router)
+	proxy := cdp.NewProxy(engineURL, router, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

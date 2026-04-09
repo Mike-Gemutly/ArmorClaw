@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/jetski/internal/security"
 	"github.com/gorilla/websocket"
 )
 
@@ -42,6 +43,12 @@ type CDPError struct {
 	Data    string `json:"data,omitempty"`
 }
 
+type MessageRecorder func(method string, params json.RawMessage)
+
+type PIIScanner interface {
+	ScanJSONMessage(jsonStr string) ([]security.PIIFinding, error)
+}
+
 type Proxy struct {
 	mu         sync.Mutex
 	clientConn *websocket.Conn
@@ -51,17 +58,24 @@ type Proxy struct {
 	cancel     context.CancelFunc
 	router     *MethodRouter
 	errorChan  chan error
+	recorder   MessageRecorder
+	piiScanner PIIScanner
 }
 
-func NewProxy(engineURL string, router *MethodRouter) *Proxy {
+func NewProxy(engineURL string, router *MethodRouter, piiScanner PIIScanner) *Proxy {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Proxy{
-		engineURL: engineURL,
-		ctx:       ctx,
-		cancel:    cancel,
-		router:    router,
-		errorChan: make(chan error, 10),
+		engineURL:  engineURL,
+		ctx:        ctx,
+		cancel:     cancel,
+		router:     router,
+		errorChan:  make(chan error, 10),
+		piiScanner: piiScanner,
 	}
+}
+
+func (p *Proxy) SetRecorder(r MessageRecorder) {
+	p.recorder = r
 }
 
 func (p *Proxy) Start(clientConn *websocket.Conn) error {
@@ -144,6 +158,18 @@ func (p *Proxy) forwardToEngine() {
 					continue
 				}
 
+				if p.piiScanner != nil {
+					if findings, err := p.piiScanner.ScanJSONMessage(string(data)); err == nil {
+						for _, f := range findings {
+							log.Printf("[JETSKI PII] detected %s in CDP message", f.Type)
+						}
+					}
+				}
+
+				if p.recorder != nil && msg.Method != "" {
+					p.recorder(msg.Method, msg.Params)
+				}
+
 				if msg.Method != "" {
 					route := p.router.Route(msg.Method)
 					if route != nil && route.Handler != nil {
@@ -189,6 +215,13 @@ func (p *Proxy) forwardToClient() {
 					}
 				}
 				return
+			}
+
+			if p.recorder != nil && messageType == websocket.TextMessage {
+				var msg CDPMessage
+				if json.Unmarshal(data, &msg) == nil && msg.Method != "" {
+					p.recorder(msg.Method, msg.Params)
+				}
 			}
 
 			if err := p.writeMessage(p.clientConn, messageType, data); err != nil {

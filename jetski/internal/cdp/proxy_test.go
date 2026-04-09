@@ -1,18 +1,22 @@
 package cdp
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/armorclaw/jetski/internal/security"
 	"github.com/gorilla/websocket"
 )
 
 func TestMethodRouter_Route(t *testing.T) {
-	router := NewMethodRouter()
+	router := NewMethodRouter(NewTranslator())
 
 	tests := []struct {
 		name           string
@@ -81,7 +85,7 @@ func TestMethodRouter_Route(t *testing.T) {
 }
 
 func TestMethodRouter_WildcardMatching(t *testing.T) {
-	router := NewMethodRouter()
+	router := NewMethodRouter(NewTranslator())
 
 	targetMethods := []string{
 		"Target.createTarget",
@@ -106,7 +110,7 @@ func TestMethodRouter_WildcardMatching(t *testing.T) {
 }
 
 func TestMethodRouter_HandlerInvocation(t *testing.T) {
-	router := NewMethodRouter()
+	router := NewMethodRouter(NewTranslator())
 
 	msg := &CDPMessage{
 		ID:     1,
@@ -132,8 +136,8 @@ func TestMethodRouter_HandlerInvocation(t *testing.T) {
 }
 
 func TestProxy_NewProxy(t *testing.T) {
-	router := NewMethodRouter()
-	proxy := NewProxy("ws://localhost:9222", router)
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy("ws://localhost:9222", router, nil)
 
 	if proxy == nil {
 		t.Fatal("NewProxy should return a non-nil proxy")
@@ -152,8 +156,8 @@ func TestProxy_BidirectionalMessageForwarding(t *testing.T) {
 
 	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
 
-	router := NewMethodRouter()
-	proxy := NewProxy(wsURL, router)
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -197,8 +201,8 @@ func TestProxy_PingPong(t *testing.T) {
 
 	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
 
-	router := NewMethodRouter()
-	proxy := NewProxy(wsURL, router)
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil)
 
 	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -221,8 +225,8 @@ func TestProxy_PingPong(t *testing.T) {
 }
 
 func TestProxy_Stop(t *testing.T) {
-	router := NewMethodRouter()
-	proxy := NewProxy("ws://localhost:9222", router)
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy("ws://localhost:9222", router, nil)
 
 	proxy.Stop()
 
@@ -291,6 +295,286 @@ func testHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func TestProxy_RecorderCallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil)
+
+	var recorded []string
+	proxy.SetRecorder(func(method string, params json.RawMessage) {
+		recorded = append(recorded, method)
+	})
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Page.navigate",
+		Params: json.RawMessage(`{"url":"https://example.com"}`),
+	}
+	data, _ := json.Marshal(msg)
+	clientConn.WriteMessage(websocket.TextMessage, data)
+
+	select {
+	case err := <-proxy.Errors():
+		if err != nil {
+			t.Errorf("Proxy error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+	}
+
+	if len(recorded) == 0 {
+		t.Fatal("expected recorder to be called, but it was not")
+	}
+	found := false
+	for _, m := range recorded {
+		if m == "Page.navigate" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Page.navigate in recorded methods, got %v", recorded)
+	}
+}
+
+func TestProxy_SetRecorder_Nil(t *testing.T) {
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy("ws://localhost:9222", router, nil)
+
+	proxy.SetRecorder(nil)
+
+	if proxy.recorder != nil {
+		t.Error("expected recorder to be nil after SetRecorder(nil)")
+	}
+}
+
+// --- PII Scanner Integration Tests ---
+
+type mockPIIScanner struct {
+	called   chan struct{}
+	findings []security.PIIFinding
+}
+
+func newMockPIIScanner() *mockPIIScanner {
+	return &mockPIIScanner{
+		called:   make(chan struct{}, 1),
+		findings: nil,
+	}
+}
+
+func (m *mockPIIScanner) ScanJSONMessage(jsonStr string) ([]security.PIIFinding, error) {
+	m.called <- struct{}{}
+	return m.findings, nil
+}
+
+func TestPII_NewProxyWithScanner(t *testing.T) {
+	router := NewMethodRouter(NewTranslator())
+	mock := newMockPIIScanner()
+	proxy := NewProxy("ws://localhost:9222", router, mock)
+
+	if proxy == nil {
+		t.Fatal("NewProxy should return a non-nil proxy")
+	}
+	if proxy.piiScanner == nil {
+		t.Error("PII scanner should not be nil when provided")
+	}
+}
+
+func TestPII_NilScannerAllowed(t *testing.T) {
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy("ws://localhost:9222", router, nil)
+
+	if proxy == nil {
+		t.Fatal("NewProxy should return a non-nil proxy")
+	}
+	if proxy.piiScanner != nil {
+		t.Error("PII scanner should be nil when not provided")
+	}
+}
+
+func TestPII_ScannerCalledOnForwardToEngine(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	mock := newMockPIIScanner()
+	proxy := NewProxy(wsURL, router, mock)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Input.insertText",
+		Params: json.RawMessage(`{"text":"hello world"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	select {
+	case <-mock.called:
+	case <-time.After(2 * time.Second):
+		t.Error("PII scanner should have been called when forwarding message")
+	}
+}
+
+func TestPII_DetectionLogsWarning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	scanner := security.NewPIIScanner()
+	proxy := NewProxy(wsURL, router, scanner)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Input.insertText",
+		Params: json.RawMessage(`{"text":"123-45-6789"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	output := buf.String()
+	if !strings.Contains(output, "[JETSKI PII]") {
+		t.Errorf("Expected [JETSKI PII] in log output, got: %s", output)
+	}
+	if !strings.Contains(output, "SSN") {
+		t.Errorf("Expected SSN type in log output, got: %s", output)
+	}
+}
+
+func TestPII_NoWarningForCleanMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	scanner := security.NewPIIScanner()
+	proxy := NewProxy(wsURL, router, scanner)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Page.navigate",
+		Params: json.RawMessage(`{"url":"https://example.com"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	output := buf.String()
+	if strings.Contains(output, "[JETSKI PII]") {
+		t.Errorf("Expected no [JETSKI PII] for clean message, got: %s", output)
+	}
+}
+
+func TestPII_EmailDetectionLogsWarning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	scanner := security.NewPIIScanner()
+	proxy := NewProxy(wsURL, router, scanner)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Input.insertText",
+		Params: json.RawMessage(`{"text":"user@example.com"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	output := buf.String()
+	if !strings.Contains(output, "[JETSKI PII]") {
+		t.Errorf("Expected [JETSKI PII] in log output, got: %s", output)
+	}
+	if !strings.Contains(output, "EMAIL") {
+		t.Errorf("Expected EMAIL type in log output, got: %s", output)
+	}
+}
+
 func BenchmarkMatchWildcard(b *testing.B) {
 	tests := []struct {
 		pattern string
@@ -313,7 +597,7 @@ func BenchmarkMatchWildcard(b *testing.B) {
 }
 
 func BenchmarkMethodRouter_Route(b *testing.B) {
-	router := NewMethodRouter()
+	router := NewMethodRouter(NewTranslator())
 	methods := []string{
 		"Target.createTarget",
 		"Target.closeTarget",

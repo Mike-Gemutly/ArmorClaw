@@ -77,7 +77,7 @@ var defaultConfig = Config{
 	},
 	Browser: BrowserConfig{
 		EnginePath:    "/usr/local/bin/lightpanda",
-		EnginePort:    "9223",
+		EnginePort:    "9333",
 		HealthCheck:   true,
 		CheckInterval: 5 * time.Second,
 		Watchdog: WatchdogConfig{

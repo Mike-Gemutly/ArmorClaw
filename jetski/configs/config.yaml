@@ -12,7 +12,7 @@ browser:
   # Path to the Lightpanda engine binary
   enginePath: "/usr/local/bin/lightpanda"
   # Port for the Lightpanda engine
-  enginePort: "9223"
+  enginePort: "9333"
   # Enable health checking
   healthCheck: true
   # Interval between health checks

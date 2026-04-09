@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/armorclaw/jetski/internal/cdp"
 	"github.com/armorclaw/jetski/internal/network"
+	"github.com/armorclaw/jetski/internal/rpc"
 	"github.com/armorclaw/jetski/internal/security"
+	"github.com/armorclaw/jetski/internal/sonar"
 	"github.com/armorclaw/jetski/internal/subprocess"
 	"github.com/armorclaw/jetski/pkg/config"
 	"github.com/armorclaw/jetski/pkg/logger"
@@ -64,8 +67,13 @@ func main() {
 
 	pi := setupProcessManager(cfg, log)
 	proxyMgr := setupProxyManager(cfg, log)
-	_ = setupPIIScanner(cfg, log)
+	piiScanner := setupPIIScanner(cfg, log)
 	router := setupMethodRouter()
+
+	sonarBuf := sonar.NewCircularBuffer(1000)
+	sonarReporter := sonar.NewReporter(sonarBuf, "wreckage", pi)
+	log.Info("Sonar telemetry initialized", "buffer_capacity", 1000)
+	_ = sonarReporter
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -73,7 +81,10 @@ func main() {
 	go handleShutdown(sigChan, cancel, pi, proxyMgr, log)
 
 	engineURL := fmt.Sprintf("ws://127.0.0.1:%s", cfg.Browser.EnginePort)
-	cdpProxy := cdp.NewProxy(engineURL, router)
+	cdpProxy := cdp.NewProxy(engineURL, router, piiScanner)
+	cdpProxy.SetRecorder(func(method string, params json.RawMessage) {
+		sonar.RecordFrame(sonarBuf, method, params, "")
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -120,13 +131,29 @@ func main() {
 		}
 	}()
 
-	log.Info("✅ Jetski Browser started successfully", "port", cfg.Server.Port)
+	rpcServer := &http.Server{
+		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, "9223"),
+		Handler:      rpc.NewServer().Handler(),
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+	}
+
+	log.Info("Starting RPC API server", "port", "9223")
+
+	go func() {
+		if err := rpcServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("RPC server error", "error", err)
+		}
+	}()
+
+	log.Info("✅ Jetski Browser started successfully", "cdp_port", cfg.Server.Port, "rpc_port", "9223")
 	<-ctx.Done()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	_ = server.Shutdown(shutdownCtx)
+	_ = rpcServer.Shutdown(shutdownCtx)
 
 	log.Info("✅ Jetski Browser stopped gracefully")
 }
@@ -184,7 +211,7 @@ func setupPIIScanner(cfg *config.Config, log *logger.Logger) *security.PIIScanne
 }
 
 func setupMethodRouter() *cdp.MethodRouter {
-	router := cdp.NewMethodRouter()
+	router := cdp.NewMethodRouter(cdp.NewTranslator())
 	return router
 }
 
