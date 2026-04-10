@@ -1433,10 +1433,13 @@ func runGenerateQRCommand(cliCfg cliConfig) {
 		cfg = config.DefaultConfig()
 	}
 
-	// Get hostname
-	hostname := getHostname()
-	if cliCfg.qrHost != "" {
-		hostname = cliCfg.qrHost
+	// Get hostname: --host flag > config > os.Hostname()
+	hostname := cliCfg.qrHost
+	if hostname == "" && cfg.HTTP.Hostname != "" {
+		hostname = cfg.HTTP.Hostname
+	}
+	if hostname == "" {
+		hostname = getHostname()
 	}
 
 	port := cfg.Discovery.Port
