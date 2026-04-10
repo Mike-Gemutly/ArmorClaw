@@ -119,6 +119,9 @@ type Config struct {
 
 	// Vault configuration (Rust Vault governance)
 	Vault VaultConfig `toml:"vault"`
+
+	// HTTP server configuration
+	HTTP HTTPConfig `toml:"http"`
 }
 
 // ServerConfig holds server-specific configuration
@@ -485,6 +488,14 @@ type EventBusConfig struct {
 
 	// MaxLogFileSize is the maximum size of a single log segment
 	MaxLogFileSize int64 `toml:"max_log_file_size" env:"ARMORCLAW_EVENTBUS_MAX_LOG_FILE_SIZE"`
+}
+
+// HTTPConfig holds the HTTPS bridge server configuration
+type HTTPConfig struct {
+	Enabled  bool   `toml:"enabled" env:"ARMORCLAW_HTTP_ENABLED"`
+	Hostname string `toml:"hostname" env:"ARMORCLAW_HTTP_HOSTNAME"`
+	Port     int    `toml:"port" env:"ARMORCLAW_HTTP_PORT"`
+	CertDir  string `toml:"cert_dir" env:"ARMORCLAW_HTTP_CERT_DIR"`
 }
 
 // DiscoveryConfig holds mDNS/Bonjour discovery configuration
@@ -916,6 +927,12 @@ func DefaultConfig() *Config {
 				JobTimeout:     300, // 5 minutes
 				PriorityLevels: 3,
 			},
+		},
+		HTTP: HTTPConfig{
+			Enabled:  false,
+			Hostname: "",
+			Port:     8443,
+			CertDir:  "/var/lib/armorclaw/certs",
 		},
 		EventBus: EventBusConfig{
 			WebSocketEnabled:  false,
