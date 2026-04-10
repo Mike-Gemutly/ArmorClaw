@@ -2674,19 +2674,17 @@ func runBridgeServer(cliCfg cliConfig) {
 	// Initialize mDNS discovery server
 	var discoveryServer *discovery.Server
 	var httpDiscoveryServer *discovery.HTTPServer
-	if cfg.Discovery.Enabled {
-		// Use Matrix homeserver from discovery config, or fall back to Matrix config
-		matrixHS := cfg.Discovery.MatrixHomeserver
-		if matrixHS == "" {
-			matrixHS = cfg.Matrix.HomeserverURL
-		}
 
-		// Derive push gateway if not set
-		pushGW := cfg.Discovery.PushGateway
-		if pushGW == "" && matrixHS != "" {
-			pushGW = strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify"
-		}
+	matrixHS := cfg.Matrix.HomeserverURL
+	if matrixHS == "" {
+		matrixHS = cfg.Discovery.MatrixHomeserver
+	}
+	pushGW := cfg.Discovery.PushGateway
+	if pushGW == "" && matrixHS != "" {
+		pushGW = strings.TrimSuffix(matrixHS, "/") + "/_matrix/push/v1/notify"
+	}
 
+	if cfg.Discovery.Enabled && !cfg.HTTP.Enabled {
 		// Start HTTP discovery server (listens on port 8080)
 		log.Println("Starting HTTP discovery server...")
 		httpDiscoveryServer, err = discovery.NewHTTPServer(discovery.HTTPServerConfig{
@@ -2748,17 +2746,16 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("mDNS discovery disabled")
 	}
 
+	if cfg.HTTP.Enabled && cfg.Discovery.Enabled {
+		log.Println("Discovery routes served via HTTPS server (unified surface)")
+	}
+
 	// Start HTTPS bridge server (port 8443) for mobile client access
 	var httpsServer *bridgeHTTP.Server
 	if cfg.HTTP.Enabled {
 		hostname := cfg.HTTP.Hostname
 		if hostname == "" {
 			hostname = cfg.Discovery.InstanceName
-		}
-
-		matrixHS := cfg.Matrix.HomeserverURL
-		if matrixHS == "" {
-			matrixHS = cfg.Discovery.MatrixHomeserver
 		}
 
 		httpsServer = bridgeHTTP.NewServer(bridgeHTTP.ServerConfig{
@@ -2768,6 +2765,10 @@ func runBridgeServer(cliCfg cliConfig) {
 			MatrixHomeserver: matrixHS,
 			ServerName:       hostname,
 			EnableCORS:       true,
+			PushGateway:      pushGW,
+			APIPath:          cfg.Discovery.APIPath,
+			WSPath:           cfg.Discovery.WSPath,
+			Metrics:          metrics,
 		}, server)
 
 		go func() {

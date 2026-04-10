@@ -43,6 +43,11 @@ type ServerConfig struct {
 	// Discovery configuration
 	MatrixHomeserver string // Matrix homeserver URL
 	ServerName       string // Human-readable server name
+	// Discovery integration
+	PushGateway string
+	APIPath     string
+	WSPath      string
+	Metrics     *rpc.Metrics
 }
 
 // Server is the HTTPS server for the bridge
@@ -57,6 +62,10 @@ type Server struct {
 	qrManager             *qr.QRManager
 	ownerClaimed          bool // tracks whether an OWNER has been claimed (for is_new_server)
 	provisioningAvailable bool // tracks whether provisioning is configured on the bridge
+	pushGateway           string
+	apiPath               string
+	wsPath                string
+	metrics               *rpc.Metrics
 }
 
 // SetOwnerClaimed allows the provisioning manager to update owner status
@@ -118,9 +127,9 @@ func NewServer(config ServerConfig, rpcServer *rpc.Server) *Server {
 	}
 
 	qrConfig := qr.DefaultQRConfig()
-	qrConfig.QRSize = 256 // Good size for mobile scanning
+	qrConfig.QRSize = 256
 
-	return &Server{
+	s := &Server{
 		config:    config,
 		rpcServer: rpcServer,
 		clients:   make(map[string]*WebSocketClient),
@@ -132,6 +141,18 @@ func NewServer(config ServerConfig, rpcServer *rpc.Server) *Server {
 			serverName,
 		),
 	}
+	s.pushGateway = config.PushGateway
+	s.apiPath = config.APIPath
+	if s.apiPath == "" {
+		s.apiPath = "/api"
+	}
+	s.wsPath = config.WSPath
+	if s.wsPath == "" {
+		s.wsPath = "/ws"
+	}
+	s.metrics = config.Metrics
+
+	return s
 }
 
 // Start starts the HTTPS server
@@ -160,6 +181,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/.well-known/matrix/client", s.handleWellKnown)
 	mux.HandleFunc("/qr/config", s.handleQRConfig)
 	mux.HandleFunc("/qr/image", s.handleQRImage)
+
+	mux.HandleFunc("/api/discovery", s.handleDiscovery)
+	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.config.Port),
@@ -384,6 +409,60 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"timestamp":              time.Now().UTC().Format(time.RFC3339),
 		"version":                rpc.BridgeVersion,
 	})
+}
+
+func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	hostname := s.config.Hostname
+	if hostname == "" {
+		hostname = s.config.ServerName
+	}
+
+	response := map[string]interface{}{
+		"version":                rpc.BridgeVersion,
+		"mode":                   "operational",
+		"service_name":           s.config.ServerName,
+		"port":                   s.config.Port,
+		"tls":                    true,
+		"api_url":                fmt.Sprintf("https://%s:%d%s", hostname, s.config.Port, s.apiPath),
+		"ws_url":                 fmt.Sprintf("wss://%s:%d%s", hostname, s.config.Port, s.wsPath),
+		"matrix_homeserver":      s.config.MatrixHomeserver,
+		"push_gateway":           s.pushGateway,
+		"provisioning_available": s.provisioningAvailable,
+		"is_new_server":          !s.ownerClaimed,
+		"server_name":            s.config.ServerName,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "running",
+		"timestamp": time.Now().Unix(),
+		"service":   "armorclaw-bridge",
+		"version":   rpc.BridgeVersion,
+	})
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+
+	if s.metrics != nil {
+		s.metrics.UpdateUptime()
+		w.Write([]byte(s.metrics.Export()))
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("metrics not initialized\n"))
+	}
 }
 
 func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
