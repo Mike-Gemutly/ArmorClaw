@@ -270,6 +270,22 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.Compliance.Patterns.APIToken = v == "true" || v == "1"
 	}
 
+	if v := os.Getenv("ARMORCLAW_HTTP_ENABLED"); v != "" {
+		cfg.HTTP.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("ARMORCLAW_HTTP_HOSTNAME"); v != "" {
+		cfg.HTTP.Hostname = v
+	}
+	if v := os.Getenv("ARMORCLAW_HTTP_PORT"); v != "" {
+		var port int
+		if _, err := fmt.Sscanf(v, "%d", &port); err == nil {
+			cfg.HTTP.Port = port
+		}
+	}
+	if v := os.Getenv("ARMORCLAW_HTTP_CERT_DIR"); v != "" {
+		cfg.HTTP.CertDir = v
+	}
+
 	return nil
 }
 
