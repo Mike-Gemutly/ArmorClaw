@@ -117,6 +117,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Validation state export for CI/ADB extraction -->
+        <receiver
+            android:name=".validation.ValidationReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.armorclaw.validation.EXPORT_STATE" />
+            </intent-filter>
+        </receiver>
+
         <!-- Provider for sharing encrypted files -->
         <provider
             android:name="androidx.core.content.FileProvider"
