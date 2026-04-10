@@ -64,6 +64,8 @@ import (
 	"github.com/armorclaw/bridge/pkg/translator"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 
+	bridgeHTTP "github.com/armorclaw/bridge/pkg/http"
+
 	"github.com/charmbracelet/huh"
 )
 
@@ -2746,6 +2748,37 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("mDNS discovery disabled")
 	}
 
+	// Start HTTPS bridge server (port 8443) for mobile client access
+	var httpsServer *bridgeHTTP.Server
+	if cfg.HTTP.Enabled {
+		hostname := cfg.HTTP.Hostname
+		if hostname == "" {
+			hostname = cfg.Discovery.InstanceName
+		}
+
+		matrixHS := cfg.Matrix.HomeserverURL
+		if matrixHS == "" {
+			matrixHS = cfg.Discovery.MatrixHomeserver
+		}
+
+		httpsServer = bridgeHTTP.NewServer(bridgeHTTP.ServerConfig{
+			Port:             cfg.HTTP.Port,
+			CertDir:          cfg.HTTP.CertDir,
+			Hostname:         hostname,
+			MatrixHomeserver: matrixHS,
+			ServerName:       hostname,
+			EnableCORS:       true,
+		}, server)
+
+		go func() {
+			if err := httpsServer.Start(); err != nil {
+				log.Printf("Warning: HTTPS server failed: %v", err)
+			}
+		}()
+
+		log.Printf("HTTPS bridge server: https://%s:%d", hostname, cfg.HTTP.Port)
+	}
+
 	log.Println("ArmorClaw Bridge is running")
 	log.Println("Press Ctrl+C to stop")
 	log.Println("")
@@ -2773,10 +2806,8 @@ func runBridgeServer(cliCfg cliConfig) {
 			discoveryServer.Stop()
 		}
 
-		// Stop mDNS discovery server
-		if discoveryServer != nil {
-			log.Println("Stopping mDNS discovery server...")
-			discoveryServer.Stop()
+		if httpsServer != nil {
+			httpsServer.Stop(context.Background())
 		}
 
 		// Stop WebRTC signaling server
