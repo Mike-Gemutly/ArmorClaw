@@ -2899,6 +2899,7 @@ func parseFlags() cliConfig {
 	cfg := cliConfig{}
 
 	flag.StringVar(&cfg.configPath, "config", "", "Path to configuration file")
+	flag.StringVar(&cfg.configPath, "c", "", "Path to configuration file (shorthand)")
 	flag.StringVar(&cfg.configOutput, "config-output", "", "Output path for 'config init' command")
 	flag.StringVar(&cfg.socketPath, "socket", "", "Path to Unix domain socket (overrides config)")
 	flag.StringVar(&cfg.dbPath, "db", "", "Path to keystore database (overrides config)")
