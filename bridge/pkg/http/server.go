@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/qr"
-	"github.com/armorclaw/bridge/pkg/securerandom"
 	"github.com/armorclaw/bridge/pkg/rpc"
+	"github.com/armorclaw/bridge/pkg/securerandom"
 	"github.com/gorilla/websocket"
 )
 
@@ -47,15 +47,15 @@ type ServerConfig struct {
 
 // Server is the HTTPS server for the bridge
 type Server struct {
-	config       ServerConfig
-	rpcServer    *rpc.Server
-	httpServer   *http.Server
-	certPEM      []byte
-	keyPEM       []byte
-	mu           sync.RWMutex
-	clients      map[string]*WebSocketClient
-	qrManager    *qr.QRManager
-	ownerClaimed        bool // tracks whether an OWNER has been claimed (for is_new_server)
+	config                ServerConfig
+	rpcServer             *rpc.Server
+	httpServer            *http.Server
+	certPEM               []byte
+	keyPEM                []byte
+	mu                    sync.RWMutex
+	clients               map[string]*WebSocketClient
+	qrManager             *qr.QRManager
+	ownerClaimed          bool // tracks whether an OWNER has been claimed (for is_new_server)
 	provisioningAvailable bool // tracks whether provisioning is configured on the bridge
 }
 
@@ -140,6 +140,15 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to setup certificates: %w", err)
 	}
 
+	var tlsCert tls.Certificate
+	if len(s.certPEM) > 0 && len(s.keyPEM) > 0 {
+		var err error
+		tlsCert, err = tls.X509KeyPair(s.certPEM, s.keyPEM)
+		if err != nil {
+			return fmt.Errorf("failed to parse certificate: %w", err)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api", s.handleRPC)
 	mux.HandleFunc("/ws", s.handleWebSocket)
@@ -156,7 +165,7 @@ func (s *Server) Start() error {
 		Addr:    fmt.Sprintf(":%d", s.config.Port),
 		Handler: s.corsMiddleware(mux),
 		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
+			MinVersion: tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
 				tls.X25519,
 				tls.CurveP256,
@@ -165,7 +174,12 @@ func (s *Server) Start() error {
 				tls.TLS_AES_256_GCM_SHA384,
 				tls.TLS_CHACHA20_POLY1305_SHA256,
 				tls.TLS_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 			},
+			Certificates: []tls.Certificate{tlsCert},
 		},
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -362,13 +376,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":                  "ok",
-		"bridge_ready":            true,
-		"provisioning_available":  s.provisioningAvailable,
-		"is_new_server":           !s.ownerClaimed,
-		"server_name":             serverName,
-		"timestamp":               time.Now().UTC().Format(time.RFC3339),
-		"version":                 rpc.BridgeVersion,
+		"status":                 "ok",
+		"bridge_ready":           true,
+		"provisioning_available": s.provisioningAvailable,
+		"is_new_server":          !s.ownerClaimed,
+		"server_name":            serverName,
+		"timestamp":              time.Now().UTC().Format(time.RFC3339),
+		"version":                rpc.BridgeVersion,
 	})
 }
 
@@ -417,8 +431,8 @@ func (s *Server) handleFingerprint(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"sha256":  fingerprint,
-		"format":  "hex",
+		"sha256": fingerprint,
+		"format": "hex",
 	})
 }
 
@@ -455,11 +469,11 @@ func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 		"m.homeserver": map[string]string{
 			"base_url": matrixURL,
 		},
-	"com.armorclaw": map[string]string{
-			"base_url":      bridgeURL,
-			"api_endpoint":  bridgeURL + "/api",
-			"ws_endpoint":   toWSS(bridgeURL) + "/ws",
-			"push_gateway":  bridgeURL + "/_matrix/push/v1/notify",
+		"com.armorclaw": map[string]string{
+			"base_url":     bridgeURL,
+			"api_endpoint": bridgeURL + "/api",
+			"ws_endpoint":  toWSS(bridgeURL) + "/ws",
+			"push_gateway": bridgeURL + "/_matrix/push/v1/notify",
 		},
 	}
 
@@ -526,12 +540,12 @@ func (s *Server) handleQRImage(w http.ResponseWriter, r *http.Request) {
 	pngDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(result.QRImage)
 
 	response := map[string]interface{}{
-		"deep_link":  result.DeepLink,
-		"url":        result.URL,
+		"deep_link":    result.DeepLink,
+		"url":          result.URL,
 		"png_data_url": pngDataURL,
-		"expires_at": result.ExpiresAt.Format(time.RFC3339),
-		"config":     result.Config,
-		"message":    "Add ?format=png or set Accept: image/png for raw PNG",
+		"expires_at":   result.ExpiresAt.Format(time.RFC3339),
+		"config":       result.Config,
+		"message":      "Add ?format=png or set Accept: image/png for raw PNG",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
