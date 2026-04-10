@@ -152,7 +152,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24  # Narrowed from /16 to avoid overlap with matrix-net
+        - subnet: 172.26.0.0/24
 
 # ========================================
 # Volumes

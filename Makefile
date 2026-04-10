@@ -138,8 +138,8 @@ vps-health:
 	@echo "=== Service Health Check ==="
 	@curl -sf http://localhost:6167/_matrix/client/versions >/dev/null 2>&1 && \
 		echo "Matrix: OK (6167)" || echo "Matrix: DOWN (6167)"
-	@curl -sf http://localhost:8081/health >/dev/null 2>&1 && \
-		echo "Bridge: OK (8081)" || echo "Bridge: DOWN (8081)"
+	@curl -sf http://localhost:8443/health >/dev/null 2>&1 && \
+		echo "Bridge: OK (8443)" || echo "Bridge: DOWN (8443)"
 	@docker ps --format "table {{.Names}}\t{{.Status}}" --filter "name=armorclaw" 2>/dev/null || true
 
 # Nuclear reset — stop everything, clean volumes

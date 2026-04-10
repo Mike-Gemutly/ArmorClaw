@@ -10,7 +10,7 @@
 #   │  └────────┬────────┘                                        │
 #   │           │                                                 │
 #   │  ┌────────▼────────────────────────────────────────────────┐ │
-#   │  │               matrix-net (172.20.0.0/24)                │ │
+#   │  │               matrix-net (172.26.0.0/24)                │ │
 #   │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │ │
 #   │  │  │    Nginx    │  │   Conduit   │  │    Coturn   │      │ │
 #   │  │  │   (Proxy)   │  │ (Matrix HS) │  │  (TURN/STUN)│      │ │
@@ -130,7 +130,7 @@ networks:
     internal: true
     ipam:
       config:
-        - subnet: 172.21.0.0/24
+        - subnet: 172.26.0.0/24
   armorclaw-isolated:
     driver: bridge
     internal: true

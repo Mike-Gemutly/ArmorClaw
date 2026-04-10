@@ -293,7 +293,7 @@ networks:
     name: armorclaw-bridge
     ipam:
       config:
-        - subnet: 172.21.0.0/24
+        - subnet: 172.26.0.0/24
     internal: true  # No external access
 
   matrix-net:

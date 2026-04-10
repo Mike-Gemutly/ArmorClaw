@@ -32,29 +32,70 @@ fi
 
 echo "  Docker: OK (${COMPOSE_CMD})"
 
-# 2. Load .env
+# 2. Load / create .env and detect public IP
+echo "[2/6] Configuring environment..."
+
+PUBLIC_IP=""
+if [ -f .env ]; then
+    source .env 2>/dev/null || true
+    # Reuse existing IP if already set
+    if [ -n "${COTURN_EXTERNAL_IP:-}" ]; then
+        PUBLIC_IP="$COTURN_EXTERNAL_IP"
+    fi
+fi
+
+# Detect public IP if not already known
+if [ -z "$PUBLIC_IP" ]; then
+    echo "  Detecting public IP..."
+    PUBLIC_IP=$(curl -s -4 --connect-timeout 5 https://ifconfig.me 2>/dev/null || true)
+    if [ -z "$PUBLIC_IP" ]; then
+        PUBLIC_IP=$(curl -s -4 --connect-timeout 5 https://api.ipify.org 2>/dev/null || true)
+    fi
+fi
+
+if [ -z "$PUBLIC_IP" ]; then
+    echo "  WARNING: Could not detect public IP — COTURN and deep links may not work"
+else
+    echo "  Public IP: $PUBLIC_IP"
+fi
+
+# Ensure .env exists with required vars
 if [ ! -f .env ]; then
-    echo "[2/6] Creating .env from template..."
-    if [ -f .env.template ]; then
-        cp .env.template .env
-        echo "  Created .env from .env.template — review and customize!"
-    else
-        echo "  WARNING: No .env.template found, creating minimal .env"
-        cat > .env <<'ENVEOF'
+    echo "  Creating .env..."
+    cat > .env <<ENVEOF
 # ArmorClaw Environment
 MATRIX_SERVER_NAME=matrix.armorclaw.com
 TURN_SECRET=$(openssl rand -hex 32)
-COTURN_EXTERNAL_IP=
+COTURN_EXTERNAL_IP=${PUBLIC_IP}
 AI_API_KEY=
 AI_PROVIDER=openrouter
 ARMORCLAW_ADMIN_TOKEN=$(openssl rand -hex 16)
 ARMORCLAW_KEYSTORE_SECRET=$(openssl rand -hex 32)
 ARMORCLAW_MATRIX_SECRET=$(openssl rand -hex 32)
+
+# Single Port Gateway (HTTPS on 8443)
+ARMORCLAW_HTTP_ENABLED=true
+ARMORCLAW_HTTP_HOSTNAME=${PUBLIC_IP}
+ARMORCLAW_HTTP_PORT=8443
+
+# Bridge-to-Conduit via Docker gateway
+ARMORCLAW_MATRIX_HOMESERVER=http://172.26.0.1:6167
 ENVEOF
-        echo "  Created .env — REVIEW AND SET SECRETS BEFORE PROCEEDING"
-    fi
+    echo "  Created .env — REVIEW AND SET SECRETS BEFORE PROCEEDING"
 else
-    echo "[2/6] .env exists — skipping"
+    # Inject/update HTTP and gateway vars if missing
+    for VAR in COTURN_EXTERNAL_IP ARMORCLAW_HTTP_ENABLED ARMORCLAW_HTTP_HOSTNAME ARMORCLAW_HTTP_PORT ARMORCLAW_MATRIX_HOMESERVER; do
+        if ! grep -q "^${VAR}=" .env 2>/dev/null; then
+            case "$VAR" in
+                COTURN_EXTERNAL_IP)       echo "${VAR}=${PUBLIC_IP}" >> .env ;;
+                ARMORCLAW_HTTP_ENABLED)   echo "${VAR}=true" >> .env ;;
+                ARMORCLAW_HTTP_HOSTNAME)  echo "${VAR}=${PUBLIC_IP}" >> .env ;;
+                ARMORCLAW_HTTP_PORT)      echo "${VAR}=8443" >> .env ;;
+                ARMORCLAW_MATRIX_HOMESERVER) echo "${VAR}=http://172.26.0.1:6167" >> .env ;;
+            esac
+            echo "  Injected ${VAR} into .env"
+        fi
+    done
 fi
 
 # Check required vars
@@ -114,10 +155,12 @@ for i in $(seq 1 15); do
     sleep 1
 done
 
-# Check Bridge health (new /health endpoint on RPC port)
-BRIDGE_PORT="${ARMORCLAW_BRIDGE_HOST_PORT:-8081}"
+# Check Bridge health (HTTPS on 8443)
+BRIDGE_PORT="${ARMORCLAW_HTTP_PORT:-8443}"
+BRIDGE_PROTO="https"
+BRIDGE_CURL_FLAGS="-sk"
 for i in $(seq 1 15); do
-    if curl -sf "http://localhost:${BRIDGE_PORT}/health" >/dev/null 2>&1; then
+    if curl -sf ${BRIDGE_CURL_FLAGS} "${BRIDGE_PROTO}://localhost:${BRIDGE_PORT}/health" >/dev/null 2>&1; then
         echo "  Bridge: OK (port ${BRIDGE_PORT})"
         break
     fi
