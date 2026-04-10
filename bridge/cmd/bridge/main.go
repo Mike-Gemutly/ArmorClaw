@@ -765,13 +765,23 @@ func runSetupCommandLegacy(cliCfg cliConfig) {
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
 }
 
-// getHostname safely gets the system hostname
+// getHostname returns the best available hostname for public-facing URLs.
+// Uses UDP STUN-like detection (like wizard.detectServerName) to find
+// the local IP that can reach the internet, falling back to os.Hostname().
 func getHostname() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "armorclaw-server"
+	if conn, err := net.DialTimeout("udp", "8.8.8.8:80", 3*time.Second); err == nil {
+		conn.Close()
+		if localAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			ip := localAddr.IP.String()
+			if ip != "127.0.0.1" && ip != "::1" && !strings.HasPrefix(ip, "172.17.") {
+				return ip
+			}
+		}
 	}
-	return hostname
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+	return "armorclaw-server"
 }
 
 // readPassword reads a password from stdin with hidden input (Unix-like systems)
@@ -1435,7 +1445,7 @@ func runGenerateQRCommand(cliCfg cliConfig) {
 		cfg = config.DefaultConfig()
 	}
 
-	// Get hostname: --host flag > config > os.Hostname()
+	// Get hostname: --host flag > config > UDP public IP detection > os.Hostname()
 	hostname := cliCfg.qrHost
 	if hostname == "" && cfg.HTTP.Hostname != "" {
 		hostname = cfg.HTTP.Hostname
