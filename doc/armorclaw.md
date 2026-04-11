@@ -2325,6 +2325,92 @@ OpenClaw includes **21 browser skills** for web automation:
 - CAPTCHA/2FA handling
 - File operations
 
+### Context Management Architecture
+
+OpenClaw manages LLM context windows through a **reactive overflow → compaction** pipeline. There is currently **no proactive (pre-overflow) compression**.
+
+#### Context Window Resolution
+
+The context window for each model is resolved through a priority chain:
+
+1. **Per-provider config overrides** (`modelsConfig.providers.<provider>.models[].contextWindow`)
+2. **Model's own `contextWindow`** field from the model registry
+3. **`agents.defaults.contextTokens`** config cap
+4. **`DEFAULT_CONTEXT_TOKENS = 200,000`** fallback
+
+**Files**:
+- `container/openclaw-src/src/agents/context-window-guard.ts` — `resolveContextWindowInfo()`, guards: `HARD_MIN=16,000`, `WARN_BELOW=32,000`
+- `container/openclaw-src/src/agents/context.ts` — `MODEL_CACHE` (Map), `lookupContextTokens()`
+- `container/openclaw-src/src/agents/defaults.ts` — `DEFAULT_CONTEXT_TOKENS = 200_000`
+
+#### In-Memory Chat History
+
+The conversation history lives in `activeSession.messages` (type `AgentMessage[]`):
+
+- **Created**: `pi-embedded-runner/run/attempt.ts:575` — `createAgentSession()`
+- **Replaced after trimming**: `attempt.ts:691` — `activeSession.agent.replaceMessages(limited)`
+- **Persisted to disk**: Via `SessionManager.open(params.sessionFile)` — JSONL session file
+- **Pre-compaction snapshot**: `pi-embedded-runner/compact.ts:582` — `const preCompactionMessages = [...session.messages]`
+
+#### Compaction Pipeline (Post-Overflow, Reactive)
+
+When a prompt exceeds the model's context window, the runtime detects the overflow error and triggers auto-compaction:
+
+1. **Overflow detection** — `pi-embedded-runner/run.ts:585-601`:
+   - Checks `promptError` and `assistantErrorText` for overflow patterns via `isLikelyContextOverflowError()`
+2. **Auto-compaction trigger** — `run.ts:603-681`:
+   - Up to `MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3` retries
+   - Calls `compactEmbeddedPiSessionDirect()` which opens the session file, runs `session.compact()`, and uses `estimateTokens()` + `generateSummary()` from `@mariozechner/pi-coding-agent`
+3. **Fallback: tool-result truncation** — `run.ts:685-731`:
+   - If compaction fails, truncates oversized tool results
+4. **Final fallback** — `run.ts:744-765`:
+   - Returns "Context overflow" error to user with `/reset` suggestion
+
+#### Compaction Engine
+
+**File**: `container/openclaw-src/src/agents/compaction.ts`
+
+| Function | Purpose |
+|----------|---------|
+| `estimateMessagesTokens()` | Sum `estimateTokens(msg)` for all messages (strips `toolResult.details`) |
+| `summarizeInStages()` | Split into N parts → summarize each → merge summaries |
+| `pruneHistoryForContextShare()` | Drop oldest chunks until budget fits (50% of context by default) |
+| `chunkMessagesByMaxTokens()` | Group messages into token-budgeted chunks |
+| `computeAdaptiveChunkRatio()` | Adjust chunk size based on average message size |
+| `summarizeWithFallback()` | Progressive: full → partial (skip oversized) → notes-only |
+
+#### Proactive Compression: Available Hooks
+
+> **Update**: The OpenClaw runtime **does** have internal task-completion signals, independent of the Bridge state machine. The capability gap is smaller than initially assessed — it is not "no proactive compression" but "no plugin leveraging the existing `agent_end` hook for proactive compression."
+
+**Three-Trigger Architecture for Layer 0:**
+
+| Tier | Hook | When It Fires | Purpose |
+|------|------|---------------|---------|
+| **Primary** | `agent_end` (success === true) | After task completes | Compaction at natural task boundaries |
+| **Safety net** | `before_prompt_build` | Before every LLM call | Catches long single-task sessions |
+| **Future** | External Bridge signal | On state machine → IDLE/COMPLETE | Reserved; requires Bridge→Container plumbing |
+
+**`agent_end` plugin hook** — Fires at `attempt.ts:1151` after every LLM run completes. Receives `{messages, success, error, durationMs}`. Plugins register via `api.on("agent_end", handler)`.
+
+**Why `agent_end` is the correct primary trigger:**
+
+| Aspect | `before_prompt_build` | `agent_end` |
+|--------|-----------------------|-------------|
+| When it fires | Before every LLM call | After task completes |
+| Risk of mid-task compaction | **Yes** — fires during multi-step tasks | **No** — `success === true` means task is done |
+| Token cost of compaction itself | Charged against current task's context | Charged in a clean window after task is done |
+| Message snapshot freshness | Messages about to be sent anyway | Completed task's final state — ideal for summarization |
+
+**`success === true` gate with context-overflow exclusion:**
+`agent_end` fires on *every* run completion, including failures and aborts. The handler must gate on `success === true` to avoid compacting corrupted or incomplete history. **Critical exclusion**: if the run failed *because* of context overflow (the existing `isLikelyContextOverflowError` path at `run.ts:585`), the handler must skip — the reactive compaction retry loop at `run.ts:603-681` already handles this case.
+
+**`session.state` diagnostic event** — Fires via `clearActiveEmbeddedRun()` at `runs.ts:143` with `{state: "idle", reason: "run_completed"}`. Observable through `emitDiagnosticEvent()`.
+
+**Full plugin lifecycle** — The system supports 20 hooks: `before_prompt_build`, `llm_input`, `llm_output`, `agent_end`, `before_compaction`, `after_compaction`, `session_start`, `session_end`, `before_model_resolve`, `before_agent_start`, `before_reset`, `message_received`, `message_sending`, `message_sent`, `before_tool_call`, `after_tool_call`, `tool_result_persist`, `before_message_write`, `gateway_start`, `gateway_stop`. All defined in `plugins/types.ts:298-318`.
+
+**Recommended approach for Layer 0**: Register an `agent_end` plugin that gates on `success === true`, checks `estimateMessagesTokens(messages)` against the context window (~75% threshold), and calls `compactEmbeddedPiSessionDirect()`. Add a `before_prompt_build` safety net at `attempt.ts:838` for long single-task sessions. No Bridge changes needed.
+
 ---
 
 ## RPC API Reference
@@ -2769,6 +2855,81 @@ LOG_LEVEL=debug
 | 9222 | JetSki CDP Proxy (agent-facing) | WebSocket |
 | 9223 | JetSki RPC API | HTTP/JSON-RPC |
 | 9333 | Lightpanda Engine | CDP over WebSocket |
+
+---
+
+## Agent State Machine (Go Bridge)
+
+The Go Bridge manages agent lifecycle through a **state machine** (`bridge/pkg/agent/state.go`) with **11 states** and validated transitions.
+
+### States
+
+| State | Description | Category |
+|-------|-------------|----------|
+| `IDLE` | Agent not performing any task | Rest |
+| `INITIALIZING` | Agent starting up | Active |
+| `BROWSING` | Navigating to a URL | Active |
+| `FORM_FILLING` | Filling form fields | Active |
+| `AWAITING_CAPTCHA` | Needs human CAPTCHA solving | Terminal (needs user) |
+| `AWAITING_2FA` | Needs a 2FA code | Terminal (needs user) |
+| `AWAITING_APPROVAL` | Waiting for BlindFill PII approval | Terminal (needs user) |
+| `PROCESSING_PAYMENT` | Submitting a payment | Active |
+| `ERROR` | Recoverable error | Recovery |
+| `COMPLETE` | Task finished successfully | Terminal (final) |
+| `OFFLINE` | Agent not reachable | Terminal (final) |
+
+### Transitions Leading to IDLE or COMPLETE
+
+Every path that ends a task cycle:
+
+| From | To | Trigger | Code Path |
+|------|----|---------|-----------|
+| `INITIALIZING` | `IDLE` | Agent startup finished | `state_machine.go:231` `SetReady()` |
+| `BROWSING` | `COMPLETE` | Browser task finished successfully | `browser.go:291` `integration.CompleteTask()` |
+| `BROWSING` | `IDLE` | Browser navigation ended without task | `state.go:58` (valid transition) |
+| `FORM_FILLING` | `COMPLETE` | Form submission succeeded | `browser.go:291` |
+| `FORM_FILLING` | `IDLE` | Form filling cancelled/ended | `state.go:68` |
+| `AWAITING_CAPTCHA` | `IDLE` | Captcha resolution abandoned | `state.go:74` |
+| `AWAITING_2FA` | `IDLE` | 2FA resolution abandoned | `state.go:81` |
+| `AWAITING_APPROVAL` | `IDLE` | Approval abandoned | `state.go:87` |
+| `PROCESSING_PAYMENT` | `COMPLETE` | Payment succeeded | `state.go:90`, `processor.go:165` |
+| `PROCESSING_PAYMENT` | `IDLE` | Payment cancelled | `state.go:93` |
+| `ERROR` | `IDLE` | Error recovered | `state_machine.go:293` `Reset()` |
+| `COMPLETE` | `IDLE` | Post-completion reset (terminal drain) | `state.go:100` |
+
+### Event Flow: Bridge → Matrix → OpenClaw
+
+When a state transition occurs:
+
+1. **`StateMachine.Transition()`** (`state_machine.go:59`) validates the transition, emits a `StatusEvent` to:
+   - `sm.eventChan` (buffered channel, 100 capacity)
+   - All subscribers via `sm.subscribers`
+2. **`Integration.processEvents()`** (`integration.go:232`) reads from the event channel and calls `onStatusChange` callback (if set)
+3. **`StatusEvent`** has `EventType()` → `"com.armorclaw.agent.status"` (Matrix event type)
+
+### Critical Gap: No Signal Reaches OpenClaw Runtime
+
+**The `onStatusChange` callback is never wired to the OpenClaw container.** The evidence:
+
+- `OnStatusChange()` (`integration.go:66`) accepts a callback, but **no caller sets it** in production code — only in tests (`integration_test.go:268`)
+- `AgentCoordinator.BroadcastStatus()` (`integration.go:330`) is a **stub** — comment says "for now, we just log" and returns `nil`
+- The eventbus has `EventTypeAgentStatusChanged` defined (`eventbus/events.go:22`) but **no code publishes agent state machine events to it**
+- OpenClaw TypeScript code has **zero references** to `com.armorclaw.agent.status`, `state_machine`, or `StatusEvent`
+- The `→ IDLE` and `→ COMPLETE` transitions are **invisible to the container runtime**
+
+### Implication for Layer 0 (Context Window Persistence)
+
+The Bridge state machine's `→ IDLE` / `→ COMPLETE` transitions do not reach the container. However, the OpenClaw runtime has its own `agent_end` plugin hook (see [Context Management Architecture](#context-management-architecture)) that fires after every LLM run with `{messages, success, error, durationMs}`. This is the natural compression trigger — no Bridge changes needed.
+
+**Three-trigger approach for Layer 0:**
+
+1. **Register an `agent_end` plugin** (primary trigger — recommended): The plugin gates on `success === true`, checks `estimateMessagesTokens(messages)` against the context window (~75% threshold), and calls `compactEmbeddedPiSessionDirect()`. Compaction runs at natural task boundaries where summaries are most coherent. **Critical exclusion**: skip when the error is a context overflow — the existing reactive compaction retry loop at `run.ts:585-681` already handles this. No cross-process plumbing needed — the hook already fires in-process with the message snapshot.
+
+2. **Add a `before_prompt_build` token check** (safety net): At `attempt.ts:838`, check `estimateMessagesTokens(activeSession.messages)` vs `ctxInfo.tokens * 0.75` before each LLM call. This catches long single-task sessions that never cross a task boundary. Note: this fires mid-task, so compaction here is more disruptive — use only as fallback.
+
+3. **External Bridge signal** (future): A Bridge→Container RPC or Matrix event triggered on state machine `→ IDLE` / `→ COMPLETE`. Reserved; requires new cross-process plumbing.
+
+Tiers 1 and 2 coexist today — `agent_end` gives compaction at task boundaries (cheaper, more coherent), while `before_prompt_build` is a safety net. Tier 3 is a future extension point if cross-boundary events become necessary.
 
 ---
 
