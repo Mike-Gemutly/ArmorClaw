@@ -344,6 +344,10 @@ export type PluginHookBeforePromptBuildEvent = {
   prompt: string;
   /** Session messages prepared for this run. */
   messages: unknown[];
+  /** Path to the session JSONL transcript. All messages are already on disk
+   *  before prompt building starts, so plugins can read this file asynchronously
+   *  and process in parallel with the prompt construction. */
+  sessionFile?: string;
 };
 
 export type PluginHookBeforePromptBuildResult = {
@@ -396,6 +400,8 @@ export type PluginHookAgentEndEvent = {
   success: boolean;
   error?: string;
   durationMs?: number;
+  /** Path to the session JSONL transcript file. */
+  sessionFile?: string;
 };
 
 // Compaction hooks

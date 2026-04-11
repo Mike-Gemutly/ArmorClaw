@@ -891,6 +891,7 @@ export async function runEmbeddedAttempt(
                 {
                   prompt: params.prompt,
                   messages: activeSession.messages,
+                  sessionFile: params.sessionFile,
                 },
                 hookCtx,
               )
@@ -1156,6 +1157,7 @@ export async function runEmbeddedAttempt(
                 success: !aborted && !promptError,
                 error: promptError ? describeUnknownError(promptError) : undefined,
                 durationMs: Date.now() - promptStartedAt,
+                sessionFile: params.sessionFile,
               },
               {
                 agentId: hookAgentId,
