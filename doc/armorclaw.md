@@ -2,9 +2,9 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 4.10.0
+> **Version**: 0.4.1
 >
-> **Last Updated**: 2026-04-09
+> **Last Updated**: 2026-04-14
 
 ---
 
@@ -58,7 +58,8 @@
 22. [Testing & Verification](#testing--verification)
 23. [Local Development Guide](#local-development-guide)
 24. [Document Index](#document-index)
-25. [Review Documentation](#review-documentation)
+25. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
+26. [Review Documentation](#review-documentation)
 
 ---
 
@@ -100,38 +101,18 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 <component id="component-overview">
 ### Component Overview
 
-<component id="component-overview">
-</component>
-
 | Component | Language | Purpose | Entry Point |
 |-----------|----------|---------|-------------|
-|<component id="go-bridge>|
 | **Go Bridge** | Go | Central orchestrator, RPC server, container manager | `bridge/cmd/bridge/main.go` |
-|</component>
-|<component id="keystore>|
 | **SQLCipher Keystore** | Go | Encrypted credential storage with hardware binding | `bridge/pkg/keystore/keystore.go` |
-|</component>
-|<component id="matrix-conduit>|
 | **Matrix Conduit** | Rust | Matrix homeserver for E2EE messaging | Conduit binary |
-|</component>
-|<component id="browser-service>|
 | **Browser Service** | TypeScript | Playwright-based browser automation | `browser-service/src/index.ts` |
-|</component>
-|<component id="openclaw-runtime>|
 | **OpenClaw Runtime** | TypeScript/Node | AI agent runtime in containers | `container/openclaw-src/openclaw.mjs` |
-|</component>
-|<component id="license-server>|
 | **License Server** | Go | Enterprise license validation | `license-server/main.go` |
-|</component>
-|<component id="armorchard>|
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
-|</component>
-|<component id="jetski-sidecar>|
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
-|</component>
-|<component id="rust-vault>|
 | **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill library | `rust-vault/src/lib.rs` |
-|</component>
+</component>
 
 ---
 
@@ -367,6 +348,9 @@ type Server struct {
 | `pkg/eventbus/` | Event broadcasting to WebSocket clients |
 | `pkg/config/` | TOML configuration management |
 | `pkg/logger/` | Structured logging |
+| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator integration |
+| `pkg/health/` | Health check and readiness monitoring |
+| `pkg/runtime/` | Bridge runtime configuration and lifecycle |
 
 #### AI & Skills
 | Package | Purpose |
@@ -385,6 +369,9 @@ type Server struct {
 | `pkg/security/` | Website guard and security policies |
 | `pkg/enforcement/` | License validation and enforcement |
 | `pkg/lockdown/` | Admin reset mode |
+| `pkg/yara/` | YARA-based content disarm and reconstruction scanner |
+| `pkg/securerandom/` | Cryptographically secure random number generation |
+| `pkg/crypto/` | Encryption and key management utilities |
 
 #### Communication
 | Package | Purpose |
@@ -394,6 +381,12 @@ type Server struct {
 | `pkg/appservice/` | Matrix AppService bridges |
 | `pkg/provisioning/` | Mobile device provisioning via QR |
 | `pkg/ghost/` | Ghost user management |
+| `pkg/push/` | Mobile push notifications via Matrix Sygnal |
+| `pkg/sso/` | Single sign-on authentication |
+| `pkg/websocket/` | WebSocket server for real-time event streaming |
+| `pkg/translator/` | Message format translation between platforms |
+| `pkg/matrixcmd/` | Matrix command parser and handler |
+| `pkg/notification/` | Cross-channel notification dispatch |
 
 #### Container & Runtime
 | Package | Purpose |
@@ -401,9 +394,11 @@ type Server struct {
 | `pkg/studio/` | Agent container lifecycle (Docker) |
 | `pkg/browser/` | Browser automation interface |
 | `pkg/queue/` | Job queue for browser tasks |
-| `pkg/docker/` | Docker client wrapper |
+| `pkg/docker/` | Docker client wrapper with resource governance |
 | `internal/agent/` | Agent runtime state machine |
 | `internal/executor/` | Task execution engine |
+| `pkg/sidecar/` | Go gRPC client for Rust document pipeline sidecar |
+| `pkg/setup/` | Initial configuration and Docker setup |
 
 #### Observability & Governance
 | Package | Purpose |
@@ -412,6 +407,27 @@ type Server struct {
 | `pkg/budget/` | AI spend budget tracking |
 | `pkg/governor/` | Rate limiting and throttling |
 | `pkg/metrics/` | Metrics collection |
+| `pkg/eventlog/` | Structured event logging and segment management |
+
+#### Real-Time Communication
+| Package | Purpose |
+|---------|---------|
+| `pkg/audio/` | Opus and PCM audio encoding/decoding |
+| `pkg/voice/` | Voice call budget tracking and management |
+| `pkg/webrtc/` | WebRTC session engine and management |
+| `pkg/turn/` | TURN/STUN relay configuration |
+
+> See [doc/voice-stack.md](voice-stack.md) for full documentation.
+
+#### Identity & Access
+| Package | Purpose |
+|---------|---------|
+| `pkg/license/` | License client and state management |
+| `pkg/permissions/` | Permission prediction and access control |
+| `pkg/invite/` | Room invitation and role management |
+| `pkg/admin/` | Admin claim and privilege management |
+
+> See [doc/license-system.md](license-system.md) for full documentation.
 
 #### v6 Microkernel (feature-flagged, off by default)
 | Package | Purpose |
