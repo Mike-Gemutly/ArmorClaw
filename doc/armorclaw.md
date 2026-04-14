@@ -1559,6 +1559,14 @@ Template → Workflow Creation → StartWorkflow (status=Running)
 - Unrecoverable errors (no agent for step, invalid execution order) fail the workflow immediately.
 - Context cancellation triggers `CancelWorkflow` and stops all running steps via `CancelAllForWorkflow`.
 
+### Multi-Agent Execution
+
+`Step.AgentIDs []string` is a **selection pool** for agent assignment, not a parallel execution directive. Currently only `AgentIDs[0]` is used — `executeStep()` selects the first agent in the pool (see `orchestrator_integration.go:237`).
+
+The `StepParallel` type exists in the `StepType` enum (`types.go:98`) alongside `StepParallelSplit` and `StepParallelMerge`, but **none are implemented** — the step executor only handles `StepAction` and `StepCondition`.
+
+Multi-agent step execution (parallel dispatch, failover, round-robin) is a **deferred feature**, not a bug. When implemented, `AgentIDs[1:]` will be used for failover or parallel execution paths.
+
 ### Bridge ↔ ArmorChat Mobile
 
 **Communication Pattern**: QR code deep link + Matrix messaging + RPC with bearer tokens

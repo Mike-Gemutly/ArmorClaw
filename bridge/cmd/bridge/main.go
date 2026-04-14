@@ -2626,6 +2626,7 @@ func runBridgeServer(cliCfg cliConfig) {
 				Factory:        fac,
 				Validator:      dependencyValidator,
 				ApprovalEngine: nil,
+				EventBus:       matrixBus,
 			})
 		}
 

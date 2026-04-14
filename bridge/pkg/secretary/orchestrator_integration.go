@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/pkg/studio"
 )
 
@@ -53,6 +54,7 @@ type StepExecutorConfig struct {
 	Factory        *studio.AgentFactory
 	Validator      *DependencyValidator
 	ApprovalEngine ApprovalChecker
+	EventBus       *events.MatrixEventBus
 	DefaultTimeout time.Duration
 	StepRetryCount int
 	StepRetryDelay time.Duration
@@ -62,6 +64,7 @@ type StepExecutor struct {
 	factory        *studio.AgentFactory
 	validator      *DependencyValidator
 	approvalEngine ApprovalChecker
+	eventBus       *events.MatrixEventBus
 	defaultTimeout time.Duration
 	retryCount     int
 	retryDelay     time.Duration
@@ -93,6 +96,7 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		factory:        cfg.Factory,
 		validator:      cfg.Validator,
 		approvalEngine: cfg.ApprovalEngine,
+		eventBus:       cfg.EventBus,
 		defaultTimeout: cfg.DefaultTimeout,
 		retryCount:     cfg.StepRetryCount,
 		retryDelay:     cfg.StepRetryDelay,
@@ -146,9 +150,15 @@ func (e *StepExecutor) ExecuteSteps(
 
 			if approvalResult.Required && !approvalResult.Approved {
 				if approvalResult.NeedsApproval {
-					return fmt.Errorf("step %s requires approval: fields %v pending approval", stepID, approvalResult.DeniedFields)
-				}
-				if len(approvalResult.DeniedFields) > 0 {
+					if e.eventBus == nil {
+						return fmt.Errorf("step %s requires PII approval but no event bus configured", stepID)
+					}
+					approvedFields, err := PendingApproval(ctx, e.eventBus, workflow.RoomID, stepID, approvalResult.DeniedFields)
+					if err != nil {
+						return fmt.Errorf("PII approval failed for step %s: %w", stepID, err)
+					}
+					_ = approvedFields
+				} else if len(approvalResult.DeniedFields) > 0 {
 					return fmt.Errorf("step %s denied: fields %v blocked by policy", stepID, approvalResult.DeniedFields)
 				}
 			}
@@ -243,6 +253,7 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 		TaskDescription: taskDesc,
 		UserID:          workflow.CreatedBy,
 		RoomID:          workflow.RoomID,
+		Config:          step.Config,
 	}
 
 	spawnCtx, cancel := context.WithTimeout(ctx, e.defaultTimeout)

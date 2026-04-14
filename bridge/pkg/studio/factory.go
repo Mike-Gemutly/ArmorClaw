@@ -2,6 +2,7 @@ package studio
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -57,10 +58,11 @@ func NewAgentFactory(cfg FactoryConfig) *AgentFactory {
 
 // SpawnRequest contains parameters for spawning an agent
 type SpawnRequest struct {
-	DefinitionID    string `json:"definition_id"`
-	TaskDescription string `json:"task_description"`
-	UserID          string `json:"user_id"`
-	RoomID          string `json:"room_id,omitempty"`
+	DefinitionID    string          `json:"definition_id"`
+	TaskDescription string          `json:"task_description"`
+	UserID          string          `json:"user_id"`
+	RoomID          string          `json:"room_id,omitempty"`
+	Config          json.RawMessage `json:"config,omitempty"`
 }
 
 // SpawnResult contains the result of spawning an agent
@@ -87,6 +89,10 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 
 	// 3. Build environment variables
 	env, warnings := f.buildEnvironment(def, req.TaskDescription)
+
+	if len(req.Config) > 0 {
+		env = append(env, "STEP_CONFIG="+string(req.Config))
+	}
 
 	// 4. Create container config
 	config := &container.Config{
