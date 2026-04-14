@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -24,17 +25,19 @@ type mockDockerClient struct {
 }
 
 type mockContainer struct {
-	id     string
-	config *container.Config
-	name   string
+	id         string
+	config     *container.Config
+	hostConfig *container.HostConfig
+	name       string
 }
 
 func (m *mockDockerClient) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig any, platform any, name string) (container.CreateResponse, error) {
 	id := "container-" + name
 	m.createdContainers = append(m.createdContainers, mockContainer{
-		id:     id,
-		config: config,
-		name:   name,
+		id:         id,
+		config:     config,
+		hostConfig: hostConfig,
+		name:       name,
 	})
 	return container.CreateResponse{ID: id}, nil
 }
@@ -461,6 +464,418 @@ func TestAgentFactory_GetStatus(t *testing.T) {
 
 	if instance.Status != StatusRunning {
 		t.Errorf("expected status running, got: %s", instance.Status)
+	}
+}
+
+//=============================================================================
+// Layer 1 Feature Tests
+//=============================================================================
+
+// ensureStateDir attempts to create the agent state directory required by Spawn.
+// If it cannot (e.g. no permissions), the test is skipped.
+func ensureStateDir(t *testing.T, defID string) {
+	t.Helper()
+	stateDir := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s", defID)
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Skipf("cannot create state directory %s: %v (requires root or appropriate permissions)", stateDir, err)
+	}
+}
+
+func TestGetRunningInstance_ReturnsRunningInstance(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "running-inst-def",
+		Name:         "Running Instance Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	now := time.Now()
+	instance := &AgentInstance{
+		ID:           "running-inst-001",
+		DefinitionID: def.ID,
+		ContainerID:  "container-running-inst-001",
+		Status:       StatusRunning,
+		RoomID:       "!room:test.example.com",
+		SpawnedBy:    "@test:example.com",
+		StartedAt:    &now,
+	}
+	if err := store.CreateInstance(instance); err != nil {
+		t.Fatalf("failed to create instance: %v", err)
+	}
+
+	factory := NewAgentFactory(FactoryConfig{
+		DockerClient: &mockDockerClient{},
+		Store:        store,
+	})
+
+	result, err := factory.GetRunningInstance(def.ID)
+	if err != nil {
+		t.Fatalf("GetRunningInstance returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil running instance, got nil")
+	}
+	if result.ID != "running-inst-001" {
+		t.Errorf("expected instance ID running-inst-001, got: %s", result.ID)
+	}
+	if result.RoomID != "!room:test.example.com" {
+		t.Errorf("expected RoomID !room:test.example.com, got: %s", result.RoomID)
+	}
+}
+
+func TestGetRunningInstance_ReturnsNilWhenNoRunningInstance(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "no-running-def",
+		Name:         "No Running Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	factory := NewAgentFactory(FactoryConfig{
+		DockerClient: &mockDockerClient{},
+		Store:        store,
+	})
+
+	result, err := factory.GetRunningInstance(def.ID)
+	if err != nil {
+		t.Fatalf("GetRunningInstance returned error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil instance, got: %+v", result)
+	}
+}
+
+func TestGetRunningInstance_ReturnsNilWhenInstanceStopped(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "stopped-inst-def",
+		Name:         "Stopped Instance Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	now := time.Now()
+	instance := &AgentInstance{
+		ID:           "stopped-inst-001",
+		DefinitionID: def.ID,
+		ContainerID:  "container-stopped-inst-001",
+		Status:       StatusCompleted,
+		SpawnedBy:    "@test:example.com",
+		StartedAt:    &now,
+		CompletedAt:  &now,
+	}
+	if err := store.CreateInstance(instance); err != nil {
+		t.Fatalf("failed to create instance: %v", err)
+	}
+
+	factory := NewAgentFactory(FactoryConfig{
+		DockerClient: &mockDockerClient{},
+		Store:        store,
+	})
+
+	result, err := factory.GetRunningInstance(def.ID)
+	if err != nil {
+		t.Fatalf("GetRunningInstance returned error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil for stopped instance, got: %+v", result)
+	}
+}
+
+func TestSpawn_RoomIDPersisted(t *testing.T) {
+	ensureStateDir(t, "roomid-persist-def")
+
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "roomid-persist-def",
+		Name:         "RoomID Persist Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	mockDocker := &mockDockerClient{}
+	factory := NewAgentFactory(FactoryConfig{
+		DockerClient: mockDocker,
+		Store:        store,
+	})
+
+	ctx := context.Background()
+	result, err := factory.Spawn(ctx, &SpawnRequest{
+		DefinitionID: def.ID,
+		RoomID:       "!room:test.example.com",
+		UserID:       "@test:example.com",
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn: %v", err)
+	}
+
+	if result.Instance.RoomID != "!room:test.example.com" {
+		t.Errorf("expected RoomID !room:test.example.com in result, got: %q", result.Instance.RoomID)
+	}
+
+	stored, err := store.GetInstance(result.Instance.ID)
+	if err != nil {
+		t.Fatalf("failed to get instance from store: %v", err)
+	}
+	if stored.RoomID != "!room:test.example.com" {
+		t.Errorf("expected RoomID !room:test.example.com in store, got: %q", stored.RoomID)
+	}
+}
+
+func TestSpawn_StateDirBindMount(t *testing.T) {
+	ensureStateDir(t, "bindmount-def")
+
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "bindmount-def",
+		Name:         "BindMount Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	mockDocker := &mockDockerClient{}
+	factory := NewAgentFactory(FactoryConfig{
+		DockerClient: mockDocker,
+		Store:        store,
+	})
+
+	ctx := context.Background()
+	_, err = factory.Spawn(ctx, &SpawnRequest{
+		DefinitionID: def.ID,
+		UserID:       "@test:example.com",
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn: %v", err)
+	}
+
+	if len(mockDocker.createdContainers) != 1 {
+		t.Fatalf("expected 1 container created, got: %d", len(mockDocker.createdContainers))
+	}
+
+	created := mockDocker.createdContainers[0]
+	expectedBind := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s:/home/claw/.openclaw", def.ID)
+	found := false
+	for _, bind := range created.hostConfig.Binds {
+		if bind == expectedBind {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected bind mount %q, got: %v", expectedBind, created.hostConfig.Binds)
+	}
+}
+
+func TestSpawn_EmptyRoomID(t *testing.T) {
+	ensureStateDir(t, "empty-roomid-def")
+
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "empty-roomid-def",
+		Name:         "Empty RoomID Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	mockDocker := &mockDockerClient{}
+	factory := NewAgentFactory(FactoryConfig{
+		DockerClient: mockDocker,
+		Store:        store,
+	})
+
+	ctx := context.Background()
+	result, err := factory.Spawn(ctx, &SpawnRequest{
+		DefinitionID: def.ID,
+		RoomID:       "",
+		UserID:       "@test:example.com",
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn with empty RoomID: %v", err)
+	}
+
+	if result.Instance.RoomID != "" {
+		t.Errorf("expected empty RoomID, got: %q", result.Instance.RoomID)
+	}
+
+	stored, err := store.GetInstance(result.Instance.ID)
+	if err != nil {
+		t.Fatalf("failed to get instance from store: %v", err)
+	}
+	if stored.RoomID != "" {
+		t.Errorf("expected empty RoomID in store, got: %q", stored.RoomID)
+	}
+}
+
+func TestStore_RoomIDRoundTrip(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "roomid-store-test",
+		Name:         "RoomID Store Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	now := time.Now()
+	inst := &AgentInstance{
+		ID:           "inst-roomid-test",
+		DefinitionID: def.ID,
+		Status:       StatusRunning,
+		RoomID:       "!room:store.test",
+		SpawnedBy:    "@test:example.com",
+		StartedAt:    &now,
+	}
+	if err := store.CreateInstance(inst); err != nil {
+		t.Fatalf("failed to create instance: %v", err)
+	}
+
+	retrieved, err := store.GetInstance(inst.ID)
+	if err != nil {
+		t.Fatalf("failed to get instance: %v", err)
+	}
+	if retrieved.RoomID != "!room:store.test" {
+		t.Errorf("expected RoomID !room:store.test, got: %q", retrieved.RoomID)
+	}
+
+	retrieved.RoomID = "!new-room:test"
+	if err := store.UpdateInstance(retrieved); err != nil {
+		t.Fatalf("failed to update instance: %v", err)
+	}
+
+	updated, err := store.GetInstance(inst.ID)
+	if err != nil {
+		t.Fatalf("failed to get updated instance: %v", err)
+	}
+	if updated.RoomID != "!new-room:test" {
+		t.Errorf("expected updated RoomID !new-room:test, got: %q", updated.RoomID)
+	}
+}
+
+func TestStore_EmptyRoomID(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "empty-roomid-store-test",
+		Name:         "Empty RoomID Store Test",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	now := time.Now()
+	inst := &AgentInstance{
+		ID:           "inst-empty-roomid-test",
+		DefinitionID: def.ID,
+		Status:       StatusRunning,
+		RoomID:       "",
+		SpawnedBy:    "@test:example.com",
+		StartedAt:    &now,
+	}
+	if err := store.CreateInstance(inst); err != nil {
+		t.Fatalf("failed to create instance: %v", err)
+	}
+
+	retrieved, err := store.GetInstance(inst.ID)
+	if err != nil {
+		t.Fatalf("failed to get instance: %v", err)
+	}
+	if retrieved.RoomID != "" {
+		t.Errorf("expected empty RoomID, got: %q", retrieved.RoomID)
 	}
 }
 
