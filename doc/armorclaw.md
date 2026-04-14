@@ -1499,14 +1499,44 @@ Bridge ← Conduit: GET /_matrix/client/v3/sync?filter={}&since={token}
 
 ### Bridge ↔ OpenClaw Agents
 
-**Communication Pattern**: Factory interface with container lifecycle management
+**Communication Pattern**: Env-var injection + exit-code polling (no structured result channel)
+
+The Bridge communicates with agent containers via **environment variables only**. There is no Matrix connection inside the container, no HTTP callback, no Unix socket, and no stdout capture. The container runs with `NetworkMode: "none"` (factory.go:121) — it has zero network access.
+
+```
+Bridge (Go)                           Container (Docker)
+┌─────────────────────┐              ┌──────────────────────────┐
+│ AgentFactory        │              │ armorclaw/agent-base     │
+│   │                 │  Spawn()     │                          │
+│   ├─factory.Spawn()──────────────▶│  Reads env vars:         │
+│   │                 │ env vars     │   TASK_DESCRIPTION       │
+│   │                 │ NetworkMode: │   STEP_CONFIG (JSON)     │
+│   │                 │   "none"     │   PII_xxx values         │
+│   │                 │              │   ENABLED_SKILLS         │
+│   │                 │              │                          │
+│   │  waitForComp()  │              │  Runs OpenClaw agent     │
+│   │  polls every    │              │  (LLM calls only, no     │
+│   │  500ms via      │              │   network access)        │
+│   │  ContainerInspect              │                          │
+│   │  checks exit ◀─│──────────────│  Exit code:              │
+│   │   code only     │              │    0 = completed         │
+│   │                 │              │    !0 = failed           │
+│   └─StepResult      │              │                          │
+│     success/fail    │              │  (agent output is lost)  │
+│     (no data)       │              │                          │
+└─────────────────────┘              └──────────────────────────┘
+```
 
 **Key Components:**
-- **Agent Integration** (`bridge/pkg/agent/integration.go`): StateMachine + HITLConsentManager
-- **State Machine** (`bridge/pkg/agent/state_machine.go`): 9-state lifecycle
-- **Orchestrator Factory** (`bridge/pkg/secretary/orchestrator.go`): Spawn, Stop, Remove, GetStatus
+- **AgentFactory** (`bridge/pkg/studio/factory.go`): `Spawn()` creates container with env vars, returns immediately. `GetStatus()` polls Docker `ContainerInspect` to check if container exited.
+- **StepExecutor** (`bridge/pkg/secretary/orchestrator_integration.go`): `executeStep()` calls `factory.Spawn()` then `waitForCompletion()` which polls `GetStatus()` every 500ms until `StatusCompleted` or `StatusFailed`.
+- **Agent Integration** (`bridge/pkg/agent/integration.go`): StateMachine + HITLConsentManager (used by the agent runtime for browser-based flows, not workflow steps).
 
 **Agent States**: OFFLINE, IDLE, BROWSING, FORM_FILLING, AWAITING_APPROVAL, AWAITING_CAPTCHA, AWAITING_2FA, PROCESSING_PAYMENT, COMPLETE, ERROR
+
+**Data flow limitation**: The container's agent output (LLM responses, tool results, browser actions) is **not captured** by the Bridge. Only the exit code is observed. Structured results would require a new communication channel.
+
+**State directory**: Each agent gets a bind-mounted directory at `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` inside the container. The container writes OpenClaw session data here. This is the only shared filesystem between Bridge and container, but the Bridge does not currently read it.
 
 **Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. Warm path sends a Matrix event to a running agent's room. Cold path spawns a new container from the agent definition. Uses `robfig/cron/v3` for cron expression parsing.
 
