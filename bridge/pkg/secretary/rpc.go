@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	cron "github.com/robfig/cron/v3"
+
 	"github.com/armorclaw/bridge/pkg/logger"
 )
 
@@ -121,6 +123,14 @@ func (h *RPCHandler) Handle(req *RPCRequest) *RPCResponse {
 		return h.handleUpdateTemplate(req)
 	case "secretary.shutdown":
 		return h.handleShutdown(req)
+	case "task.create":
+		return h.handleTaskCreate(req)
+	case "task.list":
+		return h.handleTaskList(req)
+	case "task.cancel":
+		return h.handleTaskCancel(req)
+	case "task.get":
+		return h.handleTaskGet(req)
 	default:
 		return ErrorResponse(ErrNotFound, fmt.Sprintf("Unknown method: %s", req.Method))
 	}
@@ -519,4 +529,164 @@ func (h *RPCHandler) handleShutdown(req *RPCRequest) *RPCResponse {
 	return SuccessResponse(map[string]interface{}{
 		"message": "Orchestrator shutdown complete",
 	})
+}
+
+//=============================================================================
+// Task Handlers
+//=============================================================================
+
+type TaskCreateParams struct {
+	DefinitionID   string `json:"definition_id"`
+	Description    string `json:"description,omitempty"`
+	CronExpression string `json:"cron_expression,omitempty"`
+	RunAt          string `json:"run_at,omitempty"`
+	Timezone       string `json:"timezone,omitempty"`
+	CreatedBy      string `json:"created_by"`
+}
+
+func (h *RPCHandler) handleTaskCreate(req *RPCRequest) *RPCResponse {
+	var params TaskCreateParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params for task.create")
+	}
+
+	if params.DefinitionID == "" {
+		return ErrorResponse(ErrValidation, "definition_id is required")
+	}
+
+	if params.Timezone == "" {
+		params.Timezone = "UTC"
+	}
+
+	var nextRun *time.Time
+	if params.RunAt != "" {
+		t, err := time.Parse(time.RFC3339, params.RunAt)
+		if err != nil {
+			return ErrorResponse(ErrValidation, fmt.Sprintf("Invalid run_at format: %v", err))
+		}
+		nextRun = &t
+	} else if params.CronExpression != "" {
+		sched, err := cron.ParseStandard(params.CronExpression)
+		if err != nil {
+			return ErrorResponse(ErrValidation, fmt.Sprintf("Invalid cron expression: %v", err))
+		}
+		loc, _ := time.LoadLocation(params.Timezone)
+		if loc == nil {
+			loc = time.UTC
+		}
+		t := sched.Next(time.Now().In(loc))
+		if t.IsZero() {
+			return ErrorResponse(ErrValidation, "Cron expression produces no future runs")
+		}
+		nextRun = &t
+	} else {
+		t := time.Now()
+		nextRun = &t
+	}
+
+	task := &ScheduledTask{
+		ID:             generateTaskID(),
+		TemplateID:     "",
+		DefinitionID:   params.DefinitionID,
+		CronExpression: params.CronExpression,
+		Timezone:       params.Timezone,
+		NextRun:        nextRun,
+		IsActive:       true,
+		CreatedBy:      params.CreatedBy,
+	}
+
+	if err := h.store.CreateScheduledTask(context.Background(), task); err != nil {
+		return ErrorResponse(ErrInternal, fmt.Sprintf("Failed to create task: %v", err))
+	}
+
+	return SuccessResponse(map[string]interface{}{
+		"task_id":  task.ID,
+		"status":   "pending",
+		"next_run": nextRun.UnixMilli(),
+	})
+}
+
+type TaskListParams struct {
+	DefinitionID string `json:"definition_id,omitempty"`
+}
+
+func (h *RPCHandler) handleTaskList(req *RPCRequest) *RPCResponse {
+	var params TaskListParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params for task.list")
+	}
+
+	tasks, err := h.store.ListScheduledTasks(context.Background())
+	if err != nil {
+		return ErrorResponse(ErrInternal, fmt.Sprintf("Failed to list tasks: %v", err))
+	}
+
+	if params.DefinitionID != "" {
+		var filtered []ScheduledTask
+		for _, t := range tasks {
+			if t.DefinitionID == params.DefinitionID {
+				filtered = append(filtered, t)
+			}
+		}
+		tasks = filtered
+	}
+
+	return SuccessResponse(map[string]interface{}{
+		"tasks": tasks,
+	})
+}
+
+type TaskCancelParams struct {
+	TaskID string `json:"task_id"`
+}
+
+func (h *RPCHandler) handleTaskCancel(req *RPCRequest) *RPCResponse {
+	var params TaskCancelParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params for task.cancel")
+	}
+
+	if params.TaskID == "" {
+		return ErrorResponse(ErrValidation, "task_id is required")
+	}
+
+	task, err := h.store.GetScheduledTask(context.Background(), params.TaskID)
+	if err != nil {
+		return ErrorResponse(ErrNotFound, fmt.Sprintf("Task not found: %s", params.TaskID))
+	}
+
+	task.IsActive = false
+	if err := h.store.UpdateScheduledTask(context.Background(), task); err != nil {
+		return ErrorResponse(ErrInternal, fmt.Sprintf("Failed to cancel task: %v", err))
+	}
+
+	return SuccessResponse(map[string]interface{}{
+		"success": true,
+	})
+}
+
+type TaskGetParams struct {
+	TaskID string `json:"task_id"`
+}
+
+func (h *RPCHandler) handleTaskGet(req *RPCRequest) *RPCResponse {
+	var params TaskGetParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params for task.get")
+	}
+
+	if params.TaskID == "" {
+		return ErrorResponse(ErrValidation, "task_id is required")
+	}
+
+	task, err := h.store.GetScheduledTask(context.Background(), params.TaskID)
+	if err != nil {
+		return ErrorResponse(ErrNotFound, fmt.Sprintf("Task not found: %s", params.TaskID))
+	}
+
+	return SuccessResponse(task)
+}
+
+func generateTaskID() string {
+	return fmt.Sprintf("task_%d", time.Now().UnixMilli())
 }
