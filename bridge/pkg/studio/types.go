@@ -182,28 +182,28 @@ type ResourceProfile struct {
 // DefaultResourceProfiles provides standard resource configurations
 var DefaultResourceProfiles = map[string]ResourceProfile{
 	"low": {
-		Tier:            "low",
-		MemoryMB:        256,
-		CPUShares:       512,
-		TimeoutSeconds:  300,
-		MaxConcurrency:  5,
-		Description:     "Lightweight tasks, quick operations",
+		Tier:           "low",
+		MemoryMB:       256,
+		CPUShares:      512,
+		TimeoutSeconds: 300,
+		MaxConcurrency: 5,
+		Description:    "Lightweight tasks, quick operations",
 	},
 	"medium": {
-		Tier:            "medium",
-		MemoryMB:        512,
-		CPUShares:       1024,
-		TimeoutSeconds:  600,
-		MaxConcurrency:  3,
-		Description:     "Standard tasks, moderate processing",
+		Tier:           "medium",
+		MemoryMB:       512,
+		CPUShares:      1024,
+		TimeoutSeconds: 600,
+		MaxConcurrency: 3,
+		Description:    "Standard tasks, moderate processing",
 	},
 	"high": {
-		Tier:            "high",
-		MemoryMB:        2048,
-		CPUShares:       2048,
-		TimeoutSeconds:  1800,
-		MaxConcurrency:  1,
-		Description:     "Heavy processing, complex operations",
+		Tier:           "high",
+		MemoryMB:       2048,
+		CPUShares:      2048,
+		TimeoutSeconds: 1800,
+		MaxConcurrency: 1,
+		Description:    "Heavy processing, complex operations",
 	},
 }
 
@@ -262,6 +262,9 @@ type AgentInstance struct {
 
 	// ErrorMessage describes any failure
 	ErrorMessage string `json:"error_message,omitempty"`
+
+	// RoomID is the Matrix room ID associated with this instance
+	RoomID string `json:"room_id,omitempty"`
 }
 
 // MarshalJSON custom marshals AgentInstance for API responses
@@ -298,10 +301,10 @@ type SkillValidationResult struct {
 
 // PIIValidationResult is the result of validating PII field IDs
 type PIIValidationResult struct {
-	Valid           bool     `json:"valid"`
-	InvalidIDs      []string `json:"invalid_ids,omitempty"`
+	Valid            bool     `json:"valid"`
+	InvalidIDs       []string `json:"invalid_ids,omitempty"`
 	RequiresApproval []string `json:"requires_approval,omitempty"`
-	Message         string   `json:"message,omitempty"`
+	Message          string   `json:"message,omitempty"`
 }
 
 //=============================================================================
@@ -320,14 +323,14 @@ const (
 
 // WizardState tracks an in-progress agent creation wizard
 type WizardState struct {
-	UserID    string    `json:"user_id"`
-	RoomID    string    `json:"room_id"`
+	UserID    string     `json:"user_id"`
+	RoomID    string     `json:"room_id"`
 	Step      WizardStep `json:"step"`
-	Name      string    `json:"name"`
-	Skills    []string  `json:"skills,omitempty"`
-	PIIAccess []string  `json:"pii_access,omitempty"`
-	Tier      string    `json:"tier"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Name      string     `json:"name"`
+	Skills    []string   `json:"skills,omitempty"`
+	PIIAccess []string   `json:"pii_access,omitempty"`
+	Tier      string     `json:"tier"`
+	ExpiresAt time.Time  `json:"expires_at"`
 }
 
 // IsExpired checks if the wizard session has expired
@@ -341,13 +344,13 @@ func (w *WizardState) IsExpired() bool {
 
 // StudioStats provides overview statistics for the studio
 type StudioStats struct {
-	TotalDefinitions  int            `json:"total_definitions"`
-	ActiveDefinitions int            `json:"active_definitions"`
-	TotalInstances    int            `json:"total_instances"`
-	RunningInstances  int            `json:"running_instances"`
-	SkillsAvailable   int            `json:"skills_available"`
-	PIIFieldsAvailable int           `json:"pii_fields_available"`
-	ByTier            map[string]int `json:"by_tier"`
+	TotalDefinitions   int            `json:"total_definitions"`
+	ActiveDefinitions  int            `json:"active_definitions"`
+	TotalInstances     int            `json:"total_instances"`
+	RunningInstances   int            `json:"running_instances"`
+	SkillsAvailable    int            `json:"skills_available"`
+	PIIFieldsAvailable int            `json:"pii_fields_available"`
+	ByTier             map[string]int `json:"by_tier"`
 }
 
 //=============================================================================

@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -103,18 +104,25 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 	}
 
 	// 5. Create host config with security hardening
+	stateDir := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s", def.ID)
 	hostConfig := &container.HostConfig{
 		Resources: container.Resources{
 			Memory:     int64(profile.MemoryMB) * 1024 * 1024,
 			MemorySwap: int64(profile.MemoryMB) * 1024 * 1024, // Disable swap
 			CPUShares:  int64(profile.CPUShares),
 		},
-		AutoRemove:     false, // We manage removal explicitly
+		AutoRemove:     false,  // We manage removal explicitly
 		NetworkMode:    "none", // Isolated by default
 		ReadonlyRootfs: true,
+		Binds:          []string{fmt.Sprintf("%s:/home/claw/.openclaw", stateDir)},
 		SecurityOpt:    []string{"no-new-privileges:true"},
 		CapDrop:        []string{"ALL"},
 		Privileged:     false,
+	}
+
+	// 5b. Ensure host state directory exists for persistent agent sessions
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create agent state directory: %w", err)
 	}
 
 	// 6. Generate instance ID
@@ -150,6 +158,7 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 		TaskDescription: req.TaskDescription,
 		SpawnedBy:       req.UserID,
 		StartedAt:       &now,
+		RoomID:          req.RoomID,
 	}
 
 	if err := f.store.CreateInstance(instance); err != nil {
@@ -286,6 +295,18 @@ func (f *AgentFactory) GetStatus(ctx context.Context, instanceID string) (*Agent
 // ListInstances lists all instances, optionally filtered by definition ID
 func (f *AgentFactory) ListInstances(definitionID string) ([]*AgentInstance, error) {
 	return f.store.ListInstances(definitionID, "") // Empty status means all statuses
+}
+
+// GetRunningInstance returns the single running instance for a definition, or nil if none
+func (f *AgentFactory) GetRunningInstance(definitionID string) (*AgentInstance, error) {
+	instances, err := f.store.ListInstances(definitionID, StatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list running instances: %w", err)
+	}
+	if len(instances) == 0 {
+		return nil, nil
+	}
+	return instances[0], nil
 }
 
 // CleanupStale removes instances whose containers are no longer running

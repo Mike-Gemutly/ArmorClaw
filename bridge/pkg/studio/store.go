@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -181,6 +182,7 @@ func (s *SQLiteStore) initSchema() error {
 		completed_at INTEGER,
 		exit_code INTEGER,
 		error_message TEXT,
+		room_id TEXT,
 		FOREIGN KEY (definition_id) REFERENCES agent_definitions(id) ON DELETE CASCADE
 	);
 
@@ -211,6 +213,14 @@ func (s *SQLiteStore) initSchema() error {
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	// Migration: add room_id column if not exists
+	_, migErr := s.db.Exec("ALTER TABLE agent_instances ADD COLUMN room_id TEXT")
+	if migErr != nil {
+		if !strings.Contains(migErr.Error(), "duplicate column") {
+			return fmt.Errorf("failed to migrate agent_instances: %w", migErr)
+		}
 	}
 
 	// Insert default data
@@ -786,9 +796,9 @@ func (s *SQLiteStore) CreateInstance(instance *AgentInstance) error {
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO agent_instances (id, definition_id, container_id, status, task_description, spawned_by, started_at, completed_at, exit_code, error_message)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, instance.ID, instance.DefinitionID, instance.ContainerID, instance.Status, instance.TaskDescription, instance.SpawnedBy, startedAt, completedAt, exitCode, instance.ErrorMessage)
+		INSERT INTO agent_instances (id, definition_id, container_id, status, task_description, spawned_by, started_at, completed_at, exit_code, error_message, room_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, instance.ID, instance.DefinitionID, instance.ContainerID, instance.Status, instance.TaskDescription, instance.SpawnedBy, startedAt, completedAt, exitCode, instance.ErrorMessage, instance.RoomID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create instance: %w", err)
@@ -807,9 +817,9 @@ func (s *SQLiteStore) GetInstance(id string) (*AgentInstance, error) {
 	var startedAt, completedAt, exitCode sql.NullInt64
 
 	err := s.db.QueryRow(`
-		SELECT id, definition_id, container_id, status, task_description, spawned_by, started_at, completed_at, exit_code, error_message
+		SELECT id, definition_id, container_id, status, task_description, spawned_by, started_at, completed_at, exit_code, error_message, room_id
 		FROM agent_instances WHERE id = ?
-	`, id).Scan(&instance.ID, &instance.DefinitionID, &instance.ContainerID, &instance.Status, &instance.TaskDescription, &instance.SpawnedBy, &startedAt, &completedAt, &exitCode, &instance.ErrorMessage)
+	`, id).Scan(&instance.ID, &instance.DefinitionID, &instance.ContainerID, &instance.Status, &instance.TaskDescription, &instance.SpawnedBy, &startedAt, &completedAt, &exitCode, &instance.ErrorMessage, &instance.RoomID)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("instance not found: %s", id)
@@ -839,7 +849,7 @@ func (s *SQLiteStore) ListInstances(definitionID string, status InstanceStatus) 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT id, definition_id, container_id, status, task_description, spawned_by, started_at, completed_at, exit_code, error_message FROM agent_instances WHERE 1=1`
+	query := `SELECT id, definition_id, container_id, status, task_description, spawned_by, started_at, completed_at, exit_code, error_message, room_id FROM agent_instances WHERE 1=1`
 	args := []interface{}{}
 
 	if definitionID != "" {
@@ -863,7 +873,7 @@ func (s *SQLiteStore) ListInstances(definitionID string, status InstanceStatus) 
 		instance := &AgentInstance{}
 		var startedAt, completedAt, exitCode sql.NullInt64
 
-		if err := rows.Scan(&instance.ID, &instance.DefinitionID, &instance.ContainerID, &instance.Status, &instance.TaskDescription, &instance.SpawnedBy, &startedAt, &completedAt, &exitCode, &instance.ErrorMessage); err != nil {
+		if err := rows.Scan(&instance.ID, &instance.DefinitionID, &instance.ContainerID, &instance.Status, &instance.TaskDescription, &instance.SpawnedBy, &startedAt, &completedAt, &exitCode, &instance.ErrorMessage, &instance.RoomID); err != nil {
 			return nil, fmt.Errorf("failed to scan instance: %w", err)
 		}
 
@@ -909,9 +919,9 @@ func (s *SQLiteStore) UpdateInstance(instance *AgentInstance) error {
 
 	result, err := s.db.Exec(`
 		UPDATE agent_instances
-		SET container_id = ?, status = ?, started_at = ?, completed_at = ?, exit_code = ?, error_message = ?
+		SET container_id = ?, status = ?, started_at = ?, completed_at = ?, exit_code = ?, error_message = ?, room_id = ?
 		WHERE id = ?
-	`, instance.ContainerID, instance.Status, startedAt, completedAt, exitCode, instance.ErrorMessage, instance.ID)
+	`, instance.ContainerID, instance.Status, startedAt, completedAt, exitCode, instance.ErrorMessage, instance.RoomID, instance.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update instance: %w", err)
