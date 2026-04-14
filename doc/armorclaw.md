@@ -1613,6 +1613,8 @@ The `StepParallel` type exists in the `StepType` enum (`types.go:98`) alongside 
 
 Multi-agent step execution (parallel dispatch, failover, round-robin) is a **deferred feature**, not a bug. When implemented, `AgentIDs[1:]` will be used for failover or parallel execution paths.
 
+> See [doc/secretary-workflow.md](secretary-workflow.md) for the full workflow engine deep dive: two dispatch paths, step execution lifecycle, PII approval flow, and event system.
+
 ### Bridge ↔ ArmorChat Mobile
 
 **Communication Pattern**: QR code deep link + Matrix messaging + RPC with bearer tokens
@@ -2366,6 +2368,8 @@ The Rust Office Sidecar **library is production-ready** for:
 
 **Binary compilation issues are non-blocking** - the library can be imported and used directly in other Rust applications or via FFI bindings.
 
+> See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the Go gRPC client, YARA scanner, and document pipeline architecture.
+
 ---
 
 ## ArmorChat Android Client
@@ -2401,6 +2405,8 @@ Bridge: return admin_token
    ↓
 ArmorChat: store credentials, connect to Matrix
 ```
+
+> See [doc/client-applications.md](client-applications.md) for other client applications: Admin Panel, ArmorTerminal, Setup Wizard, and OpenClaw UI.
 
 ---
 
@@ -2521,6 +2527,8 @@ When a prompt exceeds the model's context window, the runtime detects the overfl
 **Full plugin lifecycle** — The system supports 20 hooks: `before_prompt_build`, `llm_input`, `llm_output`, `agent_end`, `before_compaction`, `after_compaction`, `session_start`, `session_end`, `before_model_resolve`, `before_agent_start`, `before_reset`, `message_received`, `message_sending`, `message_sent`, `before_tool_call`, `after_tool_call`, `tool_result_persist`, `before_message_write`, `gateway_start`, `gateway_stop`. All defined in `plugins/types.ts:298-318`.
 
 **Recommended approach for Layer 0**: Register an `agent_end` plugin that gates on `success === true`, checks `estimateMessagesTokens(messages)` against the context window (~75% threshold), and calls `compactEmbeddedPiSessionDirect()`. Add a `before_prompt_build` safety net at `attempt.ts:838` for long single-task sessions. No Bridge changes needed.
+
+> See [doc/agent-runtime.md](agent-runtime.md) for agent runtime internals: memory store, LRU cache, tool executor, and speculative execution.
 
 ---
 
@@ -2701,6 +2709,8 @@ When a prompt exceeds the model's context window, the runtime detects the overfl
 | `platform.disconnected` | Platform disconnected |
 | `platform.message` | Platform message |
 | `platform.error` | Platform error |
+
+> See [doc/communication-infra.md](communication-infra.md) for communication infrastructure internals: push notifications, SSO, WebSocket server, event bus, and platform adapters.
 
 ---
 

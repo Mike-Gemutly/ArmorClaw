@@ -1,5 +1,7 @@
 # Secretary Workflow System
 
+> Part of the [ArmorClaw System Documentation](armorclaw.md)
+
 Deep dive into ArmorClaw's workflow engine: scheduled tasks, multi-step workflows, and PII approval gates.
 
 > **Source root:** `bridge/pkg/secretary/`
