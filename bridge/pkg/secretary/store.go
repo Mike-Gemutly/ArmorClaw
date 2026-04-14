@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,8 @@ type Store interface {
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
 	DeleteScheduledTask(ctx context.Context, id string) error
 	ListPendingScheduledTasks(ctx context.Context) ([]ScheduledTask, error)
+	ListDueTasks(ctx context.Context) ([]ScheduledTask, error)
+	MarkDispatched(ctx context.Context, taskID string, nextRun time.Time) error
 
 	// Notification Channels
 	CreateNotificationChannel(ctx context.Context, channel *NotificationChannel) error
@@ -196,6 +199,7 @@ func (s *SQLiteStore) initSchema() error {
 		"CREATE TABLE IF NOT EXISTS scheduled_tasks (" + "\n" +
 		"    id TEXT PRIMARY KEY," + "\n" +
 		"    template_id TEXT NOT NULL," + "\n" +
+		"    definition_id TEXT DEFAULT ''," + "\n" +
 		"    cron_expression TEXT NOT NULL," + "\n" +
 		"    timezone TEXT DEFAULT 'UTC'," + "\n" +
 		"    next_run INTEGER," + "\n" +
@@ -230,6 +234,14 @@ func (s *SQLiteStore) initSchema() error {
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	// Migration: add definition_id column if not exists
+	_, migErr := s.db.Exec("ALTER TABLE scheduled_tasks ADD COLUMN definition_id TEXT DEFAULT ''")
+	if migErr != nil {
+		if !strings.Contains(migErr.Error(), "duplicate column") {
+			return fmt.Errorf("failed to migrate scheduled_tasks: %w", migErr)
+		}
 	}
 
 	return nil
@@ -778,17 +790,27 @@ func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now().UnixMilli()
-
 	isActive := 0
 	if task.IsActive {
 		isActive = 1
 	}
 
+	var nextRunVal sql.NullInt64
+	if task.NextRun != nil {
+		nextRunVal.Int64 = task.NextRun.UnixMilli()
+		nextRunVal.Valid = true
+	}
+
+	var lastRunVal sql.NullInt64
+	if task.LastRun != nil {
+		lastRunVal.Int64 = task.LastRun.UnixMilli()
+		lastRunVal.Valid = true
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO scheduled_tasks (id, template_id, cron_expression, timezone, next_run, last_run, is_active, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, task.ID, task.TemplateID, task.CronExpression, task.Timezone, now, now, isActive, task.CreatedBy)
+		INSERT INTO scheduled_tasks (id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, task.ID, task.TemplateID, task.DefinitionID, task.CronExpression, task.Timezone, nextRunVal, lastRunVal, isActive, task.CreatedBy)
 
 	if err != nil {
 		return fmt.Errorf("failed to create scheduled task: %w", err)
@@ -812,9 +834,9 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id string) (*Schedul
 	var nextRun, lastRun sql.NullInt64
 
 	err := s.db.QueryRow(`
-		SELECT id, template_id, cron_expression, timezone, next_run, last_run, is_active, created_by
+		SELECT id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by
 		FROM scheduled_tasks WHERE id = ?
-	`, id).Scan(&task.ID, &task.TemplateID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy)
+	`, id).Scan(&task.ID, &task.TemplateID, &task.DefinitionID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("scheduled task not found: %s", id)
@@ -841,7 +863,7 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context) ([]ScheduledTask, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT id, template_id, cron_expression, timezone, next_run, last_run, is_active, created_by FROM scheduled_tasks ORDER BY next_run ASC`
+	query := `SELECT id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by FROM scheduled_tasks ORDER BY next_run ASC`
 
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -854,7 +876,7 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context) ([]ScheduledTask, 
 		task := &ScheduledTask{}
 		var nextRun, lastRun sql.NullInt64
 
-		if err := rows.Scan(&task.ID, &task.TemplateID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy); err != nil {
+		if err := rows.Scan(&task.ID, &task.TemplateID, &task.DefinitionID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy); err != nil {
 			return nil, fmt.Errorf("failed to scan scheduled task: %w", err)
 		}
 
@@ -879,7 +901,12 @@ func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now().UnixMilli()
+	var nextRunVal sql.NullInt64
+	if task.NextRun != nil {
+		nextRunVal.Int64 = task.NextRun.UnixMilli()
+		nextRunVal.Valid = true
+	}
+
 	var lastRun sql.NullInt64
 	if task.LastRun != nil {
 		lastRun.Int64 = task.LastRun.UnixMilli()
@@ -889,9 +916,9 @@ func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTa
 	var err error
 	_, err = s.db.Exec(`
 		UPDATE scheduled_tasks
-		SET template_id = ?, cron_expression = ?, timezone = ?, next_run = ?, last_run = ?, is_active = ?
+		SET template_id = ?, definition_id = ?, cron_expression = ?, timezone = ?, next_run = ?, last_run = ?, is_active = ?
 		WHERE id = ?
-	`, task.TemplateID, task.CronExpression, task.Timezone, now, lastRun, task.IsActive, task.ID)
+	`, task.TemplateID, task.DefinitionID, task.CronExpression, task.Timezone, nextRunVal, lastRun, task.IsActive, task.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update scheduled task: %w", err)
@@ -923,7 +950,7 @@ func (s *SQLiteStore) ListPendingScheduledTasks(ctx context.Context) ([]Schedule
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT id, template_id, cron_expression, timezone, next_run, last_run, is_active, created_by FROM scheduled_tasks WHERE is_active = 1 AND next_run <= ? ORDER BY next_run ASC`
+	query := `SELECT id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by FROM scheduled_tasks WHERE is_active = 1 AND next_run <= ? ORDER BY next_run ASC`
 	args := []interface{}{sql.Named("next_run", time.Now().UnixMilli())}
 
 	rows, err := s.db.Query(query, args...)
@@ -937,7 +964,7 @@ func (s *SQLiteStore) ListPendingScheduledTasks(ctx context.Context) ([]Schedule
 		task := &ScheduledTask{}
 		var nextRun, lastRun sql.NullInt64
 
-		if err := rows.Scan(&task.ID, &task.TemplateID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy); err != nil {
+		if err := rows.Scan(&task.ID, &task.TemplateID, &task.DefinitionID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy); err != nil {
 			return nil, fmt.Errorf("failed to scan scheduled task: %w", err)
 		}
 
@@ -955,6 +982,64 @@ func (s *SQLiteStore) ListPendingScheduledTasks(ctx context.Context) ([]Schedule
 	}
 
 	return tasks, nil
+}
+
+// ListDueTasks returns active tasks where next_run <= now AND definition_id != ”
+func (s *SQLiteStore) ListDueTasks(ctx context.Context) ([]ScheduledTask, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by FROM scheduled_tasks WHERE is_active = 1 AND next_run <= ? AND definition_id != '' ORDER BY next_run ASC`
+
+	rows, err := s.db.Query(query, time.Now().UnixMilli())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list due tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []ScheduledTask
+	for rows.Next() {
+		task := &ScheduledTask{}
+		var nextRun, lastRun sql.NullInt64
+
+		if err := rows.Scan(&task.ID, &task.TemplateID, &task.DefinitionID, &task.CronExpression, &task.Timezone, &nextRun, &lastRun, &task.IsActive, &task.CreatedBy); err != nil {
+			return nil, fmt.Errorf("failed to scan due task: %w", err)
+		}
+
+		if nextRun.Valid {
+			t := time.UnixMilli(nextRun.Int64)
+			task.NextRun = &t
+		}
+		if lastRun.Valid {
+			t := time.UnixMilli(lastRun.Int64)
+			task.LastRun = &t
+		}
+
+		tasks = append(tasks, *task)
+	}
+
+	return tasks, nil
+}
+
+// MarkDispatched updates a task's last_run and next_run after dispatch
+func (s *SQLiteStore) MarkDispatched(ctx context.Context, taskID string, nextRun time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UnixMilli()
+	nextRunMillis := nextRun.UnixMilli()
+
+	_, err := s.db.Exec(`
+		UPDATE scheduled_tasks
+		SET last_run = ?, next_run = ?
+		WHERE id = ?
+	`, now, nextRunMillis, taskID)
+
+	if err != nil {
+		return fmt.Errorf("failed to mark task dispatched: %w", err)
+	}
+
+	return nil
 }
 
 //=============================================================================

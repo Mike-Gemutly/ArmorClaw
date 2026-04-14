@@ -169,6 +169,9 @@ type ScheduledTask struct {
 	// TemplateID references the task template to execute
 	TemplateID string `json:"template_id"`
 
+	// DefinitionID references the agent definition for task dispatch
+	DefinitionID string `json:"definition_id"`
+
 	// CronExpression defines the execution schedule (cron format)
 	CronExpression string `json:"cron_expression"`
 
