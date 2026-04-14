@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -198,7 +197,7 @@ func (s *SQLiteStore) initSchema() error {
 		"-- Scheduled Tasks" + "\n" +
 		"CREATE TABLE IF NOT EXISTS scheduled_tasks (" + "\n" +
 		"    id TEXT PRIMARY KEY," + "\n" +
-		"    template_id TEXT NOT NULL," + "\n" +
+		"    template_id TEXT DEFAULT ''," + "\n" +
 		"    definition_id TEXT DEFAULT ''," + "\n" +
 		"    cron_expression TEXT NOT NULL," + "\n" +
 		"    timezone TEXT DEFAULT 'UTC'," + "\n" +
@@ -206,7 +205,6 @@ func (s *SQLiteStore) initSchema() error {
 		"    last_run INTEGER," + "\n" +
 		"    is_active INTEGER DEFAULT 1," + "\n" +
 		"    created_by TEXT NOT NULL," + "\n" +
-		"    FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE CASCADE" + "\n" +
 		");" + "\n" +
 
 		"-- Contacts (Rolodex)" + "\n" +
@@ -236,12 +234,47 @@ func (s *SQLiteStore) initSchema() error {
 		return fmt.Errorf("failed to create schema: %w", err)
 	}
 
-	// Migration: add definition_id column if not exists
-	_, migErr := s.db.Exec("ALTER TABLE scheduled_tasks ADD COLUMN definition_id TEXT DEFAULT ''")
+	// Migration: recreate scheduled_tasks to remove FK constraint on template_id.
+	// The FK prevented template_id='' (used by templateless scheduled tasks).
+	// SQLite doesn't support DROP CONSTRAINT, so we recreate the table.
+	_, migErr := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS scheduled_tasks_v2 (
+			id TEXT PRIMARY KEY,
+			template_id TEXT DEFAULT '',
+			definition_id TEXT DEFAULT '',
+			cron_expression TEXT NOT NULL,
+			timezone TEXT DEFAULT 'UTC',
+			next_run INTEGER,
+			last_run INTEGER,
+			is_active INTEGER DEFAULT 1,
+			created_by TEXT NOT NULL
+		)
+	`)
 	if migErr != nil {
-		if !strings.Contains(migErr.Error(), "duplicate column") {
-			return fmt.Errorf("failed to migrate scheduled_tasks: %w", migErr)
-		}
+		return fmt.Errorf("failed to create scheduled_tasks_v2: %w", migErr)
+	}
+
+	_, migErr = s.db.Exec(`
+		INSERT OR IGNORE INTO scheduled_tasks_v2 (id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by)
+		SELECT id, template_id, definition_id, cron_expression, timezone, next_run, last_run, is_active, created_by FROM scheduled_tasks
+	`)
+	if migErr != nil {
+		return fmt.Errorf("failed to migrate scheduled_tasks data: %w", migErr)
+	}
+
+	_, migErr = s.db.Exec("DROP TABLE scheduled_tasks")
+	if migErr != nil {
+		return fmt.Errorf("failed to drop old scheduled_tasks: %w", migErr)
+	}
+
+	_, migErr = s.db.Exec("ALTER TABLE scheduled_tasks_v2 RENAME TO scheduled_tasks")
+	if migErr != nil {
+		return fmt.Errorf("failed to rename scheduled_tasks_v2: %w", migErr)
+	}
+
+	_, migErr = s.db.Exec("CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_tasks(next_run)")
+	if migErr != nil {
+		return fmt.Errorf("failed to recreate scheduled_tasks index: %w", migErr)
 	}
 
 	return nil
