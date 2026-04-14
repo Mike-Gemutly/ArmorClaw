@@ -161,6 +161,12 @@ func (s *orchestratorTestStore) DeleteScheduledTask(ctx context.Context, id stri
 func (s *orchestratorTestStore) ListPendingScheduledTasks(ctx context.Context) ([]ScheduledTask, error) {
 	return nil, nil
 }
+func (s *orchestratorTestStore) ListDueTasks(ctx context.Context) ([]ScheduledTask, error) {
+	return nil, nil
+}
+func (s *orchestratorTestStore) MarkDispatched(ctx context.Context, taskID string, nextRun time.Time) error {
+	return nil
+}
 func (s *orchestratorTestStore) CreateNotificationChannel(ctx context.Context, channel *NotificationChannel) error {
 	return nil
 }

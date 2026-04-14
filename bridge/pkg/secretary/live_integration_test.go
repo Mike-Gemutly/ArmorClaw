@@ -307,6 +307,30 @@ func (s *liveTestStore) ListPendingScheduledTasks(ctx context.Context) ([]Schedu
 	return result, nil
 }
 
+func (s *liveTestStore) ListDueTasks(ctx context.Context) ([]ScheduledTask, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []ScheduledTask
+	now := time.Now()
+	for _, t := range s.scheduledTasks {
+		if t.IsActive && t.NextRun != nil && !t.NextRun.After(now) && t.DefinitionID != "" {
+			result = append(result, *t)
+		}
+	}
+	return result, nil
+}
+
+func (s *liveTestStore) MarkDispatched(ctx context.Context, taskID string, nextRun time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.scheduledTasks[taskID]; ok {
+		now := time.Now()
+		t.LastRun = &now
+		t.NextRun = &nextRun
+	}
+	return nil
+}
+
 func (s *liveTestStore) CreateNotificationChannel(ctx context.Context, ch *NotificationChannel) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
