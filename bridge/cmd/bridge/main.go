@@ -2612,6 +2612,31 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Studio command handler wired to Matrix adapter")
 	}
 
+	// Initialize task scheduler
+	var taskScheduler *secretary.TaskScheduler
+	if rolodexStore != nil && studioService != nil {
+		var schedulerFactory secretary.FactoryInterface
+		if fac := studioService.GetFactory(); fac != nil {
+			schedulerFactory = &studioFactoryAdapter{factory: fac}
+		}
+
+		var schedulerMatrix secretary.MatrixAdapter
+		if matrixAdapter != nil {
+			schedulerMatrix = &schedulerMatrixAdapter{adapter: matrixAdapter}
+		}
+
+		if schedulerFactory != nil {
+			taskScheduler = secretary.NewTaskScheduler(rolodexStore, schedulerFactory, schedulerMatrix, nil)
+			defer func() {
+				if taskScheduler != nil {
+					taskScheduler.Stop()
+				}
+			}()
+			taskScheduler.Start()
+			log.Println("Task scheduler started (15s tick interval)")
+		}
+	}
+
 	// Log RPC dependency status
 	log.Printf("RPC dependencies: studio=%v, provisioning=%v, skills=%v",
 		studioService != nil, provisioningMgr != nil, skillMgr != nil)
@@ -3516,6 +3541,54 @@ func (s *studioMatrixAdapter) SendFormattedMessage(ctx context.Context, roomID, 
 
 func (s *studioMatrixAdapter) ReplyToEvent(ctx context.Context, roomID, eventID, message string) error {
 	return s.adapter.ReplyToEvent(ctx, roomID, eventID, message)
+}
+
+// studioFactoryAdapter bridges studio.AgentFactory to secretary.FactoryInterface
+type studioFactoryAdapter struct {
+	factory *studio.AgentFactory
+}
+
+func (a *studioFactoryAdapter) GetRunningInstance(definitionID string) (*secretary.AgentInstanceRef, error) {
+	inst, err := a.factory.GetRunningInstance(definitionID)
+	if err != nil {
+		return nil, err
+	}
+	if inst == nil {
+		return nil, nil
+	}
+	return &secretary.AgentInstanceRef{
+		ID:     inst.ID,
+		RoomID: inst.RoomID,
+		Status: string(inst.Status),
+	}, nil
+}
+
+func (a *studioFactoryAdapter) Spawn(ctx context.Context, req *secretary.SpawnRequestRef) (*secretary.SpawnResultRef, error) {
+	result, err := a.factory.Spawn(ctx, &studio.SpawnRequest{
+		DefinitionID:    req.DefinitionID,
+		TaskDescription: req.TaskDescription,
+		UserID:          req.UserID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &secretary.SpawnResultRef{
+		InstanceID: result.Instance.ID,
+		RoomID:     result.Instance.RoomID,
+	}, nil
+}
+
+// schedulerMatrixAdapter wraps adapter.MatrixAdapter to satisfy secretary.MatrixAdapter
+type schedulerMatrixAdapter struct {
+	adapter *adapter.MatrixAdapter
+}
+
+func (s *schedulerMatrixAdapter) SendEvent(ctx context.Context, roomID, eventType string, payload interface{}) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("schedulerMatrixAdapter: failed to marshal payload: %w", err)
+	}
+	return s.adapter.SendEvent(roomID, eventType, data)
 }
 
 // compositeStudioHandler tries studio commands first, then secretary commands
