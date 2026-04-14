@@ -2,6 +2,7 @@ package secretary
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -199,6 +200,97 @@ func TestStore_NullTimestampsHandled(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got.NextRun, "NextRun should be nil")
 	assert.Nil(t, got.LastRun, "LastRun should be nil")
+}
+
+//=============================================================================
+// Workflow RoomID CRUD, CreateTemplate, Migration Tests
+//=============================================================================
+
+func TestWorkflowRoomID_CRUD(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	workflow := &Workflow{
+		ID:         "wf-room-crud",
+		TemplateID: "test-tpl",
+		Name:       "RoomID Test Workflow",
+		Status:     StatusPending,
+		CreatedBy:  "@test:example.com",
+		RoomID:     "!room123:example.com",
+		StartedAt:  time.Now(),
+	}
+	err := store.CreateWorkflow(ctx, workflow)
+	require.NoError(t, err)
+
+	got, err := store.GetWorkflow(ctx, "wf-room-crud")
+	require.NoError(t, err)
+	assert.Equal(t, "!room123:example.com", got.RoomID, "RoomID should be persisted on create")
+
+	got.RoomID = "!newroom:example.com"
+	err = store.UpdateWorkflow(ctx, got)
+	require.NoError(t, err)
+
+	updated, err := store.GetWorkflow(ctx, "wf-room-crud")
+	require.NoError(t, err)
+	assert.Equal(t, "!newroom:example.com", updated.RoomID, "RoomID should be updated")
+}
+
+func TestCreateTemplate_Fixed(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	template := &TaskTemplate{
+		ID:          "tpl-full-fields",
+		Name:        "Full Template",
+		Description: "A template with every field set",
+		Steps: []WorkflowStep{
+			{StepID: "s1", Name: "Step One", Type: StepAction, Order: 0},
+			{StepID: "s2", Name: "Step Two", Type: StepAction, Order: 1, NextStepID: "s1"},
+		},
+		Variables: json.RawMessage(`{"key":"value"}`),
+		PIIRefs:   []string{"payment_card", "ssn"},
+		CreatedBy: "@test:example.com",
+		IsActive:  true,
+	}
+
+	err := store.CreateTemplate(ctx, template)
+	require.NoError(t, err, "CreateTemplate with all fields should succeed")
+
+	got, err := store.GetTemplate(ctx, "tpl-full-fields")
+	require.NoError(t, err)
+	assert.Equal(t, "Full Template", got.Name)
+	assert.Equal(t, "A template with every field set", got.Description)
+	assert.Len(t, got.Steps, 2)
+	assert.Equal(t, "s1", got.Steps[0].StepID)
+	assert.Equal(t, "s2", got.Steps[1].StepID)
+	assert.True(t, got.IsActive)
+	assert.Equal(t, []string{"payment_card", "ssn"}, got.PIIRefs)
+}
+
+func TestWorkflowMigration_RoomID(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	now := time.Now().UnixMilli()
+
+	// Insert a template first to satisfy the FOREIGN KEY constraint on template_id
+	_, err = store.db.Exec(
+		`INSERT INTO task_templates (id, name, steps, created_by, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)`,
+		"tpl-migration", "Migration Template", "[]", "@test:example.com", now, now,
+	)
+	require.NoError(t, err, "template insert for FK should succeed")
+
+	_, err = store.db.Exec(`
+		INSERT INTO workflows (id, template_id, name, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by, room_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "wf-migration", "tpl-migration", "Migration Test", "pending", "{}", 0, "[]", now, nil, "", "@test:example.com", "!migrated:example.com")
+	require.NoError(t, err, "room_id column should exist in workflows table after migration")
+
+	var roomID string
+	err = store.db.QueryRow(`SELECT room_id FROM workflows WHERE id = ?`, "wf-migration").Scan(&roomID)
+	require.NoError(t, err)
+	assert.Equal(t, "!migrated:example.com", roomID)
 }
 
 func TestStore_ListPendingScheduledTasks_StillWorks(t *testing.T) {

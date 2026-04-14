@@ -133,6 +133,9 @@ type Workflow struct {
 	// CreatedBy is the Matrix user ID who started the workflow
 	CreatedBy string `json:"created_by"`
 
+	// RoomID is the Matrix room ID associated with this workflow
+	RoomID string `json:"room_id"`
+
 	// StartedAt is when the workflow was started
 	StartedAt time.Time `json:"started_at"`
 

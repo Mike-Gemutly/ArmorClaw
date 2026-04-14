@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,6 +167,7 @@ func (s *SQLiteStore) initSchema() error {
 		"    completed_at INTEGER," + "\n" +
 		"    error_message TEXT," + "\n" +
 		"    created_by TEXT NOT NULL," + "\n" +
+		"    room_id TEXT DEFAULT ''," + "\n" +
 		"    FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE CASCADE" + "\n" +
 		");" + "\n" +
 
@@ -204,7 +206,7 @@ func (s *SQLiteStore) initSchema() error {
 		"    next_run INTEGER," + "\n" +
 		"    last_run INTEGER," + "\n" +
 		"    is_active INTEGER DEFAULT 1," + "\n" +
-		"    created_by TEXT NOT NULL," + "\n" +
+		"    created_by TEXT NOT NULL" + "\n" +
 		");" + "\n" +
 
 		"-- Contacts (Rolodex)" + "\n" +
@@ -277,6 +279,13 @@ func (s *SQLiteStore) initSchema() error {
 		return fmt.Errorf("failed to recreate scheduled_tasks index: %w", migErr)
 	}
 
+	_, migErr = s.db.Exec("ALTER TABLE workflows ADD COLUMN room_id TEXT DEFAULT ''")
+	if migErr != nil {
+		if !strings.Contains(migErr.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to add room_id column to workflows: %w", migErr)
+		}
+	}
+
 	return nil
 }
 
@@ -309,7 +318,7 @@ func (s *SQLiteStore) CreateTemplate(ctx context.Context, template *TaskTemplate
 
 	_, err = s.db.Exec(`
 		INSERT INTO task_templates (id, name, description, steps, variables, pii_refs, created_by, created_at, updated_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, template.ID, template.Name, template.Description, string(stepsJSON), template.Variables, string(piiRefsJSON), template.CreatedBy, time.Now().UnixMilli(), time.Now().UnixMilli(), isActive)
 
 	if err != nil {
@@ -334,17 +343,25 @@ func (s *SQLiteStore) GetTemplate(ctx context.Context, id string) (*TaskTemplate
 	template := &TaskTemplate{}
 	var stepsJSON, variablesJSON, piiRefsJSON string
 	var isActive int
+	var createdAtInt, updatedAtInt sql.NullInt64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, description, steps, variables, pii_refs, created_by, created_at, updated_at, is_active
 		FROM task_templates WHERE id = ?
-	`, id).Scan(&template.ID, &template.Name, &template.Description, &stepsJSON, &variablesJSON, &piiRefsJSON, &template.CreatedBy, &template.CreatedAt, &template.UpdatedAt, &isActive)
+	`, id).Scan(&template.ID, &template.Name, &template.Description, &stepsJSON, &variablesJSON, &piiRefsJSON, &template.CreatedBy, &createdAtInt, &updatedAtInt, &isActive)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("template not found: %s", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get template: %w", err)
+	}
+
+	if createdAtInt.Valid {
+		template.CreatedAt = time.UnixMilli(createdAtInt.Int64)
+	}
+	if updatedAtInt.Valid {
+		template.UpdatedAt = time.UnixMilli(updatedAtInt.Int64)
 	}
 
 	if err := json.Unmarshal([]byte(stepsJSON), &template.Steps); err != nil {
@@ -385,9 +402,17 @@ func (s *SQLiteStore) ListTemplates(ctx context.Context, filter TemplateFilter) 
 		template := &TaskTemplate{}
 		var stepsJSON, variablesJSON, piiRefsJSON string
 		var isActive int
+		var createdAtInt, updatedAtInt sql.NullInt64
 
-		if err := rows.Scan(&template.ID, &template.Name, &template.Description, &stepsJSON, &variablesJSON, &piiRefsJSON, &template.CreatedBy, &template.CreatedAt, &template.UpdatedAt, &isActive); err != nil {
+		if err := rows.Scan(&template.ID, &template.Name, &template.Description, &stepsJSON, &variablesJSON, &piiRefsJSON, &template.CreatedBy, &createdAtInt, &updatedAtInt, &isActive); err != nil {
 			return nil, fmt.Errorf("failed to scan template: %w", err)
+		}
+
+		if createdAtInt.Valid {
+			template.CreatedAt = time.UnixMilli(createdAtInt.Int64)
+		}
+		if updatedAtInt.Valid {
+			template.UpdatedAt = time.UnixMilli(updatedAtInt.Int64)
 		}
 
 		if err := json.Unmarshal([]byte(stepsJSON), &template.Steps); err != nil {
@@ -494,9 +519,9 @@ func (s *SQLiteStore) CreateWorkflow(ctx context.Context, workflow *Workflow) er
 
 	var err error
 	_, err = s.db.Exec(`
-		INSERT INTO workflows (id, template_id, name, description, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, workflow.ID, workflow.TemplateID, workflow.Name, workflow.Description, string(workflow.Status), string(variablesJSON), workflow.CurrentStep, string(agentIDsJSON), startedAt, completedAt, workflow.ErrorMessage, workflow.CreatedBy)
+		INSERT INTO workflows (id, template_id, name, description, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by, room_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, workflow.ID, workflow.TemplateID, workflow.Name, workflow.Description, string(workflow.Status), string(variablesJSON), workflow.CurrentStep, string(agentIDsJSON), startedAt, completedAt, workflow.ErrorMessage, workflow.CreatedBy, workflow.RoomID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create workflow: %w", err)
@@ -518,14 +543,14 @@ func (s *SQLiteStore) GetWorkflow(ctx context.Context, id string) (*Workflow, er
 
 	workflow := &Workflow{}
 	var templateID, variablesJSON, agentIDsJSON string
-	var currentStep int
+	var currentStep string
 	var startedAt sql.NullInt64
 	var completedAt sql.NullInt64
 
 	err := s.db.QueryRow(`
-		SELECT id, template_id, name, description, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by
+		SELECT id, template_id, name, description, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by, room_id
 		FROM workflows WHERE id = ?
-	`, id).Scan(&workflow.ID, &templateID, &workflow.Name, &workflow.Description, &workflow.Status, &variablesJSON, &currentStep, &agentIDsJSON, &startedAt, &completedAt, &workflow.ErrorMessage, &workflow.CreatedBy)
+	`, id).Scan(&workflow.ID, &templateID, &workflow.Name, &workflow.Description, &workflow.Status, &variablesJSON, &currentStep, &agentIDsJSON, &startedAt, &completedAt, &workflow.ErrorMessage, &workflow.CreatedBy, &workflow.RoomID)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("workflow not found: %s", id)
@@ -533,6 +558,9 @@ func (s *SQLiteStore) GetWorkflow(ctx context.Context, id string) (*Workflow, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workflow: %w", err)
 	}
+
+	workflow.CurrentStep = currentStep
+	workflow.TemplateID = templateID
 
 	if err := json.Unmarshal([]byte(variablesJSON), &workflow.Variables); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal variables: %w", err)
@@ -559,7 +587,7 @@ func (s *SQLiteStore) ListWorkflows(ctx context.Context, filter WorkflowFilter) 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT id, template_id, name, description, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by FROM workflows`
+	query := `SELECT id, template_id, name, description, status, variables, current_step, agent_ids, started_at, completed_at, error_message, created_by, room_id FROM workflows`
 	args := []interface{}{}
 
 	if filter.Status != nil {
@@ -586,12 +614,15 @@ func (s *SQLiteStore) ListWorkflows(ctx context.Context, filter WorkflowFilter) 
 	for rows.Next() {
 		workflow := &Workflow{}
 		var templateID, variablesJSON, agentIDsJSON string
-		var currentStep int
+		var currentStep string
 		var startedAt, completedAt sql.NullInt64
 
-		if err := rows.Scan(&workflow.ID, &templateID, &workflow.Name, &workflow.Description, &workflow.Status, &variablesJSON, &currentStep, &agentIDsJSON, &startedAt, &completedAt, &workflow.ErrorMessage, &workflow.CreatedBy); err != nil {
+		if err := rows.Scan(&workflow.ID, &templateID, &workflow.Name, &workflow.Description, &workflow.Status, &variablesJSON, &currentStep, &agentIDsJSON, &startedAt, &completedAt, &workflow.ErrorMessage, &workflow.CreatedBy, &workflow.RoomID); err != nil {
 			return nil, fmt.Errorf("failed to scan workflow: %w", err)
 		}
+
+		workflow.CurrentStep = currentStep
+		workflow.TemplateID = templateID
 
 		if err := json.Unmarshal([]byte(variablesJSON), &workflow.Variables); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal variables: %w", err)
@@ -634,9 +665,9 @@ func (s *SQLiteStore) UpdateWorkflow(ctx context.Context, workflow *Workflow) er
 
 	result, err := s.db.Exec(`
 		UPDATE workflows
-		SET template_id = ?, name = ?, description = ?, status = ?, variables = ?, current_step = ?, agent_ids = ?, started_at = ?, completed_at = ?, error_message = ?
+		SET template_id = ?, name = ?, description = ?, status = ?, variables = ?, current_step = ?, agent_ids = ?, started_at = ?, completed_at = ?, error_message = ?, room_id = ?
 		WHERE id = ?
-	`, workflow.TemplateID, workflow.Name, workflow.Description, string(workflow.Status), string(variablesJSON), workflow.CurrentStep, string(agentIDsJSON), startedAt, completedAt, workflow.ErrorMessage, workflow.ID)
+	`, workflow.TemplateID, workflow.Name, workflow.Description, string(workflow.Status), string(variablesJSON), workflow.CurrentStep, string(agentIDsJSON), startedAt, completedAt, workflow.ErrorMessage, workflow.RoomID, workflow.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update workflow: %w", err)

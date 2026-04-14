@@ -90,6 +90,7 @@ type CalendarServiceInterface interface {
 type SecretaryCommandHandler struct {
 	store        SecretaryStore
 	orchestrator *WorkflowOrchestratorImpl
+	integration  *OrchestratorIntegration
 	studio       *StudioIntegration
 	matrix       studio.MatrixAdapter
 	prefix       string
@@ -106,6 +107,7 @@ type SecretaryCommandHandler struct {
 type SecretaryCommandHandlerConfig struct {
 	Store        SecretaryStore
 	Orchestrator *WorkflowOrchestratorImpl
+	Integration  *OrchestratorIntegration
 	Studio       *StudioIntegration
 	Matrix       studio.MatrixAdapter
 	Prefix       string
@@ -128,9 +130,10 @@ func NewSecretaryCommandHandler(cfg SecretaryCommandHandlerConfig) *SecretaryCom
 	return &SecretaryCommandHandler{
 		store:          cfg.Store,
 		orchestrator:   cfg.Orchestrator,
+		integration:    cfg.Integration,
 		studio:         cfg.Studio,
 		matrix:         cfg.Matrix,
-		prefix:         cfg.Prefix,
+		prefix:         prefix,
 		learnWebsite:   cfg.LearnWebsite,
 		blindFill:      cfg.BlindFill,
 		trustEngine:    cfg.TrustEngine,
@@ -427,9 +430,25 @@ func (h *SecretaryCommandHandler) handleStartWorkflow(ctx context.Context, roomI
 		return h.sendMessage(ctx, roomID, fmt.Sprintf("❌ Failed to start workflow: %v", err))
 	}
 
+	// Persist the room ID from the triggering context
 	workflow, _ := h.orchestrator.GetWorkflow(workflowID)
-	msg := fmt.Sprintf("✅ Workflow started\n\nID: `%s`\nStatus: %s", workflowID, workflow.Status)
-	return h.sendMessage(ctx, roomID, msg)
+	if workflow != nil {
+		workflow.RoomID = roomID
+		_ = h.store.UpdateWorkflow(ctx, workflow)
+	}
+
+	// Start executing workflow steps
+	if h.integration != nil {
+		if err := h.integration.StartWorkflowExecution(workflowID); err != nil {
+			return h.sendMessage(ctx, roomID, fmt.Sprintf("⚠️ Workflow started but execution failed: %v", err))
+		}
+	}
+
+	if workflow != nil {
+		msg := fmt.Sprintf("✅ Workflow started and executing\n\nID: `%s`\nStatus: %s", workflowID, workflow.Status)
+		return h.sendMessage(ctx, roomID, msg)
+	}
+	return nil
 }
 
 func (h *SecretaryCommandHandler) handleListWorkflows(ctx context.Context, roomID string) error {

@@ -2591,11 +2591,66 @@ func runBridgeServer(cliCfg cliConfig) {
 		}
 	}
 
+	// Construct workflow orchestrator for secretary wiring
+	var workflowOrchestrator *secretary.WorkflowOrchestratorImpl
+	if rolodexStore != nil && matrixBus != nil {
+		workflowEmitter := secretary.NewWorkflowEventEmitter(matrixBus)
+
+		var orchestratorFactory secretary.Factory
+		if studioService != nil {
+			if fac := studioService.GetFactory(); fac != nil {
+				orchestratorFactory = fac
+			}
+		}
+
+		var orchErr error
+		workflowOrchestrator, orchErr = secretary.NewWorkflowOrchestrator(secretary.OrchestratorConfig{
+			Store:    rolodexStore,
+			Factory:  orchestratorFactory,
+			EventBus: workflowEmitter,
+		})
+		if orchErr != nil {
+			log.Printf("Warning: failed to create workflow orchestrator: %v", orchErr)
+			workflowOrchestrator = nil
+		}
+	}
+
+	// Construct workflow execution engine
+	var orchestratorIntegration *secretary.OrchestratorIntegration
+	if rolodexStore != nil && studioService != nil {
+		dependencyValidator := secretary.NewDependencyValidator()
+
+		var stepExecutor *secretary.StepExecutor
+		if fac := studioService.GetFactory(); fac != nil {
+			stepExecutor = secretary.NewStepExecutor(secretary.StepExecutorConfig{
+				Factory:        fac,
+				Validator:      dependencyValidator,
+				ApprovalEngine: nil,
+			})
+		}
+
+		notificationService := secretary.NewNotificationService(secretary.NotificationServiceConfig{
+			Store: rolodexStore,
+		})
+
+		if workflowOrchestrator != nil && stepExecutor != nil {
+			orchestratorIntegration = secretary.NewOrchestratorIntegration(secretary.IntegrationConfig{
+				Orchestrator:        workflowOrchestrator,
+				Executor:            stepExecutor,
+				Store:               rolodexStore,
+				ApprovalEngine:      nil,
+				NotificationService: notificationService,
+			})
+			log.Println("Workflow execution engine initialized")
+		}
+	}
+
 	// Wire secretary command handler to Matrix adapter
 	if matrixAdapter != nil {
 		secretaryHandler := secretary.NewSecretaryCommandHandler(secretary.SecretaryCommandHandlerConfig{
-			Store:          nil,
-			Orchestrator:   nil,
+			Store:          rolodexStore,
+			Orchestrator:   workflowOrchestrator,
+			Integration:    orchestratorIntegration,
 			Studio:         nil,
 			Matrix:         secretary.WrapMatrixAdapter(matrixAdapter),
 			Prefix:         "!",
@@ -2626,7 +2681,7 @@ func runBridgeServer(cliCfg cliConfig) {
 		}
 
 		if schedulerFactory != nil {
-			taskScheduler = secretary.NewTaskScheduler(rolodexStore, schedulerFactory, schedulerMatrix, nil)
+			taskScheduler = secretary.NewTaskScheduler(rolodexStore, schedulerFactory, schedulerMatrix, nil, workflowOrchestrator, orchestratorIntegration)
 			defer func() {
 				if taskScheduler != nil {
 					taskScheduler.Stop()
@@ -3568,6 +3623,7 @@ func (a *studioFactoryAdapter) Spawn(ctx context.Context, req *secretary.SpawnRe
 		DefinitionID:    req.DefinitionID,
 		TaskDescription: req.TaskDescription,
 		UserID:          req.UserID,
+		RoomID:          req.RoomID,
 	})
 	if err != nil {
 		return nil, err

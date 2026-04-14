@@ -439,3 +439,50 @@ func TestHandleTaskGet_TaskNotFound(t *testing.T) {
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, ErrNotFound, resp.Error.Code)
 }
+
+//=============================================================================
+// Task Create TemplateID Tests
+//=============================================================================
+
+func TestTaskCreate_WithoutTemplateID(t *testing.T) {
+	handler, store := setupTestRPCHandler(t)
+
+	resp := callRPC(handler, "task.create", map[string]interface{}{
+		"definition_id": "def-1",
+		"created_by":    "@test:example.com",
+	})
+
+	require.Nil(t, resp.Error, "unexpected error: %v", resp.Error)
+	result, ok := resp.Result.(map[string]interface{})
+	require.True(t, ok)
+
+	taskID, _ := result["task_id"].(string)
+	assert.NotEmpty(t, taskID)
+
+	task, err := store.GetScheduledTask(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "", task.TemplateID, "template_id should be empty when not provided")
+	assert.Equal(t, "def-1", task.DefinitionID)
+	assert.True(t, task.IsActive)
+}
+
+func TestTaskCreate_WithTemplateID(t *testing.T) {
+	handler, store := setupTestRPCHandler(t)
+
+	resp := callRPC(handler, "task.create", map[string]interface{}{
+		"definition_id": "def-1",
+		"created_by":    "@test:example.com",
+	})
+
+	require.Nil(t, resp.Error, "unexpected error: %v", resp.Error)
+	result, ok := resp.Result.(map[string]interface{})
+	require.True(t, ok)
+
+	taskID, _ := result["task_id"].(string)
+	assert.NotEmpty(t, taskID)
+
+	task, err := store.GetScheduledTask(context.Background(), taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "def-1", task.DefinitionID)
+	assert.True(t, task.IsActive)
+}

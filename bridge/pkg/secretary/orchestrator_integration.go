@@ -242,7 +242,7 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 		DefinitionID:    agentID,
 		TaskDescription: taskDesc,
 		UserID:          workflow.CreatedBy,
-		RoomID:          workflow.CreatedBy,
+		RoomID:          workflow.RoomID,
 	}
 
 	spawnCtx, cancel := context.WithTimeout(ctx, e.defaultTimeout)
@@ -498,7 +498,10 @@ func (i *OrchestratorIntegration) CancelWorkflowExecution(workflowID string) err
 }
 
 func (i *OrchestratorIntegration) GetExecutionStatus(workflowID string) *ExecutionStatus {
-	runningSteps := i.executor.GetRunningSteps(workflowID)
+	var runningSteps []string
+	if i.executor != nil {
+		runningSteps = i.executor.GetRunningSteps(workflowID)
+	}
 
 	i.mu.RLock()
 	_, isExecuting := i.executionCancels[workflowID]

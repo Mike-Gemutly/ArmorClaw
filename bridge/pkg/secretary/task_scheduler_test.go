@@ -20,12 +20,16 @@ import (
 type schedulerTestStore struct {
 	sync.RWMutex
 	scheduledTasks map[string]*ScheduledTask
+	templates      map[string]*TaskTemplate
+	workflows      map[string]*Workflow
 	listDueErr     error
 }
 
 func newSchedulerTestStore() *schedulerTestStore {
 	return &schedulerTestStore{
 		scheduledTasks: make(map[string]*ScheduledTask),
+		templates:      make(map[string]*TaskTemplate),
+		workflows:      make(map[string]*Workflow),
 	}
 }
 
@@ -96,7 +100,7 @@ func (s *schedulerTestStore) ListDueTasks(ctx context.Context) ([]ScheduledTask,
 	var result []ScheduledTask
 	now := time.Now()
 	for _, t := range s.scheduledTasks {
-		if t.IsActive && t.NextRun != nil && !t.NextRun.After(now) && t.DefinitionID != "" {
+		if t.IsActive && t.NextRun != nil && !t.NextRun.After(now) && (t.DefinitionID != "" || t.TemplateID != "") {
 			result = append(result, *t)
 		}
 	}
@@ -118,10 +122,19 @@ func (s *schedulerTestStore) MarkDispatched(ctx context.Context, taskID string, 
 // Stub implementations for unused Store interface methods
 
 func (s *schedulerTestStore) CreateTemplate(ctx context.Context, template *TaskTemplate) error {
+	s.Lock()
+	defer s.Unlock()
+	s.templates[template.ID] = template
 	return nil
 }
 func (s *schedulerTestStore) GetTemplate(ctx context.Context, id string) (*TaskTemplate, error) {
-	return nil, errors.New("not implemented")
+	s.RLock()
+	defer s.RUnlock()
+	t, ok := s.templates[id]
+	if !ok {
+		return nil, fmt.Errorf("template not found: %s", id)
+	}
+	return t, nil
 }
 func (s *schedulerTestStore) ListTemplates(ctx context.Context, filter TemplateFilter) ([]TaskTemplate, error) {
 	return nil, nil
@@ -133,10 +146,19 @@ func (s *schedulerTestStore) DeleteTemplate(ctx context.Context, id string) erro
 	return nil
 }
 func (s *schedulerTestStore) CreateWorkflow(ctx context.Context, workflow *Workflow) error {
+	s.Lock()
+	defer s.Unlock()
+	s.workflows[workflow.ID] = workflow
 	return nil
 }
 func (s *schedulerTestStore) GetWorkflow(ctx context.Context, id string) (*Workflow, error) {
-	return nil, errors.New("not implemented")
+	s.RLock()
+	defer s.RUnlock()
+	w, ok := s.workflows[id]
+	if !ok {
+		return nil, fmt.Errorf("workflow not found: %s", id)
+	}
+	return w, nil
 }
 func (s *schedulerTestStore) ListWorkflows(ctx context.Context, filter WorkflowFilter) ([]Workflow, error) {
 	return nil, nil
@@ -282,7 +304,7 @@ func TestTaskScheduler_WarmDispatch(t *testing.T) {
 	}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
 	// Verify matrix.SendEvent called with correct event type
@@ -324,7 +346,7 @@ func TestTaskScheduler_ColdDispatch(t *testing.T) {
 	}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
 	// Verify Spawn was called with correct definition_id and user_id
@@ -360,7 +382,7 @@ func TestTaskScheduler_OneShotDeactivation(t *testing.T) {
 	}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
 	// Verify task deactivated
@@ -388,7 +410,7 @@ func TestTaskScheduler_CronNextRunUpdate(t *testing.T) {
 	}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
 	// Verify MarkDispatched called with non-zero next_run in the future
@@ -412,7 +434,7 @@ func TestTaskScheduler_EmptyDefinitionIdSkipped(t *testing.T) {
 	factory := &mockSchedulerFactory{}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
 	// Task with empty definition_id is excluded by ListDueTasks → not dispatched
@@ -442,7 +464,7 @@ func TestTaskScheduler_InvalidCronDeactivation(t *testing.T) {
 	}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
 	// Task should be deactivated due to invalid cron expression
@@ -470,7 +492,7 @@ func TestTaskScheduler_NilMatrixAdapter(t *testing.T) {
 	}
 
 	// nil matrix adapter — should not panic
-	scheduler := NewTaskScheduler(store, factory, nil, nil)
+	scheduler := NewTaskScheduler(store, factory, nil, nil, nil, nil)
 
 	assert.NotPanics(t, func() {
 		scheduler.tick()
@@ -489,7 +511,7 @@ func TestTaskScheduler_StoreListError(t *testing.T) {
 	factory := &mockSchedulerFactory{}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 
 	// Should not panic when ListDueTasks returns error
 	assert.NotPanics(t, func() {
@@ -506,7 +528,7 @@ func TestTaskScheduler_StartStopLifecycle(t *testing.T) {
 	factory := &mockSchedulerFactory{}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.Start()
 
 	// Give goroutine time to start
@@ -548,7 +570,7 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 	}
 	matrix := &mockSchedulerMatrix{}
 
-	scheduler := NewTaskScheduler(store, factory, matrix, nil)
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.Start()
 
 	// Wait for the immediate first tick to process
@@ -564,4 +586,276 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "task-immediate", payload.TaskID)
 	}
+}
+
+//=============================================================================
+// Scheduler Template Dispatch Tests
+//=============================================================================
+
+func TestDispatchTask_TemplateRouting(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-tmpl"] = &ScheduledTask{
+		ID:             "task-tmpl",
+		TemplateID:     "tmpl-1",
+		DefinitionID:   "def-1",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@test:example.com",
+	}
+	store.templates["tmpl-1"] = &TaskTemplate{
+		ID:        "tmpl-1",
+		Name:      "Test Template",
+		IsActive:  true,
+		CreatedBy: "@test:example.com",
+		Steps:     []WorkflowStep{{StepID: "s1", Name: "Step 1", Type: StepAction, Order: 0}},
+	}
+
+	factory := &mockSchedulerFactory{}
+	matrix := &mockSchedulerMatrix{}
+
+	emitter := newMockEventEmitter()
+	orch, err := NewWorkflowOrchestrator(OrchestratorConfig{
+		Store:    store,
+		EventBus: emitter,
+	})
+	require.NoError(t, err)
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, orch, nil)
+	scheduler.tick()
+
+	assert.False(t, factory.getRunningCalled, "template dispatch should not use factory.GetRunningInstance")
+	assert.False(t, factory.spawnCalled, "template dispatch should not use factory.Spawn")
+
+	assert.Len(t, store.workflows, 1, "templateDispatch should create a workflow")
+	for _, wf := range store.workflows {
+		assert.Equal(t, "tmpl-1", wf.TemplateID)
+		assert.Equal(t, StatusRunning, wf.Status)
+	}
+
+	updated := store.scheduledTasks["task-tmpl"]
+	assert.NotNil(t, updated.LastRun, "task should be marked dispatched")
+}
+
+func TestDispatchTask_TemplateNotFound(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-no-tmpl"] = &ScheduledTask{
+		ID:             "task-no-tmpl",
+		TemplateID:     "nonexistent-tmpl",
+		DefinitionID:   "def-1",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@test:example.com",
+	}
+
+	factory := &mockSchedulerFactory{}
+	matrix := &mockSchedulerMatrix{}
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
+	assert.NotPanics(t, func() {
+		scheduler.tick()
+	})
+
+	updated := store.scheduledTasks["task-no-tmpl"]
+	assert.True(t, updated.IsActive, "task should NOT be deactivated when template not found")
+	assert.Nil(t, updated.LastRun, "task should NOT be marked dispatched when template not found")
+}
+
+func TestDispatchTask_TemplateOnlyNoDefinitionID(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-tmpl-only"] = &ScheduledTask{
+		ID:             "task-tmpl-only",
+		TemplateID:     "tmpl_123",
+		DefinitionID:   "",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@test:example.com",
+	}
+	store.templates["tmpl_123"] = &TaskTemplate{
+		ID:        "tmpl_123",
+		Name:      "Template Only",
+		IsActive:  true,
+		CreatedBy: "@test:example.com",
+		Steps:     []WorkflowStep{{StepID: "s1", Name: "Step 1", Type: StepAction, Order: 0}},
+	}
+
+	factory := &mockSchedulerFactory{}
+	matrix := &mockSchedulerMatrix{}
+
+	emitter := newMockEventEmitter()
+	orch, err := NewWorkflowOrchestrator(OrchestratorConfig{
+		Store:    store,
+		EventBus: emitter,
+	})
+	require.NoError(t, err)
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, orch, nil)
+	scheduler.tick()
+
+	assert.False(t, factory.spawnCalled, "should use templateDispatch, not cold dispatch")
+	assert.False(t, factory.getRunningCalled, "should use templateDispatch, not warm dispatch")
+
+	updated := store.scheduledTasks["task-tmpl-only"]
+	assert.NotNil(t, updated.LastRun, "task should be marked dispatched via template path")
+}
+
+func TestDispatchTask_FreeTextUnchanged(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-freetext"] = &ScheduledTask{
+		ID:             "task-freetext",
+		TemplateID:     "",
+		DefinitionID:   "def-1",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@test:example.com",
+	}
+
+	factory := &mockSchedulerFactory{
+		runningInstance: &AgentInstanceRef{
+			ID:     "inst-1",
+			RoomID: "!room:example.com",
+			Status: "running",
+		},
+	}
+	matrix := &mockSchedulerMatrix{}
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
+	scheduler.tick()
+
+	assert.True(t, factory.getRunningCalled, "empty TemplateID should use warm/cold dispatch")
+	events := matrix.getSentEvents()
+	assert.Len(t, events, 1, "should dispatch via warm path")
+
+	updated := store.scheduledTasks["task-freetext"]
+	assert.NotNil(t, updated.NextRun)
+	assert.True(t, updated.NextRun.After(now))
+}
+
+func TestTemplateDispatch_CreatesWorkflow(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-create-wf"] = &ScheduledTask{
+		ID:             "task-create-wf",
+		TemplateID:     "tpl-wf",
+		DefinitionID:   "def-1",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@creator:example.com",
+	}
+	store.templates["tpl-wf"] = &TaskTemplate{
+		ID:          "tpl-wf",
+		Name:        "Workflow Creator Test",
+		Description: "desc",
+		IsActive:    true,
+		CreatedBy:   "@admin:example.com",
+		Steps:       []WorkflowStep{{StepID: "s1", Name: "Step 1", Type: StepAction, Order: 0}},
+	}
+
+	factory := &mockSchedulerFactory{}
+	matrix := &mockSchedulerMatrix{}
+
+	orchStore := newOrchestratorTestStore()
+	orchStore.templates["tpl-wf"] = store.templates["tpl-wf"]
+	emitter := newMockEventEmitter()
+	orch, err := NewWorkflowOrchestrator(OrchestratorConfig{
+		Store:    orchStore,
+		EventBus: emitter,
+	})
+	require.NoError(t, err)
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, orch, nil)
+	scheduler.tick()
+
+	require.Len(t, store.workflows, 1, "exactly one workflow should be created")
+	for _, wf := range store.workflows {
+		assert.Equal(t, "tpl-wf", wf.TemplateID)
+		assert.Equal(t, "Workflow Creator Test", wf.Name)
+		assert.Equal(t, "@creator:example.com", wf.CreatedBy, "workflow.CreatedBy should match task.CreatedBy")
+		assert.Equal(t, StatusPending, wf.Status)
+	}
+}
+
+func TestTemplateDispatch_StartsExecution(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-start-exec"] = &ScheduledTask{
+		ID:             "task-start-exec",
+		TemplateID:     "tpl-exec",
+		DefinitionID:   "def-1",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@test:example.com",
+	}
+	store.templates["tpl-exec"] = &TaskTemplate{
+		ID:        "tpl-exec",
+		Name:      "Exec Test",
+		IsActive:  true,
+		CreatedBy: "@test:example.com",
+		Steps:     []WorkflowStep{{StepID: "s1", Name: "Step 1", Type: StepAction, Order: 0}},
+	}
+
+	factory := &mockSchedulerFactory{}
+	matrix := &mockSchedulerMatrix{}
+
+	emitter := newMockEventEmitter()
+	orch, err := NewWorkflowOrchestrator(OrchestratorConfig{
+		Store:    store,
+		EventBus: emitter,
+	})
+	require.NoError(t, err)
+
+	integration := NewOrchestratorIntegration(IntegrationConfig{
+		Orchestrator: orch,
+		Store:        store,
+		Executor: NewStepExecutor(StepExecutorConfig{
+			Validator: NewDependencyValidator(),
+		}),
+	})
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, orch, integration)
+	scheduler.tick()
+
+	events := emitter.getEvents()
+	startedEvents := 0
+	for _, e := range events {
+		if e.eventType == WorkflowEventStarted {
+			startedEvents++
+		}
+	}
+	assert.GreaterOrEqual(t, startedEvents, 1, "orchestrator.StartWorkflow should emit started event")
+}
+
+func TestTemplateDispatch_ErrorNotDeactivated(t *testing.T) {
+	store := newSchedulerTestStore()
+	now := time.Now()
+	store.scheduledTasks["task-err-tmpl"] = &ScheduledTask{
+		ID:             "task-err-tmpl",
+		TemplateID:     "bad-tmpl",
+		DefinitionID:   "def-1",
+		CronExpression: "0 * * * *",
+		IsActive:       true,
+		NextRun:        &now,
+		CreatedBy:      "@test:example.com",
+	}
+
+	factory := &mockSchedulerFactory{}
+	matrix := &mockSchedulerMatrix{}
+
+	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
+	assert.NotPanics(t, func() {
+		scheduler.tick()
+	})
+
+	updated := store.scheduledTasks["task-err-tmpl"]
+	assert.True(t, updated.IsActive, "task should NOT be deactivated when GetTemplate returns error")
+	assert.Nil(t, updated.LastRun, "task should NOT be marked dispatched when GetTemplate returns error")
 }

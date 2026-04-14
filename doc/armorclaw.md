@@ -28,6 +28,7 @@
 | Change vault governance integration | `bridge/pkg/vault/proto/` and `rust-vault/src/governance/` |
 | Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (currently stub) |
 | Add or manage scheduled tasks | `bridge/pkg/secretary/store.go` and `bridge/pkg/secretary/task_scheduler.go` |
+| Execute or modify workflow steps | `bridge/pkg/secretary/orchestrator_integration.go` |
 
 ---
 
@@ -1134,6 +1135,9 @@ Matrix serves as the **primary control plane** for ArmorClaw, providing:
 - `app.armorclaw.consent.request` - Three-way consent request
 - `app.armorclaw.consent.response` - Three-way consent response
 - `app.armorclaw.task_dispatch` - Scheduler-to-agent task directive (internal control plane)
+- `app.armorclaw.workflow_step_progress` - Step execution progress during workflow run
+- `app.armorclaw.workflow_completed` - Workflow completed successfully (all steps done)
+- `app.armorclaw.workflow_failed` - Workflow failed with error (includes step ID and recoverability)
 
 ### Control Plane Commands
 
@@ -1505,6 +1509,55 @@ Bridge ← Conduit: GET /_matrix/client/v3/sync?filter={}&since={token}
 **Agent States**: OFFLINE, IDLE, BROWSING, FORM_FILLING, AWAITING_APPROVAL, AWAITING_CAPTCHA, AWAITING_2FA, PROCESSING_PAYMENT, COMPLETE, ERROR
 
 **Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. Warm path sends a Matrix event to a running agent's room. Cold path spawns a new container from the agent definition. Uses `robfig/cron/v3` for cron expression parsing.
+
+### Workflow Execution Lifecycle
+
+The secretary workflow engine turns task templates into multi-step workflows, executing each step as an isolated agent container.
+
+**Source**: `bridge/pkg/secretary/orchestrator_integration.go`
+
+**Lifecycle flow**:
+
+```
+Template → Workflow Creation → StartWorkflow (status=Running)
+  → StartWorkflowExecution (goroutine)
+    → StepExecutor.ExecuteSteps()
+      → For each step: DependencyValidator → ApprovalChecker (if PII) → factory.Spawn(agent)
+      → waitForCompletion (500ms polling)
+      → On complete: AdvanceWorkflow
+      → On fail: FailWorkflow
+    → On all steps complete: CompleteWorkflow
+```
+
+**Two dispatch paths for scheduled tasks** (routing in `task_scheduler.go:dispatchTask`):
+
+| Condition | Path | What happens |
+|-----------|------|--------------|
+| `TemplateID != ""` | Workflow engine | Creates a `Workflow` from the `TaskTemplate`, calls `StartWorkflow` then `StartWorkflowExecution`. Steps execute sequentially through `StepExecutor`. |
+| `TemplateID == ""` | Warm/cold dispatch | Checks for a running agent instance. If found with a room ID, sends an `app.armorclaw.task_dispatch` Matrix event to that room (warm). Otherwise spawns a new container (cold). |
+
+**Room ID semantics**:
+
+- Workflows store the Matrix room ID of the triggering context in the `room_id` column.
+- Scheduler-triggered workflows (from `templateDispatch`) set `room_id=""` because there is no user in the loop. These are fire-and-forget.
+- User-triggered workflows (from `!secretary start workflow`) persist the room ID from the triggering Matrix room. Workflow-spawned agents use this stored `room_id` for Matrix communication.
+- When `StepExecutor.executeStep` spawns an agent, it passes `workflow.RoomID` as the `RoomID` in the `SpawnRequest`, so the agent can respond in the original room.
+
+**Key components**:
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `StepExecutor` | `orchestrator_integration.go` | Executes workflow steps sequentially, spawns agents, waits for completion |
+| `OrchestratorIntegration` | `orchestrator_integration.go` | Manages goroutine lifecycle per workflow, cancellation, status tracking |
+| `DependencyValidator` | `orchestrator.go` | Validates step ordering and resolves execution order |
+| `NotificationService` | `notifications.go` | Emits `workflow.started`, `workflow.progress`, `workflow.completed`, `workflow.failed`, `workflow.cancelled` notifications |
+| `ApprovalChecker` | `orchestrator_integration.go` | Evaluates PII approval requirements per step before execution |
+
+**Error handling**:
+
+- Recoverable errors (agent spawn timeout, transient failure) retry up to `StepRetryCount` times (default: 1) with `StepRetryDelay` (default: 1s).
+- Unrecoverable errors (no agent for step, invalid execution order) fail the workflow immediately.
+- Context cancellation triggers `CancelWorkflow` and stops all running steps via `CancelAllForWorkflow`.
 
 ### Bridge ↔ ArmorChat Mobile
 

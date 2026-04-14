@@ -2,6 +2,7 @@ package secretary
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type SpawnRequestRef struct {
 	DefinitionID    string
 	TaskDescription string
 	UserID          string
+	RoomID          string
 }
 
 // SpawnResultRef is a lightweight spawn result.
@@ -52,25 +54,29 @@ type MatrixAdapter interface {
 // TaskScheduler dispatches due tasks via warm-start (Matrix) or cold-start (container spawn).
 // It is a stateless dispatcher — reads due tasks from DB, dispatches, updates next_run.
 type TaskScheduler struct {
-	store   Store
-	factory FactoryInterface
-	matrix  MatrixAdapter
-	log     *logger.Logger
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
+	store        Store
+	factory      FactoryInterface
+	matrix       MatrixAdapter
+	log          *logger.Logger
+	orchestrator *WorkflowOrchestratorImpl
+	integration  *OrchestratorIntegration
+	stopCh       chan struct{}
+	wg           sync.WaitGroup
 }
 
 // NewTaskScheduler creates a new task scheduler
-func NewTaskScheduler(store Store, factory FactoryInterface, matrix MatrixAdapter, log *logger.Logger) *TaskScheduler {
+func NewTaskScheduler(store Store, factory FactoryInterface, matrix MatrixAdapter, log *logger.Logger, orchestrator *WorkflowOrchestratorImpl, integration *OrchestratorIntegration) *TaskScheduler {
 	if log == nil {
 		log = logger.Global().WithComponent("scheduler")
 	}
 	return &TaskScheduler{
-		store:   store,
-		factory: factory,
-		matrix:  matrix,
-		log:     log,
-		stopCh:  make(chan struct{}),
+		store:        store,
+		factory:      factory,
+		matrix:       matrix,
+		log:          log,
+		orchestrator: orchestrator,
+		integration:  integration,
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -132,8 +138,14 @@ func (ts *TaskScheduler) tick() {
 
 // dispatchTask handles a single due task
 func (ts *TaskScheduler) dispatchTask(ctx context.Context, task ScheduledTask) {
-	// Skip tasks with empty definition_id (shouldn't happen due to ListDueTasks filter, but guard)
-	if strings.TrimSpace(task.DefinitionID) == "" {
+	// Route through workflow engine if template is set
+	if strings.TrimSpace(task.TemplateID) != "" {
+		ts.templateDispatch(ctx, task)
+		return
+	}
+
+	// Skip tasks with empty definition_id and no template (shouldn't happen due to ListDueTasks filter, but guard)
+	if strings.TrimSpace(task.DefinitionID) == "" && strings.TrimSpace(task.TemplateID) == "" {
 		ts.log.Warn("skipping_task_no_definition_id", "task_id", task.ID)
 		// Deactivate to prevent re-processing
 		task.IsActive = false
@@ -157,6 +169,63 @@ func (ts *TaskScheduler) dispatchTask(ctx context.Context, task ScheduledTask) {
 		// COLD START: spawn new container
 		ts.coldDispatch(ctx, task)
 	}
+}
+
+func (ts *TaskScheduler) templateDispatch(ctx context.Context, task ScheduledTask) {
+	template, err := ts.store.GetTemplate(ctx, task.TemplateID)
+	if err != nil {
+		ts.log.Error("template_dispatch_failed_get_template", "task_id", task.ID, "template_id", task.TemplateID, "error", err)
+		return
+	}
+	if template == nil || !template.IsActive {
+		ts.log.Error("template_dispatch_template_not_found", "task_id", task.ID, "template_id", task.TemplateID)
+		return
+	}
+
+	now := time.Now()
+	var variables map[string]interface{}
+	if template.Variables != nil {
+		if err := json.Unmarshal(template.Variables, &variables); err != nil {
+			ts.log.Error("template_dispatch_failed_unmarshal_variables", "task_id", task.ID, "template_id", task.TemplateID, "error", err)
+			variables = nil
+		}
+	}
+	workflow := &Workflow{
+		ID:          fmt.Sprintf("workflow_%d", now.UnixMilli()),
+		TemplateID:  task.TemplateID,
+		Name:        template.Name,
+		Description: template.Description,
+		Status:      StatusPending,
+		Variables:   variables,
+		AgentIDs:    []string{},
+		CreatedBy:   task.CreatedBy,
+		RoomID:      "",
+		StartedAt:   now,
+	}
+
+	if err := ts.store.CreateWorkflow(ctx, workflow); err != nil {
+		ts.log.Error("template_dispatch_failed_create_workflow", "task_id", task.ID, "template_id", task.TemplateID, "error", err)
+		return
+	}
+
+	if ts.orchestrator == nil {
+		ts.log.Error("template_dispatch_no_orchestrator", "task_id", task.ID)
+		return
+	}
+	if err := ts.orchestrator.StartWorkflow(workflow.ID); err != nil {
+		ts.log.Error("template_dispatch_failed_start_workflow", "task_id", task.ID, "workflow_id", workflow.ID, "error", err)
+		return
+	}
+
+	if ts.integration != nil {
+		if err := ts.integration.StartWorkflowExecution(workflow.ID); err != nil {
+			ts.log.Error("template_dispatch_failed_start_execution", "task_id", task.ID, "workflow_id", workflow.ID, "error", err)
+			return
+		}
+	}
+
+	ts.log.Info("template_dispatched_task", "task_id", task.ID, "template_id", task.TemplateID, "workflow_id", workflow.ID)
+	ts.updateAfterDispatch(ctx, task)
 }
 
 // warmDispatch sends a task dispatch event to a running agent via Matrix

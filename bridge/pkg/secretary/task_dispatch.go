@@ -16,6 +16,7 @@ type TaskDispatchPayload struct {
 	Description  string `json:"description"`
 	DispatchedAt int64  `json:"dispatched_at"`
 	Source       string `json:"source"`
+	WorkflowID   string `json:"workflow_id,omitempty"`
 }
 
 // BuildTaskDispatchPayload constructs a dispatch payload from a scheduled task
