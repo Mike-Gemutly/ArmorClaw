@@ -27,6 +27,7 @@
 | Modify MCP Router / tool routing | `bridge/pkg/mcp/router.go` and `bridge/pkg/interfaces/skillgate.go` |
 | Change vault governance integration | `bridge/pkg/vault/proto/` and `rust-vault/src/governance/` |
 | Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (currently stub) |
+| Add or manage scheduled tasks | `bridge/pkg/secretary/store.go` and `bridge/pkg/secretary/task_scheduler.go` |
 
 ---
 
@@ -229,7 +230,7 @@ armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (60 packages)
 │   ├── cmd/bridge/main.go    # Primary entry point (3,389 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (47 methods)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (51 methods)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -317,7 +318,7 @@ armorclaw-omo/
 
 The Go Bridge is the **central orchestrator** that coordinates between the host system and isolated AI agent containers. It provides:
 - Secure credential management via SQLCipher
-- JSON-RPC 2.0 API (47 methods across 8 domains)
+- JSON-RPC 2.0 API (51 methods across 9 domains)
 - Matrix integration for encrypted messaging
 - Browser automation job queue
 - Skill execution with allowlist control
@@ -1132,6 +1133,7 @@ Matrix serves as the **primary control plane** for ArmorClaw, providing:
 - `app.armorclaw.pii_response` - PII access response
 - `app.armorclaw.consent.request` - Three-way consent request
 - `app.armorclaw.consent.response` - Three-way consent response
+- `app.armorclaw.task_dispatch` - Scheduler-to-agent task directive (internal control plane)
 
 ### Control Plane Commands
 
@@ -1501,6 +1503,8 @@ Bridge ← Conduit: GET /_matrix/client/v3/sync?filter={}&since={token}
 - **Orchestrator Factory** (`bridge/pkg/secretary/orchestrator.go`): Spawn, Stop, Remove, GetStatus
 
 **Agent States**: OFFLINE, IDLE, BROWSING, FORM_FILLING, AWAITING_APPROVAL, AWAITING_CAPTCHA, AWAITING_2FA, PROCESSING_PAYMENT, COMPLETE, ERROR
+
+**Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. Warm path sends a Matrix event to a running agent's room. Cold path spawns a new container from the agent definition. Uses `robfig/cron/v3` for cron expression parsing.
 
 ### Bridge ↔ ArmorChat Mobile
 
@@ -2861,6 +2865,8 @@ LOG_LEVEL=debug
 ## Agent State Machine (Go Bridge)
 
 The Go Bridge manages agent lifecycle through a **state machine** (`bridge/pkg/agent/state.go`) with **11 states** and validated transitions.
+
+**Agent State Persistence**: Agent state directory is bind-mounted at `/var/lib/armorclaw/agent-state/{definitionID}/` to `/home/claw/.openclaw` inside containers. This overrides `ReadonlyRootfs` for the state path specifically. JSONL sessions, agent configuration, and logs persist across container lifecycle events (stop, remove, re-spawn).
 
 ### States
 
