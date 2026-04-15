@@ -163,8 +163,10 @@ func (ts *TaskScheduler) dispatchTask(ctx context.Context, task ScheduledTask) {
 	}
 
 	if instance != nil && instance.RoomID != "" {
-		// WARM START: dispatch via Matrix room injection
-		ts.warmDispatch(ctx, task, instance)
+		if err := ts.warmDispatch(ctx, task, instance); err != nil {
+			ts.log.Warn("warm_dispatch_failed_falling_back_to_cold", "task_id", task.ID, "error", err)
+			ts.coldDispatch(ctx, task)
+		}
 	} else {
 		// COLD START: spawn new container
 		ts.coldDispatch(ctx, task)
@@ -228,23 +230,8 @@ func (ts *TaskScheduler) templateDispatch(ctx context.Context, task ScheduledTas
 	ts.updateAfterDispatch(ctx, task)
 }
 
-// warmDispatch sends a task dispatch event to a running agent via Matrix
-func (ts *TaskScheduler) warmDispatch(ctx context.Context, task ScheduledTask, instance *AgentInstanceRef) {
-	payload := BuildTaskDispatchPayload(task, task.CronExpression)
-
-	if ts.matrix == nil {
-		ts.log.Warn("matrix_adapter_nil_skipping_warm_dispatch", "task_id", task.ID)
-		ts.updateAfterDispatch(ctx, task)
-		return
-	}
-
-	if err := ts.matrix.SendEvent(ctx, instance.RoomID, EventTypeTaskDispatch, payload); err != nil {
-		ts.log.Error("failed_to_send_dispatch_event", "task_id", task.ID, "room_id", instance.RoomID, "error", err)
-		return
-	}
-
-	ts.log.Info("warm_dispatched_task", "task_id", task.ID, "instance_id", instance.ID, "room_id", instance.RoomID)
-	ts.updateAfterDispatch(ctx, task)
+func (ts *TaskScheduler) warmDispatch(ctx context.Context, task ScheduledTask, instance *AgentInstanceRef) error {
+	return fmt.Errorf("warm dispatch requires backward channel — not implemented: agent containers have no Matrix connectivity (NetworkMode: none)")
 }
 
 // coldDispatch spawns a new container for the task

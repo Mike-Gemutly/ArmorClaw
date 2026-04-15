@@ -301,24 +301,20 @@ func TestTaskScheduler_WarmDispatch(t *testing.T) {
 			RoomID: "!room:example.com",
 			Status: "running",
 		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
+		},
 	}
 	matrix := &mockSchedulerMatrix{}
 
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
-	// Verify matrix.SendEvent called with correct event type
-	events := matrix.getSentEvents()
-	require.Len(t, events, 1)
-	assert.Equal(t, "!room:example.com", events[0].RoomID)
-	assert.Equal(t, EventTypeTaskDispatch, events[0].EventType)
+	// Warm dispatch is not implemented (NetworkMode: none), falls back to cold dispatch
+	assert.True(t, factory.spawnCalled, "expected cold dispatch fallback after warm dispatch failure")
+	assert.True(t, factory.getRunningCalled)
 
-	// Verify payload contains task_id
-	payload, ok := events[0].Payload.(TaskDispatchPayload)
-	require.True(t, ok)
-	assert.Equal(t, "task-1", payload.TaskID)
-
-	// Verify MarkDispatched called — next_run should be updated to future
 	updated := store.scheduledTasks["task-1"]
 	assert.NotNil(t, updated.NextRun)
 	assert.True(t, updated.NextRun.After(now))
@@ -379,6 +375,10 @@ func TestTaskScheduler_OneShotDeactivation(t *testing.T) {
 			ID:     "inst-1",
 			RoomID: "!room:example.com",
 		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
+		},
 	}
 	matrix := &mockSchedulerMatrix{}
 
@@ -406,6 +406,10 @@ func TestTaskScheduler_CronNextRunUpdate(t *testing.T) {
 		runningInstance: &AgentInstanceRef{
 			ID:     "inst-1",
 			RoomID: "!room:example.com",
+		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
 		},
 	}
 	matrix := &mockSchedulerMatrix{}
@@ -461,6 +465,10 @@ func TestTaskScheduler_InvalidCronDeactivation(t *testing.T) {
 			ID:     "inst-1",
 			RoomID: "!room:example.com",
 		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
+		},
 	}
 	matrix := &mockSchedulerMatrix{}
 
@@ -488,6 +496,10 @@ func TestTaskScheduler_NilMatrixAdapter(t *testing.T) {
 		runningInstance: &AgentInstanceRef{
 			ID:     "inst-1",
 			RoomID: "!room:example.com",
+		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
 		},
 	}
 
@@ -567,6 +579,10 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 			ID:     "inst-1",
 			RoomID: "!room:example.com",
 		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
+		},
 	}
 	matrix := &mockSchedulerMatrix{}
 
@@ -577,15 +593,12 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	scheduler.Stop()
 
-	// Verify the task was dispatched on first tick
-	events := matrix.getSentEvents()
-	assert.NotEmpty(t, events, "expected task to be dispatched on scheduler start (immediate tick)")
+	// Warm dispatch fails, falls back to cold dispatch
+	assert.True(t, factory.spawnCalled, "expected cold dispatch fallback on scheduler start (immediate tick)")
 
-	if len(events) > 0 {
-		payload, ok := events[0].Payload.(TaskDispatchPayload)
-		require.True(t, ok)
-		assert.Equal(t, "task-immediate", payload.TaskID)
-	}
+	updated := store.scheduledTasks["task-immediate"]
+	assert.NotNil(t, updated.NextRun)
+	assert.True(t, updated.NextRun.After(now))
 }
 
 //=============================================================================
@@ -723,6 +736,10 @@ func TestDispatchTask_FreeTextUnchanged(t *testing.T) {
 			RoomID: "!room:example.com",
 			Status: "running",
 		},
+		spawnResult: &SpawnResultRef{
+			InstanceID: "inst-cold",
+			RoomID:     "!cold-room:example.com",
+		},
 	}
 	matrix := &mockSchedulerMatrix{}
 
@@ -730,8 +747,7 @@ func TestDispatchTask_FreeTextUnchanged(t *testing.T) {
 	scheduler.tick()
 
 	assert.True(t, factory.getRunningCalled, "empty TemplateID should use warm/cold dispatch")
-	events := matrix.getSentEvents()
-	assert.Len(t, events, 1, "should dispatch via warm path")
+	assert.True(t, factory.spawnCalled, "warm dispatch fails, falls back to cold dispatch")
 
 	updated := store.scheduledTasks["task-freetext"]
 	assert.NotNil(t, updated.NextRun)

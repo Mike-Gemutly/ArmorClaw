@@ -27,7 +27,9 @@ type IntegrationConfig struct {
 	HITLManager *pii.HITLConsentManager
 }
 
-// Integration provides integration between agent state and Mobile Secretary components
+// Integration wires StateMachine + HITLConsentManager.
+// The StateMachine runs in the Bridge process. Container agents cannot
+// report their state. BroadcastStatus() is not yet implemented.
 type Integration struct {
 	mu           sync.RWMutex
 	agentID      string
@@ -259,7 +261,7 @@ func (i *Integration) processEvents() {
 
 // AgentCoordinator coordinates multiple agents and their status
 type AgentCoordinator struct {
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 	integrations map[string]*Integration
 }
 
@@ -326,14 +328,14 @@ func (c *AgentCoordinator) GetAllStatuses() []StatusEvent {
 	return statuses
 }
 
-// BroadcastStatus sends status updates to all listeners
+// BroadcastStatus sends status updates to all listeners.
+//
+// LIMITATION: Agent status broadcasting is not yet implemented.
+// Container-to-Bridge state reporting does not exist — containers run
+// with NetworkMode "none" and cannot push status events. Status advances
+// are inferred from container lifecycle events (spawn, poll exit code),
+// not agent-reported phase transitions. This method will return an error
+// until a backward communication channel is implemented.
 func (c *AgentCoordinator) BroadcastStatus(ctx context.Context, event StatusEvent) error {
-	// In a real implementation, this would:
-	// 1. Send to Matrix room
-	// 2. Update mobile app via push notification
-	// 3. Update web dashboard via WebSocket
-
-	// For now, we just log the event
-	// This would be replaced with actual Matrix/Matrix SDK integration
-	return nil
+	return fmt.Errorf("BroadcastStatus: agent status broadcasting not implemented — no container-to-Bridge state reporting channel exists")
 }

@@ -1,5 +1,12 @@
 // Package agent provides agent management functionality for ArmorClaw,
 // including state machine management for tracking agent operational status.
+//
+// NOTE: The state machine defined here is a Bridge-side library.
+// Container-to-Bridge state reporting does not exist.
+// States advance based on container lifecycle events (spawn, poll exit code),
+// not agent-reported phase transitions.
+// The 11 states (IDLE through OFFLINE) are defined for future use when
+// a backward communication channel is implemented.
 package agent
 
 import (
