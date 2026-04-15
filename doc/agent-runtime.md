@@ -2,32 +2,51 @@
 
 > Part of the [ArmorClaw System Documentation](armorclaw.md)
 
+> **Bridge-Side Architecture**
+>
+> The agent runtime and state machine described in this document are **Bridge-side only**. They run inside the Go Bridge process, not inside agent containers.
+>
+> **No container-to-Bridge state reporting exists.** The 11-state state machine (`IDLE` through `OFFLINE`) is a Bridge-internal library used for lifecycle tracking. Containers cannot report which state they are in. The Bridge only observes: `running` (container exists) -> `completed` (exit 0) -> `failed` (exit non-zero).
+>
+> Agent containers execute with `NetworkMode: "none"` and have zero network access. Communication is unidirectional: environment variables in, exit code out.
+
 ## Overview
 
 The agent runtime is the in-process Go engine inside the Bridge that manages task execution, conversation memory, tool dispatch, and result caching. It operates below the container lifecycle (which is handled by `pkg/studio` via Docker) and above the AI provider layer. When the Bridge receives a task through the Matrix control plane, the runtime takes over: it routes the request, executes tool calls through the executor, caches results, and tracks progress step by step.
 
 The runtime is *not* the same thing as the agent state machine documented in [armorclaw.md Agent State Machine](armorclaw.md#agent-state-machine-go-bridge). That state machine tracks high-level agent phases like `BROWSING`, `FORM_FILLING`, and `AWAITING_APPROVAL`. This runtime handles the lower-level task loop: reasoning steps, tool invocations, speculative predictions, and memory persistence.
 
+### Execution Modes
+
+- **Mode A (Agent Studio)**: Containers spawned by `factory.Spawn()` with `NetworkMode: "none"`. Task delivered via `STEP_CONFIG` env var. Results via exit code only. No network access. This is the default for secretary workflow steps.
+- **Mode B (OpenClaw Gateway)**: Containers via docker-compose with `armorclaw-isolated` network and `HTTP_PROXY`. Can reach external services through Squid proxy on go-bridge. Integration incomplete. See `container/Dockerfile.openclaw-standalone` and `docker-compose.bridge.yml`.
+
 ## Architecture
 
 ```
-                        ┌─────────────────────────────┐
-                        │         Runtime             │
-                        │  (internal/agent/)          │
-                        │                             │
-   Task ──────────────▶│  Run(ctx, task)             │
-                        │    │                        │
-                        │    ├─▶ Router.Route()       │
-                        │    ├─▶ SpeculativeExecutor  │
-                        │    │     (predictions)      │
-                        │    ├─▶ ToolExecutor.Execute │
-                        │    │     (per tool call)    │
-                        │    └─▶ build Result         │
-                        │                             │
-                        │  Wired at startup:          │
-                        │    Store  (memory)          │
-                        │    ToolCache (LRU + TTL)    │
-                        └─────────────────────────────┘
+                         ┌─────────────────────────────────────┐
+                         │         Runtime                     │
+                         │  (internal/agent/)                  │
+                         │  Bridge-side only, not in container │
+                         │                                     │
+    Task config ────────▶│  Run(ctx, task)                     │
+    (STEP_CONFIG env)    │    │                                │
+                         │    ├─▶ Router.Route()               │
+                         │    ├─▶ SpeculativeExecutor          │
+                         │    │     (predictions)              │
+                         │    ├─▶ ToolExecutor.Execute         │
+                         │    │     (per tool call)            │
+                         │    └─▶ build Result                 │
+                         │                                     │
+                         │  Wired at startup:                  │
+                         │    Store  (memory)                  │
+                         │    ToolCache (LRU + TTL)            │
+                         └─────────────────────────────────────┘
+
+    Unidirectional container communication:
+
+    Task config (STEP_CONFIG env var) ──────▶ Container (NetworkMode: "none")
+    Bridge polls Docker ContainerInspect ◀────── Container (exit code only)
 ```
 
 The `Runtime` struct in `internal/agent/runtime.go` holds all subsystems together:
@@ -182,6 +201,8 @@ The pool starts with `MaxWorkers/2` goroutines (minimum 5 by default). Each work
 
 The speculative executor pre-runs tool calls that the runtime predicts the task will need. This hides latency: when the actual tool call arrives, the result is already cached.
 
+> **Note on Container Isolation**: Speculative execution pre-computes Go-side tool call results. However, the actual agent work happens inside containers with `NetworkMode: "none"` and no network access. The speculative cache is useful for Go-side operations (keystore lookups, approval checks) but cannot pre-compute results for container-internal LLM calls or browser operations, since those execute in isolation.
+
 **SpeculativeExecutor** struct:
 
 | Field | Purpose |
@@ -240,7 +261,19 @@ The runtime sits between the container factory and the Matrix control plane. The
 5. `waitForCompletion` blocks until the container reports its final `StepResult`.
 6. The result is surfaced to the Matrix room as a message.
 
-For the container-side agent state machine (states like `BROWSING`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`), see the [Agent State Machine section in armorclaw.md](armorclaw.md#agent-state-machine-go-bridge).
+### Bridge Observable States vs State Machine States
+
+The Bridge can only observe three container states via Docker `ContainerInspect`:
+
+| Bridge-Observable State | How Detected |
+|------------------------|-------------|
+| **Running** | Container exists and `State.Running == true` |
+| **Completed** | Container exited with code 0 |
+| **Failed** | Container exited with non-zero code, or container gone |
+
+The 11-state agent state machine (`IDLE`, `INITIALIZING`, `BROWSING`, `FORM_FILLING`, `AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`, `ERROR`, `COMPLETE`, `OFFLINE`) is defined in `bridge/pkg/agent/state.go` but transitions are **programmatic only**: triggered by Bridge-side code, not by agent-reported events. The `BroadcastStatus()` method that would relay states to clients is currently a stub returning nil.
+
+For the agent state machine definition (states like `BROWSING`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`), see the [Agent State Machine section in armorclaw.md](armorclaw.md#agent-state-machine-go-bridge).
 
 ### Security Gateway (PETG)
 

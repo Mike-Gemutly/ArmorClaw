@@ -6,6 +6,8 @@
 >
 > **Last Updated**: 2026-04-14
 
+> ⚠️ **Architecture Note (v0.4.1)**: Agent containers in the default execution mode (Agent Studio / Mode A) have no network access (`NetworkMode: "none"`) and communicate only via exit codes. Structured results, progress reporting, and browser automation require Mode B (OpenClaw Gateway) or the planned backward communication channel.
+
 ---
 
 ## Context Routing Rules
@@ -44,22 +46,23 @@
 8. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
 9. [Security Architecture](#security-architecture)
 10. [Component Integration Patterns](#component-integration-patterns)
-11. [Agent Studio](#agent-studio)
-12. [Browser Service](#browser-service)
-13. [Jetski Browser Sidecar](#jetski-browser-sidecar)
-14. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
-15. [Rust Office Sidecar](#rust-office-sidecar)
-16. [ArmorChat Android Client](#armorchat-android-client)
-17. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
-18. [RPC API Reference](#rpc-api-reference)
-19. [Event Types Reference](#event-types-reference)
-20. [Configuration Reference](#configuration-reference)
-21. [Deployment Modes](#deployment-modes)
-22. [Testing & Verification](#testing--verification)
-23. [Local Development Guide](#local-development-guide)
-24. [Document Index](#document-index)
-25. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
-26. [Review Documentation](#review-documentation)
+11. [Agent Communication Model](#agent-communication-model)
+12. [Agent Studio](#agent-studio)
+13. [Browser Service](#browser-service)
+14. [Jetski Browser Sidecar](#jetski-browser-sidecar)
+15. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
+16. [Rust Office Sidecar](#rust-office-sidecar)
+17. [ArmorChat Android Client](#armorchat-android-client)
+18. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
+19. [RPC API Reference](#rpc-api-reference)
+20. [Event Types Reference](#event-types-reference)
+21. [Configuration Reference](#configuration-reference)
+22. [Deployment Modes](#deployment-modes)
+23. [Testing & Verification](#testing--verification)
+24. [Local Development Guide](#local-development-guide)
+25. [Document Index](#document-index)
+26. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
+27. [Review Documentation](#review-documentation)
 
 ---
 
@@ -84,14 +87,14 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **BlindFill™** | Memory-only secret injection, agents never see raw values |
 | **Placeholder Masking** | Strict `{{VAULT:field:hash}}` format prevents secret exposure |
 | **Prompt Injection Detection** | 3 pattern detectors (unicode tricks, random chars, repetition) |
-| **Kill-on-Violation** | Terminate compromised containers via RPC |
+| **Kill-on-Violation** | Terminate compromised containers via RPC *(post-hoc: detected via exit code, not reactive)* |
 | **USB Security Validation** | 2 security tests for ShadowMap gatekeeper and vault hold-to-reveal |
 | **E2EE Messaging** | All communication via Matrix protocol with Megolm encryption |
 | **Container Isolation** | Each agent runs in hardened Docker container |
 | **Human-in-the-Loop** | Mobile approval for sensitive operations (payments, PII) |
 | **SQLCipher Keystore** | Hardware-bound encrypted credential storage |
 | **No-Code Agent Studio** | Define agents via chat commands or dashboard |
-| **21 Browser Skills** | Chrome DevTools MCP integration for web automation |
+| **21 Browser Skills** | Chrome DevTools MCP integration for web automation *(Mode B only, requires HTTP_PROXY)* |
 | **Sentinel Mode** | Automatic VPS deployment with Let's Encrypt TLS |
 | **Split-Storage RAG** | Document chunks stored separately from vector embeddings |
 | **YARA Content Disarm** | Malicious content detected and neutralized before processing |
@@ -168,37 +171,39 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 ┌───────────────────────────────────────────────────────────────────────┐
 │                         THE VPS (Office)                              │
 │                                                                       │
-│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐           │
-│  │ ArmorClaw   │◀────▶│  OpenClaw   │◀────▶│   Jetski    │           │
-│  │ Bridge      │      │  (Agent)    │ CDP  │ CDP Proxy   │           │
-│  │ (Orchestr.) │      │             │ :9222│ (Tethered)  │           │
-│  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘           │
-│         │                    │                     │                   │
-│         │                    │  ▲                  │                   │
-│         │                    │  │                  │                   │
-│         │   BlindFill Engine │  │                  │                   │
-│         │   (Memory-Only)    │  │                  │                   │
-│         │                    │  │                  │                   │
-│         │    ┌───────────────┘  │                  │                   │
-│         │    │ Rust Vault Sidecar│                  │                   │
-│         │    │ (gRPC/Unix Socket)│                  │                   │
-│         │    │ - Zeroization     │                  │                   │
-│         │    │ - Network BlindFill│                 │                   │
-│         │    │ - Circuit Breaking │                 │                   │
-│         │    └───────────────────┘                  │                   │
-│         │                                         │                   │
-│         │    ┌───────────────────┐                 │                   │
-│         │    │ Phase 2 Pipeline  │                 │                   │
-│         │    │ - Split-Storage   │                 │                   │
-│         │    │ - YARA CDR        │                 │                   │
-│         │    │ - TTL Proxy Guard │                 │                   │
-│         │    └───────────────────┘                 │                   │
-│         │                                         │                   │
-└─────────┼────────────────────┼─────────────────────┼───────────────────┘
-          │                    │                     │
-          │ Secure Matrix Tunnel (E2EE)             │
-          │                    │                     │
-┌─────────▼────────────────────▼─────────────────────▼───────────────────┐
+│  Mode A (Agent Studio): env vars → container → exit code             │
+│  Mode B (OpenClaw Gateway): socket RPC + HTTP_PROXY via Squid        │
+│                                                                       │
+│  ┌─────────────┐  env vars   ┌─────────────┐       ┌─────────────┐   │
+│  │ ArmorClaw   │────────────▶│  OpenClaw    │       │   Jetski    │   │
+│  │ Bridge      │◀──exit code─│  (Agent)     │ CDP   │ CDP Proxy   │   │
+│  │ (Orchestr.) │             │ NetworkMode: │ :9222 │ (Tethered)  │   │
+│  └──────┬──────┘             │  "none"      │       └──────┬──────┘   │
+│         │                    └──────┬──────┘              │           │
+│         │                           │                     │           │
+│         │   BlindFill Engine        │                     │           │
+│         │   (Memory-Only)           │                     │           │
+│         │                           │                     │           │
+│         │    ┌──────────────────────┘                     │           │
+│         │    │ Rust Vault Sidecar                         │           │
+│         │    │ (gRPC/Unix Socket)                         │           │
+│         │    │ - Zeroization                              │           │
+│         │    │ - Network BlindFill                        │           │
+│         │    │ - Circuit Breaking                         │           │
+│         │    └────────────────────────────────────────────┘           │
+│         │                                                             │
+│         │    ┌───────────────────┐                                    │
+│         │    │ Phase 2 Pipeline  │                                    │
+│         │    │ - Split-Storage   │                                    │
+│         │    │ - YARA CDR        │                                    │
+│         │    │ - TTL Proxy Guard │                                    │
+│         │    └───────────────────┘                                    │
+│         │                                                             │
+└─────────┼─────────────────────────────────────────────────────────────┘
+          │
+          │ Secure Matrix Tunnel (E2EE)
+          │
+┌─────────▼─────────────────────────────────────────────────────────────┐
 │                         USER (Mobile)                                 │
 │   ArmorChat App                                                      │
 │   "Book a flight to NYC"  [Approve Credit Card] 🔐                   │
@@ -288,7 +293,7 @@ armorclaw-omo/
 | **gRPC (v6 Vault)** | gRPC over Unix socket | Vault governance: ephemeral tokens, zeroization (v6 only) | `/run/armorclaw/rust-vault.sock` |
 | **HTTP/WebSocket** | REST + WebSocket | Health checks, metrics, real-time events | 8080 |
 | **WebRTC** | ICE/STUN/TURN | Voice/video calls | Dynamic |
-| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation (agent → Jetski) | 9222 |
+| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation (agent → Jetski) *(Mode B only, requires HTTP_PROXY)* | 9222 |
 | **Jetski RPC** | JSON-RPC 2.0 (HTTP) | Jetski sidecar status, sessions, health | 9223 |
 | **Lightpanda Engine** | CDP over WebSocket | Headless browser engine (Jetski internal) | 9333 |
 
@@ -1552,6 +1557,8 @@ Bridge (Go)                           Container (Docker)
 
 **Data flow limitation**: The container's agent output (LLM responses, tool results, browser actions) is **not captured** by the Bridge. Only the exit code is observed. Structured results would require a new communication channel.
 
+> ⚠️ **Mode A Communication Limitation**: Agent containers spawned by the studio factory run with `NetworkMode: "none"`. They receive task configuration via environment variables (`STEP_CONFIG`) and report results via exit code only. There is no backward channel for structured results, progress reporting, or agent-reported state transitions. This is a known architectural gap, see the [Agent Communication Model](#agent-communication-model) section below.
+
 **State directory**: Each agent gets a bind-mounted directory at `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` inside the container. The container writes OpenClaw session data here. This is the only shared filesystem between Bridge and container, but the Bridge does not currently read it.
 
 **Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. Warm path sends a Matrix event to a running agent's room. Cold path spawns a new container from the agent definition. Uses `robfig/cron/v3` for cron expression parsing.
@@ -1679,6 +1686,32 @@ Jetski → Matrix (HITL approval requests)
 
 ---
 
+## Agent Communication Model
+
+ArmorClaw supports two agent execution modes with different communication capabilities:
+
+### Mode A: Agent Studio (Workflow Containers)
+
+- **Network**: `NetworkMode: "none"` (zero network access)
+- **Inbound**: Environment variables (`STEP_CONFIG`, `PII_*` fallback)
+- **Outbound**: Exit code only (0 = success, non-zero = failure)
+- **Bind-mount**: `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` (read-write)
+- **Limitations**: No structured results, no progress reporting, no agent-reported state, no browser automation, no CDP connectivity
+- **Used by**: Secretary workflow engine (`StepExecutor`), task scheduler (`coldDispatch`)
+
+### Mode B: OpenClaw Gateway (Compose Profile)
+
+- **Network**: `armorclaw-isolated` (internal only) + `HTTP_PROXY` through Squid on go-bridge
+- **Inbound**: Bridge socket (Unix domain socket RPC), Matrix events via bridge relay
+- **Outbound**: Bridge socket RPC responses, HTTP_PROXY for outbound requests
+- **Capabilities**: Platform adapters (Discord, Slack, etc.), browser automation via proxy, structured responses
+- **Status**: Integration incomplete (`entrypoint.ts` TODO at line 185)
+- **Used by**: docker-compose `openclaw` profile
+
+> ⚠️ **CRITICAL**: Mode A containers cannot browse the web, fill forms, report progress, or return structured results. The secretary workflow engine operates in Mode A. Features advertised as "browser automation in workflows" require Mode B or a future backward channel implementation.
+
+---
+
 ## Agent Studio
 
 ### Purpose
@@ -1745,6 +1778,8 @@ The Browser Service provides **Playwright-based browser automation** for web bro
 ```
 
 ### Browser Skills
+
+> Browser automation requires network access. In Mode A (Agent Studio), containers have `NetworkMode: "none"` and cannot reach the browser service. Browser-based workflows require Mode B (OpenClaw Gateway) or future network-bridged execution.
 
 | Skill | Description |
 |-------|-------------|

@@ -43,6 +43,25 @@ ScheduledTask (cron)
 
 ---
 
+> ⚠️ **CRITICAL: Data Flow Limitation**
+>
+> Agent containers in the secretary workflow execute with `NetworkMode: "none"`, meaning they have **zero network access**. Communication is strictly unidirectional:
+>
+> - **Inbound to container**: Environment variables (`STEP_CONFIG`, `PII_*` fallback)
+> - **Outbound from container**: Exit code only (0 = success, non-zero = failure)
+>
+> There is **no structured result passing**. The container cannot report partial output, intermediate data, rich results, or progress. The only signal the Bridge receives is binary: **success or failure**.
+>
+> This means:
+> - Multi-step workflows cannot pass structured data between steps
+> - Agent state transitions (BROWSING, FORM_FILLING, etc.) are **invisible** to the Bridge
+> - Browser automation is **impossible** in this mode (no network to reach browser service)
+> - `workflow.progress` events are **Bridge-inferred** (container still running), NOT agent-reported
+>
+> A backward communication channel is planned to address these limitations.
+
+---
+
 ## Architecture
 
 ### Component map
@@ -105,8 +124,8 @@ Triggered when `ScheduledTask.DefinitionID` is set but `TemplateID` is empty.
 
 The scheduler asks the factory if there is already a running instance for that definition:
 
-- **Warm dispatch.** A running agent exists. The scheduler sends a `app.armorclaw.task_dispatch` Matrix event into the agent's room. The agent picks up the task in place, no new container needed.
-- **Cold dispatch.** No running agent. The scheduler calls `factory.Spawn()` to create a fresh container for the task.
+- **❌ Warm dispatch (NON-FUNCTIONAL).** A running agent exists. The scheduler sends a `app.armorclaw.task_dispatch` Matrix event into the agent's room. However, the agent container has **no Matrix connection** (`NetworkMode: "none"`). The event is received only by ArmorChat clients and the Bridge's own Matrix sync. The container never sees it. This path **silently fails** with no error indication.
+- **✅ Cold dispatch (FUNCTIONAL, limited).** No running agent. The scheduler calls `factory.Spawn()` to create a fresh container for the task. Functional but limited to exit-code-only results.
 
 After either path, the task's `next_run` is updated (cron) or the task is deactivated (one shot).
 
@@ -171,29 +190,26 @@ Valid transitions (defined in `validateTransition`):
 Each step goes through `StepExecutor.executeStep()`:
 
 ```
-executeStep(workflow, step)
-   │
-   ├─ No agentIDs on step? ──► return ErrNoAgentForStep (not recoverable)
-   │
-   ├─ Build SpawnRequest:
-   │     DefinitionID = step.AgentIDs[0]
-   │     TaskDescription = "Workflow {id} - Step: {name}"
-   │     UserID = workflow.CreatedBy
-   │     RoomID = workflow.RoomID
-   │     Config = step.Config   ◄── STEP_CONFIG passthrough
-   │
-   ├─ factory.Spawn(ctx, req) ──► container created
-   │
-   ├─ Register in runningSteps map
-   │
-   └─ waitForCompletion(ctx, instanceID)
-        │
-        └─ 500ms polling loop:
-             GetStatus(instanceID)
-               Completed  ──► return nil (success)
-               Failed     ──► return ErrStepExecutionFailed
-               Running    ──► continue polling
-               ctx.Done() ──► Stop container, return error
+StepExecutor                      Container (NetworkMode: "none")
+    │                                      │
+    ├─ No agentIDs? ──► ErrNoAgentForStep  │
+    │                                      │
+    ├─ Build SpawnRequest:                 │
+    │     DefinitionID, TaskDescription,   │
+    │     UserID, RoomID, Config           │
+    │                                      │
+    ├─ STEP_CONFIG env ──────────────────▶ │ (inbound: env vars only)
+    │                                      │
+    ├─ Register in runningSteps map        │
+    │                                      │
+    └─ waitForCompletion(ctx, instanceID)  │
+         │                                 │
+         └─ 500ms polling loop:            │
+              GetStatus(instanceID)        │
+                Completed  ──▶ nil (0) ◀───│ (outbound: exit code only)
+                Failed     ──▶ Err  (non0)│
+                Running    ──▶ continue    │
+                ctx.Done() ──▶ Stop, error│
 ```
 
 ### Retry behavior
@@ -337,6 +353,8 @@ The bus is a fixed size ring buffer (default 1024 slots, max batch 128 events). 
 
 Subscribers that are too slow are silently skipped (non blocking send). The ring buffer wraps around, dropping the oldest events when full.
 
+> **Note**: `workflow.progress` events are emitted by the Bridge when it polls the container's Docker status and finds it still running. This is **not** agent-reported progress. It merely indicates the container process has not exited yet. There is no mechanism for the container to report its actual execution phase.
+
 ---
 
 ## Notifications
@@ -359,6 +377,25 @@ Subscribers that are too slow are silently skipped (non blocking send). The ring
 ### Matrix adapter
 
 `MatrixNotificationAdapter` implements `NotificationSubscriber` by calling a `sendFunc(ctx, roomID, message)`. This is how notifications reach the user's Matrix room as readable messages (not structured events).
+
+---
+
+## Execution Mode Capabilities
+
+The secretary workflow engine operates in **Mode A (Agent Studio)**:
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| Scheduled task triggering | ✅ Works | Cron-based, 15s tick interval |
+| Container lifecycle management | ✅ Works | Spawn, poll, stop |
+| PII approval gating | ✅ Works | Matrix → user → approve/deny |
+| Workflow state tracking | ✅ Works | Bridge-level: pending → running → completed/failed |
+| Structured step results | ❌ Not available | Exit code only |
+| Agent-reported progress | ❌ Not available | Bridge-inferred only |
+| Browser automation | ❌ Not available | No network access |
+| Warm dispatch | ❌ Non-functional | No Matrix connection in container |
+
+**Mode B (OpenClaw Gateway)** provides network access via HTTP_PROXY but has its own limitations (integration incomplete). Mode A/B convergence is deferred until both modes have a working backward channel.
 
 ---
 
@@ -413,3 +450,16 @@ TaskScheduler
 | `task_scheduler.go` | `TaskScheduler`, `NewTaskScheduler`, `Start`, `Stop`, `tick`, `dispatchTask`, `templateDispatch`, `warmDispatch`, `coldDispatch` |
 | `types.go` | `TaskTemplate`, `Workflow`, `WorkflowStep`, `StepType`, `WorkflowStatus`, `ApprovalResult`, `ApprovalPolicy`, `ScheduledTask`, interface definitions |
 | `bridge/internal/events/matrix_event_bus.go` | `MatrixEventBus`, `MatrixEvent`, `Publish`, `GetEventsAfter`, `Subscribe` |
+
+---
+
+## Prerequisites for Full Functionality
+
+The secretary workflow engine's full potential requires a **backward communication channel** from agent containers to the Bridge. The planned approach:
+
+1. **Shared state dir**: Container writes `result.json` to the bind-mounted state directory before exit
+2. **Bridge reads result**: After container exit, Bridge reads and parses `result.json`
+3. **Structured step results**: Multi-step workflows can pass data between steps
+4. **PII socket wiring**: Secure PII delivery via Unix socket instead of environment variables
+
+This is planned as a single atomic change. Both the backward channel and PII socket wiring must ship together.
