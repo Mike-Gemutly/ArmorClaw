@@ -135,10 +135,16 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 		Privileged:     false,
 	}
 
-	// 5b. Ensure host state directory exists for persistent agent sessions
+	// 5b. Ensure host state directory exists for persistent agent sessions.
+	// The directory must be writable by the container's non-root user (UID 10001).
+	// Bridge runs as root, so we chown the directory to 10001:10001 after creation.
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create agent state directory: %w", err)
 	}
+	// Chown to container UID so the container can write result.json and other state files.
+	// Ignore errors — non-root Bridge (dev mode) won't have permission to chown, but
+	// the directory is still writable if Bridge and container share the same UID.
+	_ = os.Chown(stateDir, 10001, 10001)
 
 	// 5c. Prepare PII socket mount if injector is available
 	var piiSocketPath string

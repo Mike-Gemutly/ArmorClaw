@@ -28,6 +28,14 @@ import (
 //
 //	Forward compatibility: unknown JSON fields are silently ignored so that
 //	new container versions can add fields without breaking older Bridge code.
+//
+// Permission model:
+//
+//	The state directory is chown'd to UID 10001 (the container user) by
+//	factory.go's Spawn() method. The container writes as 10001, Bridge reads
+//	as root. The bind mount is synchronous (local filesystem), so there is no
+//	race between the container writing the file and Bridge reading it — Docker
+//	reports container exit only after all process file descriptors are closed.
 type ContainerStepResult struct {
 	// Status is the step outcome: "success", "failed", "partial", etc.
 	Status string `json:"status"`
