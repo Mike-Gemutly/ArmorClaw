@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+
+	"github.com/armorclaw/bridge/pkg/docker"
+	"github.com/armorclaw/bridge/pkg/secrets"
 )
 
 //=============================================================================
@@ -34,9 +40,10 @@ type KeystoreProvider interface {
 
 // AgentFactory spawns containers from agent definitions
 type AgentFactory struct {
-	docker   DockerClient
-	store    Store
-	keystore KeystoreProvider
+	docker      DockerClient
+	store       Store
+	keystore    KeystoreProvider
+	piiInjector *secrets.PIIInjector
 }
 
 // FactoryConfig configures the agent factory
@@ -44,15 +51,17 @@ type FactoryConfig struct {
 	DockerClient DockerClient
 	Store        Store
 	Keystore     KeystoreProvider
+	PIIInjector  *secrets.PIIInjector
 	DefaultImage string
 }
 
 // NewAgentFactory creates a new agent factory
 func NewAgentFactory(cfg FactoryConfig) *AgentFactory {
 	return &AgentFactory{
-		docker:   cfg.DockerClient,
-		store:    cfg.Store,
-		keystore: cfg.Keystore,
+		docker:      cfg.DockerClient,
+		store:       cfg.Store,
+		keystore:    cfg.Keystore,
+		piiInjector: cfg.PIIInjector,
 	}
 }
 
@@ -131,10 +140,21 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 		return nil, fmt.Errorf("failed to create agent state directory: %w", err)
 	}
 
-	// 6. Generate instance ID
+	// 5c. Prepare PII socket mount if injector is available
+	var piiSocketPath string
 	instanceID := generateID("instance")
+	if f.piiInjector != nil && len(def.PIIAccess) > 0 {
+		if err := os.MkdirAll(docker.PIIHostSocketDir, 0750); err != nil {
+			return nil, fmt.Errorf("failed to create PII socket directory: %w", err)
+		}
 
-	// 7. Create container
+		piiSocketPath = filepath.Join(docker.PIIHostSocketDir, "armorclaw-"+instanceID+".pii.sock")
+		piiMount := docker.PreparePIISocketMount(piiSocketPath)
+		hostConfig.Mounts = []mount.Mount{piiMount}
+		env = append(env, "PII_SOCKET_PATH="+docker.PIIMountPath+"/socket.sock")
+	}
+
+	// 6. Create container
 	createResp, err := f.docker.ContainerCreate(
 		ctx,
 		config,
@@ -193,8 +213,10 @@ func (f *AgentFactory) buildEnvironment(def *AgentDefinition, task string) ([]st
 		fmt.Sprintf("TASK_DESCRIPTION=%s", task),
 	)
 
-	// PII access - inject values if keystore is available
-	if f.keystore != nil && f.keystore.IsUnsealed() {
+	if f.piiInjector != nil {
+		// Socket-based injection active; PII_SOCKET_PATH env set in Spawn()
+	} else if f.keystore != nil && f.keystore.IsUnsealed() {
+		log.Printf("[WARN] pii_injector unavailable, falling back to env var PII injection for agent %s", def.ID)
 		for _, piiID := range def.PIIAccess {
 			value, err := f.keystore.Get(piiID)
 			if err != nil {
@@ -230,6 +252,14 @@ func (f *AgentFactory) Stop(ctx context.Context, instanceID string, timeout time
 		return fmt.Errorf("failed to stop container: %w", err)
 	}
 
+	// 2b. Cleanup PII socket session
+	if f.piiInjector != nil {
+		containerName := "armorclaw-" + instanceID
+		if err := f.piiInjector.Cleanup(containerName); err != nil {
+			log.Printf("[WARN] failed to cleanup PII socket for %s: %v", containerName, err)
+		}
+	}
+
 	// 3. Update instance status
 	now := time.Now()
 	instance.Status = StatusCompleted
@@ -256,6 +286,14 @@ func (f *AgentFactory) Remove(ctx context.Context, instanceID string) error {
 		RemoveVolumes: true,
 	}); err != nil {
 		// Log but continue - container may already be gone
+	}
+
+	// 2b. Cleanup PII socket session
+	if f.piiInjector != nil {
+		containerName := "armorclaw-" + instanceID
+		if err := f.piiInjector.Cleanup(containerName); err != nil {
+			log.Printf("[WARN] failed to cleanup PII socket for %s: %v", containerName, err)
+		}
 	}
 
 	// 3. Delete instance from store

@@ -189,12 +189,18 @@ func (e *StepExecutor) ExecuteSteps(
 	return nil
 }
 
+type CompletionResult struct {
+	ExitCode        int
+	ContainerResult *ContainerStepResult
+}
+
 type StepResult struct {
-	StepID      string
-	AgentID     string
-	InstanceID  string
-	Err         error
-	Recoverable bool
+	StepID          string
+	AgentID         string
+	InstanceID      string
+	Err             error
+	Recoverable     bool
+	ContainerResult *ContainerStepResult
 }
 
 func (e *StepExecutor) executeStepWithRetry(ctx context.Context, workflow *Workflow, step WorkflowStep) *StepResult {
@@ -271,6 +277,8 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 
 	instanceID := result.Instance.ID
 
+	stateDir := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s", agentID)
+
 	e.mu.Lock()
 	stepCtx, stepCancel := context.WithCancel(ctx)
 	e.runningSteps[instanceID] = &runningStep{
@@ -288,18 +296,29 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 		e.mu.Unlock()
 	}()
 
-	execResult := e.waitForCompletion(stepCtx, instanceID)
+	completionResult, waitErr := e.waitForCompletion(stepCtx, instanceID, stateDir)
 
-	return &StepResult{
+	stepResult := &StepResult{
 		StepID:      step.StepID,
 		AgentID:     agentID,
 		InstanceID:  instanceID,
-		Err:         execResult,
-		Recoverable: execResult != nil && !errors.Is(execResult, context.Canceled),
+		Recoverable: waitErr != nil && !errors.Is(waitErr, context.Canceled),
 	}
+
+	if completionResult != nil {
+		stepResult.ContainerResult = completionResult.ContainerResult
+	}
+
+	if waitErr != nil {
+		stepResult.Err = waitErr
+	} else if completionResult != nil && completionResult.ExitCode != 0 {
+		stepResult.Err = fmt.Errorf("%w: agent exited with failure", ErrStepExecutionFailed)
+	}
+
+	return stepResult
 }
 
-func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string) error {
+func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string, stateDir string) (*CompletionResult, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -307,18 +326,20 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string)
 		select {
 		case <-ctx.Done():
 			_ = e.factory.Stop(context.Background(), instanceID, 10*time.Second)
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-ticker.C:
 			instance, err := e.factory.GetStatus(ctx, instanceID)
 			if err != nil {
-				return fmt.Errorf("failed to get agent status: %w", err)
+				return nil, fmt.Errorf("failed to get agent status: %w", err)
 			}
 
 			switch instance.Status {
 			case studio.StatusCompleted:
-				return nil
+				parsed, _ := ParseContainerStepResult(stateDir)
+				return &CompletionResult{ExitCode: 0, ContainerResult: parsed}, nil
 			case studio.StatusFailed:
-				return fmt.Errorf("%w: agent exited with failure", ErrStepExecutionFailed)
+				parsed, _ := ParseContainerStepResult(stateDir)
+				return &CompletionResult{ExitCode: 1, ContainerResult: parsed}, nil
 			case studio.StatusRunning:
 				continue
 			default:
