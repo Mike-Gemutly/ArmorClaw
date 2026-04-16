@@ -343,9 +343,7 @@ func TestVaultEventBridge_WithLogger(t *testing.T) {
 
 	bus := newTestEventBus(t)
 
-	var loggerCalled atomic.Bool
 	mockLogger := slog.Default()
-	_ = mockLogger // ensure it's used through the bridge
 
 	bridge := NewVaultEventBridge(client, bus).
 		WithLogger(mockLogger)
@@ -358,7 +356,6 @@ func TestVaultEventBridge_WithLogger(t *testing.T) {
 	bridge.Stop()
 
 	// If we get here without panic, logger was accepted.
-	_ = loggerCalled
 }
 
 func TestVaultEventBridge_ConcurrentStop(t *testing.T) {

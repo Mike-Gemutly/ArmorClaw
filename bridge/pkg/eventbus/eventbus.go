@@ -12,6 +12,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/eventlog"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/websocket"
+	"log"
 	"log/slog"
 )
 
@@ -142,16 +143,12 @@ func (b *EventBus) Start() error {
 	// Start WebSocket server if configured
 	if b.websocketServer != nil {
 		if err := b.websocketServer.Start(); err != nil {
-			slog.Warn("WebSocket broadcasting requested but server is unimplemented stub. Disabling.",
-				"error", err)
-			b.websocketServer = nil
-		} else {
-			b.securityLog.LogSecurityEvent("eventbus_started",
-				slog.Bool("websocket_enabled", true),
-				slog.String("addr", b.websocketServer.Addr()))
+			log.Fatalf("CRITICAL: WebSocket broadcasting is enabled in config, but the server implementation is unavailable. Halting boot to prevent silent failure: %v", err)
 		}
-	}
-	if b.websocketServer == nil {
+		b.securityLog.LogSecurityEvent("eventbus_started",
+			slog.Bool("websocket_enabled", true),
+			slog.String("addr", b.websocketServer.Addr()))
+	} else {
 		b.securityLog.LogSecurityEvent("eventbus_started",
 			slog.Bool("websocket_enabled", false))
 	}
