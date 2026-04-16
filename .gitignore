@@ -120,6 +120,7 @@ sidecar/target/
 **/target/
 
 # Go build artifacts
+license-server/license-server
 *.exe
 *.exe~
 *.dll
