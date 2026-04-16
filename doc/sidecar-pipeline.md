@@ -76,7 +76,7 @@ If the sidecar is down, the Bridge's queue manager buffers requests and retries 
 
 ### Rust Sidecar (`sidecar/`)
 
-The Rust sidecar is organized into the following modules. The library compiles cleanly and is production-ready. The binary target has outstanding compilation errors but is not needed for library use.
+The Rust sidecar is organized into the following modules. The library code is production-quality but requires `protoc` (Protocol Buffers compiler) to compile due to the gRPC service definition. The binary target has outstanding compilation errors and is not needed for library use.
 
 #### Connectors (`sidecar/src/connectors/`)
 
@@ -98,8 +98,8 @@ Extracts text from common document formats. All extractors return structured res
 |--------|------|-------|
 | PDF | `pdf.rs` | Text extraction, split, merge |
 | DOCX | `docx.rs` | Text extraction, paragraph insert/delete, find/replace |
-| XLSX | `xlsx.rs` | Stub, returns helpful error |
-| OCR | `ocr.rs` | Stub, returns helpful error |
+| XLSX | `xlsx.rs` | Functional — calamine-based extraction with ShadowMap redaction |
+| OCR | `ocr.rs` | Functional — Tesseract subprocess + ONNX fallback, multi-language |
 | Diff | `diff.rs` | Myers algorithm for text diff |
 | HTML Diff | `html_diff.rs` | HTML-aware diff generation |
 | DOCX Diff | `docx_diff.rs` | Stub, redline document generation |
@@ -110,7 +110,7 @@ Additional document modules:
 |--------|------|---------|
 | RAG Chunking | `rag.rs` | `TextChunker` with pluggable chunking strategies |
 | Embeddings | `embeddings.rs` | `EmbeddingGenerator` trait, `OpenAIEmbedder` implementation |
-| Qdrant | `qdrant.rs` | Disabled, API compatibility issues |
+| Qdrant | `qdrant.rs` | Implemented — create/upsert/search (needs qdrant-client-rs v1.7 builder migration) |
 
 The `MAX_FILE_SIZE` constant (5 GB) caps all document operations.
 

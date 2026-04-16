@@ -43,22 +43,20 @@ ScheduledTask (cron)
 
 ---
 
-> ⚠️ **CRITICAL: Data Flow Limitation**
+> ⚠️ **Data Flow (Updated)**
 >
-> Agent containers in the secretary workflow execute with `NetworkMode: "none"`, meaning they have **zero network access**. Communication is strictly unidirectional:
+> Agent containers in the secretary workflow execute with `NetworkMode: "none"`, meaning they have **zero network access**. Communication flow:
 >
 > - **Inbound to container**: Environment variables (`STEP_CONFIG`, `PII_*` fallback)
-> - **Outbound from container**: Exit code only (0 = success, non-zero = failure)
+> - **Outbound from container**: Exit code + `result.json` (step mode) or exit code only (agent mode)
 >
-> There is **no structured result passing**. The container cannot report partial output, intermediate data, rich results, or progress. The only signal the Bridge receives is binary: **success or failure**.
+> In step mode (STEP_CONFIG present), the container writes structured results to `result.json` in the bind-mounted state dir before exit. The Bridge reads this via `ParseContainerStepResult()`. See `doc/agent-runtime.md` for the step mode flow.
 >
-> This means:
-> - Multi-step workflows cannot pass structured data between steps
+> Remaining limitations:
 > - Agent state transitions (BROWSING, FORM_FILLING, etc.) are **invisible** to the Bridge
 > - Browser automation is **impossible** in this mode (no network to reach browser service)
 > - `workflow.progress` events are **Bridge-inferred** (container still running), NOT agent-reported
->
-> A backward communication channel is planned to address these limitations.
+> - Agent mode (no STEP_CONFIG) still has no backward channel
 
 ---
 
@@ -202,14 +200,16 @@ StepExecutor                      Container (NetworkMode: "none")
     │                                      │
     ├─ Register in runningSteps map        │
     │                                      │
-    └─ waitForCompletion(ctx, instanceID)  │
+    └─ waitForCompletion(ctx, instanceID, stateDir)  │
          │                                 │
          └─ 500ms polling loop:            │
               GetStatus(instanceID)        │
-                Completed  ──▶ nil (0) ◀───│ (outbound: exit code only)
-                Failed     ──▶ Err  (non0)│
-                Running    ──▶ continue    │
-                ctx.Done() ──▶ Stop, error│
+                Completed  ──▶ ParseContainer ◀─│ (outbound: exit code +
+                             StepResult()      │  result.json in state dir)
+                Failed     ──▶ ParseContainer ◀─│
+                             StepResult()      │
+                Running    ──▶ continue        │
+                ctx.Done() ──▶ Stop, error     │
 ```
 
 ### Retry behavior
@@ -227,15 +227,15 @@ Each `WorkflowStep` carries a `Config` field (`json.RawMessage`). This is passed
 
 This is how template authors pass step specific configuration (API endpoints, parameters, flags) into the agent container without modifying the agent definition.
 
-### Data flow limitation
+### Data flow
 
-Containers spawned by the step executor run with `NetworkMode: "none"`. The executor observes only the container's exit code:
+Containers spawned by the step executor run with `NetworkMode: "none"`. In step mode, the executor observes both exit code and `result.json`:
 
-- Exit 0 (status `Completed`): step succeeded.
-- Non zero exit (status `Failed`): step failed.
+- Exit 0 (status `Completed`): step succeeded. Bridge reads `result.json` via `ParseContainerStepResult()`.
+- Non zero exit (status `Failed`): step failed. Bridge reads `result.json` for error details.
 - Container still running: keep polling.
 
-There is no structured result passing. The container cannot report partial output, intermediate data, or rich results back to the orchestrator. The only signal is binary: success or failure.
+The container writes structured results (status, output, data, error, duration_ms) to `result.json` before exit. See `doc/agent-runtime.md` Step Mode section for the full flow.
 
 ---
 
@@ -390,12 +390,12 @@ The secretary workflow engine operates in **Mode A (Agent Studio)**:
 | Container lifecycle management | ✅ Works | Spawn, poll, stop |
 | PII approval gating | ✅ Works | Matrix → user → approve/deny |
 | Workflow state tracking | ✅ Works | Bridge-level: pending → running → completed/failed |
-| Structured step results | ❌ Not available | Exit code only |
+| Structured step results | ✅ Step mode | `result.json` in state dir (step mode only) |
 | Agent-reported progress | ❌ Not available | Bridge-inferred only |
 | Browser automation | ❌ Not available | No network access |
 | Warm dispatch | ❌ Non-functional | No Matrix connection in container |
 
-**Mode B (OpenClaw Gateway)** provides network access via HTTP_PROXY but has its own limitations (integration incomplete). Mode A/B convergence is deferred until both modes have a working backward channel.
+**Mode B (OpenClaw Gateway)** provides network access via HTTP_PROXY but has its own limitations (integration incomplete).
 
 ---
 
@@ -453,13 +453,12 @@ TaskScheduler
 
 ---
 
-## Prerequisites for Full Functionality
+## Remaining Prerequisites
 
-The secretary workflow engine's full potential requires a **backward communication channel** from agent containers to the Bridge. The planned approach:
+The backward communication channel (`result.json`) and PII socket wiring are now implemented. Remaining gaps:
 
-1. **Shared state dir**: Container writes `result.json` to the bind-mounted state directory before exit
-2. **Bridge reads result**: After container exit, Bridge reads and parses `result.json`
-3. **Structured step results**: Multi-step workflows can pass data between steps
-4. **PII socket wiring**: Secure PII delivery via Unix socket instead of environment variables
-
-This is planned as a single atomic change. Both the backward channel and PII socket wiring must ship together.
+1. ~~**Shared state dir**: Container writes `result.json` to the bind-mounted state directory before exit~~ ✅ Done
+2. ~~**Bridge reads result**: After container exit, Bridge reads and parses `result.json`~~ ✅ Done
+3. **Structured step results**: Multi-step workflows can pass data between steps via `result.json` `data` field — container handlers needed for each step type
+4. ~~**PII socket wiring**: Secure PII delivery via Unix socket instead of environment variables~~ ✅ Done
+5. **Browser automation**: Requires network access — still needs Mode B or AI proxy socket

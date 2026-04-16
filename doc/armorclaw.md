@@ -6,7 +6,7 @@
 >
 > **Last Updated**: 2026-04-14
 
-> ⚠️ **Architecture Note (v0.4.1)**: Agent containers in the default execution mode (Agent Studio / Mode A) have no network access (`NetworkMode: "none"`) and communicate only via exit codes. Structured results, progress reporting, and browser automation require Mode B (OpenClaw Gateway) or the planned backward communication channel.
+> ⚠️ **Architecture Note (v0.4.1)**: Agent containers in the default execution mode (Agent Studio / Mode A) have no network access (`NetworkMode: "none"`). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation and network-dependent features still require Mode B (OpenClaw Gateway).
 
 ---
 
@@ -28,7 +28,7 @@
 | Change deployment scripts | `deploy/` and `.skills/` |
 | Modify MCP Router / tool routing | `bridge/pkg/mcp/router.go` and `bridge/pkg/interfaces/skillgate.go` |
 | Change vault governance integration | `bridge/pkg/vault/proto/` and `rust-vault/src/governance/` |
-| Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (currently stub) |
+| Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (implemented, v6-gated) |
 | Add or manage scheduled tasks | `bridge/pkg/secretary/store.go` and `bridge/pkg/secretary/task_scheduler.go` |
 | Execute or modify workflow steps | `bridge/pkg/secretary/orchestrator_integration.go` |
 
@@ -171,7 +171,7 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 ┌───────────────────────────────────────────────────────────────────────┐
 │                         THE VPS (Office)                              │
 │                                                                       │
-│  Mode A (Agent Studio): env vars → container → exit code             │
+│  Mode A (Agent Studio): env vars → container → exit code + result.json  │
 │  Mode B (OpenClaw Gateway): socket RPC + HTTP_PROXY via Squid        │
 │                                                                       │
 │  ┌─────────────┐  env vars   ┌─────────────┐       ┌─────────────┐   │
@@ -217,7 +217,7 @@ armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (60 packages)
 │   ├── cmd/bridge/main.go    # Primary entry point (3,389 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (51 methods)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (61 methods)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -229,7 +229,7 @@ armorclaw-omo/
 │   │   ├── audit/            # Audit logging
 │   │   ├── mcp/              # MCP Router with SkillGate (v6 microkernel)
 │   │   ├── vault/proto/      # Governance gRPC client (v6 microkernel)
-│   │   ├── toolsidecar/      # Tool sidecar provisioning (stub)
+│   │   ├── toolsidecar/      # Tool sidecar provisioning (v6-gated)
 │   │   └── ... (50 more)
 │   └── internal/             # Internal implementation (19 packages)
 │       ├── adapter/          # Matrix/Slack adapters
@@ -244,7 +244,7 @@ armorclaw-omo/
 │   │   ├── governance/       # gRPC governance service (ephemeral tokens)
 │   │   └── grpc/             # gRPC server with mTLS auth
 │   ├── proto/governance.proto
-│   └── tests/                # 118 tests (config, vault, placeholder, CDP, mTLS)
+│   └── tests/                # 96 tests (config, vault, placeholder, CDP, mTLS)
 │
 ├── jetski/                    # Go CDP proxy with Tethered Mode security
 │   ├── cmd/observer/main.go  # Primary entry point
@@ -382,6 +382,8 @@ type Server struct {
 | Package | Purpose |
 |---------|---------|
 | `internal/adapter/` | Matrix, Slack adapters (messaging platforms) |
+| `internal/sdtw/` | SDTW adapters — Discord, Teams, WhatsApp (uniform interface, HMAC signatures) |
+| `internal/queue/` | Persistent message queue (SQLite WAL) for SDTW adapters |
 | `pkg/matrix/` | Matrix client library |
 | `pkg/appservice/` | Matrix AppService bridges |
 | `pkg/provisioning/` | Mobile device provisioning via QR |
@@ -439,7 +441,7 @@ type Server struct {
 |---------|---------|
 | `pkg/mcp/` | MCP Router — routes tool calls through SkillGate, consent, and vault governance |
 | `pkg/vault/proto/` | Generated gRPC client for Rust Vault governance (ephemeral tokens, zeroization) |
-| `pkg/toolsidecar/` | Tool sidecar provisioning — isolated tool execution containers (stub) |
+| `pkg/toolsidecar/` | Tool sidecar provisioning — isolated tool execution containers (v6-gated) |
 
 ### Initialization Flow
 
@@ -692,7 +694,7 @@ The Rust Vault and Jetski both touch CDP interception, but at different abstract
 | **What it does** | Generates `Fetch.enable` params, resolves `{{VAULT:field:hash}}` placeholders | Full WebSocket proxy between agent and Lightpanda engine |
 | **Port usage** | None (library, no listener) | Listens on 9222 (CDP), 9223 (RPC) |
 | **PII handling** | Placeholder format validation | Active net.Conn-level PII scrubbing |
-| **Runtime state** | Compiles, 118 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
+| **Runtime state** | Compiles, 96 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
 
 **In practice**: Jetski is the **active CDP security layer**. The Rust Vault's CDP interceptor represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level.
 
@@ -866,7 +868,7 @@ service Keystore {
 
 ### Testing
 
-**Test Coverage: 118 tests across 13 test files**
+**Test Coverage: 96 tests across 10 test files**
 
 - **Config Tests** (5) - Configuration validation
 - **Error Tests** (15) - Error handling
@@ -1520,7 +1522,7 @@ Bridge ← Conduit: GET /_matrix/client/v3/sync?filter={}&since={token}
 
 ### Bridge ↔ OpenClaw Agents
 
-**Communication Pattern**: Env-var injection + exit-code polling (no structured result channel)
+**Communication Pattern**: Env-var injection + exit-code polling + `result.json` backward channel
 
 The Bridge communicates with agent containers via **environment variables only**. There is no Matrix connection inside the container, no HTTP callback, no Unix socket, and no stdout capture. The container runs with `NetworkMode: "none"` (factory.go:121) — it has zero network access.
 
@@ -1535,16 +1537,18 @@ Bridge (Go)                           Container (Docker)
 │   │                 │   "none"     │   PII_xxx values         │
 │   │                 │              │   ENABLED_SKILLS         │
 │   │                 │              │                          │
-│   │  waitForComp()  │              │  Runs OpenClaw agent     │
-│   │  polls every    │              │  (LLM calls only, no     │
-│   │  500ms via      │              │   network access)        │
-│   │  ContainerInspect              │                          │
-│   │  checks exit ◀─│──────────────│  Exit code:              │
-│   │   code only     │              │    0 = completed         │
-│   │                 │              │    !0 = failed           │
+│   │  waitForComp()  │              │  STEP_CONFIG present?    │
+│   │  polls every    │              │    → Step mode: execute, │
+│   │  500ms via      │              │      write result.json,  │
+│   │  ContainerInspect              │      exit                │
+│   │  checks exit ◀─│──────────────│    → Agent mode: Matrix  │
+│   │   code          │              │      polling loop        │
+│   │                 │              │                          │
+│   │  ParseContainer │  result.json │  Exit code:              │
+│   │  StepResult() ◀─│◀────────────│    0 = completed         │
+│   │  (state dir)    │              │    !0 = failed           │
 │   └─StepResult      │              │                          │
-│     success/fail    │              │  (agent output is lost)  │
-│     (no data)       │              │                          │
+│     + ContainerResult│              │  result.json (step mode) │
 └─────────────────────┘              └──────────────────────────┘
 ```
 
@@ -1555,11 +1559,11 @@ Bridge (Go)                           Container (Docker)
 
 **Agent States**: OFFLINE, IDLE, BROWSING, FORM_FILLING, AWAITING_APPROVAL, AWAITING_CAPTCHA, AWAITING_2FA, PROCESSING_PAYMENT, COMPLETE, ERROR
 
-**Data flow limitation**: The container's agent output (LLM responses, tool results, browser actions) is **not captured** by the Bridge. Only the exit code is observed. Structured results would require a new communication channel.
+**Data flow**: In step mode, the container writes structured results to `result.json` in the state dir before exit. The Bridge reads this via `ParseContainerStepResult()`. In agent mode (no STEP_CONFIG), the agent output is not captured — only the exit code is observed.
 
-> ⚠️ **Mode A Communication Limitation**: Agent containers spawned by the studio factory run with `NetworkMode: "none"`. They receive task configuration via environment variables (`STEP_CONFIG`) and report results via exit code only. There is no backward channel for structured results, progress reporting, or agent-reported state transitions. This is a known architectural gap, see the [Agent Communication Model](#agent-communication-model) section below.
+> ⚠️ **Mode A Communication**: Agent containers spawned by the studio factory run with `NetworkMode: "none"`. They receive task configuration via environment variables (`STEP_CONFIG`) and report results via exit code + `result.json` (step mode) or exit code only (agent mode). See [Agent Communication Model](#agent-communication-model) below.
 
-**State directory**: Each agent gets a bind-mounted directory at `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` inside the container. The container writes OpenClaw session data here. This is the only shared filesystem between Bridge and container, but the Bridge does not currently read it.
+**State directory**: Each agent gets a bind-mounted directory at `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` inside the container. In step mode, the container writes `result.json` here before exit. The Bridge reads it via `ParseContainerStepResult()` after container exit.
 
 **Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. Warm path sends a Matrix event to a running agent's room. Cold path spawns a new container from the agent definition. Uses `robfig/cron/v3` for cron expression parsing.
 
@@ -1694,9 +1698,11 @@ ArmorClaw supports two agent execution modes with different communication capabi
 
 - **Network**: `NetworkMode: "none"` (zero network access)
 - **Inbound**: Environment variables (`STEP_CONFIG`, `PII_*` fallback)
-- **Outbound**: Exit code only (0 = success, non-zero = failure)
+- **Outbound**: Exit code + `result.json` (step mode) or exit code only (agent mode)
 - **Bind-mount**: `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` (read-write)
-- **Limitations**: No structured results, no progress reporting, no agent-reported state, no browser automation, no CDP connectivity
+- **Step mode**: When `STEP_CONFIG` is present, container parses config, executes task, writes `result.json` to state dir, exits. Bridge reads via `ParseContainerStepResult()`. See `doc/agent-runtime.md` for details.
+- **Agent mode**: When `STEP_CONFIG` is absent, container runs the OpenClaw agent Matrix polling loop (no backward channel in this mode)
+- **Limitations**: No network access, no progress reporting, no browser automation, no CDP connectivity
 - **Used by**: Secretary workflow engine (`StepExecutor`), task scheduler (`coldDispatch`)
 
 ### Mode B: OpenClaw Gateway (Compose Profile)
@@ -1708,7 +1714,7 @@ ArmorClaw supports two agent execution modes with different communication capabi
 - **Status**: Integration incomplete (`entrypoint.ts` TODO at line 185)
 - **Used by**: docker-compose `openclaw` profile
 
-> ⚠️ **CRITICAL**: Mode A containers cannot browse the web, fill forms, report progress, or return structured results. The secretary workflow engine operates in Mode A. Features advertised as "browser automation in workflows" require Mode B or a future backward channel implementation.
+> ⚠️ **CRITICAL**: Mode A containers cannot browse the web, fill forms, or report progress in real-time. Structured results are available in step mode via `result.json`. Browser-based workflows require Mode B or a future network-bridged execution.
 
 ---
 
@@ -2047,7 +2053,7 @@ Generated gRPC client stubs from `governance.proto`. Provides four methods:
 
 #### ToolSidecar (`bridge/pkg/toolsidecar/`)
 
-> **Status: Stub** — The interface and data structures exist, but container spawning is not yet implemented. Full implementation is planned for a future phase.
+> **Status: Implemented** — `Provisioner.SpawnToolSidecar()` creates hardened containers (NetworkMode: none, readonly, cap-drop ALL, 512MB memory). `StopToolSidecar()` tears them down. Currently gated behind v6 microkernel flag.
 
 ```go
 type ToolSidecar struct {
@@ -2064,7 +2070,7 @@ type ToolSidecar struct {
 | Aspect | v6 Microkernel OFF (default) | v6 Microkernel ON |
 |--------|----------------------------|-------------------|
 | **Vault governance** | Skipped entirely | Active — ephemeral tokens, zeroization |
-| **Tool isolation** | Skills execute in-process | ToolSidecar containers (when implemented) |
+| **Tool isolation** | Skills execute in-process | ToolSidecar containers (SpawnToolSidecar) |
 | **Secret access** | Direct keystore retrieval | Vault-issued ephemeral tokens |
 | **Event streaming** | No governance events | gRPC stream from Rust Vault |
 | **Backward compat** | Full v4.x behavior | Enhanced security model |
@@ -3070,7 +3076,7 @@ When a state transition occurs:
 **The `onStatusChange` callback is never wired to the OpenClaw container.** The evidence:
 
 - `OnStatusChange()` (`integration.go:66`) accepts a callback, but **no caller sets it** in production code — only in tests (`integration_test.go:268`)
-- `AgentCoordinator.BroadcastStatus()` (`integration.go:330`) is a **stub** — comment says "for now, we just log" and returns `nil`
+- `AgentCoordinator.BroadcastStatus()` (`integration.go:339`) is a **stub** — returns `fmt.Errorf("... not implemented")` because containers have no network to push state
 - The eventbus has `EventTypeAgentStatusChanged` defined (`eventbus/events.go:22`) but **no code publishes agent state machine events to it**
 - OpenClaw TypeScript code has **zero references** to `com.armorclaw.agent.status`, `state_machine`, or `StatusEvent`
 - The `→ IDLE` and `→ COMPLETE` transitions are **invisible to the container runtime**

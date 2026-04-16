@@ -8,7 +8,9 @@
 >
 > **No container-to-Bridge state reporting exists.** The 11-state state machine (`IDLE` through `OFFLINE`) is a Bridge-internal library used for lifecycle tracking. Containers cannot report which state they are in. The Bridge only observes: `running` (container exists) -> `completed` (exit 0) -> `failed` (exit non-zero).
 >
-> Agent containers execute with `NetworkMode: "none"` and have zero network access. Communication is unidirectional: environment variables in, exit code out.
+> **Backward channel:** Containers in step mode (STEP_CONFIG present) write structured results to `result.json` in the bind-mounted state dir before exit. The Bridge reads this via `ParseContainerStepResult()`. See [Step Mode](#step-mode-step_config) below.
+>
+> Agent containers execute with `NetworkMode: "none"` and have zero network access. Communication: environment variables in, exit code + `result.json` out (step mode) or exit code only out (agent mode).
 
 ## Overview
 
@@ -18,7 +20,7 @@ The runtime is *not* the same thing as the agent state machine documented in [ar
 
 ### Execution Modes
 
-- **Mode A (Agent Studio)**: Containers spawned by `factory.Spawn()` with `NetworkMode: "none"`. Task delivered via `STEP_CONFIG` env var. Results via exit code only. No network access. This is the default for secretary workflow steps.
+- **Mode A (Agent Studio)**: Containers spawned by `factory.Spawn()` with `NetworkMode: "none"`. Task delivered via `STEP_CONFIG` env var. Results via exit code + `result.json` in bind-mounted state dir (`/home/claw/.openclaw/`). When `STEP_CONFIG` is present, container runs in **step mode**: parses config, executes task, writes `result.json`, exits. When absent, runs in **agent mode** (Matrix polling loop). No network access. This is the default for secretary workflow steps.
 - **Mode B (OpenClaw Gateway)**: Containers via docker-compose with `armorclaw-isolated` network and `HTTP_PROXY`. Can reach external services through Squid proxy on go-bridge. Integration incomplete. See `container/Dockerfile.openclaw-standalone` and `docker-compose.bridge.yml`.
 
 ## Architecture
@@ -43,11 +45,42 @@ The runtime is *not* the same thing as the agent state machine documented in [ar
                          │    ToolCache (LRU + TTL)            │
                          └─────────────────────────────────────┘
 
-    Unidirectional container communication:
+    Bidirectional container communication (step mode):
 
     Task config (STEP_CONFIG env var) ──────▶ Container (NetworkMode: "none")
-    Bridge polls Docker ContainerInspect ◀────── Container (exit code only)
+    Bridge polls Docker ContainerInspect ◀────── Container (exit code + result.json)
 ```
+
+## Step Mode (STEP_CONFIG)
+
+When the Bridge sets `STEP_CONFIG` via `factory.go:Spawn()`, the container enters step mode instead of the default agent mode (Matrix polling loop). Step mode is the backward channel for Mode A containers.
+
+**Flow:**
+1. Bridge calls `factory.Spawn()` with `step.Config` → sets `STEP_CONFIG` env var
+2. `entrypoint.py` detects `STEP_CONFIG` → imports `step_runner`
+3. `step_runner.py` parses config via `step_config.py`, dispatches to a handler, writes `result.json`
+4. Container exits (0 for success, 1 for failure)
+5. Bridge's `waitForCompletion()` polls Docker, then calls `ParseContainerStepResult(stateDir)`
+
+**Container-side modules** (in `container/openclaw/`):
+- `step_config.py` — Parses `STEP_CONFIG` env var into `StepConfig` object
+- `step_runner.py` — Executes step via handler (echo, transform, default), writes result
+- `result_writer.py` — Atomic write of `result.json` (temp file + `os.rename()`)
+
+**result.json schema** (matches `ContainerStepResult` in `bridge/pkg/secretary/result.go`):
+```json
+{
+  "status": "success",
+  "output": "human-readable output",
+  "data": {"key": "value"},
+  "error": "error message if failed",
+  "duration_ms": 1500
+}
+```
+
+Fields: `status` (string, required), `output` (string, required), `data` (map, omitempty), `error` (string, omitempty), `duration_ms` (int, required).
+
+**Handlers:** Computation-only (no network). `echo` (for testing), `transform` (JSON-to-JSON), default (logs task received). Additional handlers require a separate plan with AI proxy socket.
 
 The `Runtime` struct in `internal/agent/runtime.go` holds all subsystems together:
 
