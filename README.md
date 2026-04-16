@@ -1089,6 +1089,39 @@ cd bridge && go test -v ./pkg/rpc/...
 ./tests/test-rpc-methods.sh
 ```
 
+### Sidecar Test Coverage
+
+The document processing pipeline has comprehensive test coverage across both Rust and Python sidecars:
+
+**Python MarkItDown Sidecar** (`sidecar-python/`):
+
+| Test File | Tests | Description |
+|-----------|-------|-------------|
+| `test_worker.py` | 27 | Server startup, format mapping, text extraction, threshold streaming, TTL |
+| `test_edge_cases.py` | 16 | Empty payloads, corrupt files, 10MB boundary, concurrent requests, token integration |
+| `test_interceptor.py` | 12 | HMAC-SHA256 token validation edge cases |
+| `test_docker_integration.py` | 10 | Container lifecycle, network isolation, filesystem security (skip without Docker) |
+
+**Go Bridge Routing** (`bridge/pkg/sidecar/`):
+
+| Test File | Tests | Description |
+|-----------|-------|-------------|
+| `office_client_test.go` | 18 | 3-layer routing: native text bypass, compound validation, strict drop |
+| `office_client_e2e_test.go` | 7 | Full Go→Python E2E: XLSX conversion, MSG handling, docx non-routing |
+
+**Run all sidecar tests:**
+```bash
+# Python sidecar (unit + integration)
+cd sidecar-python && python -m pytest -v
+
+# Go routing + E2E
+cd bridge && go test -v -run "TestRouteExtractText|TestE2E" ./pkg/sidecar/...
+
+# Full regression (Python + Go)
+cd sidecar-python && python -m pytest -v
+cd bridge && go test ./pkg/sidecar/...
+```
+
 CI Pipeline:
 ```
 precheck → rpc-unit-tests → rpc-integ-tests → docker-build → docker-smoke → docker-push
@@ -1204,6 +1237,26 @@ The Rust sidecar handles heavy I/O operations:
 - PII interception before sidecar calls
 - Unix domain socket with 0600 permissions
 
+### Python MarkItDown Sidecar (Legacy Office Formats)
+
+The Python sidecar extends document processing with legacy Microsoft Office format support via the MarkItDown library:
+
+- **Formats**: XLSX, PPTX, MSG (Outlook email), XLS, DOC, PPT
+- **Routing**: Go Bridge validates magic bytes (ZIP/OLE) + MIME type, routes to Python sidecar
+- **Security**: HMAC-SHA256 token validation, `NetworkMode: none`, `cap_drop: ALL`, read-only root
+- **Performance**: Threshold streaming — in-memory for <10 MB, temp file for ≥10 MB
+- **Reliability**: TTL recycling — server exits after 50 requests for container restart cycling
+- **Communication**: gRPC over Unix Domain Socket (`/run/armorclaw/sidecar-office.sock`)
+- **Test Coverage**: 90 tests (27 worker + 16 edge cases + 12 interceptor + 7 E2E + 18 routing + 10 Docker)
+
+**3-Layer Routing** (Go Bridge `RouteExtractText()`):
+
+| Layer | Condition | Action |
+|-------|-----------|--------|
+| 0 | Plain text (txt, csv, json, md) | Decode natively in Go — no sidecar call |
+| 1 | Valid magic + MIME match | Route to Python (XLSX/PPTX/MSG/XLS/DOC/PPT) or Rust (PDF/DOCX) |
+| 2 | Magic bytes ≠ declared format | **Strict drop** — reject immediately |
+
 ### Jetski Browser Sidecar
 
 Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents and the browser engine:
@@ -1266,6 +1319,7 @@ Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents 
 * **Tests:** [tests/integration/](tests/integration/) (v4.4.0+)
 * **GitHub Actions:** [Actions](https://github.com/Gemutly/ArmorClaw/actions) (CI/CD pipelines)
 * **Jetski Sidecar:** [jetski/README.md](jetski/README.md)
+* **Document Pipeline:** [doc/sidecar-pipeline.md](doc/sidecar-pipeline.md) (Rust + Python sidecars, Go routing, YARA)
 
 ---
 

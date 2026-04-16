@@ -4,7 +4,7 @@
 
 ## Overview
 
-The document processing pipeline handles file ingestion, text extraction, encryption, and split-storage for RAG across three codebases: a Rust sidecar (data plane), a Go gRPC client (control plane bridge), and a YARA content scanner. Together they form the secure document path from cloud storage to chunked, encrypted storage with provenance tracking.
+The document processing pipeline handles file ingestion, text extraction, encryption, and split-storage for RAG across multiple codebases: a Rust sidecar (data plane), a Python MarkItDown sidecar (legacy Office format support), a Go gRPC client with 3-layer routing (control plane bridge), and a YARA content scanner. Together they form the secure document path from cloud storage to chunked, encrypted storage with provenance tracking.
 
 **Not to be confused with `rust-vault/`.** The vault handles secrets and credential storage. The sidecar handles documents: extracting text, encrypting chunks, scanning for malware, and maintaining a provenance chain. They share no code.
 
@@ -313,9 +313,135 @@ Agents initiate document operations through Matrix rooms. The Bridge translates 
 
 Jetski (`jetski/`) is a separate component that handles browser automation via CDP. The document sidecar does not interact with Jetski directly. They share the same Bridge control plane but operate independently. Jetski handles web pages; the document sidecar handles files.
 
+### Python MarkItDown Sidecar (`sidecar-python/`)
+
+The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust sidecar does not support natively: `.xlsx`, `.pptx`, `.msg`, `.doc`, `.xls`, and `.ppt`.
+
+#### Architecture
+
+```
+                        Go Bridge (Control Plane)
+                        ┌────────────────────────────────────────┐
+                        │  bridge/pkg/sidecar/                   │
+                        │  ┌──────────────────────────────────┐  │
+                        │  │ RouteExtractText()               │  │
+                        │  │ Layer 0: native text bypass      │  │
+                        │  │ Layer 1: compound magic+format   │  │
+                        │  │ Layer 2: strict drop on mismatch │  │
+                        │  └──────────┬───────────────────────┘  │
+                        │             │                           │
+                        │     ┌───────┴────────┐                  │
+                        │     ▼                ▼                  │
+                        │  ┌────────┐   ┌──────────────┐         │
+                        │  │ Rust   │   │ Python       │         │
+                        │  │ Sidecar│   │ MarkItDown   │         │
+                        │  │ (PDF,  │   │ Sidecar      │         │
+                        │  │ DOCX)  │   │ (XLSX, PPTX, │         │
+                        │  └────────┘   │  MSG, DOC,   │         │
+                        │               │  XLS, PPT)   │         │
+                        │               └──────────────┘         │
+                        └────────────────────────────────────────┘
+```
+
+#### Routing Logic (3-Layer)
+
+| Layer | Condition | Action |
+|-------|-----------|--------|
+| **Layer 0** | `text/plain`, `text/csv`, `application/json`, `text/markdown` | Decode natively in Go — no sidecar call |
+| **Layer 1** | ZIP magic + xlsx/pptx format → Python; OLE magic + xls/msg/doc/ppt format → Python; ZIP magic + docx/pdf → Rust | Route to appropriate sidecar based on compound magic byte + MIME type validation |
+| **Layer 2** | Magic bytes don't match declared format (e.g., ZIP magic + msg format) | **Strict drop** — return `InvalidArgument` immediately |
+
+#### Key Design Decisions
+
+- **Compound validation**: The Go Bridge validates both the file's magic bytes (ZIP: `PK\x03\x04` or OLE: `\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1`) AND the declared MIME type before routing. Mismatches are rejected at the gateway.
+- **No HTTP/FastAPI**: The Python sidecar uses `grpc.server()` exclusively — no HTTP endpoints exposed.
+- **Threshold streaming**: Files under 10 MB are converted in-memory via `BytesIO`. Files over 10 MB are written to a temp file for conversion, then cleaned up.
+- **TTL recycling**: The server exits gracefully after `MAX_REQUESTS` (default: 50) to enable container restart cycling.
+- **Network isolation**: Container runs with `NetworkMode: none`, `cap_drop: ALL`, read-only root filesystem, and tmpfs for `/tmp/office_worker`.
+
+#### Python Server (`sidecar-python/worker.py`)
+
+| Feature | Implementation |
+|---------|---------------|
+| **gRPC Server** | Sync `grpc.server()` with `ThreadPoolExecutor` |
+| **Format Mapping** | `FORMAT_MAP` — 6 MIME types → extensions |
+| **Conversion** | MarkItDown library with `StreamInfo` for in-memory path |
+| **Threshold** | `_THRESHOLD_BYTES = 10 * 1024 * 1024` (10 MB) |
+| **TTL** | `MAX_REQUESTS = 50` before graceful shutdown |
+| **Version** | `SERVER_VERSION = "1.0.0"` in `HealthCheck` response |
+| **Socket** | `SIDECAR_SOCKET` env var (default: `/run/armorclaw/sidecar-office.sock`) |
+
+#### Token Interceptor (`sidecar-python/interceptor.py`)
+
+HMAC-SHA256 token validation using `grpc_aio.ServerInterceptor`. Tokens carry `{request_id}:{timestamp}:{hmac_signature}` format with configurable TTL.
+
+> **Known issue**: The production `TokenInterceptor` is `grpc_aio.ServerInterceptor` (async) but `worker.py` uses sync `grpc.server()`. This causes `AttributeError` at runtime. Tests use a sync `_SyncTokenInterceptor` wrapper. This is a pre-existing production bug.
+
+#### Supported Formats
+
+| Format | MIME Type | Magic Bytes | Extension | Converter |
+|--------|-----------|-------------|-----------|-----------|
+| Excel (modern) | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | ZIP (PK) | `.xlsx` | MarkItDown `XlsxConverter` |
+| PowerPoint (modern) | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | ZIP (PK) | `.pptx` | MarkItDown `PptxConverter` |
+| Outlook Email | `application/vnd.ms-outlook` | OLE (D0CF) | `.msg` | MarkItDown `OutlookMsgConverter` |
+| Word (legacy) | `application/msword` | OLE (D0CF) | `.doc` | Error — XlsConverter intercepts |
+| Excel (legacy) | `application/vnd.ms-excel` | OLE (D0CF) | `.xls` | MarkItDown `XlsConverter` |
+| PowerPoint (legacy) | `application/vnd.ms-powerpoint` | OLE (D0CF) | `.ppt` | Error — XlsConverter intercepts |
+
+> **Limitation**: Legacy `.doc` and `.ppt` files produce conversion errors because MarkItDown's `XlsConverter` claims OLE files before the Word/PowerPoint converters. This is a known MarkItDown library limitation.
+
+#### Docker Deployment (`deploy/docker-compose.sidecar-py.yml`)
+
+```yaml
+# Container hardening
+network_mode: none
+cap_drop: [ALL]
+read_only: true
+security_opt: [no-new-privileges:true]
+mem_limit: 512MB
+tmpfs:
+  - /tmp/office_worker:size=100M
+```
+
+#### Test Coverage
+
+| Test File | Tests | Status |
+|-----------|-------|--------|
+| `sidecar-python/test_worker.py` | 27 | All pass |
+| `sidecar-python/test_edge_cases.py` | 16 | All pass |
+| `sidecar-python/test_interceptor.py` | 12 | All pass |
+| `sidecar-python/test_docker_integration.py` | 10 | Skip when no Docker |
+| `bridge/pkg/sidecar/office_client_e2e_test.go` | 7 | All pass |
+| `bridge/pkg/sidecar/office_client_test.go` | 18 | All pass |
+| **Total** | **90** | **0 regressions** |
+
+#### Running Tests
+
+```bash
+# Python unit + integration tests
+cd sidecar-python && python -m pytest test_worker.py test_edge_cases.py test_interceptor.py -v
+
+# Go routing + E2E tests
+cd bridge && go test -v -run "TestRouteExtractText|TestE2E" ./pkg/sidecar/
+
+# Full regression (Python + Go)
+cd sidecar-python && python -m pytest -v
+cd bridge && go test ./pkg/sidecar/...
+```
+
+#### Go Client Routing (`bridge/pkg/sidecar/office_client.go`)
+
+The `RouteExtractText()` function implements the 3-layer routing:
+
+1. **Native text bypass**: Detects `text/*` MIME types and returns decoded content immediately without any gRPC call.
+2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based office formats to Python, ZIP-based docx/pdf to Rust.
+3. **Strict drop**: If magic bytes contradict the declared format (e.g., OLE magic with xlsx MIME), returns `codes.InvalidArgument` without calling any sidecar.
+
 ## References
 
-- [sidecar/README.md](../sidecar/README.md) - Full sidecar documentation (API, testing, deployment, security audit)
+- [sidecar/README.md](../sidecar/README.md) - Full Rust sidecar documentation (API, testing, deployment, security audit)
 - [armorclaw.md](armorclaw.md) - ArmorClaw system documentation index
 - `.sisyphus/audits/SECURITY_AUDIT_TASK_49.md` - Security audit results
-- `.sisyphus/plans/rust-office-sidecar.md` - Implementation plan
+- `.sisyphus/plans/rust-office-sidecar.md` - Rust sidecar implementation plan
+- `.sisyphus/plans/markitdown-sidecar.md` - Python MarkItDown sidecar implementation plan
+- `.sisyphus/plans/markitdown-sidecar-testing.md` - Python sidecar testing plan

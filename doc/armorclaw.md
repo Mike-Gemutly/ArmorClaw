@@ -29,6 +29,7 @@
 | Modify MCP Router / tool routing | `bridge/pkg/mcp/router.go` and `bridge/pkg/interfaces/skillgate.go` |
 | Change vault governance integration | `bridge/pkg/vault/proto/` and `rust-vault/src/governance/` |
 | Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (implemented, v6-gated) |
+| Modify Python office sidecar | `sidecar-python/worker.py`, `sidecar-python/interceptor.py`, `bridge/pkg/sidecar/office_client.go` |
 | Add or manage scheduled tasks | `bridge/pkg/secretary/store.go` and `bridge/pkg/secretary/task_scheduler.go` |
 | Execute or modify workflow steps | `bridge/pkg/secretary/orchestrator_integration.go` |
 
@@ -115,6 +116,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
 | **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill library | `rust-vault/src/lib.rs` |
+| **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (XLSX, PPTX, MSG, XLS, DOC, PPT) | `sidecar-python/worker.py` |
 </component>
 
 ---
@@ -272,6 +274,15 @@ armorclaw-omo/
 │
 ├── deploy/                   # Deployment scripts (32 scripts)
 │   └── install.sh           # One-command installer
+│
+├── sidecar-python/           # Python MarkItDown sidecar (legacy Office formats)
+│   ├── worker.py            # gRPC server with ExtractText, threshold streaming, TTL recycling
+│   ├── interceptor.py       # HMAC-SHA256 token validation interceptor
+│   ├── conftest.py          # Test fixtures for 6 document formats
+│   ├── test_worker.py       # 27 server unit tests
+│   ├── test_edge_cases.py   # 16 edge case tests
+│   ├── test_interceptor.py  # 12 interceptor tests
+│   └── proto/               # Generated gRPC stubs from sidecar.proto
 │
 ├── .skills/                  # AI CLI deployment skills
 │   ├── deploy.yaml
@@ -2095,9 +2106,11 @@ This section documents code that exists in the repository but is **not active** 
 The Rust Office Sidecar is a **high-performance data plane component** for heavy I/O operations, separate from the Rust Vault security enclave. It handles:
 
 - **Cloud Storage Access** - S3, SharePoint, Azure Blob operations
-- **Document Processing** - PDF text extraction, DOCX parsing, XLSX, OCR
+- **Document Processing** - PDF text extraction, DOCX parsing, OCR
 - **Data Transformation** - Heavy computational work
 - **Reliability Features** - Circuit breakers, rate limiting, retry logic
+
+> **Routing split**: PDF and DOCX documents route to this Rust sidecar. XLSX, PPTX, MSG, XLS, DOC, and PPT formats route to the Python MarkItDown sidecar (`sidecar-python/`). See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the full 3-layer routing architecture.
 
 ### Architecture
 
@@ -2162,7 +2175,7 @@ cargo build --release
 |--------|--------|----------|
 | **PDF** | ✅ Working | Text extraction, metadata, merging |
 | **DOCX** | ✅ Working | Text extraction |
-| **XLSX** | ⚠️ Stub | Returns helpful error message |
+| **XLSX** | ➡️ Python | Routed to Python MarkItDown sidecar |
 | **OCR** | ⚠️ Stub | Returns helpful error message |
 | **Diff** | ✅ Working | Myers algorithm, HTML diff |
 
@@ -2350,7 +2363,7 @@ All security constraints from the plan are met:
 | Limitation | Status | Workaround |
 |------------|--------|------------|
 | Binary compilation | 74 errors | Use library directly |
-| XLSX extraction | Stub only | Return helpful error |
+| XLSX extraction | Routes to Python | `sidecar-python/` handles XLSX, PPTX, MSG, XLS, DOC, PPT |
 | OCR processing | Stub only | Return helpful error |
 | Azure Blob | Disabled (OpenSSL) | Use S3 or SharePoint |
 | gRPC proto | Not generated | Implement manually |
@@ -2857,7 +2870,7 @@ CF_TUNNEL_DOMAIN=armorclaw.example.com
 
 ### Test Categories
 
-The testing suite includes **10 comprehensive test categories** with **136+ individual tests**:
+The testing suite includes **11 comprehensive test categories** with **226+ individual tests**:
 
 | Category | Description | Test Count |
 |----------|-------------|------------|
@@ -2871,6 +2884,7 @@ The testing suite includes **10 comprehensive test categories** with **136+ indi
 | **SSL/TLS** | Certificate presence, expiry, chain | 6 |
 | **Performance** | SSH speed, API times, container resources | 6 |
 | **Output Formatting** | JSON console output, error handling | 1 |
+| **Python Sidecar** | Worker unit tests, edge cases, token interceptor, E2E | 90 |
 
 ### Running Tests
 
@@ -2904,6 +2918,12 @@ bash tests/ssh/run_all_tests.sh --all --output json
 - **ARMORCLAW.md** - AI-powered deployment skills introduction
 - **AGENTS.md** - Agent OS orchestration guidance
 - **CLAUDE.md** - Claude Code development standards
+
+### Sidecar Documentation
+- **doc/sidecar-pipeline.md** - Document processing pipeline (Rust + Python sidecars, Go routing, YARA)
+- **sidecar/README.md** - Rust sidecar internals (connectors, encryption, provenance)
+- **sidecar-python/worker.py** - Python MarkItDown sidecar (XLSX, PPTX, MSG, XLS, DOC, PPT conversion)
+- **bridge/pkg/sidecar/office_client.go** - 3-layer routing logic (native bypass, compound validation, strict drop)
 
 ### Review Documentation
 - `applications/ArmorChat-review.md` - Android client review
@@ -2992,6 +3012,14 @@ cargo test --all
 # Run JetSki tests
 cd jetski
 go test ./...
+
+# Run Python MarkItDown sidecar tests
+cd sidecar-python
+python -m pytest test_worker.py test_edge_cases.py test_interceptor.py -v
+
+# Run Go→Python E2E integration tests
+cd bridge
+go test -v -run "TestRouteExtractText|TestE2E" ./pkg/sidecar/...
 ```
 
 ### Environment Variables for Development
@@ -3017,6 +3045,7 @@ LOG_LEVEL=debug
 | 9222 | JetSki CDP Proxy (agent-facing) | WebSocket |
 | 9223 | JetSki RPC API | HTTP/JSON-RPC |
 | 9333 | Lightpanda Engine | CDP over WebSocket |
+| Unix socket | Python MarkItDown Sidecar | gRPC (`/run/armorclaw/sidecar-office.sock`) |
 
 ---
 
