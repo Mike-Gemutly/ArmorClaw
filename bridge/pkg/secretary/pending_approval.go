@@ -3,6 +3,7 @@ package secretary
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -17,9 +18,31 @@ const (
 	PIIRequestEventType  = "app.armorclaw.pii_request"
 	PIIResponseEventType = "app.armorclaw.pii_response"
 
-	// piiApprovalTimeout is the maximum time to wait for a PII approval response.
-	piiApprovalTimeout = 120 * time.Second
+	// DefaultPIIApprovalTimeout is the fallback when no config is provided.
+	DefaultPIIApprovalTimeout = 120 * time.Second
+
+	// MaxPIIApprovalTimeout is the hard upper bound (15 minutes).
+	MaxPIIApprovalTimeout = 900 * time.Second
 )
+
+// ApprovalTimeout holds the configured timeout duration for PII approvals.
+// It can be set via Bridge TOML [secretary] block. Defaults to 120s, max 900s.
+var ApprovalTimeout = DefaultPIIApprovalTimeout
+
+// SetApprovalTimeout configures the PII approval timeout, clamped to MaxPIIApprovalTimeout.
+func SetApprovalTimeout(d time.Duration) {
+	if d <= 0 {
+		ApprovalTimeout = DefaultPIIApprovalTimeout
+		return
+	}
+	if d > MaxPIIApprovalTimeout {
+		slog.Warn("PII approval timeout exceeds maximum, clamping",
+			"requested", d, "maximum", MaxPIIApprovalTimeout)
+		ApprovalTimeout = MaxPIIApprovalTimeout
+		return
+	}
+	ApprovalTimeout = d
+}
 
 //=============================================================================
 // Pending Approval Registry
@@ -83,8 +106,8 @@ func PendingApproval(ctx context.Context, eventBus *events.MatrixEventBus, roomI
 		}
 		return resp.Fields, nil
 
-	case <-time.After(piiApprovalTimeout):
-		return nil, fmt.Errorf("PII approval timed out for step %s after %v", stepID, piiApprovalTimeout)
+	case <-time.After(ApprovalTimeout):
+		return nil, fmt.Errorf("PII approval timed out for step %s after %v", stepID, ApprovalTimeout)
 
 	case <-ctx.Done():
 		return nil, fmt.Errorf("PII approval cancelled for step %s: %w", stepID, ctx.Err())
