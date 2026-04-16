@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package armorclaw.sidecar.v1;
+
+option go_package = "github.com/armorclaw/bridge/pkg/sidecar/proto;sidecar";
+
+service SidecarService {
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+    
+    // Storage operations
+    rpc UploadBlob(UploadBlobRequest) returns (UploadBlobResponse);
+    rpc DownloadBlob(DownloadBlobRequest) returns (stream BlobChunk);
+    rpc ListBlobs(ListBlobsRequest) returns (ListBlobsResponse);
+    rpc DeleteBlob(DeleteBlobRequest) returns (DeleteBlobResponse);
+    
+    // Document operations
+    rpc ExtractText(ExtractTextRequest) returns (ExtractTextResponse);
+    rpc ProcessDocument(ProcessDocumentRequest) returns (ProcessDocumentResponse);
+}
+
+// Authentication metadata
+message RequestMetadata {
+    string request_id = 1;
+    string ephemeral_token = 2;
+    int64 timestamp_unix = 3;
+    string operation_signature = 4;
+}
+
+// Health check
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+    string status = 1;
+    int64 uptime_seconds = 2;
+    int32 active_requests = 3;
+    int64 memory_used_bytes = 4;
+    string version = 5;
+}
+
+// Storage messages
+message UploadBlobRequest {
+    RequestMetadata metadata = 1;
+    string provider = 2;
+    string destination_uri = 3;
+    string content_type = 4;
+    map<string, string> provider_config = 5;
+    bytes content = 6;
+    string local_file_path = 7;
+}
+
+message UploadBlobResponse {
+    string blob_id = 1;
+    string etag = 2;
+    int64 size_bytes = 3;
+    string content_hash_sha256 = 4;
+    int64 timestamp_unix = 5;
+}
+
+message DownloadBlobRequest {
+    RequestMetadata metadata = 1;
+    string provider = 2;
+    string source_uri = 3;
+    map<string, string> provider_config = 4;
+    int64 offset_bytes = 5;
+    int64 max_bytes = 6;
+}
+
+message BlobChunk {
+    bytes data = 1;
+    int64 offset = 2;
+    bool is_last = 3;
+}
+
+message ListBlobsRequest {
+    RequestMetadata metadata = 1;
+    string provider = 2;
+    string prefix = 3;
+    int32 max_results = 4;
+    map<string, string> provider_config = 5;
+}
+
+message ListBlobsResponse {
+    repeated BlobInfo blobs = 1;
+    string continuation_token = 2;
+}
+
+message BlobInfo {
+    string uri = 1;
+    int64 size_bytes = 2;
+    string content_type = 3;
+    int64 last_modified_unix = 4;
+    string etag = 5;
+}
+
+message DeleteBlobRequest {
+    RequestMetadata metadata = 1;
+    string provider = 2;
+    string uri = 3;
+    map<string, string> provider_config = 4;
+}
+
+message DeleteBlobResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// Document processing messages
+message ExtractTextRequest {
+    RequestMetadata metadata = 1;
+    string document_format = 2;
+    bytes document_content = 3;
+    string document_uri = 4;
+    map<string, string> options = 5;
+}
+
+message ExtractTextResponse {
+    string text = 1;
+    int32 page_count = 2;
+    map<string, string> metadata = 3;
+}
+
+message ProcessDocumentRequest {
+    RequestMetadata metadata = 1;
+    string operation = 2;
+    string input_format = 3;
+    string output_format = 4;
+    bytes input_content = 5;
+    string input_uri = 6;
+    map<string, string> operation_params = 7;
+}
+
+message ProcessDocumentResponse {
+    string output_uri = 1;
+    bytes output_content = 2;
+    string output_format = 3;
+    map<string, string> metadata = 4;
+}

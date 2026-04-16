@@ -1,0 +1,5 @@
+grpcio>=1.60.0
+grpcio-health-checking>=1.60.0
+markitdown[outlook,xlsx,pptx]>=0.1.0
+olefile>=0.47
+xlrd>=2.0.1
