@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ func setupFactoryWithDef(t *testing.T, defID string) (*AgentFactory, *mockDocker
 	factory := NewAgentFactory(FactoryConfig{
 		DockerClient: mockDocker,
 		Store:        store,
+		StateDir:     os.TempDir(),
 	})
 
 	return factory, mockDocker
@@ -51,7 +53,6 @@ func findEnv(t *testing.T, env []string, prefix string) (string, bool) {
 }
 
 func TestSpawnConfigPassthrough(t *testing.T) {
-	ensureStateDir(t, "cfg-passthrough")
 	factory, mockDocker := setupFactoryWithDef(t, "cfg-passthrough")
 
 	_, err := factory.Spawn(context.Background(), &SpawnRequest{
@@ -79,7 +80,6 @@ func TestSpawnConfigPassthrough(t *testing.T) {
 }
 
 func TestSpawnConfigNil(t *testing.T) {
-	ensureStateDir(t, "cfg-nil")
 	factory, mockDocker := setupFactoryWithDef(t, "cfg-nil")
 
 	_, err := factory.Spawn(context.Background(), &SpawnRequest{
@@ -102,7 +102,6 @@ func TestSpawnConfigNil(t *testing.T) {
 }
 
 func TestSpawnConfigEmpty(t *testing.T) {
-	ensureStateDir(t, "cfg-empty")
 	factory, mockDocker := setupFactoryWithDef(t, "cfg-empty")
 
 	_, err := factory.Spawn(context.Background(), &SpawnRequest{
@@ -125,7 +124,6 @@ func TestSpawnConfigEmpty(t *testing.T) {
 }
 
 func TestSpawnConfigRawJSON(t *testing.T) {
-	ensureStateDir(t, "cfg-raw")
 	factory, mockDocker := setupFactoryWithDef(t, "cfg-raw")
 
 	_, err := factory.Spawn(context.Background(), &SpawnRequest{

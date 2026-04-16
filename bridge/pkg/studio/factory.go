@@ -44,6 +44,7 @@ type AgentFactory struct {
 	store       Store
 	keystore    KeystoreProvider
 	piiInjector *secrets.PIIInjector
+	stateDir    string
 }
 
 // FactoryConfig configures the agent factory
@@ -53,6 +54,7 @@ type FactoryConfig struct {
 	Keystore     KeystoreProvider
 	PIIInjector  *secrets.PIIInjector
 	DefaultImage string
+	StateDir     string
 }
 
 // NewAgentFactory creates a new agent factory
@@ -62,7 +64,15 @@ func NewAgentFactory(cfg FactoryConfig) *AgentFactory {
 		store:       cfg.Store,
 		keystore:    cfg.Keystore,
 		piiInjector: cfg.PIIInjector,
+		stateDir:    cfg.StateDir,
 	}
+}
+
+func (f *AgentFactory) getStateDir() string {
+	if f.stateDir != "" {
+		return f.stateDir
+	}
+	return "/var/lib/armorclaw"
 }
 
 // SpawnRequest contains parameters for spawning an agent
@@ -119,7 +129,7 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 	}
 
 	// 5. Create host config with security hardening
-	stateDir := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s", def.ID)
+	stateDir := fmt.Sprintf("%s/agent-state/%s", f.getStateDir(), def.ID)
 	hostConfig := &container.HostConfig{
 		Resources: container.Resources{
 			Memory:     int64(profile.MemoryMB) * 1024 * 1024,

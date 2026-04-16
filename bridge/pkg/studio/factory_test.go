@@ -129,10 +129,8 @@ func TestAgentFactory_Spawn(t *testing.T) {
 	mockDocker := &mockDockerClient{}
 
 	// Create factory
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	// Spawn agent
 	ctx := context.Background()
@@ -200,10 +198,8 @@ func TestAgentFactory_Spawn_InactiveDefinition(t *testing.T) {
 		t.Fatalf("failed to create definition: %v", err)
 	}
 
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: &mockDockerClient{},
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: &mockDockerClient{},
+		Store: store})
 
 	ctx := context.Background()
 	_, err = factory.Spawn(ctx, &SpawnRequest{
@@ -223,10 +219,8 @@ func TestAgentFactory_Spawn_NonexistentDefinition(t *testing.T) {
 	}
 	defer store.Close()
 
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: &mockDockerClient{},
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: &mockDockerClient{},
+		Store: store})
 
 	ctx := context.Background()
 	_, err = factory.Spawn(ctx, &SpawnRequest{
@@ -270,11 +264,9 @@ func TestAgentFactory_Spawn_WithKeystore(t *testing.T) {
 		},
 	}
 
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-		Keystore:     mockKeystore,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store:    store,
+		Keystore: mockKeystore})
 
 	ctx := context.Background()
 	result, err := factory.Spawn(ctx, &SpawnRequest{
@@ -334,10 +326,8 @@ func TestAgentFactory_Stop(t *testing.T) {
 	}
 
 	mockDocker := &mockDockerClient{}
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	// Spawn first
 	ctx := context.Background()
@@ -389,10 +379,8 @@ func TestAgentFactory_Remove(t *testing.T) {
 	}
 
 	mockDocker := &mockDockerClient{}
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	ctx := context.Background()
 	result, err := factory.Spawn(ctx, &SpawnRequest{
@@ -445,10 +433,8 @@ func TestAgentFactory_GetStatus(t *testing.T) {
 	mockDocker := &mockDockerClient{
 		containerState: &types.ContainerState{Running: true, ExitCode: 0},
 	}
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	ctx := context.Background()
 	result, _ := factory.Spawn(ctx, &SpawnRequest{
@@ -470,16 +456,6 @@ func TestAgentFactory_GetStatus(t *testing.T) {
 //=============================================================================
 // Layer 1 Feature Tests
 //=============================================================================
-
-// ensureStateDir attempts to create the agent state directory required by Spawn.
-// If it cannot (e.g. no permissions), the test is skipped.
-func ensureStateDir(t *testing.T, defID string) {
-	t.Helper()
-	stateDir := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s", defID)
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Skipf("cannot create state directory %s: %v (requires root or appropriate permissions)", stateDir, err)
-	}
-}
 
 func TestGetRunningInstance_ReturnsRunningInstance(t *testing.T) {
 	store, err := NewStore(StoreConfig{Path: ":memory:"})
@@ -516,10 +492,8 @@ func TestGetRunningInstance_ReturnsRunningInstance(t *testing.T) {
 		t.Fatalf("failed to create instance: %v", err)
 	}
 
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: &mockDockerClient{},
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: &mockDockerClient{},
+		Store: store})
 
 	result, err := factory.GetRunningInstance(def.ID)
 	if err != nil {
@@ -557,10 +531,8 @@ func TestGetRunningInstance_ReturnsNilWhenNoRunningInstance(t *testing.T) {
 		t.Fatalf("failed to create definition: %v", err)
 	}
 
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: &mockDockerClient{},
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: &mockDockerClient{},
+		Store: store})
 
 	result, err := factory.GetRunningInstance(def.ID)
 	if err != nil {
@@ -606,10 +578,8 @@ func TestGetRunningInstance_ReturnsNilWhenInstanceStopped(t *testing.T) {
 		t.Fatalf("failed to create instance: %v", err)
 	}
 
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: &mockDockerClient{},
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: &mockDockerClient{},
+		Store: store})
 
 	result, err := factory.GetRunningInstance(def.ID)
 	if err != nil {
@@ -621,7 +591,6 @@ func TestGetRunningInstance_ReturnsNilWhenInstanceStopped(t *testing.T) {
 }
 
 func TestSpawn_RoomIDPersisted(t *testing.T) {
-	ensureStateDir(t, "roomid-persist-def")
 
 	store, err := NewStore(StoreConfig{Path: ":memory:"})
 	if err != nil {
@@ -644,10 +613,8 @@ func TestSpawn_RoomIDPersisted(t *testing.T) {
 	}
 
 	mockDocker := &mockDockerClient{}
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	ctx := context.Background()
 	result, err := factory.Spawn(ctx, &SpawnRequest{
@@ -673,7 +640,6 @@ func TestSpawn_RoomIDPersisted(t *testing.T) {
 }
 
 func TestSpawn_StateDirBindMount(t *testing.T) {
-	ensureStateDir(t, "bindmount-def")
 
 	store, err := NewStore(StoreConfig{Path: ":memory:"})
 	if err != nil {
@@ -696,10 +662,8 @@ func TestSpawn_StateDirBindMount(t *testing.T) {
 	}
 
 	mockDocker := &mockDockerClient{}
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	ctx := context.Background()
 	_, err = factory.Spawn(ctx, &SpawnRequest{
@@ -715,7 +679,7 @@ func TestSpawn_StateDirBindMount(t *testing.T) {
 	}
 
 	created := mockDocker.createdContainers[0]
-	expectedBind := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s:/home/claw/.openclaw", def.ID)
+	expectedBind := fmt.Sprintf("%s/agent-state/%s:/home/claw/.openclaw", os.TempDir(), def.ID)
 	found := false
 	for _, bind := range created.hostConfig.Binds {
 		if bind == expectedBind {
@@ -729,7 +693,6 @@ func TestSpawn_StateDirBindMount(t *testing.T) {
 }
 
 func TestSpawn_EmptyRoomID(t *testing.T) {
-	ensureStateDir(t, "empty-roomid-def")
 
 	store, err := NewStore(StoreConfig{Path: ":memory:"})
 	if err != nil {
@@ -752,10 +715,8 @@ func TestSpawn_EmptyRoomID(t *testing.T) {
 	}
 
 	mockDocker := &mockDockerClient{}
-	factory := NewAgentFactory(FactoryConfig{
-		DockerClient: mockDocker,
-		Store:        store,
-	})
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
 
 	ctx := context.Background()
 	result, err := factory.Spawn(ctx, &SpawnRequest{
