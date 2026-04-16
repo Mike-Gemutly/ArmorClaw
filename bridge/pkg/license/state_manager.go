@@ -114,10 +114,10 @@ type AlertSender interface {
 
 // StateManager manages runtime license state and behavior
 type StateManager struct {
-	logger        *slog.Logger
-	validator     LicenseValidator
-	alertSender   AlertSender
-	config        StateConfig
+	logger      *slog.Logger
+	validator   LicenseValidator
+	alertSender AlertSender
+	config      StateConfig
 
 	mu            sync.RWMutex
 	currentState  *LicenseInfo
@@ -142,7 +142,8 @@ type StateConfig struct {
 // DefaultStateConfig returns default configuration
 func DefaultStateConfig() StateConfig {
 	return StateConfig{
-		GracePeriodDuration: 7 * 24 * time.Hour, // 7 days
+		// CRITICAL: Must match EnforcementManager GracePeriodDays (72h).
+		GracePeriodDuration: 3 * 24 * time.Hour, // 3 days
 		PollInterval:        24 * time.Hour,     // Check daily
 		AlertThresholds:     []int{30, 14, 7, 1},
 		BlockOnExpired:      true,
@@ -172,9 +173,9 @@ func (m *StateManager) Initialize(ctx context.Context) (*LicenseInfo, error) {
 		m.logger.Error("license_validation_failed", "error", err)
 		// Create unknown state info
 		info = &LicenseInfo{
-			State:       StateUnknown,
-			Behavior:    BehaviorDegraded, // Allow degraded operation
-			LastChecked: time.Now(),
+			State:            StateUnknown,
+			Behavior:         BehaviorDegraded, // Allow degraded operation
+			LastChecked:      time.Now(),
 			ValidationErrors: []string{err.Error()},
 		}
 	}

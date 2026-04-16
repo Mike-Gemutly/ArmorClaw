@@ -29,16 +29,16 @@ const (
 	FeatureWhatsAppBridge Feature = "bridge.whatsapp"
 
 	// Compliance Features
-	FeaturePHIScrubbing    Feature = "compliance.phi_scrubbing"
-	FeatureHIPAAMode       Feature = "compliance.hipaa"
-	FeatureAuditExport     Feature = "compliance.audit_export"
-	FeatureTamperEvidence  Feature = "compliance.tamper_evidence"
+	FeaturePHIScrubbing   Feature = "compliance.phi_scrubbing"
+	FeatureHIPAAMode      Feature = "compliance.hipaa"
+	FeatureAuditExport    Feature = "compliance.audit_export"
+	FeatureTamperEvidence Feature = "compliance.tamper_evidence"
 
 	// Security Features
-	FeatureSSO             Feature = "security.sso"
-	FeatureSAML            Feature = "security.saml"
-	FeatureMFAEnforcement  Feature = "security.mfa_enforcement"
-	FeatureHardwareKeys    Feature = "security.hardware_keys"
+	FeatureSSO            Feature = "security.sso"
+	FeatureSAML           Feature = "security.saml"
+	FeatureMFAEnforcement Feature = "security.mfa_enforcement"
+	FeatureHardwareKeys   Feature = "security.hardware_keys"
 
 	// Voice Features
 	FeatureVoiceCalls      Feature = "voice.calls"
@@ -58,12 +58,12 @@ const (
 
 // FeatureDefinition describes a feature and its requirements
 type FeatureDefinition struct {
-	Name         string        `json:"name"`
-	Description  string        `json:"description"`
-	MinTier      license.Tier  `json:"min_tier"`
-	Category     string        `json:"category"`
-	Enabled      bool          `json:"enabled"`
-	Compliance   bool          `json:"compliance"` // If true, affects PHI/HIPAA handling
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	MinTier     license.Tier `json:"min_tier"`
+	Category    string       `json:"category"`
+	Enabled     bool         `json:"enabled"`
+	Compliance  bool         `json:"compliance"` // If true, affects PHI/HIPAA handling
 }
 
 // ComplianceMode represents the level of compliance enforcement
@@ -79,13 +79,13 @@ const (
 
 // PlatformLimit represents limits for platform bridging
 type PlatformLimit struct {
-	Platform       string `json:"platform"`
-	Enabled        bool   `json:"enabled"`
-	MaxChannels    int    `json:"max_channels"`    // 0 = unlimited
-	MaxUsers       int    `json:"max_users"`       // 0 = unlimited
-	MessageLimit   int    `json:"message_limit"`   // per day, 0 = unlimited
-	PHIScrubbing   bool   `json:"phi_scrubbing"`
-	AuditLogging   bool   `json:"audit_logging"`
+	Platform     string `json:"platform"`
+	Enabled      bool   `json:"enabled"`
+	MaxChannels  int    `json:"max_channels"`  // 0 = unlimited
+	MaxUsers     int    `json:"max_users"`     // 0 = unlimited
+	MessageLimit int    `json:"message_limit"` // per day, 0 = unlimited
+	PHIScrubbing bool   `json:"phi_scrubbing"`
+	AuditLogging bool   `json:"audit_logging"`
 }
 
 // EnforcementConfig configures the enforcement manager
@@ -97,6 +97,7 @@ type EnforcementConfig struct {
 	DefaultComplianceMode ComplianceMode
 
 	// Enable grace period for expired licenses
+	// CRITICAL: Must match StateManager GracePeriodDuration (72h).
 	EnableGracePeriod bool
 	GracePeriodDays   int
 
@@ -109,12 +110,12 @@ type EnforcementConfig struct {
 
 // Manager enforces feature access based on license tier
 type Manager struct {
-	config     EnforcementConfig
-	features   map[Feature]*FeatureDefinition
-	limits     map[string]*PlatformLimit
-	license    *license.CachedLicense
-	mu         sync.RWMutex
-	logger     *slog.Logger
+	config   EnforcementConfig
+	features map[Feature]*FeatureDefinition
+	limits   map[string]*PlatformLimit
+	license  *license.CachedLicense
+	mu       sync.RWMutex
+	logger   *slog.Logger
 }
 
 // NewManager creates a new enforcement manager
@@ -592,10 +593,10 @@ func (m *Manager) GetLicenseInfo() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	info := map[string]interface{}{
-		"tier":             license.TierFree,
-		"valid":            false,
-		"compliance_mode":  m.config.DefaultComplianceMode,
-		"features":         []string{},
+		"tier":            license.TierFree,
+		"valid":           false,
+		"compliance_mode": m.config.DefaultComplianceMode,
+		"features":        []string{},
 	}
 
 	if m.license != nil {
