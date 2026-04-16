@@ -1,0 +1,63 @@
+# AppArmor profile for ArmorClaw Python Office Sidecar
+# Restricts Python worker to minimum required filesystem and runtime access
+#
+# Install:
+#   sudo apparmor_parser -r container/apparmor-profile-office
+#
+# Verify:
+#   sudo aa-status | grep armorclaw-office-worker
+
+#include <tunables/global>
+
+profile armorclaw-office-worker flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Python runtime
+  /usr/bin/python3.* ix,
+  /usr/lib/python3.*/** r,
+  /usr/local/lib/python3.*/dist-packages/** r,
+
+  # Temp file workspace (tmpfs — RAM-only, 512MB)
+  /tmp/office_worker/** rw,
+
+  # Shared secret (read-only tmpfs mount — injected by Go Bridge)
+  /run/secrets/shared_secret r,
+
+  # Socket directory (isolated mount — container sees only /run/armorclaw/)
+  /run/armorclaw/** rw,
+
+  # Deny shells (defense in depth)
+  deny /bin/sh x,
+  deny /bin/bash x,
+  deny /bin/dash x,
+  deny /usr/bin/zsh x,
+
+  # Deny network tools
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+  deny /usr/bin/nc x,
+  deny /usr/bin/telnet x,
+
+  # Deny host filesystem access
+  deny /home/** rw,
+  deny /root/** rw,
+  deny /etc/** rw,
+
+  # System libraries (read-only)
+  /usr/lib/** r,
+  /lib/** r,
+  /lib64/** r,
+
+  # Deny process inspection
+  deny ptrace read,
+  deny /proc/*/cmdline r,
+  deny /proc/*/environ r,
+  deny /proc/*/maps r,
+
+  # Deny mount and module operations
+  deny mount,
+  deny umount,
+  deny init_module,
+  deny finit_module,
+  deny delete_module,
+}

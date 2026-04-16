@@ -1,0 +1,49 @@
+# Docker Compose: ArmorClaw Python Office Sidecar
+# MarkItDown polyglot sidecar for .xlsx, .pptx, .msg, .doc, .xls, .ppt
+#
+# Symmetrical containment with Rust sidecar:
+#   - network_mode: none (zero network)
+#   - UID 10001 (non-root, same as Rust)
+#   - cap_drop: ALL
+#   - read_only filesystem
+#   - AppArmor profile
+#   - tmpfs for large file spill
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.sidecar-py.yml up -d
+#
+# Socket: /run/armorclaw/office-sidecar/sidecar-office.sock
+# Isolation: Container sees ONLY /run/armorclaw/ (not Rust or Bridge sockets)
+
+services:
+  sidecar-office:
+    build:
+      context: ../sidecar-python
+      dockerfile: Dockerfile
+    image: armorclaw/sidecar-office:latest
+    container_name: armorclaw-sidecar-office
+    user: "10001:10001"
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - /run/armorclaw/office-sidecar:/run/armorclaw
+      - /run/armorclaw/secrets/office-hmac:/run/secrets/shared_secret:ro
+    tmpfs:
+      - /tmp/office_worker:size=512m,mode=0700
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=armorclaw-office-worker
+    environment:
+      - SIDECAR_SOCKET=/run/armorclaw/sidecar-office.sock
+      - SIDECAR_SECRET_FILE=/run/secrets/shared_secret
+      - SIDECAR_MAX_REQUESTS=50
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
