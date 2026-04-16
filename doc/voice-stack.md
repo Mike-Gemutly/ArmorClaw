@@ -102,7 +102,7 @@ Credential format: username is `<unix_expiry>:<session_id>`, password is `base64
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TURN_SECRET` | Shared secret for HMAC-SHA1 credential generation | `change-me-to-a-strong-random-secret` |
+| `TURN_SECRET` | **Required.** Shared secret for HMAC-SHA1 credential generation. Bridge refuses to start if empty. | _(none — must be set)_ |
 | `TURN_HOST` | TURN relay hostname or IP | `matrix.armorclaw.com` |
 | `TURN_PORT` | TURN relay port | `3478` |
 | `TURN_PROTOCOL` | Transport protocol: `udp`, `tcp`, or `tls` | `udp` |
