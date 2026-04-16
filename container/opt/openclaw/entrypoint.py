@@ -397,6 +397,32 @@ except AttributeError:
 # but that's acceptable since the container is isolated.
 
 # ============================================================================
+# Step Execution Mode (STEP_CONFIG)
+# ============================================================================
+# When the Bridge sets STEP_CONFIG (via factory.go), the container runs a
+# single step, writes result.json to the state dir, and exits — instead of
+# entering the agent's Matrix polling loop.
+step_config_str = os.getenv('STEP_CONFIG', '').strip()
+if step_config_str:
+    print("[ArmorClaw] Step execution mode detected (STEP_CONFIG present)")
+    try:
+        from openclaw.step_config import parse_step_config
+        from openclaw.step_runner import StepRunner
+
+        config = parse_step_config()
+        if config:
+            runner = StepRunner()
+            exit_code = runner.run(config)
+            print(f"[ArmorClaw] Step completed with exit code {exit_code}")
+            sys.exit(exit_code)
+        else:
+            print("[ArmorClaw] ✗ ERROR: STEP_CONFIG present but failed to parse", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"[ArmorClaw] ✗ ERROR: Step execution failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# ============================================================================
 # Health Check and Validation
 # ============================================================================
 
