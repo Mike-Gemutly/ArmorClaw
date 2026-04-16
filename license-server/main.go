@@ -23,17 +23,17 @@ import (
 
 // Configuration
 type Config struct {
-	Port          string
-	DatabaseURL   string
-	AdminToken    string
+	Port            string
+	DatabaseURL     string
+	AdminToken      string
 	GracePeriodDays int
 }
 
 // Server represents the license server
 type Server struct {
-	config Config
-	db     *sql.DB
-	logger *slog.Logger
+	config  Config
+	db      *sql.DB
+	logger  *slog.Logger
 	limiter *RateLimiter
 }
 
@@ -44,20 +44,20 @@ type RateLimiter struct {
 }
 
 type RateLimitEntry struct {
-	Count     int
-	ResetAt   time.Time
+	Count   int
+	ResetAt time.Time
 }
 
 // License represents a license in the database
 type License struct {
-	ID           int
-	LicenseKey   string
-	Tier         string
+	ID            int
+	LicenseKey    string
+	Tier          string
 	CustomerEmail string
-	CreatedAt    time.Time
-	ExpiresAt    time.Time
-	Status       string
-	MaxInstances int // Maximum allowed instances (0 = unlimited)
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	Status        string
+	MaxInstances  int // Maximum allowed instances (0 = unlimited)
 }
 
 // Feature represents an available feature
@@ -90,15 +90,15 @@ type ValidationRequest struct {
 
 // ValidationResponse is the response for license validation
 type ValidationResponse struct {
-	Valid            bool     `json:"valid"`
-	Tier             string   `json:"tier,omitempty"`
-	Features         []string `json:"features,omitempty"`
-	ExpiresAt        string   `json:"expires_at,omitempty"`
-	InstanceID       string   `json:"instance_id,omitempty"`
-	GracePeriodDays  int      `json:"grace_period_days"`
-	FeatureValid     bool     `json:"feature_valid,omitempty"`
-	ErrorCode        string   `json:"error_code,omitempty"`
-	ErrorMessage     string   `json:"error_message,omitempty"`
+	Valid             bool     `json:"valid"`
+	Tier              string   `json:"tier,omitempty"`
+	Features          []string `json:"features,omitempty"`
+	ExpiresAt         string   `json:"expires_at,omitempty"`
+	InstanceID        string   `json:"instance_id,omitempty"`
+	GracePeriodDays   int      `json:"grace_period_days"`
+	FeatureValid      bool     `json:"feature_valid,omitempty"`
+	ErrorCode         string   `json:"error_code,omitempty"`
+	ErrorMessage      string   `json:"error_message,omitempty"`
 	AvailableFeatures []string `json:"available_features,omitempty"`
 }
 
@@ -129,9 +129,9 @@ type ErrorResponse struct {
 func main() {
 	// Load configuration
 	config := Config{
-		Port:          getEnv("PORT", "8080"),
-		DatabaseURL:   getEnv("DATABASE_URL", ""),
-		AdminToken:    getEnv("ADMIN_TOKEN", ""),
+		Port:            getEnv("PORT", "8080"),
+		DatabaseURL:     getEnv("DATABASE_URL", ""),
+		AdminToken:      getEnv("ADMIN_TOKEN", ""),
 		GracePeriodDays: parseInt(getEnv("GRACE_PERIOD_DAYS", "3"), 3),
 	}
 
@@ -187,6 +187,9 @@ func main() {
 	addr := ":" + config.Port
 	logger.Info("Starting license server", "addr", addr)
 
+	// Start background validation retention worker (90-day cleanup)
+	go server.runValidationRetention(context.Background())
+
 	if err := http.ListenAndServe(addr, server.loggingMiddleware(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
@@ -238,6 +241,7 @@ func initSchema(db *sql.DB) error {
 		instance_id UUID,
 		feature_key VARCHAR(100),
 		validated_at TIMESTAMP DEFAULT NOW(),
+		created_at TIMESTAMP DEFAULT NOW(),
 		was_valid BOOLEAN,
 		error_code VARCHAR(100)
 	);
@@ -246,7 +250,18 @@ func initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_licenses_email ON licenses(customer_email);
 	CREATE INDEX IF NOT EXISTS idx_validations_instance ON validations(instance_id);
 	CREATE INDEX IF NOT EXISTS idx_validations_feature ON validations(feature_key);
+	CREATE INDEX IF NOT EXISTS idx_validations_created_at ON validations(created_at);
 	CREATE INDEX IF NOT EXISTS idx_instances_license ON instances(license_id);
+
+	-- Migration: add created_at column if missing (existing deployments)
+	DO $$
+	BEGIN
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'validations' AND column_name = 'created_at') THEN
+			ALTER TABLE validations ADD COLUMN created_at TIMESTAMP DEFAULT NOW();
+			UPDATE validations SET created_at = validated_at WHERE created_at IS NULL;
+		END IF;
+	END $$;
 
 	-- Insert default features if not exists
 	INSERT INTO features (feature_key, name, description, tier) VALUES
@@ -462,8 +477,8 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 
 	if err == sql.ErrNoRows {
 		s.writeError(w, http.StatusNotFound, ErrorResponse{
-			Error:       "License not found or inactive",
-			ErrorCode:   "LICENSE_NOT_FOUND",
+			Error:        "License not found or inactive",
+			ErrorCode:    "LICENSE_NOT_FOUND",
 			ErrorMessage: "The provided license key is invalid or has been deactivated",
 		})
 		return
@@ -507,8 +522,8 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 				"max_instances", license.MaxInstances,
 			)
 			s.writeError(w, http.StatusForbidden, ErrorResponse{
-				Error:       "Instance limit exceeded",
-				ErrorCode:   "INSTANCE_LIMIT_EXCEEDED",
+				Error:        "Instance limit exceeded",
+				ErrorCode:    "INSTANCE_LIMIT_EXCEEDED",
 				ErrorMessage: fmt.Sprintf("This license has reached its maximum of %d instance(s). Current: %d", license.MaxInstances, currentInstances),
 			})
 			return
@@ -604,12 +619,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	`, license.ID).Scan(&lastValidation)
 
 	response := map[string]interface{}{
-		"license_key":            maskLicenseKey(license.LicenseKey),
-		"tier":                   license.Tier,
-		"status":                 license.Status,
-		"created_at":             license.CreatedAt.Format(time.RFC3339),
-		"expires_at":             license.ExpiresAt.Format(time.RFC3339),
-		"features":               features,
+		"license_key": maskLicenseKey(license.LicenseKey),
+		"tier":        license.Tier,
+		"status":      license.Status,
+		"created_at":  license.CreatedAt.Format(time.RFC3339),
+		"expires_at":  license.ExpiresAt.Format(time.RFC3339),
+		"features":    features,
 		"usage": map[string]interface{}{
 			"validations_this_month": validationsThisMonth,
 			"last_validation":        formatNullTime(lastValidation),
@@ -689,10 +704,10 @@ func (s *Server) handleAdminCreate(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("License created", "license_key", maskLicenseKey(licenseKey), "tier", req.Tier, "expires_at", expiresAt, "max_instances", maxInstances)
 
 	response := map[string]interface{}{
-		"license_key":    licenseKey,
-		"tier":           req.Tier,
-		"expires_at":     expiresAt.Format(time.RFC3339),
-		"max_instances":  maxInstances,
+		"license_key":   licenseKey,
+		"tier":          req.Tier,
+		"expires_at":    expiresAt.Format(time.RFC3339),
+		"max_instances": maxInstances,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -705,9 +720,9 @@ func getDefaultMaxInstances(tier string) int {
 	case "ent", "enterprise":
 		return 10 // Enterprise: 10 instances
 	case "pro", "professional":
-		return 3  // Professional: 3 instances
+		return 3 // Professional: 3 instances
 	default:
-		return 1  // Free/Essential: 1 instance
+		return 1 // Free/Essential: 1 instance
 	}
 }
 
@@ -737,8 +752,8 @@ func (s *Server) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("License revoked", "license_key", maskLicenseKey(licenseKey))
 
 	response := map[string]interface{}{
-		"revoked":     true,
-		"revoked_at":  time.Now().Format(time.RFC3339),
+		"revoked":    true,
+		"revoked_at": time.Now().Format(time.RFC3339),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -762,6 +777,31 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+// runValidationRetention deletes validation records older than 90 days.
+// Runs once every 24 hours in a background goroutine.
+func (s *Server) runValidationRetention(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			result, err := s.db.ExecContext(ctx,
+				`DELETE FROM validations WHERE created_at < NOW() - INTERVAL '90 days'`)
+			if err != nil {
+				s.logger.Error("validation retention cleanup failed", "error", err)
+				continue
+			}
+			if rows, _ := result.RowsAffected(); rows > 0 {
+				s.logger.Info("validation retention cleanup completed",
+					"rows_deleted", rows)
+			}
+		}
+	}
 }
 
 // Helper functions
