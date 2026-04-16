@@ -29,6 +29,16 @@ const (
 // It can be set via Bridge TOML [secretary] block. Defaults to 120s, max 900s.
 var ApprovalTimeout = DefaultPIIApprovalTimeout
 
+// piiAlertDispatcher is called after publishing a PII request event to trigger
+// push notifications. Set via SetPIIAlertDispatcher during Bridge startup.
+var piiAlertDispatcher func(roomID, stepID string, fields []string)
+
+// SetPIIAlertDispatcher registers the callback that fires a push notification
+// immediately after a PII approval request is published.
+func SetPIIAlertDispatcher(fn func(roomID, stepID string, fields []string)) {
+	piiAlertDispatcher = fn
+}
+
 // SetApprovalTimeout configures the PII approval timeout, clamped to MaxPIIApprovalTimeout.
 func SetApprovalTimeout(d time.Duration) {
 	if d <= 0 {
@@ -97,6 +107,12 @@ func PendingApproval(ctx context.Context, eventBus *events.MatrixEventBus, roomI
 		Type:    PIIRequestEventType,
 		Content: payload,
 	})
+
+	// Fire push notification so the user sees the approval request immediately,
+	// even if they're not actively watching the Matrix room.
+	if piiAlertDispatcher != nil {
+		piiAlertDispatcher(roomID, stepID, requiredFields)
+	}
 
 	// Block until response, timeout, or cancellation.
 	select {
