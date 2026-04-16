@@ -211,10 +211,6 @@ func (r *RolodexService) UpdateContact(ctx context.Context, req *UpdateRequest) 
 	}
 
 	// Update the contact with encrypted data
-	existing.Name = req.Name
-	if existing.Name == "" {
-		existing.Name = existing.Name
-	}
 	if req.Name != "" {
 		existing.Name = req.Name
 	}
