@@ -15,6 +15,7 @@ import traceback
 from concurrent import futures
 
 import grpc
+from markitdown import MarkItDown, StreamInfo
 
 from proto import sidecar_pb2, sidecar_pb2_grpc
 from interceptor import TokenInterceptor, load_shared_secret
@@ -95,7 +96,6 @@ class OfficeSidecarServicer(sidecar_pb2_grpc.SidecarServiceServicer):
             )
 
         try:
-            from markitdown import MarkItDown, StreamInfo
             md = MarkItDown()
 
             if len(document_content) < _THRESHOLD_BYTES:
@@ -181,7 +181,7 @@ def serve():
     )
 
     os.umask(0o077)
-    socket_path = "/run/armorclaw/sidecar-office.sock"
+    socket_path = os.environ.get("SIDECAR_SOCKET", "/run/armorclaw/sidecar-office.sock")
     server.add_insecure_port(f"unix://{socket_path}")
     os.chmod(socket_path, 0o600)
 
