@@ -1954,7 +1954,9 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Fatalf("Failed to create WebRTC engine: %v", err)
 	}
 
-	// Create TURN manager (optional) - from turn package
+	// Create TURN manager (required for voice features)
+	// TURN_SECRET must be configured — the default is intentionally empty
+	// to prevent deploying with a known shared secret.
 	var turnMgr *turn.Manager
 	if cfg.WebRTC.TURNSharedSecret != "" {
 		// Use default TURN config with the configured secret
@@ -1978,7 +1980,11 @@ func runBridgeServer(cliCfg cliConfig) {
 				turnConfig.Servers[0].Port = port
 			}
 		}
-		turnMgr = turn.NewManager(turnConfig)
+		var turnErr error
+		turnMgr, turnErr = turn.NewManager(turnConfig)
+		if turnErr != nil {
+			log.Fatalf("FATAL: %v", turnErr)
+		}
 		webrtcEngine.SetTURNManager(turnMgr)
 		log.Println("TURN manager initialized")
 	}

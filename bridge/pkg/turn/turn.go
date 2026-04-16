@@ -60,7 +60,7 @@ func DefaultConfig() Config {
 				Realm:    "armorclaw",
 			},
 		},
-		Secret:     "change-me-to-a-strong-random-secret",
+		Secret:     "", // MUST be set via TURN_SECRET environment variable
 		DefaultTTL: 10 * time.Minute,
 		MaxTTL:     1 * time.Hour,
 	}
@@ -68,11 +68,11 @@ func DefaultConfig() Config {
 
 // Manager manages TURN credential generation and validation
 type Manager struct {
-	config       Config
+	config      Config
 	credentials sync.Map // map[username]*credentialInfo
-	mu           sync.RWMutex
-	stopChan     chan struct{}
-	wg           sync.WaitGroup
+	mu          sync.RWMutex
+	stopChan    chan struct{}
+	wg          sync.WaitGroup
 }
 
 // credentialInfo holds information about a credential
@@ -83,12 +83,16 @@ type credentialInfo struct {
 	created   time.Time
 }
 
-// NewManager creates a new TURN manager
-func NewManager(config Config) *Manager {
+// NewManager creates a new TURN manager.
+// Returns ErrTurnSecretRequired if config.Secret is empty.
+func NewManager(config Config) (*Manager, error) {
+	if config.Secret == "" {
+		return nil, ErrTurnSecretRequired
+	}
 	return &Manager{
 		config:   config,
 		stopChan: make(chan struct{}),
-	}
+	}, nil
 }
 
 // GenerateTURNCredentials creates ephemeral TURN credentials for a session
@@ -208,8 +212,8 @@ func (m *Manager) GetStats() map[string]interface{} {
 	})
 
 	return map[string]interface{}{
-		"total_credentials":  count,
-		"expiring_soon":      expiringSoon,
+		"total_credentials": count,
+		"expiring_soon":     expiringSoon,
 		"servers":           len(m.config.Servers),
 	}
 }
@@ -274,10 +278,10 @@ type ICECandidate struct {
 type ICECandidateType string
 
 const (
-	ICECandidateHost       ICECandidateType = "host"
-	ICECandidateSRFLX      ICECandidateType = "srflx"
-	ICECandidatePRFLX      ICECandidateType = "prflx"
-	ICECandidateRelay      ICECandidateType = "relay"
+	ICECandidateHost  ICECandidateType = "host"
+	ICECandidateSRFLX ICECandidateType = "srflx"
+	ICECandidatePRFLX ICECandidateType = "prflx"
+	ICECandidateRelay ICECandidateType = "relay"
 )
 
 // String returns the string representation of the candidate type
@@ -606,8 +610,8 @@ func (c *ICECandidate) String() string {
 // ToJSON converts the ICE candidate to JSON format
 func (c *ICECandidate) ToJSON() map[string]interface{} {
 	json := map[string]interface{}{
-		"candidate": fmt.Sprintf("%s %d %d %s %s", c.Address, c.Port, c.Priority, c.Type, c.Protocol),
-		"sdpMid":    "0",
+		"candidate":     fmt.Sprintf("%s %d %d %s %s", c.Address, c.Port, c.Priority, c.Type, c.Protocol),
+		"sdpMid":        "0",
 		"sdpMLineIndex": 0,
 	}
 
@@ -657,11 +661,11 @@ func Uint32(b []byte) uint32 {
 
 // STUNMessage represents a STUN message
 type STUNMessage struct {
-	Type      uint16
-	Length    uint16
-	MagicCookie uint32
+	Type          uint16
+	Length        uint16
+	MagicCookie   uint32
 	TransactionID [12]byte
-	Attributes []STUNAttribute
+	Attributes    []STUNAttribute
 }
 
 // STUNAttribute represents a STUN attribute
@@ -673,28 +677,28 @@ type STUNAttribute struct {
 
 // STUNMethod represents STUN method types
 const (
-	STUNMethodBinding           uint16 = 0x0001
-	STUNMethodAllocate          uint16 = 0x0003
-	STUNMethodRefresh           uint16 = 0x0004
-	STUNMethodSend              uint16 = 0x0006
-	STUNMethodData              uint16 = 0x0007
-	STUNMethodCreatePermission  uint16 = 0x0008
-	STUNMethodChannelBind       uint16 = 0x0009
+	STUNMethodBinding          uint16 = 0x0001
+	STUNMethodAllocate         uint16 = 0x0003
+	STUNMethodRefresh          uint16 = 0x0004
+	STUNMethodSend             uint16 = 0x0006
+	STUNMethodData             uint16 = 0x0007
+	STUNMethodCreatePermission uint16 = 0x0008
+	STUNMethodChannelBind      uint16 = 0x0009
 )
 
 // STUNAttrType represents STUN attribute types
 const (
-	STUNAttrAddress             uint16 = 0x0001
-	STUNAttrXorMappedAddress    uint16 = 0x0020
-	STUNAttrUsername            uint16 = 0x0006
-	STUNAttrMessageIntegrity    uint16 = 0x0008
-	STUNAttrErrorCode          uint16 = 0x0009
-	STUNAttrChannelNumber      uint16 = 0x000C
-	STUNAttrLifetime           uint16 = 0x000D
-	STUNAttrXorPeerAddress     uint16 = 0x0012
-	STUNAttrData               uint16 = 0x0013
-	STUNAttrRealm              uint16 = 0x0014
-	STUNAttrNonce              uint16 = 0x0015
+	STUNAttrAddress          uint16 = 0x0001
+	STUNAttrXorMappedAddress uint16 = 0x0020
+	STUNAttrUsername         uint16 = 0x0006
+	STUNAttrMessageIntegrity uint16 = 0x0008
+	STUNAttrErrorCode        uint16 = 0x0009
+	STUNAttrChannelNumber    uint16 = 0x000C
+	STUNAttrLifetime         uint16 = 0x000D
+	STUNAttrXorPeerAddress   uint16 = 0x0012
+	STUNAttrData             uint16 = 0x0013
+	STUNAttrRealm            uint16 = 0x0014
+	STUNAttrNonce            uint16 = 0x0015
 )
 
 // STUNMagicCookie is the STUN magic cookie value
@@ -703,10 +707,10 @@ const STUNMagicCookie uint32 = 0x2112A442
 // NewSTUNMessage creates a new STUN message
 func NewSTUNMessage(method uint16, transactionID [12]byte) *STUNMessage {
 	return &STUNMessage{
-		Type:           method,
-		MagicCookie:    STUNMagicCookie,
-		TransactionID:  transactionID,
-		Attributes:     make([]STUNAttribute, 0),
+		Type:          method,
+		MagicCookie:   STUNMagicCookie,
+		TransactionID: transactionID,
+		Attributes:    make([]STUNAttribute, 0),
 	}
 }
 
@@ -760,8 +764,8 @@ func ParseSTUNMessage(data []byte) (*STUNMessage, error) {
 	}
 
 	msg := &STUNMessage{
-		Type:      Uint16(data[0:2]),
-		Length:    Uint16(data[2:4]),
+		Type:        Uint16(data[0:2]),
+		Length:      Uint16(data[2:4]),
 		MagicCookie: Uint32(data[4:8]),
 	}
 
@@ -780,8 +784,8 @@ func ParseSTUNMessage(data []byte) (*STUNMessage, error) {
 		}
 
 		attr := STUNAttribute{
-			Type:   Uint16(data[offset:offset+2]),
-			Length: Uint16(data[offset+2:offset+4]),
+			Type:   Uint16(data[offset : offset+2]),
+			Length: Uint16(data[offset+2 : offset+4]),
 		}
 
 		if attr.Length > 0 {
@@ -835,4 +839,7 @@ var (
 
 	// ErrSTUNNotSupported is returned when STUN is not supported
 	ErrSTUNNotSupported = fmt.Errorf("STUN not supported")
+
+	// ErrTurnSecretRequired is returned when TURN_SECRET is not configured
+	ErrTurnSecretRequired = fmt.Errorf("TURN_SECRET is required: set the TURN_SECRET environment variable or config field to a strong random secret")
 )

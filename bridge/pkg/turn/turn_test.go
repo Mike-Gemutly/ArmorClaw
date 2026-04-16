@@ -23,7 +23,10 @@ func TestGenerateTURNCredentials(t *testing.T) {
 		MaxTTL:     1 * time.Hour,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	defer manager.Stop()
 
 	sessionID := "test-session-123"
@@ -82,7 +85,10 @@ func TestValidateTURNCredentials(t *testing.T) {
 		MaxTTL:     1 * time.Hour,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	defer manager.Stop()
 
 	sessionID := "test-session-123"
@@ -125,7 +131,10 @@ func TestTURNCredentialsExpiry(t *testing.T) {
 		MaxTTL:     1 * time.Hour,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	defer manager.Stop()
 
 	// Generate credentials with very short TTL
@@ -136,7 +145,7 @@ func TestTURNCredentialsExpiry(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Should be expired now
-	_, err := manager.ValidateTURNCredentials(cred.Username, cred.Password)
+	_, err = manager.ValidateTURNCredentials(cred.Username, cred.Password)
 	if err != ErrTURNExpired {
 		t.Errorf("Expected ErrTURNExpired, got %v", err)
 	}
@@ -153,7 +162,10 @@ func TestCleanupExpired(t *testing.T) {
 		MaxTTL:     1 * time.Hour,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 
 	// Generate credentials with short TTL
 	_, _ = manager.GenerateTURNCredentials("test-session-1", 50*time.Millisecond)
@@ -190,7 +202,10 @@ func TestGetStats(t *testing.T) {
 		MaxTTL:     1 * time.Hour,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	defer manager.Start()
 	defer manager.Stop()
 
@@ -213,13 +228,16 @@ func TestGetStats(t *testing.T) {
 // TestMaxTTL tests maximum TTL enforcement
 func TestMaxTTL(t *testing.T) {
 	config := Config{
-		Servers:     []ServerConfig{{Host: "turn.example.com", Port: 3478, Protocol: "udp"}},
-		Secret:      "test-secret",
-		DefaultTTL:  10 * time.Minute,
-		MaxTTL:      30 * time.Minute,
+		Servers:    []ServerConfig{{Host: "turn.example.com", Port: 3478, Protocol: "udp"}},
+		Secret:     "test-secret",
+		DefaultTTL: 10 * time.Minute,
+		MaxTTL:     30 * time.Minute,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	defer manager.Stop()
 
 	// Request credentials with TTL exceeding max
@@ -519,7 +537,10 @@ func TestTURNProtocol(t *testing.T) {
 		MaxTTL:     1 * time.Hour,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	defer manager.Stop()
 
 	creds, _ := manager.GenerateTURNCredentials("test-session", 5*time.Minute)
@@ -555,7 +576,10 @@ func TestIntegration_TURNLifecycle(t *testing.T) {
 		MaxTTL:     5 * time.Minute,
 	}
 
-	manager := NewManager(config)
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatalf("NewManager() failed: %v", err)
+	}
 	manager.Start()
 	defer manager.Stop()
 
