@@ -142,12 +142,16 @@ func (b *EventBus) Start() error {
 	// Start WebSocket server if configured
 	if b.websocketServer != nil {
 		if err := b.websocketServer.Start(); err != nil {
-			return fmt.Errorf("failed to start WebSocket server: %w", err)
+			slog.Warn("WebSocket broadcasting requested but server is unimplemented stub. Disabling.",
+				"error", err)
+			b.websocketServer = nil
+		} else {
+			b.securityLog.LogSecurityEvent("eventbus_started",
+				slog.Bool("websocket_enabled", true),
+				slog.String("addr", b.websocketServer.Addr()))
 		}
-		b.securityLog.LogSecurityEvent("eventbus_started",
-			slog.Bool("websocket_enabled", true),
-			slog.String("addr", b.websocketServer.Addr()))
-	} else {
+	}
+	if b.websocketServer == nil {
 		b.securityLog.LogSecurityEvent("eventbus_started",
 			slog.Bool("websocket_enabled", false))
 	}
