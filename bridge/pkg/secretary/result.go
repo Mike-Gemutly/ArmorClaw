@@ -2,9 +2,12 @@
 package secretary
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 //=============================================================================
@@ -80,4 +83,134 @@ func ParseContainerStepResult(stateDir string) (*ContainerStepResult, error) {
 	}
 
 	return &result, nil
+}
+
+// StepEvent is a structured event recorded during container step execution.
+type StepEvent struct {
+	Seq        int                    `json:"seq"`
+	Type       string                 `json:"type"`
+	Name       string                 `json:"name"`
+	TsMs       int64                  `json:"ts_ms"`
+	Detail     map[string]interface{} `json:"detail,omitempty"`
+	DurationMs *int                   `json:"duration_ms,omitempty"`
+}
+
+// Blocker describes an obstacle that prevented step completion.
+type Blocker struct {
+	BlockerType string `json:"blocker_type"`
+	Message     string `json:"message"`
+	Suggestion  string `json:"suggestion,omitempty"`
+	Field       string `json:"field,omitempty"`
+}
+
+// SkillCandidate is a detected automation opportunity for reuse.
+type SkillCandidate struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	PatternType string  `json:"pattern_type"`
+	PatternData string  `json:"pattern_data,omitempty"`
+	Confidence  float64 `json:"confidence"`
+}
+
+// EventsSummary holds aggregated event counts by type.
+type EventsSummary struct {
+	Total int            `json:"total"`
+	Types map[string]int `json:"types"`
+}
+
+// ExtendedStepResult extends ContainerStepResult with underscore-prefixed metadata
+// from newer container versions. Embeds *ContainerStepResult for field access.
+type ExtendedStepResult struct {
+	*ContainerStepResult
+
+	Comments        []string         `json:"_comments,omitempty"`
+	Blockers        []Blocker        `json:"_blockers,omitempty"`
+	SkillCandidates []SkillCandidate `json:"_skill_candidates,omitempty"`
+	EventsSummary   *EventsSummary   `json:"_events_summary,omitempty"`
+	Events          []StepEvent      `json:"-"`
+}
+
+// rawExtended unmarshals underscore-prefixed fields from result.json.
+type rawExtended struct {
+	Comments        []string         `json:"_comments"`
+	Blockers        []Blocker        `json:"_blockers"`
+	SkillCandidates []SkillCandidate `json:"_skill_candidates"`
+	EventsSummary   *EventsSummary   `json:"_events_summary"`
+}
+
+// ParseExtendedStepResult parses result.json (base + underscore-prefixed fields)
+// and _events.jsonl. Returns (nil, nil) if result.json does not exist.
+func ParseExtendedStepResult(stateDir string) (*ExtendedStepResult, error) {
+	base, err := ParseContainerStepResult(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	if base == nil {
+		return nil, nil
+	}
+
+	resultPath := filepath.Join(stateDir, "result.json")
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ExtendedStepResult{ContainerStepResult: base}, nil
+		}
+		return nil, fmt.Errorf("read result.json for extended fields: %w", err)
+	}
+
+	var raw rawExtended
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse extended fields: %w", err)
+	}
+
+	ext := &ExtendedStepResult{
+		ContainerStepResult: base,
+		Comments:            raw.Comments,
+		Blockers:            raw.Blockers,
+		SkillCandidates:     raw.SkillCandidates,
+		EventsSummary:       raw.EventsSummary,
+	}
+
+	events, err := ReadEventsFile(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("read events: %w", err)
+	}
+	ext.Events = events
+
+	return ext, nil
+}
+
+// ReadEventsFile parses _events.jsonl line by line. Returns nil if file missing.
+func ReadEventsFile(stateDir string) ([]StepEvent, error) {
+	eventsPath := filepath.Join(stateDir, "_events.jsonl")
+
+	f, err := os.Open(eventsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open _events.jsonl: %w", err)
+	}
+	defer f.Close()
+
+	var events []StepEvent
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var evt StepEvent
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			return nil, fmt.Errorf("parse _events.jsonl line %d: %w", lineNum, err)
+		}
+		events = append(events, evt)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read _events.jsonl: %w", err)
+	}
+
+	return events, nil
 }

@@ -30,6 +30,7 @@ type DockerClient interface {
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 	ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error)
 	ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error)
+	ContainerKill(ctx context.Context, containerID string, signal string) error
 }
 
 // KeystoreProvider interface for accessing secrets
@@ -315,6 +316,41 @@ func (f *AgentFactory) Remove(ctx context.Context, instanceID string) error {
 	// 3. Delete instance from store
 	if err := f.store.DeleteInstance(instanceID); err != nil {
 		return fmt.Errorf("failed to delete instance: %w", err)
+	}
+
+	return nil
+}
+
+// Kill immediately sends SIGKILL to a running agent container (no graceful shutdown).
+// Use this for emergencies (e.g., 10MB output overflow) where the container must die now.
+func (f *AgentFactory) Kill(ctx context.Context, instanceID string) error {
+	instance, err := f.store.GetInstance(instanceID)
+	if err != nil {
+		return fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	killCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := f.docker.ContainerKill(killCtx, instance.ContainerID, "SIGKILL"); err != nil {
+		return fmt.Errorf("failed to kill container: %w", err)
+	}
+
+	// Cleanup PII socket session
+	if f.piiInjector != nil {
+		containerName := "armorclaw-" + instanceID
+		if err := f.piiInjector.Cleanup(containerName); err != nil {
+			log.Printf("[WARN] failed to cleanup PII socket for %s: %v", containerName, err)
+		}
+	}
+
+	// Update instance status
+	now := time.Now()
+	instance.Status = StatusFailed
+	instance.CompletedAt = &now
+
+	if err := f.store.UpdateInstance(instance); err != nil {
+		return fmt.Errorf("failed to update instance status: %w", err)
 	}
 
 	return nil

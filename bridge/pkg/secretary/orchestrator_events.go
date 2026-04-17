@@ -14,9 +14,14 @@ import (
 const (
 	WorkflowEventStarted   = "workflow.started"
 	WorkflowEventProgress  = "workflow.progress"
+	WorkflowEventBlocked   = "workflow.blocked"
 	WorkflowEventCompleted = "workflow.completed"
 	WorkflowEventFailed    = "workflow.failed"
 	WorkflowEventCancelled = "workflow.cancelled"
+
+	WorkflowEventStepProgress   = "workflow.step_progress"
+	WorkflowEventStepError      = "workflow.step_error"
+	WorkflowEventBlockerWarning = "workflow.blocker_warning"
 )
 
 //=============================================================================
@@ -46,6 +51,7 @@ type WorkflowEvent struct {
 type EventEmitter interface {
 	EmitStarted(workflow *Workflow) uint64
 	EmitProgress(workflow *Workflow, stepID, stepName string, progress float64) uint64
+	EmitBlocked(workflow *Workflow, reason, message string) uint64
 	EmitCompleted(workflow *Workflow, result string) uint64
 	EmitFailed(workflow *Workflow, stepID string, err error, recoverable bool) uint64
 	EmitCancelled(workflow *Workflow, reason string) uint64
@@ -158,6 +164,23 @@ func (e *WorkflowEventEmitter) EmitCancelled(workflow *Workflow, reason string) 
 	return e.publish(workflow.CreatedBy, WorkflowEventCancelled, event)
 }
 
+func (e *WorkflowEventEmitter) EmitBlocked(workflow *Workflow, reason, message string) uint64 {
+	event := WorkflowEvent{
+		WorkflowID: workflow.ID,
+		TemplateID: workflow.TemplateID,
+		Status:     StatusBlocked,
+		Reason:     reason,
+		Result:     message,
+		Timestamp:  time.Now().UnixMilli(),
+		Metadata: map[string]interface{}{
+			"name":        workflow.Name,
+			"currentStep": workflow.CurrentStep,
+		},
+	}
+
+	return e.publish(workflow.CreatedBy, WorkflowEventBlocked, event)
+}
+
 func (e *WorkflowEventEmitter) publish(roomID, eventType string, event WorkflowEvent) uint64 {
 	return e.bus.Publish(events.MatrixEvent{
 		ID:      fmt.Sprintf("%s-%s-%d", eventType, event.WorkflowID, time.Now().UnixNano()),
@@ -266,4 +289,108 @@ func EmitWorkflowFailed(bus *events.MatrixEventBus, workflow *Workflow, stepID s
 func EmitWorkflowCancelled(bus *events.MatrixEventBus, workflow *Workflow, reason string) uint64 {
 	emitter := NewWorkflowEventEmitter(bus)
 	return emitter.EmitCancelled(workflow, reason)
+}
+
+//=============================================================================
+// Step Event Methods (from container _events.jsonl)
+//=============================================================================
+
+// ProgressDetail carries structured metadata for step progress events.
+type ProgressDetail struct {
+	EventSeq  int                    `json:"event_seq"`
+	EventType string                 `json:"event_type"`
+	StepName  string                 `json:"step_name"`
+	ElapsedMs int64                  `json:"elapsed_ms"`
+	Detail    map[string]interface{} `json:"detail,omitempty"`
+}
+
+// EmitStepProgress publishes a WorkflowEventStepProgress event derived from a StepEvent.
+// It extracts progress percent from event.Detail["percent"] when present.
+func (e *WorkflowEventEmitter) EmitStepProgress(roomID string, event StepEvent) uint64 {
+	var progress float64
+	if v, ok := event.Detail["percent"]; ok {
+		if f, ok := v.(float64); ok {
+			progress = f
+		}
+	}
+
+	var elapsed int64
+	if event.DurationMs != nil {
+		elapsed = int64(*event.DurationMs)
+	}
+
+	wfEvent := WorkflowEvent{
+		Progress:  progress,
+		StepName:  event.Name,
+		Timestamp: event.TsMs,
+		Status:    StatusRunning,
+		Metadata: map[string]interface{}{
+			"progress_detail": ProgressDetail{
+				EventSeq:  event.Seq,
+				EventType: event.Type,
+				StepName:  event.Name,
+				ElapsedMs: elapsed,
+				Detail:    event.Detail,
+			},
+		},
+	}
+
+	return e.publish(roomID, WorkflowEventStepProgress, wfEvent)
+}
+
+// EmitStepError publishes a WorkflowEventStepError event derived from a StepEvent.
+func (e *WorkflowEventEmitter) EmitStepError(roomID string, event StepEvent) uint64 {
+	wfEvent := WorkflowEvent{
+		Error:     event.Name,
+		Timestamp: event.TsMs,
+		Status:    StatusFailed,
+		Metadata: map[string]interface{}{
+			"event_seq":  event.Seq,
+			"event_type": event.Type,
+			"detail":     event.Detail,
+		},
+	}
+
+	return e.publish(roomID, WorkflowEventStepError, wfEvent)
+}
+
+// EmitBlockerWarning publishes a WorkflowEventBlockerWarning event derived from a StepEvent.
+func (e *WorkflowEventEmitter) EmitBlockerWarning(roomID string, event StepEvent) uint64 {
+	wfEvent := WorkflowEvent{
+		Status:    StatusBlocked,
+		Timestamp: event.TsMs,
+		Metadata: map[string]interface{}{
+			"blocker_type": event.Detail["blocker_type"],
+			"message":      event.Detail["message"],
+			"event_seq":    event.Seq,
+			"event_type":   event.Type,
+		},
+	}
+
+	return e.publish(roomID, WorkflowEventBlockerWarning, wfEvent)
+}
+
+//=============================================================================
+// Standalone Step Event Helpers
+//=============================================================================
+
+// EmitStepProgressEvent is a standalone helper that creates an emitter and
+// publishes a step progress event in one call.
+func EmitStepProgressEvent(bus *events.MatrixEventBus, roomID string, event StepEvent) uint64 {
+	emitter := NewWorkflowEventEmitter(bus)
+	return emitter.EmitStepProgress(roomID, event)
+}
+
+// EmitStepErrorEvent is a standalone helper that creates an emitter and
+// publishes a step error event in one call.
+func EmitStepErrorEvent(bus *events.MatrixEventBus, roomID string, event StepEvent) uint64 {
+	emitter := NewWorkflowEventEmitter(bus)
+	return emitter.EmitStepError(roomID, event)
+}
+
+// EmitBlockerWarningEvent is a standalone helper that creates an emitter and
+// publishes a blocker warning event in one call.
+func EmitBlockerWarningEvent(bus *events.MatrixEventBus, roomID string, event StepEvent) uint64 {
+	emitter := NewWorkflowEventEmitter(bus)
+	return emitter.EmitBlockerWarning(roomID, event)
 }

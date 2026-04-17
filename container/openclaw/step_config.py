@@ -22,6 +22,36 @@ class StepConfig:
         self.step_id = step_id
         self.step_name = step_name
 
+    @property
+    def _retry(self):
+        """Retry configuration, or None if absent/invalid."""
+        val = self.config.get("_retry")
+        if not isinstance(val, dict):
+            return None
+        attempt = val.get("attempt")
+        if not isinstance(attempt, int) or attempt < 1:
+            return None
+        return val
+
+    @property
+    def _blocker_response(self):
+        """Blocker response payload, or None if absent/invalid."""
+        val = self.config.get("_blocker_response")
+        if not isinstance(val, dict):
+            return None
+        inp = val.get("input")
+        if not isinstance(inp, str) or not inp:
+            return None
+        return val
+
+    @property
+    def relevant_skills(self):
+        """List of relevant skill descriptors, or None if absent/not a list."""
+        val = self.config.get("relevant_skills")
+        if not isinstance(val, list):
+            return None
+        return val
+
 
 def parse_step_config():
     """Read and validate STEP_CONFIG from the environment.

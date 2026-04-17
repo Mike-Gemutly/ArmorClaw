@@ -24,6 +24,7 @@ type DockerClientAdapter struct {
 	removeFunc  func(ctx context.Context, containerID string, force bool) error
 	inspectFunc func(ctx context.Context, containerID string) (*ContainerInfo, error)
 	listFunc    func(ctx context.Context, all bool) ([]types.Container, error)
+	killFunc    func(ctx context.Context, containerID string, signal string) error
 }
 
 // ContainerInfo contains container state information
@@ -50,6 +51,11 @@ func NewDockerClientAdapter(
 		inspectFunc: inspect,
 		listFunc:    list,
 	}
+}
+
+// SetKillFunc sets the kill function for SIGKILL support (optional, called after construction if available)
+func (a *DockerClientAdapter) SetKillFunc(kill func(ctx context.Context, containerID string, signal string) error) {
+	a.killFunc = kill
 }
 
 func (a *DockerClientAdapter) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig any, platform any, name string) (container.CreateResponse, error) {
@@ -94,6 +100,13 @@ func (a *DockerClientAdapter) ContainerInspect(ctx context.Context, containerID 
 
 func (a *DockerClientAdapter) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
 	return a.listFunc(ctx, options.All)
+}
+
+func (a *DockerClientAdapter) ContainerKill(ctx context.Context, containerID string, signal string) error {
+	if a.killFunc != nil {
+		return a.killFunc(ctx, containerID, signal)
+	}
+	return fmt.Errorf("kill function not configured on DockerClientAdapter")
 }
 
 //=============================================================================

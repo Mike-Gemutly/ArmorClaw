@@ -52,3 +52,27 @@ def write_result(state_dir, result_dict):
 
     os.rename(tmp, target)
     return True
+
+
+def write_enriched_result(state_dir, status, output, data=None, error=None,
+                          duration_ms=0, comments=None, blockers=None,
+                          skill_candidates=None, events_summary=None):
+    """Write an enriched result.json with optional underscore-prefixed fields.
+
+    Builds on the existing write_result() for atomic file write.
+    Underscore fields are only included when non-empty, matching Go
+    ExtendedStepResult ``omitempty`` semantics.
+    """
+    result = build_result(status, output, error=error, data=data,
+                          duration_ms=duration_ms)
+
+    if comments:
+        result["_comments"] = comments
+    if blockers:
+        result["_blockers"] = blockers
+    if skill_candidates:
+        result["_skill_candidates"] = skill_candidates
+    if events_summary:
+        result["_events_summary"] = events_summary
+
+    return write_result(state_dir, result)

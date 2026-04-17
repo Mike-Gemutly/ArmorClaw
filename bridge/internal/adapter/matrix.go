@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -758,9 +759,68 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 					}(&event)
 				}
 			}
+
+			// Handle custom ArmorClaw event types (workflow.*, agent.*, blocker.*)
+			switch {
+			case strings.HasPrefix(event.Type, "workflow."):
+				// workflow.progress, workflow.step_progress, workflow.step_error,
+				// workflow.blocker_warning, workflow.blocked, workflow.timeline
+				fmt.Printf("[matrix] processEvents: workflow event type=%s room=%s sender=%s\n",
+					event.Type, roomID, event.Sender)
+				m.publishCustomEvent(&event, roomID)
+
+			case strings.HasPrefix(event.Type, "agent."):
+				// agent.comment, etc.
+				fmt.Printf("[matrix] processEvents: agent event type=%s room=%s sender=%s\n",
+					event.Type, roomID, event.Sender)
+				m.publishCustomEvent(&event, roomID)
+
+			case strings.HasPrefix(event.Type, "blocker."):
+				// blocker.required, etc.
+				fmt.Printf("[matrix] processEvents: blocker event type=%s room=%s sender=%s\n",
+					event.Type, roomID, event.Sender)
+				m.publishCustomEvent(&event, roomID)
+
+			default:
+				// Unknown custom event types - log at debug but don't silently drop
+				if strings.Contains(event.Type, ".") && !strings.HasPrefix(event.Type, "m.") {
+					fmt.Printf("[matrix] processEvents: unrecognized custom event type=%s room=%s\n",
+						event.Type, roomID)
+				}
+			}
 		}
 	}
 	return processed
+}
+
+func (m *MatrixAdapter) publishCustomEvent(event *MatrixEvent, roomID string) {
+	m.mu.RLock()
+	bus := m.eventBus
+	publisher := m.eventPublisher
+	m.mu.RUnlock()
+
+	if bus != nil {
+		bus.Publish(events.MatrixEvent{
+			ID:      event.EventID,
+			RoomID:  roomID,
+			Sender:  event.Sender,
+			Type:    event.Type,
+			Content: event.Content,
+		})
+	}
+
+	if publisher != nil {
+		go func(e *MatrixEvent) {
+			if err := publisher.Publish(e); err != nil {
+				logger.Global().Warn("Failed to publish custom event to event bus",
+					"error", err,
+					"event_id", e.EventID,
+					"room_id", e.RoomID,
+					"type", e.Type,
+				)
+			}
+		}(event)
+	}
 }
 
 // GetSyncMetrics returns current sync performance metrics

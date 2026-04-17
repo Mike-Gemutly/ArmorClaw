@@ -92,6 +92,9 @@ func (s *orchestratorTestStore) GetTemplate(ctx context.Context, id string) (*Ta
 	}
 	return t, nil
 }
+func (s *orchestratorTestStore) GetTemplateByTrigger(ctx context.Context, trigger string) (*TaskTemplate, error) {
+	return nil, nil
+}
 
 func (s *orchestratorTestStore) CreateTemplate(ctx context.Context, t *TaskTemplate) error {
 	s.mu.Lock()
@@ -280,6 +283,18 @@ func (e *mockEventEmitter) EmitCancelled(workflow *Workflow, reason string) uint
 		eventType: WorkflowEventCancelled,
 		workflow:  workflow,
 		reason:    reason,
+	})
+	return uint64(len(e.events))
+}
+
+func (e *mockEventEmitter) EmitBlocked(workflow *Workflow, reason, message string) uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.events = append(e.events, capturedEvent{
+		eventType: WorkflowEventBlocked,
+		workflow:  workflow,
+		reason:    reason,
+		result:    message,
 	})
 	return uint64(len(e.events))
 }

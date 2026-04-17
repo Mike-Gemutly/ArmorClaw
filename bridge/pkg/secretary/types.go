@@ -16,6 +16,7 @@ type WorkflowStatus string
 const (
 	StatusPending   WorkflowStatus = "pending"
 	StatusRunning   WorkflowStatus = "running"
+	StatusBlocked   WorkflowStatus = "blocked"
 	StatusCompleted WorkflowStatus = "completed"
 	StatusFailed    WorkflowStatus = "failed"
 	StatusCancelled WorkflowStatus = "cancelled"
@@ -192,6 +193,12 @@ type ScheduledTask struct {
 
 	// CreatedBy is the Matrix user ID who created this task
 	CreatedBy string `json:"created_by"`
+
+	// Trigger is the event trigger key for event-driven dispatch (e.g., "email:secretary@example.com")
+	Trigger string `json:"trigger,omitempty"`
+
+	// OneShot indicates this task should fire once then deactivate
+	OneShot bool `json:"one_shot"`
 }
 
 //=============================================================================

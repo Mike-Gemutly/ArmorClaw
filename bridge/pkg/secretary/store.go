@@ -22,6 +22,7 @@ type Store interface {
 	// Task Templates
 	CreateTemplate(ctx context.Context, template *TaskTemplate) error
 	GetTemplate(ctx context.Context, id string) (*TaskTemplate, error)
+	GetTemplateByTrigger(ctx context.Context, trigger string) (*TaskTemplate, error)
 	ListTemplates(ctx context.Context, filter TemplateFilter) ([]TaskTemplate, error)
 	UpdateTemplate(ctx context.Context, template *TaskTemplate) error
 	DeleteTemplate(ctx context.Context, id string) error
@@ -230,7 +231,25 @@ func (s *SQLiteStore) initSchema() error {
 		"CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_tasks(next_run);" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company);" + "\n" +
-		"CREATE INDEX IF NOT EXISTS idx_contacts_relationship ON contacts(relationship);"
+		"CREATE INDEX IF NOT EXISTS idx_contacts_relationship ON contacts(relationship);" + "\n" +
+
+		"-- Learned Skills" + "\n" +
+		"CREATE TABLE IF NOT EXISTS learned_skills (" + "\n" +
+		"    id TEXT PRIMARY KEY," + "\n" +
+		"    name TEXT UNIQUE," + "\n" +
+		"    description TEXT," + "\n" +
+		"    source_task_id TEXT," + "\n" +
+		"    source_template_id TEXT," + "\n" +
+		"    pattern_type TEXT NOT NULL," + "\n" +
+		"    pattern_data TEXT NOT NULL," + "\n" +
+		"    trigger_keywords TEXT NOT NULL," + "\n" +
+		"    success_count INTEGER DEFAULT 0," + "\n" +
+		"    failure_count INTEGER DEFAULT 0," + "\n" +
+		"    last_used_at INTEGER," + "\n" +
+		"    created_at INTEGER NOT NULL," + "\n" +
+		"    confidence REAL DEFAULT 0.5" + "\n" +
+		");" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_learned_confidence ON learned_skills(confidence);"
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
@@ -355,6 +374,47 @@ func (s *SQLiteStore) GetTemplate(ctx context.Context, id string) (*TaskTemplate
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get template: %w", err)
+	}
+
+	if createdAtInt.Valid {
+		template.CreatedAt = time.UnixMilli(createdAtInt.Int64)
+	}
+	if updatedAtInt.Valid {
+		template.UpdatedAt = time.UnixMilli(updatedAtInt.Int64)
+	}
+
+	if err := json.Unmarshal([]byte(stepsJSON), &template.Steps); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+	}
+
+	template.Variables = json.RawMessage(variablesJSON)
+	if err := json.Unmarshal([]byte(piiRefsJSON), &template.PIIRefs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+	}
+	template.IsActive = isActive == 1
+
+	return template, nil
+}
+
+func (s *SQLiteStore) GetTemplateByTrigger(ctx context.Context, trigger string) (*TaskTemplate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	template := &TaskTemplate{}
+	var stepsJSON, variablesJSON, piiRefsJSON string
+	var isActive int
+	var createdAtInt, updatedAtInt sql.NullInt64
+
+	err := s.db.QueryRow(`
+		SELECT id, name, description, steps, variables, pii_refs, created_by, created_at, updated_at, is_active
+		FROM task_templates WHERE trigger = ? AND is_active = 1 LIMIT 1
+	`, trigger).Scan(&template.ID, &template.Name, &template.Description, &stepsJSON, &variablesJSON, &piiRefsJSON, &template.CreatedBy, &createdAtInt, &updatedAtInt, &isActive)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get template by trigger: %w", err)
 	}
 
 	if createdAtInt.Valid {

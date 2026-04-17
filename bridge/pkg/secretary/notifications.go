@@ -3,6 +3,7 @@ package secretary
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -563,6 +564,167 @@ func (b *NotificationBuilder) Build() *Notification {
 		b.notification.ID = generateNotificationID()
 	}
 	return b.notification
+}
+
+//=============================================================================
+// Timeline Formatting
+//=============================================================================
+
+// stepIcon returns an emoji for the given event type.
+func stepIcon(eventType string) string {
+	switch eventType {
+	case "step":
+		return "🔹"
+	case "file_read":
+		return "📄"
+	case "file_write":
+		return "✏️"
+	case "file_delete":
+		return "🗑️"
+	case "command_run":
+		return "⌨️"
+	case "observation":
+		return "💭"
+	case "blocker":
+		return "🚧"
+	case "error":
+		return "❌"
+	case "artifact":
+		return "📦"
+	case "checkpoint":
+		return "🏁"
+	default:
+		return "•"
+	}
+}
+
+// FormatTimelineMessage formats an ExtendedStepResult into a human-readable
+// timeline string. If no parsed events are available, it falls back to the
+// plain output text.
+func FormatTimelineMessage(result *ExtendedStepResult) string {
+	if result == nil || result.Events == nil || len(result.Events) == 0 {
+		if result != nil {
+			return result.Output
+		}
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("📋 %s\n", result.Output))
+	b.WriteString("───────────\n")
+
+	totalDuration := int64(0)
+	if result.ContainerStepResult != nil {
+		totalDuration = result.DurationMS
+	}
+
+	stepCount := 0
+	for _, evt := range result.Events {
+		if evt.Type == "_summary" || evt.Type == "progress" {
+			continue
+		}
+
+		icon := stepIcon(evt.Type)
+		b.WriteString(fmt.Sprintf("%s %s", icon, evt.Name))
+
+		switch evt.Type {
+		case "file_read":
+			if lines, ok := evt.Detail["lines"]; ok {
+				b.WriteString(fmt.Sprintf(" (%v lines)", lines))
+			}
+		case "file_write":
+			if changes, ok := evt.Detail["changes"]; ok {
+				b.WriteString(fmt.Sprintf(" (%v changes)", changes))
+			}
+		case "command_run":
+			if code, ok := evt.Detail["exit_code"]; ok {
+				if codeNum, ok := toInt(code); ok && codeNum == 0 {
+					b.WriteString(" ✓")
+				} else if ok {
+					b.WriteString(fmt.Sprintf(" ✗ exit %d", codeNum))
+				}
+			}
+		case "blocker":
+			if msg, ok := evt.Detail["message"].(string); ok && msg != "" {
+				b.WriteString(fmt.Sprintf(": %s", msg))
+			}
+		case "artifact":
+			if size, ok := evt.Detail["size_bytes"]; ok {
+				b.WriteString(fmt.Sprintf(" (%v bytes)", size))
+			}
+		}
+
+		if evt.Detail != nil {
+			if truncated, ok := evt.Detail["_truncated"].(bool); ok && truncated {
+				b.WriteString(" [truncated]")
+			}
+		}
+
+		if evt.DurationMs != nil {
+			b.WriteString(fmt.Sprintf(" (%dms)", *evt.DurationMs))
+		}
+
+		b.WriteString("\n")
+		stepCount++
+	}
+
+	summaryTotal := 0
+	if result.EventsSummary != nil {
+		summaryTotal = result.EventsSummary.Total
+	}
+	if summaryTotal == 0 {
+		summaryTotal = stepCount
+	}
+
+	totalSec := float64(totalDuration) / 1000.0
+	b.WriteString(fmt.Sprintf("\n⏱ %.1fs · %d steps", totalSec, summaryTotal))
+
+	return b.String()
+}
+
+// FormatBlockerMessage formats a list of blockers into a human-readable Matrix
+// notification. Returns an empty string if blockers is nil or empty.
+func FormatBlockerMessage(blockers []Blocker, timeout time.Duration) string {
+	if len(blockers) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("🚧 **Agent blocked — action required**\n\n")
+
+	for i, bl := range blockers {
+		b.WriteString(fmt.Sprintf("**Blocker %d:** %s\n", i+1, bl.Message))
+		if bl.Suggestion != "" {
+			b.WriteString(fmt.Sprintf("💡 %s\n", bl.Suggestion))
+		}
+		if bl.Field != "" {
+			b.WriteString(fmt.Sprintf("🔑 Field: %s\n", bl.Field))
+		}
+		if bl.BlockerType != "" {
+			b.WriteString(fmt.Sprintf("📋 Type: %s\n", bl.BlockerType))
+		}
+		if i < len(blockers)-1 {
+			b.WriteString("───────────\n")
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("\n⏱ Expires in %s", timeout.Round(time.Second)))
+
+	return b.String()
+}
+
+// toInt attempts to convert an interface{} to int.
+func toInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	case int64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 //=============================================================================

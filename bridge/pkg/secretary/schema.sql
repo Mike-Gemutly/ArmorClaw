@@ -144,3 +144,20 @@ CREATE INDEX IF NOT EXISTS idx_relationships_user ON contact_relationships(user_
 CREATE INDEX IF NOT EXISTS idx_relationships_type ON contact_relationships(relationship_type);
 CREATE INDEX IF NOT EXISTS idx_relationships_last_contacted ON contact_relationships(last_contacted_at);
 CREATE INDEX IF NOT EXISTS idx_relationships_active ON contact_relationships(is_active);
+
+-- =============================================================================
+-- Email Pipeline Migrations (v2)
+-- =============================================================================
+
+-- Add trigger column to task_templates for event-driven dispatch
+ALTER TABLE task_templates ADD COLUMN trigger TEXT DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_templates_trigger ON task_templates(trigger);
+
+-- Add default_definition_id to task_templates for one-shot email workflows
+ALTER TABLE task_templates ADD COLUMN default_definition_id TEXT DEFAULT '';
+
+-- Add one_shot column to scheduled_tasks for fire-once tasks
+ALTER TABLE scheduled_tasks ADD COLUMN one_shot INTEGER DEFAULT 0;
+
+-- Add trigger column to scheduled_tasks for event-driven dispatch
+ALTER TABLE scheduled_tasks ADD COLUMN trigger TEXT DEFAULT '';

@@ -19,6 +19,10 @@ type mockDockerClient struct {
 	createdContainers []mockContainer
 	startedContainers []string
 	stoppedContainers []string
+	killedContainers  []struct {
+		id     string
+		signal string
+	}
 	removedContainers []string
 	inspectError      error
 	containerState    *types.ContainerState
@@ -49,6 +53,14 @@ func (m *mockDockerClient) ContainerStart(ctx context.Context, containerID strin
 
 func (m *mockDockerClient) ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error {
 	m.stoppedContainers = append(m.stoppedContainers, containerID)
+	return nil
+}
+
+func (m *mockDockerClient) ContainerKill(ctx context.Context, containerID string, signal string) error {
+	m.killedContainers = append(m.killedContainers, struct {
+		id     string
+		signal string
+	}{id: containerID, signal: signal})
 	return nil
 }
 
@@ -354,6 +366,63 @@ func TestAgentFactory_Stop(t *testing.T) {
 	instance, _ := store.GetInstance(result.Instance.ID)
 	if instance.Status != StatusCompleted {
 		t.Errorf("expected status completed, got: %s", instance.Status)
+	}
+}
+
+func TestFactoryKill(t *testing.T) {
+	store, err := NewStore(StoreConfig{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	def := &AgentDefinition{
+		ID:           "kill-test-agent",
+		Name:         "Kill Test Agent",
+		Skills:       []string{"browser_navigate"},
+		ResourceTier: "medium",
+		CreatedBy:    "@test:example.com",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		IsActive:     true,
+	}
+	if err := store.CreateDefinition(def); err != nil {
+		t.Fatalf("failed to create definition: %v", err)
+	}
+
+	mockDocker := &mockDockerClient{}
+	factory := NewAgentFactory(FactoryConfig{StateDir: os.TempDir(), DockerClient: mockDocker,
+		Store: store})
+
+	ctx := context.Background()
+	result, err := factory.Spawn(ctx, &SpawnRequest{
+		DefinitionID: "kill-test-agent",
+		UserID:       "@test:example.com",
+	})
+	if err != nil {
+		t.Fatalf("failed to spawn: %v", err)
+	}
+
+	err = factory.Kill(ctx, result.Instance.ID)
+	if err != nil {
+		t.Fatalf("failed to kill: %v", err)
+	}
+
+	if len(mockDocker.killedContainers) != 1 {
+		t.Fatalf("expected 1 container killed, got: %d", len(mockDocker.killedContainers))
+	}
+
+	if mockDocker.killedContainers[0].signal != "SIGKILL" {
+		t.Errorf("expected SIGKILL signal, got: %s", mockDocker.killedContainers[0].signal)
+	}
+
+	if len(mockDocker.stoppedContainers) != 0 {
+		t.Error("expected no ContainerStop calls — Kill should use ContainerKill only")
+	}
+
+	instance, _ := store.GetInstance(result.Instance.ID)
+	if instance.Status != StatusFailed {
+		t.Errorf("expected status failed, got: %s", instance.Status)
 	}
 }
 
