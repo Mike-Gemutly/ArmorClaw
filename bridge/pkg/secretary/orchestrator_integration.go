@@ -2,6 +2,7 @@ package secretary
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -58,6 +59,7 @@ type StepExecutorConfig struct {
 	DefaultTimeout time.Duration
 	StepRetryCount int
 	StepRetryDelay time.Duration
+	StateDirBase   string
 }
 
 type StepExecutor struct {
@@ -68,6 +70,7 @@ type StepExecutor struct {
 	defaultTimeout time.Duration
 	retryCount     int
 	retryDelay     time.Duration
+	stateDirBase   string
 
 	mu           sync.RWMutex
 	runningSteps map[string]*runningStep
@@ -91,6 +94,9 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 	if cfg.StepRetryDelay == 0 {
 		cfg.StepRetryDelay = 1 * time.Second
 	}
+	if cfg.StateDirBase == "" {
+		cfg.StateDirBase = "/var/lib/armorclaw/agent-state"
+	}
 
 	return &StepExecutor{
 		factory:        cfg.Factory,
@@ -100,8 +106,13 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		defaultTimeout: cfg.DefaultTimeout,
 		retryCount:     cfg.StepRetryCount,
 		retryDelay:     cfg.StepRetryDelay,
+		stateDirBase:   cfg.StateDirBase,
 		runningSteps:   make(map[string]*runningStep),
 	}
+}
+
+func (e *StepExecutor) agentStateDir(agentID string) string {
+	return fmt.Sprintf("%s/%s", e.stateDirBase, agentID)
 }
 
 func (e *StepExecutor) ExecuteSteps(
@@ -192,6 +203,7 @@ func (e *StepExecutor) ExecuteSteps(
 type CompletionResult struct {
 	ExitCode        int
 	ContainerResult *ContainerStepResult
+	ExtendedResult  *ExtendedStepResult
 }
 
 type StepResult struct {
@@ -277,7 +289,7 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 
 	instanceID := result.Instance.ID
 
-	stateDir := fmt.Sprintf("/var/lib/armorclaw/agent-state/%s", agentID)
+	stateDir := e.agentStateDir(agentID)
 
 	e.mu.Lock()
 	stepCtx, stepCancel := context.WithCancel(ctx)
@@ -319,6 +331,7 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 }
 
 func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string, stateDir string) (*CompletionResult, error) {
+	reader := NewEventReader(stateDir)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -326,6 +339,7 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 		select {
 		case <-ctx.Done():
 			_ = e.factory.Stop(context.Background(), instanceID, 10*time.Second)
+			_ = cleanupStateDir(stateDir)
 			return nil, ctx.Err()
 		case <-ticker.C:
 			instance, err := e.factory.GetStatus(ctx, instanceID)
@@ -333,13 +347,45 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 				return nil, fmt.Errorf("failed to get agent status: %w", err)
 			}
 
+			// Tail _events.jsonl while container is running.
+			events, _, readErr := reader.ReadNew()
+			if readErr != nil {
+				if errors.Is(readErr, ErrEventLogExceeded) {
+					// 10MB overflow: kill container, cleanup, fail.
+					_ = e.factory.Kill(ctx, instanceID)
+					_ = cleanupStateDir(stateDir)
+					return nil, fmt.Errorf("event log exceeded 10MB cap: %w", ErrEventLogExceeded)
+				}
+				// Non-fatal read error — log and continue polling.
+			}
+			// Route events by type (logged for observability; T13 adds emission methods).
+			for _, evt := range events {
+				_ = evt // placeholder: event routing added in T13
+			}
+
 			switch instance.Status {
 			case studio.StatusCompleted:
-				parsed, _ := ParseContainerStepResult(stateDir)
-				return &CompletionResult{ExitCode: 0, ContainerResult: parsed}, nil
+				// Debug: check if result.json exists
+				resultPath := stateDir
+				if len(resultPath) > 0 && resultPath[len(resultPath)-1] != '/' {
+					resultPath += "/"
+				}
+				resultPath += "result.json"
+				ext, _ := ParseExtendedStepResult(stateDir)
+				var base *ContainerStepResult
+				if ext != nil {
+					base = ext.ContainerStepResult
+				}
+				_ = cleanupStateDir(stateDir)
+				return &CompletionResult{ExitCode: 0, ContainerResult: base, ExtendedResult: ext}, nil
 			case studio.StatusFailed:
-				parsed, _ := ParseContainerStepResult(stateDir)
-				return &CompletionResult{ExitCode: 1, ContainerResult: parsed}, nil
+				ext, _ := ParseExtendedStepResult(stateDir)
+				var base *ContainerStepResult
+				if ext != nil {
+					base = ext.ContainerStepResult
+				}
+				_ = cleanupStateDir(stateDir)
+				return &CompletionResult{ExitCode: 1, ContainerResult: base, ExtendedResult: ext}, nil
 			case studio.StatusRunning:
 				continue
 			default:
@@ -394,6 +440,204 @@ func (e *StepExecutor) GetRunningSteps(workflowID string) []string {
 		}
 	}
 	return steps
+}
+
+//=============================================================================
+// Blocker Handling
+//=============================================================================
+
+const (
+	MaxBlockerRetries = 3
+	BlockerTimeout    = 10 * time.Minute
+)
+
+// BlockerResponse holds the user's response to a blocker prompt.
+// PII SAFETY: The Input field may contain sensitive data and must NEVER be logged.
+type BlockerResponse struct {
+	Input      string `json:"input"`
+	Note       string `json:"note,omitempty"`
+	UserID     string `json:"user_id"`
+	ProvidedAt int64  `json:"provided_at"`
+}
+
+// pendingBlockers stores channels for in-flight blocker waits.
+// Key format: "blocker:{workflowID}:{stepID}" → value: chan BlockerResponse
+var pendingBlockers sync.Map
+
+// executeStepWithBlockerHandling runs the spawn→wait→blocker loop for a single step.
+// If the container reports blockers, the workflow is blocked and the method waits
+// for a response before re-spawning with the updated config (up to MaxBlockerRetries).
+func (e *StepExecutor) executeStepWithBlockerHandling(
+	ctx context.Context,
+	workflow *Workflow,
+	step WorkflowStep,
+	agentID string,
+	orchestrator *WorkflowOrchestratorImpl,
+) (*StepResult, error) {
+	if len(step.AgentIDs) == 0 {
+		return nil, ErrNoAgentForStep
+	}
+
+	config := step.Config
+
+	for attempt := 1; attempt <= MaxBlockerRetries; attempt++ {
+		// 1. Spawn container
+		taskDesc := fmt.Sprintf("Workflow %s - Step: %s (attempt %d)", workflow.ID, step.Name, attempt)
+		spawnReq := &studio.SpawnRequest{
+			DefinitionID:    agentID,
+			TaskDescription: taskDesc,
+			UserID:          workflow.CreatedBy,
+			RoomID:          workflow.RoomID,
+			Config:          config,
+		}
+
+		spawnCtx, spawnCancel := context.WithTimeout(ctx, e.defaultTimeout)
+		spawnResult, err := e.factory.Spawn(spawnCtx, spawnReq)
+		spawnCancel()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrAgentSpawnFailed, err)
+		}
+
+		instanceID := spawnResult.Instance.ID
+		stateDir := e.agentStateDir(agentID)
+
+		// Track running step
+		e.mu.Lock()
+		stepCtx, stepCancel := context.WithCancel(ctx)
+		e.runningSteps[instanceID] = &runningStep{
+			workflowID: workflow.ID,
+			stepID:     step.StepID,
+			instanceID: instanceID,
+			startedAt:  time.Now(),
+			cancelFunc: stepCancel,
+		}
+		e.mu.Unlock()
+
+		// 2. Wait for completion
+		completionResult, waitErr := e.waitForCompletion(stepCtx, instanceID, stateDir)
+
+		// Clean up running step tracking
+		e.mu.Lock()
+		delete(e.runningSteps, instanceID)
+		e.mu.Unlock()
+
+		// 3. Check for ErrEventLogExceeded — return immediately
+		if waitErr != nil {
+			if errors.Is(waitErr, ErrEventLogExceeded) {
+				return nil, waitErr
+			}
+			return nil, waitErr
+		}
+
+		// 4. Check exit code
+		if completionResult != nil && completionResult.ExitCode != 0 {
+			return nil, fmt.Errorf("%w: agent exited with failure", ErrStepExecutionFailed)
+		}
+
+		// 5. Check for blockers
+		hasBlockers := completionResult != nil && completionResult.ExtendedResult != nil && len(completionResult.ExtendedResult.Blockers) > 0
+		if hasBlockers {
+			blocker := completionResult.ExtendedResult.Blockers[0]
+
+			// Block the workflow
+			if blockErr := orchestrator.BlockWorkflow(workflow.ID, "blocker", blocker.Message); blockErr != nil {
+				return nil, fmt.Errorf("failed to block workflow: %w", blockErr)
+			}
+
+			// Wait for blocker response
+			response, respErr := e.waitForBlockerResponse(ctx, workflow.ID, step.StepID)
+			if respErr != nil {
+				return nil, fmt.Errorf("blocker timeout: %w", respErr)
+			}
+
+			// Append response to config (PII safe — memory only, never logged)
+			config = appendBlockerResponse(config, response)
+
+			if unblockErr := orchestrator.UnblockWorkflow(workflow.ID); unblockErr != nil {
+				return nil, fmt.Errorf("failed to unblock workflow: %w", unblockErr)
+			}
+
+			continue
+		}
+
+		// 6. No blockers — build success result and return
+		stepResult := &StepResult{
+			StepID:      step.StepID,
+			AgentID:     agentID,
+			InstanceID:  instanceID,
+			Recoverable: false,
+		}
+		if completionResult != nil {
+			stepResult.ContainerResult = completionResult.ContainerResult
+		}
+		return stepResult, nil
+	}
+
+	// Max retries exceeded
+	return nil, fmt.Errorf("max blocker retries (%d) exceeded", MaxBlockerRetries)
+}
+
+// waitForBlockerResponse waits for a user response to a blocker prompt.
+// It registers a channel in the pendingBlockers sync.Map and waits for
+// an external caller (T18 Matrix handler) to deliver the response.
+func (e *StepExecutor) waitForBlockerResponse(ctx context.Context, workflowID, stepID string) (BlockerResponse, error) {
+	key := fmt.Sprintf("blocker:%s:%s", workflowID, stepID)
+	ch := make(chan BlockerResponse, 1)
+	pendingBlockers.Store(key, ch)
+	defer pendingBlockers.Delete(key)
+
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, BlockerTimeout)
+	defer timeoutCancel()
+
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-timeoutCtx.Done():
+		return BlockerResponse{}, fmt.Errorf("blocker response timeout after %v", BlockerTimeout)
+	case <-ctx.Done():
+		return BlockerResponse{}, ctx.Err()
+	}
+}
+
+// DeliverBlockerResponse delivers a blocker response to a waiting step executor.
+// This is the public API for T18's Matrix handler to call.
+func DeliverBlockerResponse(workflowID, stepID string, response BlockerResponse) bool {
+	key := fmt.Sprintf("blocker:%s:%s", workflowID, stepID)
+	val, ok := pendingBlockers.Load(key)
+	if !ok {
+		return false
+	}
+	ch, ok := val.(chan BlockerResponse)
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- response:
+		return true
+	default:
+		return false
+	}
+}
+
+// appendBlockerResponse adds the blocker response to the step config.
+// PII SAFETY: The response.Input field is never logged or written to disk.
+func appendBlockerResponse(config json.RawMessage, response BlockerResponse) json.RawMessage {
+	var configMap map[string]interface{}
+	if config != nil {
+		if err := json.Unmarshal(config, &configMap); err != nil {
+			configMap = make(map[string]interface{})
+		}
+	} else {
+		configMap = make(map[string]interface{})
+	}
+
+	configMap["_blocker_response"] = response
+
+	updated, err := json.Marshal(configMap)
+	if err != nil {
+		return config // fallback to original on marshal error
+	}
+	return updated
 }
 
 //=============================================================================

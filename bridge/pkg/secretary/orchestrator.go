@@ -254,6 +254,62 @@ func (o *WorkflowOrchestratorImpl) CancelWorkflow(workflowID string, reason stri
 	return nil
 }
 
+// BlockWorkflow transitions a running workflow to blocked status.
+// This is called when an agent hits a blocker during execution.
+func (o *WorkflowOrchestratorImpl) BlockWorkflow(workflowID, reason, message string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	active, exists := o.activeWorkflows[workflowID]
+	if !exists {
+		_, err := o.store.GetWorkflow(o.ctx, workflowID)
+		if err != nil {
+			return fmt.Errorf("workflow not found: %s", workflowID)
+		}
+		return fmt.Errorf("workflow %s is not currently running", workflowID)
+	}
+
+	if err := o.validateTransition(active.workflow.Status, StatusBlocked); err != nil {
+		return fmt.Errorf("invalid status transition: %w", err)
+	}
+
+	workflow := active.workflow
+	workflow.Status = StatusBlocked
+	workflow.ErrorMessage = message
+
+	_ = o.store.UpdateWorkflow(o.ctx, workflow)
+
+	o.eventEmitter.EmitBlocked(workflow, reason, message)
+
+	return nil
+}
+
+// UnblockWorkflow transitions a blocked workflow back to running status.
+// This is called after a blocker response is received and before re-spawning the agent.
+func (o *WorkflowOrchestratorImpl) UnblockWorkflow(workflowID string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	active, exists := o.activeWorkflows[workflowID]
+	if !exists {
+		return fmt.Errorf("workflow %s is not currently active", workflowID)
+	}
+
+	if err := o.validateTransition(active.workflow.Status, StatusRunning); err != nil {
+		return fmt.Errorf("invalid status transition: %w", err)
+	}
+
+	workflow := active.workflow
+	workflow.Status = StatusRunning
+	workflow.ErrorMessage = ""
+
+	if err := o.store.UpdateWorkflow(o.ctx, workflow); err != nil {
+		return fmt.Errorf("failed to update workflow: %w", err)
+	}
+
+	return nil
+}
+
 func (o *WorkflowOrchestratorImpl) CompleteWorkflow(workflowID string, result string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -439,7 +495,8 @@ func (o *WorkflowOrchestratorImpl) validateTransition(from, to WorkflowStatus) e
 
 	validTransitions := map[WorkflowStatus][]WorkflowStatus{
 		StatusPending:   {StatusRunning, StatusCancelled},
-		StatusRunning:   {StatusCompleted, StatusFailed, StatusCancelled},
+		StatusRunning:   {StatusCompleted, StatusFailed, StatusCancelled, StatusBlocked},
+		StatusBlocked:   {StatusRunning, StatusFailed, StatusCancelled},
 		StatusCompleted: {},
 		StatusFailed:    {},
 		StatusCancelled: {},
