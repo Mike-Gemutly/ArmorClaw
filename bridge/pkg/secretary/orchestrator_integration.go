@@ -75,6 +75,16 @@ type StepExecutorConfig struct {
 	StepRetryDelay time.Duration
 	StateDirBase   string
 	SkillFinder    SkillFinder
+
+	// OnSkillExtraction is called after successful step completion to extract
+	// reusable skill patterns from the result. Errors are silently ignored to
+	// avoid disrupting the workflow. Uses callback to avoid importing pkg/skills.
+	OnSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
+
+	// OnSkillOutcome records whether a previously suggested skill was helpful.
+	// Called for each skill in the relevant_skills config field after step
+	// completion (success or failure). Uses callback to avoid import cycle.
+	OnSkillOutcome func(skillID string, success bool) error
 }
 
 type StepExecutor struct {
@@ -87,6 +97,9 @@ type StepExecutor struct {
 	retryDelay     time.Duration
 	stateDirBase   string
 	skillFinder    SkillFinder
+
+	onSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
+	onSkillOutcome    func(skillID string, success bool) error
 
 	mu           sync.RWMutex
 	runningSteps map[string]*runningStep
@@ -115,16 +128,18 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 	}
 
 	return &StepExecutor{
-		factory:        cfg.Factory,
-		validator:      cfg.Validator,
-		approvalEngine: cfg.ApprovalEngine,
-		eventBus:       cfg.EventBus,
-		defaultTimeout: cfg.DefaultTimeout,
-		retryCount:     cfg.StepRetryCount,
-		retryDelay:     cfg.StepRetryDelay,
-		stateDirBase:   cfg.StateDirBase,
-		skillFinder:    cfg.SkillFinder,
-		runningSteps:   make(map[string]*runningStep),
+		factory:           cfg.Factory,
+		validator:         cfg.Validator,
+		approvalEngine:    cfg.ApprovalEngine,
+		eventBus:          cfg.EventBus,
+		defaultTimeout:    cfg.DefaultTimeout,
+		retryCount:        cfg.StepRetryCount,
+		retryDelay:        cfg.StepRetryDelay,
+		stateDirBase:      cfg.StateDirBase,
+		skillFinder:       cfg.SkillFinder,
+		onSkillExtraction: cfg.OnSkillExtraction,
+		onSkillOutcome:    cfg.OnSkillOutcome,
+		runningSteps:      make(map[string]*runningStep),
 	}
 }
 
@@ -342,6 +357,14 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 		stepResult.Err = waitErr
 	} else if completionResult != nil && completionResult.ExitCode != 0 {
 		stepResult.Err = fmt.Errorf("%w: agent exited with failure", ErrStepExecutionFailed)
+	}
+
+	stepSuccess := stepResult.Err == nil
+
+	e.recordSkillOutcomes(step.Config, stepSuccess)
+
+	if stepSuccess && e.onSkillExtraction != nil && completionResult != nil && completionResult.ExtendedResult != nil {
+		e.onSkillExtraction(completionResult.ExtendedResult, taskDesc, workflow.ID, workflow.TemplateID)
 	}
 
 	return stepResult
@@ -693,6 +716,34 @@ func appendBlockerResponse(config json.RawMessage, response BlockerResponse) jso
 		return config // fallback to original on marshal error
 	}
 	return updated
+}
+
+func (e *StepExecutor) recordSkillOutcomes(config json.RawMessage, success bool) {
+	if e.onSkillOutcome == nil {
+		return
+	}
+
+	var configMap map[string]interface{}
+	if err := json.Unmarshal(config, &configMap); err != nil {
+		return
+	}
+
+	skills, ok := configMap["relevant_skills"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, s := range skills {
+		skillMap, ok := s.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		source, ok := skillMap["source"].(string)
+		if !ok {
+			continue
+		}
+		_ = e.onSkillOutcome(source, success)
+	}
 }
 
 //=============================================================================

@@ -1324,3 +1324,210 @@ func TestInjectLearnedSkills_NoMatch(t *testing.T) {
 
 	assert.Equal(t, original, result, "no matching skills should return config unchanged")
 }
+
+//=============================================================================
+// Post-Completion Skill Extraction + RecordOutcome Tests
+//=============================================================================
+
+func TestPostCompletion_SkillExtractedOnSuccess(t *testing.T) {
+	_, mockDocker, _, instanceID, executor := setupPurgeTest(t,
+		&types.ContainerState{Running: true, ExitCode: 0},
+	)
+
+	var extractionCalls []struct {
+		taskDesc string
+		taskID   string
+		tmplID   string
+	}
+	var extractionMu sync.Mutex
+
+	executor.onSkillExtraction = func(result *ExtendedStepResult, taskDesc, taskID, templateID string) {
+		extractionMu.Lock()
+		extractionCalls = append(extractionCalls, struct {
+			taskDesc string
+			taskID   string
+			tmplID   string
+		}{taskDesc, taskID, templateID})
+		extractionMu.Unlock()
+	}
+
+	stateDir := filepath.Join(os.TempDir(), fmt.Sprintf("skill-extract-ok-%d", time.Now().UnixNano()))
+	require.NoError(t, os.MkdirAll(stateDir, 0755))
+	t.Cleanup(func() { os.RemoveAll(stateDir) })
+
+	resultJSON, err := json.Marshal(ContainerStepResult{
+		Status:     "success",
+		Output:     "task completed",
+		DurationMS: 500,
+	})
+	require.NoError(t, err)
+	writeStateDirFiles(t, stateDir, resultJSON)
+
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		mockDocker.setState(&types.ContainerState{Running: false, ExitCode: 0})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	completionResult, waitErr := executor.waitForCompletion(ctx, instanceID, stateDir)
+	require.NoError(t, waitErr)
+	require.NotNil(t, completionResult)
+
+	workflow := &Workflow{
+		ID:         "wf-skill-test",
+		TemplateID: "tmpl-123",
+		Name:       "Skill Test",
+		Status:     StatusRunning,
+		CreatedBy:  "@test:example.com",
+		RoomID:     "!test:example.com",
+		StartedAt:  time.Now(),
+	}
+	step := WorkflowStep{
+		StepID:   "step-1",
+		Order:    0,
+		Type:     StepAction,
+		Name:     "Test Step",
+		AgentIDs: []string{"purge-test-agent"},
+		Config:   json.RawMessage(`{"timeout": 30}`),
+	}
+
+	stepResult := &StepResult{
+		StepID:          step.StepID,
+		AgentID:         "purge-test-agent",
+		InstanceID:      instanceID,
+		ContainerResult: completionResult.ContainerResult,
+	}
+	stepSuccess := stepResult.Err == nil
+
+	executor.recordSkillOutcomes(step.Config, stepSuccess)
+	if stepSuccess && executor.onSkillExtraction != nil && completionResult.ExtendedResult != nil {
+		executor.onSkillExtraction(completionResult.ExtendedResult,
+			fmt.Sprintf("Workflow %s - Step: %s", workflow.ID, step.Name),
+			workflow.ID, workflow.TemplateID)
+	}
+
+	extractionMu.Lock()
+	require.Len(t, extractionCalls, 1, "OnSkillExtraction should be called once on success")
+	assert.Equal(t, "wf-skill-test", extractionCalls[0].taskID)
+	assert.Equal(t, "tmpl-123", extractionCalls[0].tmplID)
+	assert.Contains(t, extractionCalls[0].taskDesc, "wf-skill-test")
+	extractionMu.Unlock()
+}
+
+func TestPostCompletion_NoExtractionOnFailure(t *testing.T) {
+	executor := NewStepExecutor(StepExecutorConfig{})
+
+	extractionCalled := false
+	executor.onSkillExtraction = func(result *ExtendedStepResult, taskDesc, taskID, templateID string) {
+		extractionCalled = true
+	}
+
+	completionResult := &CompletionResult{
+		ExitCode: 1,
+		ExtendedResult: &ExtendedStepResult{
+			ContainerStepResult: &ContainerStepResult{Status: "failed"},
+		},
+	}
+
+	workflow := &Workflow{
+		ID:         "wf-fail-test",
+		TemplateID: "tmpl-456",
+		Name:       "Fail Test",
+		Status:     StatusRunning,
+		CreatedBy:  "@test:example.com",
+	}
+	step := WorkflowStep{
+		StepID:   "step-fail",
+		Order:    0,
+		Type:     StepAction,
+		Name:     "Fail Step",
+		AgentIDs: []string{"agent-1"},
+		Config:   json.RawMessage(`{"timeout": 30}`),
+	}
+
+	stepSuccess := false
+
+	executor.recordSkillOutcomes(step.Config, stepSuccess)
+	if stepSuccess && executor.onSkillExtraction != nil && completionResult != nil && completionResult.ExtendedResult != nil {
+		executor.onSkillExtraction(completionResult.ExtendedResult,
+			fmt.Sprintf("Workflow %s - Step: %s", workflow.ID, step.Name),
+			workflow.ID, workflow.TemplateID)
+	}
+
+	assert.False(t, extractionCalled, "OnSkillExtraction should NOT be called on failure")
+}
+
+func TestPostCompletion_RecordOutcomeOnSuccess(t *testing.T) {
+	executor := NewStepExecutor(StepExecutorConfig{})
+
+	var recordedOutcomes []struct {
+		skillID string
+		success bool
+	}
+	var outcomeMu sync.Mutex
+
+	executor.onSkillOutcome = func(skillID string, success bool) error {
+		outcomeMu.Lock()
+		recordedOutcomes = append(recordedOutcomes, struct {
+			skillID string
+			success bool
+		}{skillID, success})
+		outcomeMu.Unlock()
+		return nil
+	}
+
+	config := json.RawMessage(`{
+		"timeout": 30,
+		"relevant_skills": [
+			{"name": "web-search", "source": "task-100", "confidence": 0.9},
+			{"name": "form-fill", "source": "task-200", "confidence": 0.7}
+		]
+	}`)
+
+	executor.recordSkillOutcomes(config, true)
+
+	outcomeMu.Lock()
+	require.Len(t, recordedOutcomes, 2, "should record outcome for each suggested skill")
+	assert.Equal(t, "task-100", recordedOutcomes[0].skillID)
+	assert.True(t, recordedOutcomes[0].success)
+	assert.Equal(t, "task-200", recordedOutcomes[1].skillID)
+	assert.True(t, recordedOutcomes[1].success)
+	outcomeMu.Unlock()
+}
+
+func TestPostCompletion_RecordOutcomeOnFailure(t *testing.T) {
+	executor := NewStepExecutor(StepExecutorConfig{})
+
+	var recordedOutcomes []struct {
+		skillID string
+		success bool
+	}
+	var outcomeMu sync.Mutex
+
+	executor.onSkillOutcome = func(skillID string, success bool) error {
+		outcomeMu.Lock()
+		recordedOutcomes = append(recordedOutcomes, struct {
+			skillID string
+			success bool
+		}{skillID, success})
+		outcomeMu.Unlock()
+		return nil
+	}
+
+	config := json.RawMessage(`{
+		"timeout": 30,
+		"relevant_skills": [
+			{"name": "web-search", "source": "task-100", "confidence": 0.9}
+		]
+	}`)
+
+	executor.recordSkillOutcomes(config, false)
+
+	outcomeMu.Lock()
+	require.Len(t, recordedOutcomes, 1, "should record outcome even on failure")
+	assert.Equal(t, "task-100", recordedOutcomes[0].skillID)
+	assert.False(t, recordedOutcomes[0].success)
+	outcomeMu.Unlock()
+}
