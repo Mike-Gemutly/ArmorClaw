@@ -123,6 +123,77 @@ Each error code is registered in `ErrorRegistry` with a description and resoluti
 
 **Key types:** `EventBus`, `Subscriber`, `EventFilter`, `MatrixEventWrapper`, `EventError`, `ErrorCode`, `ErrorDomain`.
 
+### Workflow Events (`pkg/secretary/`)
+
+The orchestrator events system (`orchestrator_events.go`) defines workflow lifecycle events that flow through the `MatrixEventBus`. These events are emitted by `WorkflowEventEmitter` during container execution and consumed by the Matrix adapter's `processEvents()` method, which routes them to Matrix rooms.
+
+**Core workflow events** (existed before v3):
+
+| Event Type | Constant | When Emitted |
+|------------|----------|-------------|
+| `workflow.started` | `WorkflowEventStarted` | Workflow begins execution |
+| `workflow.progress` | `WorkflowEventProgress` | Step progress update |
+| `workflow.blocked` | `WorkflowEventBlocked` | Workflow hits a human-in-the-loop blocker |
+| `workflow.completed` | `WorkflowEventCompleted` | Workflow finishes successfully |
+| `workflow.failed` | `WorkflowEventFailed` | Workflow fails (may be recoverable) |
+| `workflow.cancelled` | `WorkflowEventCancelled` | Workflow is cancelled by user or system |
+
+**Step-level events** (new in v3):
+
+These events are derived from container `StepEvent` objects (read from `_events.jsonl` files) and published by the `WorkflowEventEmitter` through the `MatrixEventBus`.
+
+| Event Type | Constant | When Emitted | Payload |
+|------------|----------|-------------|---------|
+| `workflow.step_progress` | `WorkflowEventStepProgress` | Container emits a step progress update | `progress` (float from `detail.percent`), `step_name`, `timestamp`, `status: running`, `metadata.progress_detail` with `event_seq`, `event_type`, `step_name`, `elapsed_ms`, `detail` |
+| `workflow.step_error` | `WorkflowEventStepError` | Container step fails | `error` (step name), `timestamp`, `status: failed`, `metadata` with `event_seq`, `event_type`, `detail` |
+| `workflow.blocker_warning` | `WorkflowEventBlockerWarning` | Container encounters a blocker condition | `status: blocked`, `timestamp`, `metadata` with `blocker_type`, `message`, `event_seq`, `event_type` |
+
+**Event structure:**
+
+All workflow events share the `WorkflowEvent` struct:
+
+```
+WorkflowID  string                 // The running workflow
+TemplateID  string                 // Template that spawned it (optional)
+Status      WorkflowStatus         // running, completed, failed, blocked, cancelled
+StepID      string                 // Current step (optional)
+StepName    string                 // Human-readable step name (optional)
+Progress    float64                // 0.0 to 1.0 (optional)
+Timestamp   int64                  // Unix milliseconds
+Error       string                 // Error message (optional)
+Recoverable bool                   // Whether a failure is recoverable
+Reason      string                 // Blocker or cancellation reason (optional)
+Result      string                 // Completion result (optional)
+Duration    int64                  // Total duration in milliseconds (optional)
+Metadata    map[string]interface{} // Extra context
+```
+
+**Emission pattern:**
+
+The `WorkflowEventEmitter` wraps the `events.MatrixEventBus` (a separate high-throughput ring buffer in `internal/events/`). Each emit method builds a `WorkflowEvent`, wraps it in a `MatrixEvent` with a generated ID (`{eventType}-{workflowID}-{nanotime}`), and calls `bus.Publish()`. The bus assigns a monotonically increasing sequence number and broadcasts to live subscribers.
+
+Standalone helper functions (`EmitStepProgressEvent`, `EmitStepErrorEvent`, `EmitBlockerWarningEvent`) create a temporary emitter and publish in one call, convenient for callers that don't hold a long-lived emitter.
+
+**Step icon rendering:**
+
+The `stepIcon()` function in `notifications.go` maps event types to emoji for timeline display in Matrix messages:
+
+| Event Type | Icon |
+|-----------|------|
+| `step` | `🔹` |
+| `file_read` | `📄` |
+| `file_write` | `✏️` |
+| `file_delete` | `🗑️` |
+| `command_run` | `⌨️` |
+| `observation` | `💭` |
+| `blocker` | `🚧` |
+| `error` | `❌` |
+| `artifact` | `📦` |
+| `checkpoint` | `🏁` |
+| (default) | `•` |
+
+`FormatTimelineMessage()` builds a human-readable timeline from `ExtendedStepResult.Events`, rendering each event with its icon, name, duration, and context-specific details (line counts, exit codes, blocker messages). `FormatBlockerMessage()` formats blocker lists into structured Matrix notifications with suggestions, field names, and expiration timers.
+
 ### Platform Adapters (`internal/adapter/`)
 
 This package contains the primary platform adapters that route messages between external services and the ArmorClaw Bridge.
@@ -140,6 +211,34 @@ The central adapter. `MatrixAdapter` is a full Matrix client that syncs with the
 - Integration with the high-throughput `events.MatrixEventBus` for agent streaming
 - Sync performance metrics (`SyncMetrics`)
 
+**processEvents() and event routing:**
+
+The `processEvents()` method is called after each successful `/sync`. It iterates through joined room timelines and routes events by type:
+
+1. **`m.room.message` events** go through the full trust/PII pipeline. Before queuing, the adapter checks for studio commands via `StudioCommandHandler.HandleMatrixMessage()`. If a studio handler consumes the event, it skips the queue. Otherwise, the event is pushed to `eventQueue` and published to the `MatrixEventBus` and `EventPublisher` (if configured).
+
+2. **Custom ArmorClaw event types** are routed by prefix:
+   - `workflow.*` (progress, step_progress, step_error, blocker_warning, blocked, timeline) are forwarded to `publishCustomEvent()`
+   - `agent.*` (comment, etc.) are forwarded the same way
+   - `blocker.*` (required, etc.) are forwarded the same way
+   - Other dotted types not starting with `m.` are logged at debug level
+
+`publishCustomEvent()` publishes to both the `MatrixEventBus` (high-throughput ring buffer) and the `EventPublisher` (legacy event bus adapter). The publisher call runs in a goroutine to avoid blocking sync.
+
+**MatrixEventBus integration:**
+
+The `events.MatrixEventBus` (defined in `internal/events/matrix_event_bus.go`) is a ring buffer separate from the general `EventBus` in `pkg/eventbus/`. It is designed for high-throughput agent streaming:
+
+- Ring buffer with configurable size (default 1024 events)
+- Monotonically increasing sequence numbers assigned at publish time
+- Non-blocking publish: slow subscribers are skipped rather than blocking
+- `Publish()` returns the assigned sequence number
+- `GetEventsAfter(cursor)` and `WaitForEvents(ctx, cursor)` allow consumers to tail the buffer by sequence position, with batch reads up to 128 events
+- `Subscribe()` returns a buffered channel (capacity 100) that receives live events
+- Condition variable broadcast wakes polling consumers when new events arrive
+
+The `MatrixAdapter` stores the bus in its `eventBus` field, set via `SetEventBus()`. Both message events and custom events (workflow, agent, blocker) are published to this bus. The workflow event emitter (`WorkflowEventEmitter`) also publishes directly to the same bus, creating a unified stream that Matrix consumers can subscribe to.
+
 **Slack adapter (`slack.go`):**
 
 Routes messages between Slack workspaces and Matrix rooms. `SlackAdapter` supports:
@@ -153,7 +252,20 @@ Routes messages between Slack workspaces and Matrix rooms. `SlackAdapter` suppor
 
 **Command handling (`commands_integration.go`):**
 
-`CommandHandler` processes Matrix messages that start with `/` as admin commands. It integrates with `admin.ClaimManager` and `lockdown.Manager` for administrative operations like lockdown mode.
+`CommandHandler` processes Matrix messages that start with `/` or `!` as commands. It integrates with `admin.ClaimManager`, `lockdown.Manager`, and `skills.LearnedStore` for administrative and agent operations.
+
+Admin commands use the `/` prefix and cover setup and operations: `/claim_admin`, `/status`, `/verify`, `/approve`, `/reject`, `/help`.
+
+Agent commands use the `!agent` prefix and interact with the `LearnedStore` for persistent skill management:
+
+| Command | Syntax | Purpose |
+|---------|--------|---------|
+| `!agent skills` | `!agent skills <agent_id>` | Lists all learned skills for an agent. Each skill shows its name, confidence score (0.00 to 1.00), and successful invocation count. Returns an empty message if the agent has no learned skills. |
+| `!agent forget-skill` | `!agent forget-skill <agent_id> <skill_id>` | Deletes a learned skill by ID. Used to remove skills that are no longer useful or were learned incorrectly. Returns an error if the skill ID is not found. |
+
+Both commands require a non-nil `LearnedStore`. If the store is unavailable (nil), they return an error. The `!agent` prefix routes to `handleAgentSubcommand`, which dispatches to `handleAgentSkills` or `handleAgentForgetSkill` based on the first argument. Unknown subcommands get an error with the list of available subcommands.
+
+Responses are sent back to the Matrix room as `m.notice` messages via `SendMessageWithRetry`. Errors are prefixed with a red X emoji and formatted in bold.
 
 **Trust integration (`trust_integration.go`):**
 
@@ -207,14 +319,34 @@ Bridge Core
   |
   +-- Matrix Adapter (internal/adapter)
   |     |-- Receives Matrix events via /sync
-  |     |-- Publishes to EventBus (pkg/eventbus)
+  |     |-- processEvents() routes by type:
+  |     |     |-- m.room.message -> trust/PII pipeline -> eventQueue
+  |     |     |-- workflow.* / agent.* / blocker.* -> publishCustomEvent()
+  |     |-- Publishes to EventBus (pkg/eventbus) and MatrixEventBus
   |     |-- Applies TrustVerifier and PII scrubbing
+  |
+  +-- Observable Container Event Flow (v3)
+  |     |-- Container writes events.jsonl (StepEvents)
+  |     |-- EventReader (Bridge) tails events.jsonl
+  |     |-- OrchestratorIntegration processes StepEvents
+  |     |-- WorkflowEventEmitter publishes to MatrixEventBus:
+  |     |     workflow.started, workflow.step_progress,
+  |     |     workflow.step_error, workflow.blocker_warning,
+  |     |     workflow.completed
+  |     |-- MatrixEventBus -> processEvents() -> Matrix room
+  |     |-- Matrix /sync -> ArmorChat receives timeline
   |
   +-- EventBus (pkg/eventbus)
   |     |-- Receives events from Matrix adapter and internal components
   |     |-- Distributes to in-process subscribers
   |     |-- Optionally broadcasts via WebSocket (pkg/websocket)
   |     |-- Optionally appends to durable log
+  |
+  +-- MatrixEventBus (internal/events)
+  |     |-- High-throughput ring buffer for agent streaming
+  |     |-- Receives from processEvents() and WorkflowEventEmitter
+  |     |-- Sequence-numbered cursor-based reads
+  |     |-- Non-blocking: slow subscribers are skipped
   |
   +-- Push Gateway (pkg/push)
   |     |-- Called when Matrix messages need mobile notification
@@ -226,8 +358,10 @@ Bridge Core
   |     |-- Independent of other subsystems
   |
   +-- Platform Adapters (internal/adapter, internal/sdtw)
-        |-- Route messages between external platforms and Matrix
-        |-- Each adapter is independently configured and started
+         |-- Route messages between external platforms and Matrix
+         |-- Each adapter is independently configured and started
 ```
 
 The key takeaway: each subsystem is wired into the Bridge core independently. There is no shared subsystem-to-subsystem wiring. The event bus is the closest thing to a shared dependency, but only the Matrix adapter publishes to it directly. Other subsystems don't depend on it.
+
+The observable container flow (v3) adds a second publishing path: `WorkflowEventEmitter` publishes directly to the `MatrixEventBus`, bypassing the general `EventBus`. This keeps high-frequency step events on a dedicated ring buffer that won't interfere with the general pub/sub backbone. The `MatrixEventBus` feeds into `processEvents()` and then out to Matrix rooms, where ArmorChat picks them up via `/sync`.
