@@ -9,13 +9,15 @@ import (
 
 	"github.com/armorclaw/bridge/pkg/admin"
 	"github.com/armorclaw/bridge/pkg/lockdown"
+	"github.com/armorclaw/bridge/pkg/skills"
 )
 
 // CommandHandler handles Matrix commands for ArmorClaw admin operations
 type CommandHandler struct {
-	claimMgr    *admin.ClaimManager
-	lockdownMgr *lockdown.Manager
-	adapter     *MatrixAdapter
+	claimMgr     *admin.ClaimManager
+	lockdownMgr  *lockdown.Manager
+	adapter      *MatrixAdapter
+	learnedStore *skills.LearnedStore
 }
 
 // NewCommandHandler creates a new command handler
@@ -23,11 +25,13 @@ func NewCommandHandler(
 	claimMgr *admin.ClaimManager,
 	lockdownMgr *lockdown.Manager,
 	adapter *MatrixAdapter,
+	learnedStore *skills.LearnedStore,
 ) *CommandHandler {
 	return &CommandHandler{
-		claimMgr:    claimMgr,
-		lockdownMgr: lockdownMgr,
-		adapter:     adapter,
+		claimMgr:     claimMgr,
+		lockdownMgr:  lockdownMgr,
+		adapter:      adapter,
+		learnedStore: learnedStore,
 	}
 }
 
@@ -36,8 +40,8 @@ func NewCommandHandler(
 func (h *CommandHandler) HandleCommand(ctx context.Context, roomID, userID, message string) bool {
 	message = strings.TrimSpace(message)
 
-	// Check if it starts with /
-	if !strings.HasPrefix(message, "/") {
+	// Check if it starts with / or !
+	if !strings.HasPrefix(message, "/") && !strings.HasPrefix(message, "!") {
 		return false
 	}
 
@@ -53,22 +57,26 @@ func (h *CommandHandler) HandleCommand(ctx context.Context, roomID, userID, mess
 	var response string
 	var err error
 
-	switch cmd {
-	case "/claim_admin":
-		response, err = h.handleClaimAdmin(ctx, userID, args)
-	case "/status":
-		response, err = h.handleStatus(ctx)
-	case "/verify":
-		response, err = h.handleVerify(ctx, userID, args)
-	case "/approve":
-		response, err = h.handleApprove(ctx, userID, args)
-	case "/reject":
-		response, err = h.handleReject(ctx, userID, args)
-	case "/help":
-		response = h.handleHelp()
-	default:
-		// Unknown command, don't consume it
-		return false
+	if cmd == "!agent" {
+		response, err = h.handleAgentSubcommand(ctx, userID, args)
+	} else {
+		switch cmd {
+		case "/claim_admin":
+			response, err = h.handleClaimAdmin(ctx, userID, args)
+		case "/status":
+			response, err = h.handleStatus(ctx)
+		case "/verify":
+			response, err = h.handleVerify(ctx, userID, args)
+		case "/approve":
+			response, err = h.handleApprove(ctx, userID, args)
+		case "/reject":
+			response, err = h.handleReject(ctx, userID, args)
+		case "/help":
+			response = h.handleHelp()
+		default:
+			// Unknown command, don't consume it
+			return false
+		}
 	}
 
 	// Send response
@@ -253,8 +261,68 @@ func (h *CommandHandler) handleHelp() string {
 		"- `/verify <code>` - Verify a device or claim\n" +
 		"- `/approve <claim_id>` - Approve a pending claim (admin only)\n" +
 		"- `/reject <claim_id> [reason]` - Reject a pending claim (admin only)\n" +
+		"- `!agent skills <agent_id>` - List learned skills for an agent\n" +
+		"- `!agent forget-skill <agent_id> <skill_id>` - Delete a learned skill\n" +
 		"- `/help` - Show this help message\n\n" +
 		"💡 Commands only work in rooms with the ArmorClaw agent."
+}
+
+func (h *CommandHandler) handleAgentSubcommand(ctx context.Context, userID string, args []string) (string, error) {
+	if h.learnedStore == nil {
+		return "", fmt.Errorf("learned skills not available")
+	}
+
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: !agent <skills|forget-skill> [args]")
+	}
+
+	switch args[0] {
+	case "skills":
+		return h.handleAgentSkills(ctx, userID, args[1:])
+	case "forget-skill":
+		return h.handleAgentForgetSkill(ctx, userID, args[1:])
+	default:
+		return "", fmt.Errorf("unknown !agent subcommand: %s (available: skills, forget-skill)", args[0])
+	}
+}
+
+func (h *CommandHandler) handleAgentSkills(ctx context.Context, userID string, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: !agent skills <agent_id>")
+	}
+	agentID := args[0]
+
+	skillList, err := h.learnedStore.ListForAgent(20)
+	if err != nil {
+		return "", fmt.Errorf("failed to list skills: %w", err)
+	}
+
+	if len(skillList) == 0 {
+		return fmt.Sprintf("No learned skills yet for %s.", agentID), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📚 Learned Skills for %s:\n", agentID))
+	for i, sk := range skillList {
+		sb.WriteString(fmt.Sprintf("%d. %s (confidence: %.2f, %d successful)\n",
+			i+1, sk.Name, sk.Confidence, sk.SuccessCount))
+	}
+
+	return sb.String(), nil
+}
+
+func (h *CommandHandler) handleAgentForgetSkill(ctx context.Context, userID string, args []string) (string, error) {
+	if len(args) < 2 {
+		return "", fmt.Errorf("usage: !agent forget-skill <agent_id> <skill_id>")
+	}
+	skillID := args[1]
+
+	err := h.learnedStore.Delete(skillID)
+	if err != nil {
+		return "", fmt.Errorf("skill %s not found", skillID)
+	}
+
+	return fmt.Sprintf("Forgot skill: %s", skillID), nil
 }
 
 // Update processEvents in matrix.go to call this
