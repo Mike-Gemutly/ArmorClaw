@@ -10,9 +10,11 @@ import (
 )
 
 const (
-	PatternCommandSequence = "command_sequence"
-	PatternFileTransform   = "file_transform"
-	PatternConfigTemplate  = "config_template"
+	PatternCommandSequence    = "command_sequence"
+	PatternFileTransform      = "file_transform"
+	PatternConfigTemplate     = "config_template"
+	PatternStepSequence       = "step_sequence"
+	PatternCheckpointSequence = "checkpoint_sequence"
 )
 
 // ExtractFromResult analyzes an ExtendedStepResult using multiple strategies
@@ -84,6 +86,40 @@ func ExtractFromResult(
 		})
 	}
 
+	// Strategy 2b: Step sequence extraction (3+ distinct step names required).
+	stepSeq := extractStepSequence(result.Events)
+	if len(stepSeq) >= 3 {
+		pd, _ := json.Marshal(stepSeq)
+		skills = append(skills, LearnedSkill{
+			ID:               fmt.Sprintf("ls_%s_%d", taskID, time.Now().UnixMilli()),
+			Name:             generateSkillName(taskDesc, "stepseq"),
+			SourceTaskID:     taskID,
+			SourceTemplateID: templateID,
+			PatternType:      PatternStepSequence,
+			PatternData:      string(pd),
+			Confidence:       0.5,
+			TriggerKeywords:  taskDesc,
+			CreatedAt:        time.Now().UnixMilli(),
+		})
+	}
+
+	// Strategy 3b: Checkpoint sequence extraction (any checkpoint events).
+	checkpoints := extractCheckpoints(result.Events)
+	if len(checkpoints) > 0 {
+		pd, _ := json.Marshal(checkpoints)
+		skills = append(skills, LearnedSkill{
+			ID:               fmt.Sprintf("ls_%s_%d", taskID, time.Now().UnixMilli()),
+			Name:             generateSkillName(taskDesc, "ckptseq"),
+			SourceTaskID:     taskID,
+			SourceTemplateID: templateID,
+			PatternType:      PatternCheckpointSequence,
+			PatternData:      string(pd),
+			Confidence:       0.4,
+			TriggerKeywords:  taskDesc,
+			CreatedAt:        time.Now().UnixMilli(),
+		})
+	}
+
 	return deduplicateSkills(skills)
 }
 
@@ -132,6 +168,39 @@ func extractFileOperations(events []secretary.StepEvent) map[string][]string {
 	}
 
 	return result
+}
+
+func extractStepSequence(events []secretary.StepEvent) []map[string]interface{} {
+	seen := make(map[string]struct{})
+	var steps []map[string]interface{}
+	for _, evt := range events {
+		if evt.Type == "step" {
+			if _, ok := seen[evt.Name]; ok {
+				continue
+			}
+			seen[evt.Name] = struct{}{}
+			entry := map[string]interface{}{
+				"name": evt.Name,
+				"seq":  evt.Seq,
+			}
+			steps = append(steps, entry)
+		}
+	}
+	return steps
+}
+
+func extractCheckpoints(events []secretary.StepEvent) []map[string]interface{} {
+	var checkpoints []map[string]interface{}
+	for _, evt := range events {
+		if evt.Type == "checkpoint" {
+			entry := map[string]interface{}{
+				"name": evt.Name,
+				"seq":  evt.Seq,
+			}
+			checkpoints = append(checkpoints, entry)
+		}
+	}
+	return checkpoints
 }
 
 func generateSkillName(taskDesc, suffix string) string {

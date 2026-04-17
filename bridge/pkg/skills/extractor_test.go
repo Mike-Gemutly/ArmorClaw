@@ -149,3 +149,86 @@ func TestDeduplicateSkills(t *testing.T) {
 		t.Errorf("expected second skill name 'unique', got %q", deduped[1].Name)
 	}
 }
+
+func TestExtractStepSequence(t *testing.T) {
+	result := &secretary.ExtendedStepResult{
+		Events: []secretary.StepEvent{
+			{Type: "step", Name: "fetch_deps", Seq: 1},
+			{Type: "step", Name: "compile", Seq: 2},
+			{Type: "step", Name: "run_tests", Seq: 3},
+		},
+	}
+
+	skills := ExtractFromResult(result, "build project", "task-7", "tpl-7")
+
+	var found bool
+	for _, sk := range skills {
+		if sk.PatternType == PatternStepSequence {
+			found = true
+			if sk.Confidence != 0.5 {
+				t.Errorf("expected confidence 0.5, got %f", sk.Confidence)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a step_sequence skill from 3 distinct step events")
+	}
+}
+
+func TestExtractStepSequenceDuplicateNames(t *testing.T) {
+	result := &secretary.ExtendedStepResult{
+		Events: []secretary.StepEvent{
+			{Type: "step", Name: "run", Seq: 1},
+			{Type: "step", Name: "run", Seq: 2},
+		},
+	}
+
+	skills := ExtractFromResult(result, "run twice", "task-8", "tpl-8")
+
+	for _, sk := range skills {
+		if sk.PatternType == PatternStepSequence {
+			t.Error("2 step events with same name should not produce step_sequence skill")
+		}
+	}
+}
+
+func TestExtractCheckpoints(t *testing.T) {
+	result := &secretary.ExtendedStepResult{
+		Events: []secretary.StepEvent{
+			{Type: "checkpoint", Name: "before_deploy", Seq: 5},
+			{Type: "checkpoint", Name: "after_deploy", Seq: 10},
+		},
+	}
+
+	skills := ExtractFromResult(result, "deploy app", "task-9", "tpl-9")
+
+	var found bool
+	for _, sk := range skills {
+		if sk.PatternType == PatternCheckpointSequence {
+			found = true
+			if sk.Confidence != 0.4 {
+				t.Errorf("expected confidence 0.4, got %f", sk.Confidence)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a checkpoint_sequence skill from checkpoint events")
+	}
+}
+
+func TestExtractNoStepOrCheckpointEvents(t *testing.T) {
+	result := &secretary.ExtendedStepResult{
+		Events: []secretary.StepEvent{
+			{Type: "progress", Name: "halfway", Seq: 1},
+			{Type: "error", Name: "something", Seq: 2},
+		},
+	}
+
+	skills := ExtractFromResult(result, "random events", "task-10", "tpl-10")
+
+	for _, sk := range skills {
+		if sk.PatternType == PatternStepSequence || sk.PatternType == PatternCheckpointSequence {
+			t.Errorf("unexpected skill pattern %q from progress/error events", sk.PatternType)
+		}
+	}
+}
