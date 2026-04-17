@@ -219,7 +219,7 @@ func TestTailEventsDuringExecution(t *testing.T) {
 	assert.Nil(t, dupes, "no new events should be returned after steady state")
 }
 
-func TestTailEvents_OverflowKillsContainer(t *testing.T) {
+func TestTailEvents_OverflowReturnsSoftCapError(t *testing.T) {
 	tmpDir := t.TempDir()
 	eventsPath := filepath.Join(tmpDir, "_events.jsonl")
 
@@ -241,7 +241,7 @@ func TestTailEvents_OverflowKillsContainer(t *testing.T) {
 
 	_, _, err = reader.ReadNew()
 	assert.ErrorIs(t, err, ErrEventLogExceeded,
-		"ReadNew must return ErrEventLogExceeded for >10MB file")
+		"ReadNew must return ErrEventLogExceeded for >10MB file (soft cap signal)")
 }
 
 func TestTailEvents_ParseExtendedAfterCompletion(t *testing.T) {
@@ -565,16 +565,16 @@ func TestPurgeOrder_CancelPath(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "state dir should be cleaned up after cancel: statErr=%v", statErr)
 }
 
-func TestPurgeOrder_10MBKillPath(t *testing.T) {
+func TestPurgeOrder_10MBSoftCapPath(t *testing.T) {
 	_, mockDocker, _, instanceID, executor := setupPurgeTest(t,
 		&types.ContainerState{Running: true, ExitCode: 0},
 	)
 
-	stateDir := filepath.Join(os.TempDir(), fmt.Sprintf("purge-test-kill-%d", time.Now().UnixNano()))
+	stateDir := filepath.Join(os.TempDir(), fmt.Sprintf("purge-test-softcap-%d", time.Now().UnixNano()))
 	require.NoError(t, os.MkdirAll(stateDir, 0755))
 	t.Cleanup(func() { os.RemoveAll(stateDir) })
 
-	// Create _events.jsonl larger than 10MB.
+	// Create _events.jsonl larger than 10MB to trigger soft cap.
 	eventsPath := filepath.Join(stateDir, "_events.jsonl")
 	bigLine := make([]byte, 1024)
 	for i := range bigLine {
@@ -588,24 +588,37 @@ func TestPurgeOrder_10MBKillPath(t *testing.T) {
 	}
 	require.NoError(t, f.Close())
 
+	// Write result.json so completion can be parsed.
+	resultJSON, err := json.Marshal(ContainerStepResult{
+		Status:     "success",
+		Output:     "completed after soft cap",
+		DurationMS: 1000,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "result.json"), resultJSON, 0644))
+
+	// After 800ms, transition Docker state to completed (container finishes naturally).
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		mockDocker.setState(&types.ContainerState{Running: false, ExitCode: 0})
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	completionResult, waitErr := executor.waitForCompletion(ctx, instanceID, stateDir)
 
-	require.Error(t, waitErr, "should return error for 10MB overflow")
-	assert.Contains(t, waitErr.Error(), "event log exceeded", "error should mention 10MB cap")
+	// Soft cap: no error, container finishes normally.
+	require.NoError(t, waitErr, "soft cap should not return error, container finishes normally")
+	assert.NotNil(t, completionResult, "CompletionResult should be returned on soft cap path")
+	assert.Equal(t, 0, completionResult.ExitCode)
 
-	// Kill() should have been called (not Stop).
-	assert.NotEmpty(t, mockDocker.getKilled(), "Kill() should be called on 10MB overflow")
-	assert.Empty(t, mockDocker.getStopped(), "Stop() should NOT be called on 10MB overflow (Kill instead)")
+	// Kill() should NOT be called — that's the whole point of soft cap.
+	assert.Empty(t, mockDocker.getKilled(), "Kill() should NOT be called on 10MB soft cap")
 
-	// CompletionResult should be nil (error path).
-	assert.Nil(t, completionResult, "CompletionResult should be nil on kill path")
-
-	// State directory must be gone even on kill path.
+	// State directory must be cleaned up after completion.
 	_, statErr := os.Stat(stateDir)
-	assert.True(t, os.IsNotExist(statErr), "state dir should be cleaned up after 10MB kill: statErr=%v", statErr)
+	assert.True(t, os.IsNotExist(statErr), "state dir should be cleaned up after soft cap completion: statErr=%v", statErr)
 }
 
 func TestPurgeOrder_CommentsAfterPurge(t *testing.T) {
