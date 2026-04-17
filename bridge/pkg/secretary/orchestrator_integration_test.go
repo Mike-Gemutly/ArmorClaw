@@ -1256,3 +1256,71 @@ func TestAppendBlockerResponse(t *testing.T) {
 		assert.NotNil(t, m["_blocker_response"])
 	})
 }
+
+//=============================================================================
+// injectLearnedSkills Tests
+//=============================================================================
+
+type mockSkillFinder struct {
+	skills []LearnedSkillInfo
+	err    error
+}
+
+func (m *mockSkillFinder) FindForTask(taskDesc string, limit int) ([]LearnedSkillInfo, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.skills, nil
+}
+
+func TestInjectLearnedSkills_WithMatch(t *testing.T) {
+	finder := &mockSkillFinder{
+		skills: []LearnedSkillInfo{
+			{Name: "web-search", Confidence: 0.9, PatternType: "web_browsing", SourceTaskID: "task-123"},
+			{Name: "form-fill", Confidence: 0.7, PatternType: "form_filling", SourceTaskID: "task-456"},
+		},
+	}
+
+	executor := NewStepExecutor(StepExecutorConfig{SkillFinder: finder})
+
+	config := json.RawMessage(`{"timeout": 30}`)
+	result := executor.injectLearnedSkills(config, "search the web for restaurants")
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(result, &m))
+	assert.Equal(t, float64(30), m["timeout"])
+
+	skills := m["relevant_skills"].([]interface{})
+	require.Len(t, skills, 2)
+
+	first := skills[0].(map[string]interface{})
+	assert.Equal(t, "web-search", first["name"])
+	assert.Equal(t, float64(0.9), first["confidence"])
+	assert.Equal(t, "web_browsing", first["pattern"])
+	assert.Equal(t, "task-123", first["source"])
+
+	second := skills[1].(map[string]interface{})
+	assert.Equal(t, "form-fill", second["name"])
+}
+
+func TestInjectLearnedSkills_NilStore(t *testing.T) {
+	executor := NewStepExecutor(StepExecutorConfig{})
+
+	original := json.RawMessage(`{"timeout": 30}`)
+	result := executor.injectLearnedSkills(original, "search the web for restaurants")
+
+	assert.Equal(t, original, result, "nil SkillFinder should return config unchanged")
+}
+
+func TestInjectLearnedSkills_NoMatch(t *testing.T) {
+	finder := &mockSkillFinder{
+		skills: []LearnedSkillInfo{},
+	}
+
+	executor := NewStepExecutor(StepExecutorConfig{SkillFinder: finder})
+
+	original := json.RawMessage(`{"timeout": 30}`)
+	result := executor.injectLearnedSkills(original, "search the web for restaurants")
+
+	assert.Equal(t, original, result, "no matching skills should return config unchanged")
+}

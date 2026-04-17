@@ -12,6 +12,20 @@ import (
 	"github.com/armorclaw/bridge/pkg/studio"
 )
 
+// LearnedSkillInfo is a minimal interface for injecting learned skill suggestions
+// into step config. Avoids importing pkg/skills directly (would create import cycle).
+type LearnedSkillInfo struct {
+	Name         string
+	Confidence   float64
+	PatternType  string
+	SourceTaskID string
+}
+
+// SkillFinder finds relevant learned skills for a task description.
+type SkillFinder interface {
+	FindForTask(taskDesc string, limit int) ([]LearnedSkillInfo, error)
+}
+
 //=============================================================================
 // Step Execution Errors
 //=============================================================================
@@ -60,6 +74,7 @@ type StepExecutorConfig struct {
 	StepRetryCount int
 	StepRetryDelay time.Duration
 	StateDirBase   string
+	SkillFinder    SkillFinder
 }
 
 type StepExecutor struct {
@@ -71,6 +86,7 @@ type StepExecutor struct {
 	retryCount     int
 	retryDelay     time.Duration
 	stateDirBase   string
+	skillFinder    SkillFinder
 
 	mu           sync.RWMutex
 	runningSteps map[string]*runningStep
@@ -107,6 +123,7 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		retryCount:     cfg.StepRetryCount,
 		retryDelay:     cfg.StepRetryDelay,
 		stateDirBase:   cfg.StateDirBase,
+		skillFinder:    cfg.SkillFinder,
 		runningSteps:   make(map[string]*runningStep),
 	}
 }
@@ -617,6 +634,44 @@ func DeliverBlockerResponse(workflowID, stepID string, response BlockerResponse)
 	default:
 		return false
 	}
+}
+
+func (e *StepExecutor) injectLearnedSkills(config json.RawMessage, taskDesc string) json.RawMessage {
+	if e.skillFinder == nil {
+		return config
+	}
+
+	matched, err := e.skillFinder.FindForTask(taskDesc, 3)
+	if err != nil || len(matched) == 0 {
+		return config
+	}
+
+	var configMap map[string]interface{}
+	if config != nil {
+		if err := json.Unmarshal(config, &configMap); err != nil {
+			configMap = make(map[string]interface{})
+		}
+	} else {
+		configMap = make(map[string]interface{})
+	}
+
+	var skillContexts []map[string]interface{}
+	for _, skill := range matched {
+		skillContexts = append(skillContexts, map[string]interface{}{
+			"name":       skill.Name,
+			"confidence": skill.Confidence,
+			"pattern":    skill.PatternType,
+			"source":     skill.SourceTaskID,
+		})
+	}
+
+	configMap["relevant_skills"] = skillContexts
+
+	updated, err := json.Marshal(configMap)
+	if err != nil {
+		return config
+	}
+	return updated
 }
 
 // appendBlockerResponse adds the blocker response to the step config.
