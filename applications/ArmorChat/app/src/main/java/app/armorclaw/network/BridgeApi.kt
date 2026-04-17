@@ -510,6 +510,25 @@ class BridgeApi(private val baseUrl: String = "http://localhost:8080/api") {
     }
 
     /**
+     * Resolve a workflow blocker by providing the required input.
+     * PII SAFETY: `input` may contain secrets — never log or cache it.
+     */
+    fun resolveBlocker(
+        workflowId: String,
+        stepId: String,
+        input: String,
+        note: String = ""
+    ): Result<Map<String, String>> {
+        val params = mutableMapOf(
+            "workflow_id" to workflowId,
+            "step_id" to stepId,
+            "input" to input
+        )
+        if (note.isNotEmpty()) params["note"] = note
+        return rpc("resolve_blocker", params)
+    }
+
+    /**
      * Rotate bootstrap password
      */
     fun rotateBootstrapPassword(newPassword: String): Result<Map<String, Boolean>> {

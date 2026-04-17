@@ -212,6 +212,45 @@ class BridgeApiTest {
     }
 
     @Test
+    fun `resolveBlocker RPCRequest has correct method and params`() {
+        val request = BridgeApi.RPCRequest(
+            id = 1,
+            method = "resolve_blocker",
+            params = mapOf(
+                "workflow_id" to "wf-123",
+                "step_id" to "step-456",
+                "input" to "user-provided-value",
+                "note" to "optional note"
+            )
+        )
+
+        assertEquals("method should be resolve_blocker", "resolve_blocker", request.method)
+        assertEquals("workflow_id should match", "wf-123", request.params!!["workflow_id"])
+        assertEquals("step_id should match", "step-456", request.params!!["step_id"])
+        assertEquals("input should match", "user-provided-value", request.params!!["input"])
+        assertEquals("note should match", "optional note", request.params!!["note"])
+    }
+
+    @Test
+    fun `resolveBlocker RPCRequest omits note when empty`() {
+        val request = BridgeApi.RPCRequest(
+            id = 2,
+            method = "resolve_blocker",
+            params = mapOf(
+                "workflow_id" to "wf-789",
+                "step_id" to "step-012",
+                "input" to "secret-data"
+            )
+        )
+
+        assertEquals("method should be resolve_blocker", "resolve_blocker", request.method)
+        assertNull("note should be omitted when empty", request.params!!["note"])
+        assertEquals("workflow_id should match", "wf-789", request.params!!["workflow_id"])
+        assertEquals("step_id should match", "step-012", request.params!!["step_id"])
+        assertEquals("input should match", "secret-data", request.params!!["input"])
+    }
+
+    @Test
     fun `unicode in strings is handled`() {
         val category = BridgeApi.DataCategory(
             id = "test",
