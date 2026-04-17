@@ -1027,6 +1027,52 @@ func TestBlockerLoop_MaxRetriesExceeded(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+func TestBlockerLoop_Timeout(t *testing.T) {
+	executor, orch, mockDocker, store, workflowID, stepID, tmpDir := setupBlockerTest(t)
+
+	defID := "blocker-test-agent"
+	stateDir := filepath.Join(tmpDir, "agent-state", defID)
+
+	step := WorkflowStep{
+		StepID:   stepID,
+		Order:    0,
+		Type:     StepAction,
+		Name:     "Test Step",
+		AgentIDs: []string{defID},
+		Config:   json.RawMessage(`{"url":"https://example.com"}`),
+	}
+	workflow := store.workflows[workflowID]
+
+	// Goroutine: spawn returns blockers, but nobody delivers a response — simulate timeout
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		writeBlockerResult(t, stateDir, []Blocker{
+			{BlockerType: "missing_input", Message: "Need password"},
+		})
+		mockDocker.mu.Lock()
+		for _, s := range mockDocker.containers {
+			if s.Running {
+				s.Running = false
+				s.ExitCode = 0
+				s.FinishedAt = "2025-01-01T00:00:00Z"
+				break
+			}
+		}
+		mockDocker.mu.Unlock()
+		// Intentionally do NOT deliver blocker response — simulate timeout
+	}()
+
+	// Use short timeout instead of waiting full 10 minutes
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := executor.executeStepWithBlockerHandling(ctx, workflow, step, defID, orch)
+
+	require.Error(t, err, "should fail when blocker times out")
+	assert.Contains(t, err.Error(), "blocker")
+	assert.Nil(t, result)
+}
+
 func TestBlockerLoop_PII_NotLogged(t *testing.T) {
 	executor, orch, mockDocker, store, workflowID, stepID, tmpDir := setupBlockerTest(t)
 
