@@ -107,7 +107,7 @@ Containers in step mode emit structured events to `_events.jsonl` throughout exe
 {"seq": 2, "type": "command_run", "name": "python transform.py", "ts_ms": 1200, "detail": {"exit_code": 0}, "duration_ms": 700}
 ```
 
-**10 MB cap:** The Bridge's `EventReader` enforces a 10 MB limit. If `_events.jsonl` exceeds this, the container is SIGKILLed (not gracefully stopped) via `factory.Kill()`.
+**10 MB soft cap:** The Bridge's `EventReader` enforces a 10 MB limit. If `_events.jsonl` exceeds this, `ReadNew()` returns `ErrEventLogExceeded`. The calling code in `waitForCompletion()` logs a warning and stops tailing events, but does **not** kill the container. The container continues executing and finishes naturally via the normal Docker polling loop. After completion, `cleanupStateDir()` purges the oversized log. This soft cap preserves the container's output while preventing unbounded memory/disk growth from event tailing.
 
 **Integration with StepRunner:** `StepRunner.run()` creates the `EventEmitter` as the first action and injects it into `step_config.config["_emitter_ref"]` so handlers can emit events without importing `events.py`. On completion, the runner reads `_events.jsonl` to extract blockers and event summaries for the enriched result.
 

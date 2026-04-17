@@ -373,9 +373,7 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
 
 #### Token Interceptor (`sidecar-python/interceptor.py`)
 
-HMAC-SHA256 token validation using `grpc_aio.ServerInterceptor`. Tokens carry `{request_id}:{timestamp}:{hmac_signature}` format with configurable TTL.
-
-> **Known issue**: The production `TokenInterceptor` is `grpc_aio.ServerInterceptor` (async) but `worker.py` uses sync `grpc.server()`. This causes `AttributeError` at runtime. Tests use a sync `_SyncTokenInterceptor` wrapper. This is a pre-existing production bug.
+HMAC-SHA256 token validation using a sync `grpc.ServerInterceptor`. Tokens carry `{request_id}:{timestamp}:{hmac_signature}` format with configurable TTL. The interceptor was originally implemented as `grpc_aio.ServerInterceptor` (async), which was incompatible with the sync `grpc.server()` in `worker.py`. This has been fixed: `interceptor.py` now uses a sync interceptor that works correctly with the sync gRPC server.
 
 #### Supported Formats
 

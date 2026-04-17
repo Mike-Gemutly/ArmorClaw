@@ -79,7 +79,7 @@ ScheduledTask (cron)
 | `EventFileCleaner` | `cleanup.go` | Removes the state directory (including `_events.jsonl`) after step completion. Ensures parse→purge→notify ordering. |
 | `BlockerHandler` | `orchestrator_integration.go` | Runs the spawn→wait→blocker loop: blocks workflow, waits for user response, re-spawns with updated config. Max 3 retries, 10-minute timeout. |
 | `SkillInjector` | `orchestrator_integration.go` | Injects `relevant_skills` into step config before dispatch via `injectLearnedSkills()`. |
-| `SkillExtractor` | `bridge/pkg/skills/extractor.go` | Analyzes `ExtendedStepResult` with 3 strategies to produce `LearnedSkill` suggestions. |
+| `SkillExtractor` | `bridge/pkg/skills/extractor.go` | Analyzes `ExtendedStepResult` with 5 strategies to produce `LearnedSkill` suggestions. |
 | `MatrixEventBus` | `bridge/internal/events/matrix_event_bus.go` | Ring buffer (default 1024 slots). Delivers events to the Matrix conduit and to in process subscribers. |
 
 ### Key types (types.go)
@@ -133,7 +133,7 @@ Triggered when `ScheduledTask.DefinitionID` is set but `TemplateID` is empty.
 
 The scheduler asks the factory if there is already a running instance for that definition:
 
-- **❌ Warm dispatch (NON-FUNCTIONAL).** A running agent exists. The scheduler sends a `app.armorclaw.task_dispatch` Matrix event into the agent's room. However, the agent container has **no Matrix connection** (`NetworkMode: "none"`). The event is received only by ArmorChat clients and the Bridge's own Matrix sync. The container never sees it. This path **silently fails** with no error indication.
+- **❌ Warm dispatch (NON-FUNCTIONAL, skips with WARN).** A running agent exists. The scheduler sends a `app.armorclaw.task_dispatch` Matrix event into the agent's room. However, the agent container has **no Matrix connection** (`NetworkMode: "none"`). The event is received only by ArmorChat clients and the Bridge's own Matrix sync. The container never sees it. `warmDispatch()` now explicitly logs a WARN and returns an error, causing the caller to fall back to cold dispatch.
 - **✅ Cold dispatch (FUNCTIONAL, limited).** No running agent. The scheduler calls `factory.Spawn()` to create a fresh container for the task. Functional but limited to exit-code-only results.
 
 After either path, the task's `next_run` is updated (cron) or the task is deactivated (one shot).
@@ -299,7 +299,7 @@ The Bridge tails `_events.jsonl` during step execution for real-time progress vi
 
 `EventReader` incrementally reads new events from `<stateDir>/_events.jsonl`. Each call to `ReadNew()` returns only lines appended since the previous call, tracked via byte offset and sequence number. If the file does not exist, it returns `(nil, 0, nil)` so callers can poll without special casing.
 
-**10 MB cap**: If the file exceeds `maxEventLogSize` (10 MB), `ReadNew()` returns `ErrEventLogExceeded`. The calling code in `waitForCompletion()` handles this by calling `factory.Kill()` (SIGKILL, not graceful), then `cleanupStateDir()`, and returning an error.
+**10 MB soft cap**: If the file exceeds `maxEventLogSize` (10 MB), `ReadNew()` returns `ErrEventLogExceeded`. The calling code in `waitForCompletion()` handles this by logging a warning and setting a `capExceeded` flag. The container is **not** killed — it continues executing and finishes naturally via the normal Docker polling loop. After completion, `cleanupStateDir()` purges the oversized log. This is a soft cap, not a hard termination: the container's output is preserved, only real-time event tailing stops.
 
 ### Event routing
 
@@ -476,13 +476,17 @@ The learned skills pipeline extracts reusable execution patterns from successful
 
 ### Extraction (bridge/pkg/skills/extractor.go)
 
-`ExtractFromResult()` analyzes an `ExtendedStepResult` using three strategies:
+`ExtractFromResult()` analyzes an `ExtendedStepResult` using five strategies:
 
 1. **Self-reported candidates.** The container may include `_skill_candidates` in `result.json`. Each `SkillCandidate` (name, description, pattern_type, confidence) is converted directly into a `LearnedSkill`. If confidence is unset, defaults to 0.5.
 
 2. **Command sequence.** If the events contain 2+ `command_run` events, a `command_sequence` skill is extracted with the command list as pattern data. Confidence: 0.6.
 
 3. **File operations.** If the events contain 1+ `file_write` or 2+ `file_read` events, a `file_transform` skill is extracted with file paths grouped by operation type. Confidence: 0.5.
+
+4. **Step sequence.** If the events contain 3+ distinct step names (e.g., `step`, `command_run`, `file_read` in sequence), a `step_sequence` skill is extracted capturing the ordered step pattern. Confidence: 0.5.
+
+5. **Checkpoint sequence.** If the events contain any `checkpoint` events, a `checkpoint_sequence` skill is extracted capturing the checkpoint names and order. Confidence: 0.4.
 
 Skills are deduplicated by name before saving.
 
@@ -620,7 +624,7 @@ The secretary workflow engine operates in **Mode A (Agent Studio)**:
 | Structured step results | ✅ Step mode | `result.json` in state dir (step mode only) |
 | Agent-reported progress | ✅ Available | Via `_events.jsonl` event streaming (step, file ops, commands, observations) |
 | Browser automation | ✅ Via Jetski | Agent delegates to Jetski sidecar (separate container with network) |
-| Warm dispatch | ❌ Stub (falls back to cold) | `warmDispatch()` returns error, caller falls back to `coldDispatch()` |
+| Warm dispatch | ❌ Stub (skips with WARN, falls back to cold) | `warmDispatch()` logs WARN and returns error; caller falls back to `coldDispatch()` |
 
 Browser automation is handled by the Jetski sidecar, a separate container with network access that acts as a CDP proxy to the Lightpanda browser engine. Agent containers never perform browser operations directly.
 
@@ -680,7 +684,7 @@ TaskScheduler
 | `task_scheduler.go` | `TaskScheduler`, `NewTaskScheduler`, `Start`, `Stop`, `tick`, `dispatchTask`, `templateDispatch`, `warmDispatch`, `coldDispatch` |
 | `types.go` | `TaskTemplate`, `Workflow`, `WorkflowStep`, `StepType`, `WorkflowStatus`, `ApprovalResult`, `ApprovalPolicy`, `ScheduledTask`, interface definitions |
 | `bridge/internal/events/matrix_event_bus.go` | `MatrixEventBus`, `MatrixEvent`, `Publish`, `GetEventsAfter`, `Subscribe` |
-| `bridge/pkg/skills/extractor.go` | `ExtractFromResult`, `PatternCommandSequence`, `PatternFileTransform`, `PatternConfigTemplate` |
+| `bridge/pkg/skills/extractor.go` | `ExtractFromResult`, `PatternCommandSequence`, `PatternFileTransform`, `PatternStepSequence`, `PatternCheckpointSequence`, `PatternConfigTemplate` |
 | `bridge/pkg/skills/learned_store.go` | `LearnedStore`, `LearnedSkill`, `Save`, `FindForTask`, `RecordOutcome`, `Delete`, `ListForAgent` |
 | `bridge/pkg/rpc/server.go` | `handleResolveBlocker` (resolve_blocker RPC handler) |
 | `bridge/internal/adapter/commands_integration.go` | `CommandHandler`, `handleAgentSkills`, `handleAgentForgetSkill` |
