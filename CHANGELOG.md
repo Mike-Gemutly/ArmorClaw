@@ -1,9 +1,32 @@
 # ArmorClaw Changelog
 
-> **Last Updated:** 2026-02-25
-> **Current Version:** 0.3.1
+> **Last Updated:** 2026-04-17
+> **Current Version:** 0.4.0
 
 All notable changes to ArmorClaw are documented here with commit references.
+
+---
+
+## [0.4.0] - 2026-04-17 - Agent Studio: Observable Containers + Learned Skills
+
+### Added
+- **Container Event Emission** (`container/openclaw/events.py`) — EventEmitter with 4 primary event types (STEP, PROGRESS, CHECKPOINT, ERROR) and PIPE_BUF 4096-byte enforcement
+- **Bridge EventReader** (`bridge/pkg/secretary/event_reader.go`) — Incremental `_events.jsonl` tailing with soft 10MB cap (stops tailing with warning, no SIGKILL)
+- **Progress Streaming** (`bridge/pkg/secretary/orchestrator_integration.go`) — Bridge polls `_events.jsonl` at 500ms intervals during execution, routes events to MatrixEventBus, forwards to Matrix rooms as `m.notice` messages
+- **Learned Skills Store** (`bridge/pkg/skills/learned_store.go`) — SQLite-backed skill persistence with confidence ≥ 0.4 threshold, suggestions only (never auto-executed)
+- **Skill Extraction** (`bridge/pkg/skills/extractor.go`) — Automatic pattern extraction from successful tasks: step_sequence (3+ distinct step names → confidence 0.5), checkpoint_sequence (any checkpoints → confidence 0.4), plus existing command_sequence and file_transform for Mode B
+- **Matrix Event Forwarding** (`bridge/pkg/secretary/orchestrator_events.go`) — MatrixEventForwarder subscribes to workflow.* events, publishes as `m.room.message` with `msgtype: m.notice`
+- **Timeline Formatter** (`bridge/pkg/secretary/notifications.go`) — FormatTimelineMessage and GetTimelineEvents for structured UI data
+- **ArmorChat WorkflowTimeline** (`WorkflowTimeline.kt`) — Scrollable timeline composable with event icons, progress bar, live/complete indicators
+- **ArmorChat GovernanceBanner** (`GovernanceBanner.kt`) — Running state with pulsing indicator and step count
+- **Matrix Commands** (`bridge/internal/adapter/commands_integration.go`) — `!agent skills <agent_id>` and `!agent forget-skill <agent_id> <skill_id>`
+- **State Directory Cleanup** (`bridge/pkg/secretary/cleanup.go`) — cleanupStateDir with purge ordering: parse → RemoveAll → notify
+
+### Fixed
+- **Warm dispatch silent failure** (`bridge/pkg/secretary/task_scheduler.go`) — Skip warm dispatch with WARN log for NetworkMode "none" containers (no Matrix connectivity)
+- **Python sidecar interceptor crash** (`sidecar-python/interceptor.py`) — Rewrote TokenInterceptor to use sync `grpc.ServerInterceptor` instead of async `grpc_aio.ServerInterceptor` (AttributeError at runtime with sync worker.py)
+- **Event routing placeholder** (`bridge/pkg/secretary/orchestrator_integration.go`) — Wired `_ = evt` placeholder to actual EmitStepProgress/EmitStepError calls
+- **Soft cap on event log overflow** — Container finishes normally when `_events.jsonl` exceeds 10MB (sets capExceeded flag, logs warning, continues Docker polling — no Kill() call)
 
 ---
 

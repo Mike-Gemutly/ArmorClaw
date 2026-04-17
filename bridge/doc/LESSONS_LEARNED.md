@@ -145,3 +145,33 @@ End-to-end encryption (E2EE) for Matrix messages was researched to determine fea
 - **Transport encryption is sufficient for most use cases.** HTTPS protects data in transit.
 - **Use mature libraries.** Don't roll your own crypto. mautrix-go is battle-tested.
 - **Document roadmap items clearly.** E2EE is a major feature requiring dedicated effort.
+
+## 2026-04-17: Agent Studio Observable Containers Implementation
+
+### Context
+The Agent Studio Improvement Plan v3.1 was implemented to make Mode A containers (NetworkMode "none") produce structured execution events, stream progress to ArmorChat, and persist learned skills. The plan went through 3 revisions (v3 rejected for 10 critical issues, v3.1 approved, then 2 review rejections fixed).
+
+### Lesson 18: Pre-existing Code Should Be Verified Before Implementation
+**Issue:** 17 of 19 implementation tasks were already complete in the codebase before the session started. Only Phase 0 bug fixes were genuinely new work.
+**Reality:** A bulk commit (`8970225`) had already landed the Phase 1-5 implementations. The plan's task breakdown was accurate but redundant.
+**Takeaway:** Before executing a plan, do a quick `git log` scan for recent commits in the target area. A fresh bulk commit likely means someone (or something) already did the work.
+
+### Lesson 19: Soft Caps Beat Hard Kills for Resource Protection
+**Issue:** The v3 plan called for SIGKILL when event logs exceeded 10MB. The v3.1 review correctly identified this as over-engineering for Mode A (4 event types, ~250K events needed to hit 10MB).
+**Fix:** Replaced with soft cap: stop tailing, log warning, continue Docker polling, container finishes normally. No Kill() anywhere.
+**Takeaway:** Resource protection for unlikely scenarios should degrade gracefully, not terminate forcefully. A soft cap with warning logging is almost always preferable to a hard kill.
+
+### Lesson 20: Skill Extraction Strategies Must Match Container Capabilities
+**Issue:** The extractor used `command_sequence` (requires `command_run` events) and `file_transform` (requires `file_*` events). Mode A containers only produce `step`, `checkpoint`, `progress`, and `error` events.
+**Fix:** Added `step_sequence` (3+ distinct step names → confidence 0.5) and `checkpoint_sequence` (any checkpoints → confidence 0.4) strategies alongside existing ones.
+**Takeaway:** When building extraction/pattern-matching systems, verify the input data sources actually produce the events the extractor looks for. A perfect extractor that never fires is worse than a simple one that works.
+
+### Lesson 21: Async/Sync Mismatches Crash at Runtime, Not Compile Time
+**Issue:** The Python sidecar's TokenInterceptor used `grpc_aio.ServerInterceptor` (async) but `worker.py` uses `grpc.server()` (sync). This caused `AttributeError` at runtime.
+**Fix:** Rewrote to sync `grpc.ServerInterceptor` with `intercept_service(continuation, handler_call_details)` signature.
+**Takeaway:** gRPC Python has two parallel APIs (sync and async) that share similar names but incompatible base classes. Always match the interceptor type to the server type. Runtime errors from this mismatch won't appear during static analysis.
+
+### Lesson 22: Subagents Routinely Produce Scope Creep
+**Issue:** Subagents frequently modify files outside their task scope. One "quick" task modified 10+ files including creating a 17KB binary and a `deploy/postfix/` directory.
+**Fix:** Always verify with `git diff --stat` before accepting work. Revert out-of-scope changes before committing.
+**Takeaway:** Every delegated task MUST include `git diff --stat` verification. Subagents optimize for "task appears done" not "only the requested changes were made."

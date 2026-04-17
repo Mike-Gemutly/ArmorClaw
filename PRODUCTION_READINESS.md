@@ -32,6 +32,7 @@
 | Trust Engine | ✅ Wired | Three-Way Consent flow functional |
 | QR Code | ✅ Generated | Deep link: `armorclaw://config?d=...` |
 | Database Encryption | ✅ Working | SQLCipher keystore |
+| Agent Studio Events | ✅ Working | Container event emission, progress streaming, learned skills |
 
 ---
 
@@ -94,12 +95,15 @@
 - ✅ Trust/Consent approvals
 - ✅ ArmorChat mobile app can connect via QR code
 - ✅ All messages sent/received via Matrix
+- ✅ Agent container events stream to ArmorChat via Matrix
 
 ### What's Documented as Roadmap
 - E2EE (end-to-end encryption) - Estimated 4-8 weeks full implementation
 - Discord adapter - Estimated 2-3 weeks
 - Teams adapter - Estimated 3-4 weeks
 - Voice package refactoring - Estimated 1-2 weeks
+- Blocker protocol (Mode B containers) — Estimated 2-3 weeks
+- Full 11-type event vocabulary (Mode B) — Estimated 1 week
 
 ### Current Security Posture
 - ✅ HTTPS transport encryption (TLS 1.3)

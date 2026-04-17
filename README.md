@@ -1271,6 +1271,32 @@ Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents 
 - Lighthouse sub-project for Nav-Chart REST API
 - Chartmaker sub-project (TypeScript CLI) for recording browser interactions
 
+### Agent Studio (Observable Containers + Learned Skills)
+
+Mode A containers (NetworkMode "none", deterministic computation only) now produce structured execution events, stream progress to ArmorChat via Matrix, and persist learned skills:
+
+- **Event Emission**: Containers write `_events.jsonl` with 4 primary event types (STEP, PROGRESS, CHECKPOINT, ERROR) and PIPE_BUF (4096 byte) line enforcement
+- **Progress Streaming**: Bridge tails `_events.jsonl` during execution (500ms polling), emits progress to MatrixEventBus, forwards to Matrix rooms as `m.notice` messages
+- **Learned Skills**: Successful task patterns extracted automatically (step sequences, checkpoints) and stored in SQLite as suggestions for future tasks (confidence >= 0.4, never auto-executed)
+- **Timeline UI**: ArmorChat WorkflowTimeline composable with event icons, progress bar, and live/complete indicators
+- **Soft 10MB Cap**: Event log capped at 10MB -- stops tailing with warning, container finishes normally (no SIGKILL)
+- **State Cleanup**: `_events.jsonl` and state directory purged after task completion (parse -> cleanup -> notify ordering)
+- **Matrix Commands**: `!agent skills <agent_id>` and `!agent forget-skill <agent_id> <skill_id>` for skill management
+
+**Key Files:**
+| Component | File | Purpose |
+|-----------|------|---------|
+| EventReader | `bridge/pkg/secretary/event_reader.go` | Incremental tailing with soft 10MB cap |
+| EventEmitter | `container/openclaw/events.py` | Container-side event writer |
+| LearnedStore | `bridge/pkg/skills/learned_store.go` | SQLite-backed skill persistence |
+| Extractor | `bridge/pkg/skills/extractor.go` | Skill extraction from step/checkpoint patterns |
+| StepExecutor | `bridge/pkg/secretary/orchestrator_integration.go` | Polling loop, event routing, skill lifecycle |
+| WorkflowTimeline | `applications/ArmorChat/.../WorkflowTimeline.kt` | Android timeline UI |
+
+**Event Flow:**
+```
+Container (_events.jsonl) -> Bridge EventReader (500ms poll) -> MatrixEventBus -> Matrix Room -> ArmorChat (/sync)
+```
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -1301,7 +1327,7 @@ Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents 
 
 * **VPS-Based Secretary:** Agents run headless on your server, performing desktop-class tasks
 * **Mobile-First Control:** Monitor status, review screenshots, approve PII via ArmorChat
-* **No-Code Agent Studio:** Define agents via chat or Dashboard—no coding required
+* **No-Code Agent Studio:** Define agents via chat or Dashboard—no coding required. Observable containers with progress streaming and learned skills.
 * **BlindFill™ Security:** Agents request sensitive data via references, never see raw values
 * **Secure Browser Automation:** Remote control via Matrix protocol
 * **Secure Document Pipeline:** Split-Storage RAG, YARA CDR, TTL Proxy Guard
@@ -1319,6 +1345,7 @@ Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents 
 * **Tests:** [tests/integration/](tests/integration/) (v4.4.0+)
 * **GitHub Actions:** [Actions](https://github.com/Gemutly/ArmorClaw/actions) (CI/CD pipelines)
 * **Jetski Sidecar:** [jetski/README.md](jetski/README.md)
+* **Bridge Lessons Learned:** [bridge/doc/LESSONS_LEARNED.md](bridge/doc/LESSONS_LEARNED.md)
 * **Document Pipeline:** [doc/sidecar-pipeline.md](doc/sidecar-pipeline.md) (Rust + Python sidecars, Go routing, YARA)
 
 ---
