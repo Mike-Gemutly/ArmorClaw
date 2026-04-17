@@ -7,7 +7,6 @@ import time
 from typing import Optional
 
 import grpc
-from grpc import aio as grpc_aio
 
 
 # Token constants (must match Go bridge/pkg/sidecar/token.go)
@@ -93,15 +92,17 @@ def validate_token(shared_secret: str, token: str) -> None:
         raise ValueError("invalid token signature")
 
 
-class TokenInterceptor(grpc_aio.ServerInterceptor):
-    """gRPC server interceptor that validates HMAC tokens and injects version metadata."""
+class TokenInterceptor(grpc.ServerInterceptor):
+    """Synchronous gRPC server interceptor that validates HMAC tokens and injects version metadata.
+
+    Compatible with grpc.server() (sync) used by worker.py.
+    """
 
     def __init__(self, shared_secret: str):
         self._shared_secret = shared_secret
 
-    async def intercept_service(self, continuation, handler_call_details):
+    def intercept_service(self, continuation, handler_call_details):
         """Intercept incoming gRPC calls to validate token and inject version."""
-        # Validate token from incoming metadata
         metadata = dict(handler_call_details.invocation_metadata or [])
         token = metadata.get(TOKEN_METADATA_KEY)
 
@@ -114,12 +115,12 @@ class TokenInterceptor(grpc_aio.ServerInterceptor):
             return self._abort_unauthenticated(str(e))
 
         # Token valid — proceed to the actual handler
-        handler = await continuation(handler_call_details)
+        handler = continuation(handler_call_details)
 
         if handler is None:
             return None
 
-        # Wrap the handler to inject server version in response metadata
+        # Wrap the handler to inject server version in initial metadata
         return self._wrap_handler_with_version(handler)
 
     def _abort_unauthenticated(self, reason: str):
@@ -127,27 +128,20 @@ class TokenInterceptor(grpc_aio.ServerInterceptor):
         def abort_handler(request, context):
             context.abort(grpc.StatusCode.UNAUTHENTICATED, reason)
 
-        async def abort_stream_handler(request, context):
-            context.abort(grpc.StatusCode.UNAUTHENTICATED, reason)
-
         return grpc.unary_unary_rpc_method_handler(abort_handler)
 
     def _wrap_handler_with_version(self, handler):
-        """Wrap the gRPC handler to inject x-sidecar-server-version in trailing metadata."""
+        """Wrap the gRPC handler to inject x-sidecar-server-version in initial metadata."""
         original_unary = handler.unary_unary
         original_stream = handler.unary_stream
 
         if original_unary:
 
-            async def wrapped_unary(request, context):
-                try:
-                    response = await original_unary(request, context)
-                except Exception:
-                    raise
-                await context.send_initial_metadata((
+            def wrapped_unary(request, context):
+                context.set_trailing_metadata((
                     (SERVER_VERSION_METADATA_KEY, SERVER_VERSION),
                 ))
-                return response
+                return original_unary(request, context)
 
             return grpc.unary_unary_rpc_method_handler(
                 wrapped_unary,
@@ -157,11 +151,11 @@ class TokenInterceptor(grpc_aio.ServerInterceptor):
 
         if original_stream:
 
-            async def wrapped_stream(request, context):
-                await context.send_initial_metadata((
+            def wrapped_stream(request, context):
+                context.set_trailing_metadata((
                     (SERVER_VERSION_METADATA_KEY, SERVER_VERSION),
                 ))
-                async for response in original_stream(request, context):
+                for response in original_stream(request, context):
                     yield response
 
             return grpc.unary_stream_rpc_method_handler(
