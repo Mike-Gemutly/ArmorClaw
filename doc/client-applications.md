@@ -14,6 +14,42 @@ This document covers four applications. ArmorChat, the primary mobile client, is
 
 The consumer-facing mobile app. End-to-end encrypted messaging with agents via Matrix, biometric keystore, HITL approval flows, and QR provisioning.
 
+### Workflow UI Components (v3)
+
+Three Jetpack Compose components added by the Agent Studio Improvement Plan v3 give users real-time visibility into agent workflows and a human-in-the-loop mechanism for resolving blockers.
+
+#### WorkflowTimeline
+
+Renders workflow events as a scrollable vertical timeline. Each row shows an emoji icon (mapped from Go bridge `stepIcon()` values), step name, optional detail line, and duration badge. A progress bar and live/paused/complete status indicator sit above the event list. The component consumes `WorkflowTimelineState` (event list, progress float, running flag) from a ViewModel/StateFlow pattern fed by Matrix `/sync` events. It does not manage network connections.
+
+**Key types:** `WorkflowEvent` (seq, type, name, tsMs, detail, durationMs), `WorkflowTimelineState` (events, progress, isRunning, workflowName)
+
+**Icon mapping:** step, file_read, file_write, file_delete, command_run, observation, blocker, error, artifact, checkpoint
+
+#### BlockerResponseDialog
+
+Modal dialog for resolving workflow blockers that need user input. Displays the blocker message, field label, and optional suggestion. Sensitive fields (password, card, key, token, secret, cvv, pin, ssn) get password masking automatically. Includes a collapsible note field and a state machine with four states: INPUT, LOADING, ERROR, DISMISSED. On submit, calls the parent's `onResolve` callback with (workflowId, stepId, input, note), which the ViewModel routes to `BridgeApi.resolveBlocker()`.
+
+**Key types:** `BlockerInfo` (blockerType, message, suggestion, field, workflowId, stepId), `BlockerDialogState` enum
+
+#### GovernanceBanner
+
+Persistent compact banner showing the current workflow status. Maps to Go `WorkflowStatus` values: IDLE (hidden), RUNNING (blue, pulsing dot, step counter), BLOCKED (amber, clickable, triggers `BlockerResponseDialog`), COMPLETED (green), FAILED (red), CANCELLED (grey). The BLOCKED variant accepts an `onBlockedTap` callback to open the blocker resolution flow.
+
+**Key type:** `WorkflowStatus` enum with `fromGo(String)` parser for Go-side lowercase values
+
+### Blocker Resolution RPC
+
+`BridgeApi.resolveBlocker()` sends a JSON-RPC call to the Bridge with the user's response:
+
+```
+method: "resolve_blocker"
+params: { workflow_id, step_id, input, note? }
+returns: Result<Map<String, String>>
+```
+
+The input field is never logged or cached (PII safety). Sensitive values are masked in the UI and travel E2EE through the Bridge to the Orchestrator, which unblocks the workflow and lets the container retry.
+
 ## Admin Panel
 
 | | |
@@ -127,20 +163,22 @@ All client applications connect back to the ArmorClaw control plane, but through
 │   Admin Panel    │ ───────────────────────▶│             │
 │   Setup Wizard   │     (via /api/* proxy)  │             │
 └──────────────────┘                         │   Go Bridge │
-                                             │ (Control    │
+                                              │ (Control    │
 ┌──────────────────┐     WebSocket           │  Plane)     │
 │  OpenClaw UI     │ ───────────────────────▶│             │
 │  (Agent Control) │   (Gateway protocol)    │             │
 └──────────────────┘                         └──────┬──────┘
-                                                    │
+                                                     │
 ┌──────────────────┐     Matrix E2EE               │
 │   ArmorChat      │ ──────────────────────────────│
 │   ArmorTerminal  │     (via Conduit homeserver)   │
-└──────────────────┘                                │
-                                                    ▼
-                                              ┌──────────┐
-                                              │  Agents  │
-                                              └──────────┘
+└──────┬───────────┘                                │
+       │                                            ▼
+       │  Blocker resolution:                 ┌──────────┐
+       │  resolve_blocker RPC ──────────────▶ │  Agents  │
+       │  (via Bridge HTTP API)               └──────────┘
+       │    Orchestrator unblocks workflow
+       │    Container retries
 ```
 
 | Application | Transport | Protocol | Authentication |
@@ -149,4 +187,4 @@ All client applications connect back to the ArmorClaw control plane, but through
 | Setup Wizard | HTTP (proxied to Unix socket) | JSON-RPC 2.0 | Lockdown challenge/response |
 | ArmorTerminal | HTTP(S) + WebSocket | JSON-RPC 2.0 + Matrix | Device registration + certificate pinning |
 | OpenClaw UI | WebSocket | Gateway protocol (v3) | Ed25519 device identity + token |
-| ArmorChat | Matrix federation | Matrix protocol | Matrix E2EE + biometric keystore |
+| ArmorChat | Matrix federation + Bridge HTTP RPC | Matrix protocol + JSON-RPC (resolve_blocker) | Matrix E2EE + biometric keystore |
