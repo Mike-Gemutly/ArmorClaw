@@ -2,11 +2,11 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 0.4.1
+> **Version**: 0.5.0
 >
-> **Last Updated**: 2026-04-14
+> **Last Updated**: 2026-04-17
 
-> ⚠️ **Architecture Note (v0.4.1)**: Agent containers in the default execution mode (Agent Studio / Mode A) have no network access (`NetworkMode: "none"`). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation and network-dependent features still require Mode B (OpenClaw Gateway).
+> ⚠️ **Architecture Note (v0.4.1)**: Agent containers always run with `NetworkMode: "none"` (no network access). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation runs through the Jetski sidecar, a separate container with its own network stack; agent containers never perform browser operations directly.
 
 ---
 
@@ -32,6 +32,10 @@
 | Modify Python office sidecar | `sidecar-python/worker.py`, `sidecar-python/interceptor.py`, `bridge/pkg/sidecar/office_client.go` |
 | Add or manage scheduled tasks | `bridge/pkg/secretary/store.go` and `bridge/pkg/secretary/task_scheduler.go` |
 | Execute or modify workflow steps | `bridge/pkg/secretary/orchestrator_integration.go` |
+| Modify sovereign email pipeline | `bridge/pkg/email/` and `bridge/cmd/mta-recv/` and `doc/email-pipeline.md` |
+| Change PII masking rules | `bridge/pkg/pii/masker.go` |
+| Modify OAuth token storage | `bridge/pkg/keystore/oauth.go` |
+| Change bridge-local step execution | `bridge/pkg/secretary/bridge_local_registry.go` |
 
 ---
 
@@ -44,26 +48,27 @@
 5. [SQLCipher Keystore](#sqlcipher-keystore)
 6. [Rust Vault Sidecar](#rust-vault-sidecar)
 7. [Phase 2: Secure Document Pipeline](#phase-2-secure-document-pipeline)
-8. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
-9. [Security Architecture](#security-architecture)
-10. [Component Integration Patterns](#component-integration-patterns)
-11. [Agent Communication Model](#agent-communication-model)
-12. [Agent Studio](#agent-studio)
-13. [Browser Service](#browser-service)
-14. [Jetski Browser Sidecar](#jetski-browser-sidecar)
-15. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
-16. [Rust Office Sidecar](#rust-office-sidecar)
-17. [ArmorChat Android Client](#armorchat-android-client)
-18. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
-19. [RPC API Reference](#rpc-api-reference)
-20. [Event Types Reference](#event-types-reference)
-21. [Configuration Reference](#configuration-reference)
-22. [Deployment Modes](#deployment-modes)
-23. [Testing & Verification](#testing--verification)
-24. [Local Development Guide](#local-development-guide)
-25. [Document Index](#document-index)
-26. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
-27. [Review Documentation](#review-documentation)
+8. [Sovereign Email Pipeline](#sovereign-email-pipeline)
+9. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
+10. [Security Architecture](#security-architecture)
+11. [Component Integration Patterns](#component-integration-patterns)
+12. [Agent Communication Model](#agent-communication-model)
+13. [Agent Studio](#agent-studio)
+14. [Browser Service](#browser-service)
+15. [Jetski Browser Sidecar](#jetski-browser-sidecar)
+16. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
+17. [Rust Office Sidecar](#rust-office-sidecar)
+18. [ArmorChat Android Client](#armorchat-android-client)
+19. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
+20. [RPC API Reference](#rpc-api-reference)
+21. [Event Types Reference](#event-types-reference)
+22. [Configuration Reference](#configuration-reference)
+23. [Deployment Modes](#deployment-modes)
+24. [Testing & Verification](#testing--verification)
+25. [Local Development Guide](#local-development-guide)
+26. [Document Index](#document-index)
+27. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
+28. [Review Documentation](#review-documentation)
 
 ---
 
@@ -95,7 +100,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **Human-in-the-Loop** | Mobile approval for sensitive operations (payments, PII) |
 | **SQLCipher Keystore** | Hardware-bound encrypted credential storage |
 | **No-Code Agent Studio** | Define agents via chat commands or dashboard |
-| **21 Browser Skills** | Chrome DevTools MCP integration for web automation *(Mode B only, requires HTTP_PROXY)* |
+| **21 Browser Skills** | Chrome DevTools MCP integration for web automation via Jetski sidecar (separate container with network access) |
 | **Sentinel Mode** | Automatic VPS deployment with Let's Encrypt TLS |
 | **Split-Storage RAG** | Document chunks stored separately from vector embeddings |
 | **YARA Content Disarm** | Malicious content detected and neutralized before processing |
@@ -173,8 +178,8 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 ┌───────────────────────────────────────────────────────────────────────┐
 │                         THE VPS (Office)                              │
 │                                                                       │
-│  Mode A (Agent Studio): env vars → container → exit code + result.json  │
-│  Mode B (OpenClaw Gateway): socket RPC + HTTP_PROXY via Squid        │
+│  Agent containers: env vars → container (NetworkMode: "none") → exit code + result.json  │
+│  Browser automation: Agent → Bridge RPC → Jetski CDP proxy → Lightpanda browser       │
 │                                                                       │
 │  ┌─────────────┐  env vars   ┌─────────────┐       ┌─────────────┐   │
 │  │ ArmorClaw   │────────────▶│  OpenClaw    │       │   Jetski    │   │
@@ -304,7 +309,7 @@ armorclaw-omo/
 | **gRPC (v6 Vault)** | gRPC over Unix socket | Vault governance: ephemeral tokens, zeroization (v6 only) | `/run/armorclaw/rust-vault.sock` |
 | **HTTP/WebSocket** | REST + WebSocket | Health checks, metrics, real-time events | 8080 |
 | **WebRTC** | ICE/STUN/TURN | Voice/video calls | Dynamic |
-| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation (agent → Jetski) *(Mode B only, requires HTTP_PROXY)* | 9222 |
+| **CDP WebSocket** | Chrome DevTools Protocol | Browser automation (agent → Bridge → Jetski CDP proxy → Lightpanda) | 9222 |
 | **Jetski RPC** | JSON-RPC 2.0 (HTTP) | Jetski sidecar status, sessions, health | 9223 |
 | **Lightpanda Engine** | CDP over WebSocket | Headless browser engine (Jetski internal) | 9333 |
 
@@ -1716,16 +1721,17 @@ ArmorClaw supports two agent execution modes with different communication capabi
 - **Limitations**: No network access, no progress reporting, no browser automation, no CDP connectivity
 - **Used by**: Secretary workflow engine (`StepExecutor`), task scheduler (`coldDispatch`)
 
-### Mode B: OpenClaw Gateway (Compose Profile)
+### Browser Automation via Jetski Sidecar
 
-- **Network**: `armorclaw-isolated` (internal only) + `HTTP_PROXY` through Squid on go-bridge
-- **Inbound**: Bridge socket (Unix domain socket RPC), Matrix events via bridge relay
-- **Outbound**: Bridge socket RPC responses, HTTP_PROXY for outbound requests
-- **Capabilities**: Platform adapters (Discord, Slack, etc.), browser automation via proxy, structured responses
-- **Status**: Integration incomplete (`entrypoint.ts` TODO at line 185)
-- **Used by**: docker-compose `openclaw` profile
+Browser automation does not run inside agent containers. Instead, the Jetski sidecar handles all browser operations as a separate container with its own network stack (`network: "bridge"`):
 
-> ⚠️ **CRITICAL**: Mode A containers cannot browse the web, fill forms, or report progress in real-time. Structured results are available in step mode via `result.json`. Browser-based workflows require Mode B or a future network-bridged execution.
+- **Agent container**: `NetworkMode: "none"` (no network, as above)
+- **Jetski sidecar**: Separate container with network access, runs the CDP proxy and Lightpanda browser engine
+- **Communication path**: Agent → Bridge (Unix socket RPC) → Jetski (`:9222` CDP proxy) → Lightpanda (`:9333`)
+- **Outbound proxy rotation**: Jetski's `ProxyManager` rotates outbound proxies for anti-WAF purposes (not for giving agent containers network access)
+- **Security**: PII scrubbing at the net.Conn level, SQLCipher session encryption, Matrix HITL approval for sensitive operations
+
+> ⚠️ **CRITICAL**: Agent containers cannot browse the web directly. All browser automation goes through the Jetski sidecar. The Bridge brokers communication between the isolated agent container and the networked Jetski sidecar. Structured results are available in step mode via `result.json`.
 
 ---
 
@@ -1796,7 +1802,7 @@ The Browser Service provides **Playwright-based browser automation** for web bro
 
 ### Browser Skills
 
-> Browser automation requires network access. In Mode A (Agent Studio), containers have `NetworkMode: "none"` and cannot reach the browser service. Browser-based workflows require Mode B (OpenClaw Gateway) or future network-bridged execution.
+> Browser automation is handled by the Jetski sidecar, which runs as a separate container with network access. Agent containers themselves (always `NetworkMode: "none"`) never perform browser operations directly. The Bridge routes browser requests from the agent to Jetski over RPC.
 
 | Skill | Description |
 |-------|-------------|

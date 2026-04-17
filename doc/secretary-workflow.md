@@ -619,10 +619,10 @@ The secretary workflow engine operates in **Mode A (Agent Studio)**:
 | Workflow state tracking | ✅ Works | Bridge-level: pending → running → completed/failed |
 | Structured step results | ✅ Step mode | `result.json` in state dir (step mode only) |
 | Agent-reported progress | ✅ Available | Via `_events.jsonl` event streaming (step, file ops, commands, observations) |
-| Browser automation | ❌ Not available | No network access |
-| Warm dispatch | ❌ Non-functional | No Matrix connection in container |
+| Browser automation | ✅ Via Jetski | Agent delegates to Jetski sidecar (separate container with network) |
+| Warm dispatch | ❌ Stub (falls back to cold) | `warmDispatch()` returns error, caller falls back to `coldDispatch()` |
 
-**Mode B (OpenClaw Gateway)** provides network access via HTTP_PROXY but has its own limitations (integration incomplete).
+Browser automation is handled by the Jetski sidecar, a separate container with network access that acts as a CDP proxy to the Lightpanda browser engine. Agent containers never perform browser operations directly.
 
 ---
 
@@ -635,7 +635,7 @@ TaskScheduler
     │
     ├── store (SQLCipher) ── templates, workflows, scheduled tasks, policies
     ├── factory (studio.AgentFactory) ── container spawn/stop/status
-    ├── matrix (MatrixAdapter) ── warm dispatch events
+    ├── matrix (MatrixAdapter) ── warm dispatch (currently stub, falls back to cold)
     │
     ├── orchestrator (WorkflowOrchestratorImpl)
     │       ├── store ── workflow CRUD
@@ -701,4 +701,4 @@ The backward communication channel (`result.json`), event streaming (`_events.js
 5. ~~**Event streaming**: Containers emit StepEvents to `_events.jsonl`, Bridge tails for real-time progress~~ ✅ Done
 6. ~~**Blocker protocol**: Human-in-the-loop blocker resolution with re-spawn~~ ✅ Done
 7. ~~**Learned skills**: Extraction, persistence, injection, and outcome recording~~ ✅ Done
-8. **Browser automation**: Requires network access — still needs Mode B or AI proxy socket
+8. **Browser automation**: Handled by Jetski sidecar (separate container with network). Agent containers delegate browser operations to Jetski via the Bridge. No direct browser access from isolated containers.

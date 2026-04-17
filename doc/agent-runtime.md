@@ -21,7 +21,7 @@ The runtime is *not* the same thing as the agent state machine documented in [ar
 ### Execution Modes
 
 - **Mode A (Agent Studio)**: Containers spawned by `factory.Spawn()` with `NetworkMode: "none"`. Task delivered via `STEP_CONFIG` env var. Results via exit code + `result.json` in bind-mounted state dir (`/home/claw/.openclaw/`). When `STEP_CONFIG` is present, container runs in **step mode**: parses config, executes task, writes `result.json`, exits. When absent, runs in **agent mode** (Matrix polling loop). No network access. This is the default for secretary workflow steps.
-- **Mode B (OpenClaw Gateway)**: Containers via docker-compose with `armorclaw-isolated` network and `HTTP_PROXY`. Can reach external services through Squid proxy on go-bridge. Integration incomplete. See `container/Dockerfile.openclaw-standalone` and `docker-compose.bridge.yml`.
+- **Network-Isolated Execution**: Agent containers always run with `NetworkMode: "none"` and zero network access. Browser automation runs via the Jetski sidecar (separate container with network access, CDP proxy with PII scrubbing). LLM API calls are made by the Bridge process, not by agent containers. No proxy-out path exists for containers — all outbound network operations are handled by the Bridge or Jetski. See `jetski/` for the sidecar architecture.
 
 ## Architecture
 
@@ -359,7 +359,7 @@ The Bridge can observe four container states via Docker `ContainerInspect` and `
 | **Failed** | Container exited with non-zero code, or container gone |
 | **Events** | `StepEvent` entries in `_events.jsonl` (step, file ops, commands, observations, blockers, errors) |
 
-The 11-state agent state machine (`IDLE`, `INITIALIZING`, `BROWSING`, `FORM_FILLING`, `AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`, `ERROR`, `COMPLETE`, `OFFLINE`) is defined in `bridge/pkg/agent/state.go` but transitions are **programmatic only**: triggered by Bridge-side code, not by agent-reported events. The `BroadcastStatus()` method that would relay states to clients is currently a stub returning nil.
+The 11-state agent state machine (`IDLE`, `INITIALIZING`, `BROWSING`, `FORM_FILLING`, `AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`, `ERROR`, `COMPLETE`, `OFFLINE`) is defined in `bridge/pkg/agent/state.go` but transitions are **programmatic only**: triggered by Bridge-side code, not by agent-reported events. The `BroadcastStatus()` method that would relay states to clients is currently unimplemented and returns `fmt.Errorf("BroadcastStatus: agent status broadcasting not implemented — no container-to-Bridge state reporting channel exists")`.
 
 For the agent state machine definition (states like `BROWSING`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`), see the [Agent State Machine section in armorclaw.md](armorclaw.md#agent-state-machine-go-bridge).
 

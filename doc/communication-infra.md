@@ -12,7 +12,7 @@ The six subsystems covered here:
 |-----------|---------|---------|
 | Push Notifications | `pkg/push/` | Mobile push via FCM, APNS, Web Push, and Matrix Sygnal |
 | Single Sign-On | `pkg/sso/` | Enterprise SAML 2.0 and OIDC authentication |
-| WebSocket Server | `pkg/websocket/` | Real-time event streaming to clients |
+| WebSocket Server | `pkg/websocket/` | Real-time event streaming to clients (stub — not yet implemented) |
 | Event Bus Internals | `pkg/eventbus/` | In-process pub/sub with optional durable log |
 | Platform Adapters | `internal/adapter/` | Matrix and Slack message routing |
 | Additional Platform Adapters | `internal/sdtw/` | Discord, Telegram, Teams, WhatsApp adapters |
@@ -98,7 +98,7 @@ The event bus is the in-process pub/sub backbone for real-time Matrix event dist
 3. If a subscriber's channel is full (slow consumer), the event is dropped and logged. The bus does not block publishers on slow subscribers.
 4. A background goroutine cleans up subscribers inactive for more than 30 minutes.
 5. Optionally, a durable log (`eventlog.Log`) appends every published event for replay or auditing.
-6. Optionally, an embedded WebSocket server streams events to external clients.
+6. Optionally, an embedded WebSocket server streams events to external clients (not yet implemented — currently a stub).
 
 **Filter model:**
 
@@ -106,7 +106,7 @@ The event bus is the in-process pub/sub backbone for real-time Matrix event dist
 
 **Bridge events:**
 
-`PublishBridgeEvent` handles non-Matrix events (agent, workflow, HITL, budget, platform). These events implement the `BridgeEvent` interface (`EventType()`, `Timestamp()`, `ToJSON()`). They are wrapped, serialized, and broadcast to WebSocket clients if the server is enabled. Broadcast failures are logged but don't fail the publish operation.
+`PublishBridgeEvent` handles non-Matrix events (agent, workflow, HITL, budget, platform). These events implement the `BridgeEvent` interface (`EventType()`, `Timestamp()`, `ToJSON()`). They are wrapped, serialized, and broadcast to WebSocket clients if the server is enabled. Since the WebSocket server is currently a stub, these broadcasts are no-ops. Broadcast failures are logged but don't fail the publish operation.
 
 **Error handling:**
 
@@ -339,7 +339,7 @@ Bridge Core
   +-- EventBus (pkg/eventbus)
   |     |-- Receives events from Matrix adapter and internal components
   |     |-- Distributes to in-process subscribers
-  |     |-- Optionally broadcasts via WebSocket (pkg/websocket)
+  |     |-- Optionally broadcasts via WebSocket (pkg/websocket) — stub, not yet implemented
   |     |-- Optionally appends to durable log
   |
   +-- MatrixEventBus (internal/events)
