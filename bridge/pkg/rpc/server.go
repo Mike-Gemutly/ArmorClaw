@@ -30,6 +30,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/mcp"
 	"github.com/armorclaw/bridge/pkg/provisioning"
+	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/translator"
 	"github.com/armorclaw/bridge/pkg/trust"
@@ -890,6 +891,7 @@ func (s *Server) registerHandlers() {
 		"mobile.heartbeat":          s.handleMobileHeartbeat,
 		"container.terminate":       s.handleTerminateContainer,
 		"container.list":            s.handleListContainers,
+		"resolve_blocker":           s.handleResolveBlocker,
 	}
 
 	s.handlers = h
@@ -932,6 +934,38 @@ func (s *Server) handleHardeningRotatePassword(ctx context.Context, req *Request
 
 	hardeningHandler := NewHardeningHandler(s.hardeningStore, matrixAdapter, "/var/lib/armorclaw/.admin_password")
 	return hardeningHandler.handleHardeningRotatePassword(ctx, req)
+}
+
+func (s *Server) handleResolveBlocker(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	var params struct {
+		WorkflowID string `json:"workflow_id"`
+		StepID     string `json:"step_id"`
+		Input      string `json:"input"`
+		Note       string `json:"note"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "invalid parameters"}
+	}
+
+	// Validate required fields
+	if params.WorkflowID == "" || params.StepID == "" || params.Input == "" {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "workflow_id, step_id, and input are required"}
+	}
+
+	// Build response — PII SAFETY: Input is NEVER logged (intentional omission)
+	response := secretary.BlockerResponse{
+		Input:      params.Input,
+		Note:       params.Note,
+		UserID:     "", // extracted from auth context in production
+		ProvidedAt: time.Now().Unix(),
+	}
+
+	delivered := secretary.DeliverBlockerResponse(params.WorkflowID, params.StepID, response)
+	if !delivered {
+		return nil, &ErrorObj{Code: InvalidParams, Message: "no pending blocker for workflow " + params.WorkflowID + " step " + params.StepID}
+	}
+
+	return map[string]interface{}{"status": "delivered"}, nil
 }
 
 // GetMatrixAdapter returns the Matrix adapter for external integration

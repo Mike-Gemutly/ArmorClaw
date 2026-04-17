@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/armorclaw/bridge/pkg/secretary"
 )
 
 func TestMethodRegistration(t *testing.T) {
@@ -140,5 +142,110 @@ func TestHealthCheckHandler(t *testing.T) {
 	}
 	if !valid {
 		t.Errorf("expected status to be one of %v, got %s", validStatuses, healthResp.Status)
+	}
+}
+
+func TestResolveBlocker_DeliversResponse(t *testing.T) {
+	server := &Server{}
+	server.registerHandlers()
+
+	handler := server.handlers["resolve_blocker"]
+	if handler == nil {
+		t.Fatalf("resolve_blocker handler not registered")
+	}
+
+	workflowID := "test-wf-deliver"
+	stepID := "step-1"
+	key := "blocker:" + workflowID + ":" + stepID
+
+	ch := make(chan secretary.BlockerResponse, 1)
+	secretary.PendingBlockersMap().Store(key, ch)
+	defer secretary.PendingBlockersMap().Delete(key)
+
+	req := &Request{
+		Params: json.RawMessage(`{"workflow_id":"test-wf-deliver","step_id":"step-1","input":"my-secret-input","note":"optional note"}`),
+	}
+
+	result, errObj := handler(context.Background(), req)
+	if errObj != nil {
+		t.Fatalf("unexpected error: %v", errObj)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map result, got %T", result)
+	}
+	if resultMap["status"] != "delivered" {
+		t.Errorf("expected status 'delivered', got %v", resultMap["status"])
+	}
+
+	select {
+	case resp := <-ch:
+		if resp.Input != "my-secret-input" {
+			t.Errorf("expected input 'my-secret-input', got %q", resp.Input)
+		}
+		if resp.Note != "optional note" {
+			t.Errorf("expected note 'optional note', got %q", resp.Note)
+		}
+		if resp.ProvidedAt == 0 {
+			t.Error("expected ProvidedAt to be set")
+		}
+	default:
+		t.Error("expected response on channel, but channel was empty")
+	}
+}
+
+func TestResolveBlocker_NoPendingBlocker(t *testing.T) {
+	server := &Server{}
+	server.registerHandlers()
+
+	handler := server.handlers["resolve_blocker"]
+	if handler == nil {
+		t.Fatalf("resolve_blocker handler not registered")
+	}
+
+	req := &Request{
+		Params: json.RawMessage(`{"workflow_id":"no-such-wf","step_id":"no-step","input":"whatever"}`),
+	}
+
+	_, errObj := handler(context.Background(), req)
+	if errObj == nil {
+		t.Fatal("expected error for no pending blocker, got nil")
+	}
+	if errObj.Code != InvalidParams {
+		t.Errorf("expected InvalidParams code, got %d", errObj.Code)
+	}
+}
+
+func TestResolveBlocker_MissingFields(t *testing.T) {
+	server := &Server{}
+	server.registerHandlers()
+
+	handler := server.handlers["resolve_blocker"]
+	if handler == nil {
+		t.Fatalf("resolve_blocker handler not registered")
+	}
+
+	tests := []struct {
+		name   string
+		params string
+	}{
+		{"empty workflow_id", `{"workflow_id":"","step_id":"s1","input":"val"}`},
+		{"empty step_id", `{"workflow_id":"wf1","step_id":"","input":"val"}`},
+		{"empty input", `{"workflow_id":"wf1","step_id":"s1","input":""}`},
+		{"missing workflow_id", `{"step_id":"s1","input":"val"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &Request{Params: json.RawMessage(tt.params)}
+			_, errObj := handler(context.Background(), req)
+			if errObj == nil {
+				t.Error("expected error for missing fields, got nil")
+			}
+			if errObj.Code != InvalidParams {
+				t.Errorf("expected InvalidParams code, got %d", errObj.Code)
+			}
+		})
 	}
 }
