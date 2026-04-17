@@ -162,15 +162,13 @@ func (ts *TaskScheduler) dispatchTask(ctx context.Context, task ScheduledTask) {
 		return
 	}
 
+	// All containers use NetworkMode "none" (hardcoded in factory.Spawn),
+	// so warm dispatch is never possible — skip cleanly instead of erroring.
 	if instance != nil && instance.RoomID != "" {
-		if err := ts.warmDispatch(ctx, task, instance); err != nil {
-			ts.log.Warn("warm_dispatch_failed_falling_back_to_cold", "task_id", task.ID, "error", err)
-			ts.coldDispatch(ctx, task)
-		}
-	} else {
-		// COLD START: spawn new container
-		ts.coldDispatch(ctx, task)
+		ts.log.Warn("warm_dispatch_skipped", "task_id", task.ID, "reason", "all containers use NetworkMode 'none', using cold dispatch")
 	}
+	// COLD START: spawn new container
+	ts.coldDispatch(ctx, task)
 }
 
 func (ts *TaskScheduler) templateDispatch(ctx context.Context, task ScheduledTask) {
@@ -297,4 +295,15 @@ func (ts *TaskScheduler) updateAfterDispatch(ctx context.Context, task Scheduled
 	}
 
 	ts.log.Info("updated_task_next_run", "task_id", task.ID, "next_run", nextRun.Format(time.RFC3339))
+}
+
+func (ts *TaskScheduler) DispatchNow(ctx context.Context, task *ScheduledTask) error {
+	if task == nil {
+		return fmt.Errorf("task is nil")
+	}
+	if err := ts.store.CreateScheduledTask(ctx, task); err != nil {
+		return fmt.Errorf("create scheduled task: %w", err)
+	}
+	ts.dispatchTask(ctx, *task)
+	return nil
 }

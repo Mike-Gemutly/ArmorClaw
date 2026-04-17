@@ -141,6 +141,17 @@ func (s *liveTestStore) GetTemplate(ctx context.Context, id string) (*TaskTempla
 	return t, nil
 }
 
+func (s *liveTestStore) GetTemplateByTrigger(ctx context.Context, trigger string) (*TaskTemplate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, t := range s.templates {
+		if t.ID == trigger {
+			return t, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *liveTestStore) ListTemplates(ctx context.Context, filter TemplateFilter) ([]TaskTemplate, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -494,6 +505,19 @@ func (e *liveTestEventEmitter) EmitCancelled(workflow *Workflow, reason string) 
 		eventType: "cancelled",
 		workflow:  workflow,
 		reason:    reason,
+		timestamp: time.Now(),
+	})
+	return uint64(len(e.events))
+}
+
+func (e *liveTestEventEmitter) EmitBlocked(workflow *Workflow, reason, message string) uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.events = append(e.events, capturedLiveEvent{
+		eventType: "blocked",
+		workflow:  workflow,
+		reason:    reason,
+		result:    message,
 		timestamp: time.Now(),
 	})
 	return uint64(len(e.events))

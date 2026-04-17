@@ -81,6 +81,9 @@ func (s *rpcTestStore) MarkDispatched(ctx context.Context, taskID string, nextRu
 	return nil
 }
 
+func (s *rpcTestStore) GetTemplateByTrigger(ctx context.Context, trigger string) (*TaskTemplate, error) {
+	return nil, nil
+}
 func (s *rpcTestStore) CreateTemplate(ctx context.Context, template *TaskTemplate) error {
 	return nil
 }

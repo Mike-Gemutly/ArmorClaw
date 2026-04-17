@@ -136,6 +136,16 @@ func (s *schedulerTestStore) GetTemplate(ctx context.Context, id string) (*TaskT
 	}
 	return t, nil
 }
+func (s *schedulerTestStore) GetTemplateByTrigger(ctx context.Context, trigger string) (*TaskTemplate, error) {
+	s.RLock()
+	defer s.RUnlock()
+	for _, t := range s.templates {
+		if t.ID == trigger {
+			return t, nil
+		}
+	}
+	return nil, nil
+}
 func (s *schedulerTestStore) ListTemplates(ctx context.Context, filter TemplateFilter) ([]TaskTemplate, error) {
 	return nil, nil
 }
@@ -283,7 +293,7 @@ func (m *mockSchedulerMatrix) getSentEvents() []sentEvent {
 // Scheduler Tests
 //=============================================================================
 
-func TestTaskScheduler_WarmDispatch(t *testing.T) {
+func TestTaskScheduler_WarmDispatchSkippedForNetworkNone(t *testing.T) {
 	store := newSchedulerTestStore()
 	now := time.Now()
 	store.scheduledTasks["task-1"] = &ScheduledTask{
@@ -311,9 +321,9 @@ func TestTaskScheduler_WarmDispatch(t *testing.T) {
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
-	// Warm dispatch is not implemented (NetworkMode: none), falls back to cold dispatch
-	assert.True(t, factory.spawnCalled, "expected cold dispatch fallback after warm dispatch failure")
-	assert.True(t, factory.getRunningCalled)
+	// Warm dispatch should be skipped (NetworkMode: none), go straight to cold dispatch
+	assert.True(t, factory.getRunningCalled, "should check for running instance")
+	assert.True(t, factory.spawnCalled, "should use cold dispatch since warm is skipped (NetworkMode 'none')")
 
 	updated := store.scheduledTasks["task-1"]
 	assert.NotNil(t, updated.NextRun)
@@ -594,7 +604,7 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 	scheduler.Stop()
 
 	// Warm dispatch fails, falls back to cold dispatch
-	assert.True(t, factory.spawnCalled, "expected cold dispatch fallback on scheduler start (immediate tick)")
+	assert.True(t, factory.spawnCalled, "warm dispatch skipped (NetworkMode 'none'), uses cold dispatch on scheduler start (immediate tick)")
 
 	updated := store.scheduledTasks["task-immediate"]
 	assert.NotNil(t, updated.NextRun)
@@ -746,8 +756,8 @@ func TestDispatchTask_FreeTextUnchanged(t *testing.T) {
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
-	assert.True(t, factory.getRunningCalled, "empty TemplateID should use warm/cold dispatch")
-	assert.True(t, factory.spawnCalled, "warm dispatch fails, falls back to cold dispatch")
+	assert.True(t, factory.getRunningCalled, "empty TemplateID should check for running instance")
+	assert.True(t, factory.spawnCalled, "warm dispatch skipped (NetworkMode 'none'), uses cold dispatch")
 
 	updated := store.scheduledTasks["task-freetext"]
 	assert.NotNil(t, updated.NextRun)
