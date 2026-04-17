@@ -49,13 +49,13 @@ ScheduledTask (cron)
 >
 > - **Inbound to container**: Environment variables (`STEP_CONFIG`, `PII_*` fallback)
 > - **Outbound from container**: Exit code + `result.json` (step mode) or exit code only (agent mode)
+> - **Real-time events**: Containers emit `StepEvent` entries to `_events.jsonl` during execution, which the Bridge tails for live progress
 >
-> In step mode (STEP_CONFIG present), the container writes structured results to `result.json` in the bind-mounted state dir before exit. The Bridge reads this via `ParseContainerStepResult()`. See `doc/agent-runtime.md` for the step mode flow.
+> In step mode (STEP_CONFIG present), the container writes structured results to `result.json` in the bind-mounted state dir before exit. The Bridge reads this via `ParseContainerStepResult()` (or `ParseExtendedStepResult()` for enriched results with blockers and skill candidates). During execution, the Bridge also tails `_events.jsonl` via `EventReader` for real-time step progress. See `doc/agent-runtime.md` for the step mode flow.
 >
 > Remaining limitations:
 > - Agent state transitions (BROWSING, FORM_FILLING, etc.) are **invisible** to the Bridge
 > - Browser automation is **impossible** in this mode (no network to reach browser service)
-> - `workflow.progress` events are **Bridge-inferred** (container still running), NOT agent-reported
 > - Agent mode (no STEP_CONFIG) still has no backward channel
 
 ---
@@ -75,6 +75,11 @@ ScheduledTask (cron)
 | `PendingApproval` / `HandlePIIResponse` | `pending_approval.go` | Blocking PII gate: publishes `app.armorclaw.pii_request` to Matrix, waits for `app.armorclaw.pii_response`. |
 | `NotificationService` | `notifications.go` | Fan out workflow and approval notifications to subscribers (Matrix adapter, etc.). |
 | `TaskScheduler` | `task_scheduler.go` | 15 second tick loop. Stateless dispatcher that reads due tasks from DB. |
+| `EventReader` | `event_reader.go` | Incremental `_events.jsonl` tailer. Tracks byte offset and sequence number for deduplication. Enforces 10 MB cap. |
+| `EventFileCleaner` | `cleanup.go` | Removes the state directory (including `_events.jsonl`) after step completion. Ensures parse→purge→notify ordering. |
+| `BlockerHandler` | `orchestrator_integration.go` | Runs the spawn→wait→blocker loop: blocks workflow, waits for user response, re-spawns with updated config. Max 3 retries, 10-minute timeout. |
+| `SkillInjector` | `orchestrator_integration.go` | Injects `relevant_skills` into step config before dispatch via `injectLearnedSkills()`. |
+| `SkillExtractor` | `bridge/pkg/skills/extractor.go` | Analyzes `ExtendedStepResult` with 3 strategies to produce `LearnedSkill` suggestions. |
 | `MatrixEventBus` | `bridge/internal/events/matrix_event_bus.go` | Ring buffer (default 1024 slots). Delivers events to the Matrix conduit and to in process subscribers. |
 
 ### Key types (types.go)
@@ -83,10 +88,16 @@ ScheduledTask (cron)
 TaskTemplate           Definition of a reusable workflow (steps, variables, PII refs)
 Workflow               Runtime instance of a template
 WorkflowStep           One step in a template (action, condition, parallel variants)
-WorkflowStatus         pending | running | completed | failed | cancelled
+WorkflowStatus         pending | running | blocked | completed | failed | cancelled
 ApprovalPolicy         Rules for auto approve vs. manual gate, per PII field
 ApprovalResult         Outcome of evaluating policies: approved/denied/needs_approval
 ScheduledTask          Cron entry that triggers a template dispatch or a direct agent spawn
+StepEvent              Structured event emitted by containers to _events.jsonl (seq, type, name, ts_ms, detail, duration_ms)
+BlockerResponse        User response to a blocker prompt (input, note, user_id, provided_at)
+ExtendedStepResult     Enriched result with _comments, _blockers, _skill_candidates, _events_summary
+Blocker                Obstacle that prevented step completion (blocker_type, message, suggestion, field)
+SkillCandidate         Detected automation opportunity from agent output (name, description, pattern_type, confidence)
+LearnedSkill           Persisted execution pattern extracted from successful tasks (confidence, trigger_keywords, success/failure counts)
 ```
 
 Step types (`StepType` enum):
@@ -141,22 +152,24 @@ After either path, the task's `next_run` is updated (cron) or the task is deacti
                      ▼
               ┌─────────────┐
         ┌────▶│   running   │◀───┐
-        │     └──┬───┬───┬──┘    │
-        │        │   │   │       │
-        │        │   │   │       │
-   CancelWorkflow│   │   │ AdvanceWorkflow
-        │        │   │   │ (last step)
-        │        │   │   │       │
-        │        ▼   │   ▼       │
-  ┌──────────┐  │  ┌──────────┐  │
-  │cancelled │  │  │completed │──┘
-  └──────────┘  │  └──────────┘
+        │     └──┬───┬──┬───┘    │
+        │        │   │  │        │
+        │        │   │  │        │
+   CancelWorkflow│  │  │ AdvanceWorkflow
+        │        │   │  │ (last step)
+        │        │   │  │        │ UnblockWorkflow()
+        │        │   │  │        │
+        │        ▼   │  ▼        │
+  ┌──────────┐  │ ┌──────────┐  │
+  │cancelled │  │ │completed │──┘
+  └──────────┘  │ └──────────┘
            FailWorkflow()
-                │
-                ▼
-         ┌──────────┐
-         │  failed  │
-         └──────────┘
+           BlockWorkflow()
+                │        │
+                ▼        ▼
+         ┌──────────┐ ┌──────────┐
+         │  failed  │ │ blocked  │
+         └──────────┘ └──────────┘
 ```
 
 Valid transitions (defined in `validateTransition`):
@@ -164,7 +177,8 @@ Valid transitions (defined in `validateTransition`):
 | From | To |
 |------|----|
 | pending | running, cancelled |
-| running | completed, failed, cancelled |
+| running | completed, failed, cancelled, blocked |
+| blocked | running, failed, cancelled |
 | completed | (terminal) |
 | failed | (terminal) |
 | cancelled | (terminal) |
@@ -196,6 +210,9 @@ StepExecutor                      Container (NetworkMode: "none")
     │     DefinitionID, TaskDescription,   │
     │     UserID, RoomID, Config           │
     │                                      │
+    ├─ Inject learned skills into config   │
+    │     (injectLearnedSkills)            │
+    │                                      │
     ├─ STEP_CONFIG env ──────────────────▶ │ (inbound: env vars only)
     │                                      │
     ├─ Register in runningSteps map        │
@@ -204,9 +221,12 @@ StepExecutor                      Container (NetworkMode: "none")
          │                                 │
          └─ 500ms polling loop:            │
               GetStatus(instanceID)        │
-                Completed  ──▶ ParseContainer ◀─│ (outbound: exit code +
-                             StepResult()      │  result.json in state dir)
-                Failed     ──▶ ParseContainer ◀─│
+              ReadNew() from _events.jsonl ◀──│ (real-time events)
+              Route events: step_progress, │
+                step_error, blocker_warning│
+                Complete  ──▶ ParseExtended ◀──│ (outbound: exit code +
+                             StepResult()      │  result.json + _events.jsonl)
+                Failed     ──▶ ParseExtended ◀──│
                              StepResult()      │
                 Running    ──▶ continue        │
                 ctx.Done() ──▶ Stop, error     │
@@ -229,13 +249,76 @@ This is how template authors pass step specific configuration (API endpoints, pa
 
 ### Data flow
 
-Containers spawned by the step executor run with `NetworkMode: "none"`. In step mode, the executor observes both exit code and `result.json`:
+Containers spawned by the step executor run with `NetworkMode: "none"`. In step mode, the executor observes exit code, `result.json`, and `_events.jsonl`:
 
-- Exit 0 (status `Completed`): step succeeded. Bridge reads `result.json` via `ParseContainerStepResult()`.
-- Non zero exit (status `Failed`): step failed. Bridge reads `result.json` for error details.
-- Container still running: keep polling.
+- Exit 0 (status `Completed`): step succeeded. Bridge reads `result.json` via `ParseExtendedStepResult()` which also reads `_events.jsonl` for timeline events.
+- Non zero exit (status `Failed`): step failed. Bridge reads `result.json` for error details and `_events.jsonl` for any events emitted before failure.
+- Container still running: keep polling. `EventReader.ReadNew()` tails `_events.jsonl` for real-time progress.
 
-The container writes structured results (status, output, data, error, duration_ms) to `result.json` before exit. See `doc/agent-runtime.md` Step Mode section for the full flow.
+The container writes structured results (status, output, data, error, duration_ms) to `result.json` before exit. The `EventEmitter` in the container writes `StepEvent` entries to `_events.jsonl` throughout execution. After parsing, the state directory is purged via `cleanupStateDir()`. See `doc/agent-runtime.md` Step Mode section for the full flow.
+
+---
+
+## Observable Containers
+
+Containers in step mode emit structured events to `_events.jsonl` in the bind-mounted state directory during execution. This is implemented by the `EventEmitter` class in `container/openclaw/events.py`.
+
+### How it works
+
+1. `StepRunner.run()` creates an `EventEmitter` instance for the state directory.
+2. The emitter opens `_events.jsonl` for append and writes a header comment.
+3. Handlers emit events via convenience methods (`step()`, `file_read()`, `command_run()`, etc.).
+4. Each event is serialized as a single JSON line, respecting `PIPE_BUF` (4096 bytes) for atomic writes on Linux. Lines exceeding this limit are truncated (detail replaced with `_truncated: true`, then name shortened, then detail dropped entirely).
+5. On close, the emitter writes a `_summary` event with total event count and elapsed time.
+
+### Event types
+
+| Type | Method | Purpose |
+|------|--------|---------|
+| `step` | `step()` | Generic step start/complete |
+| `file_read` | `file_read()` | File read operation (path, lines, size) |
+| `file_write` | `file_write()` | File write operation (path, changes, size) |
+| `file_delete` | `file_delete()` | File deletion (path) |
+| `command_run` | `command_run()` | Shell command execution (command, exit_code, truncated) |
+| `observation` | `observation()` | Agent observation or note |
+| `blocker` | `blocker()` | Agent hit an obstacle needing human input |
+| `error` | `error()` | Error during execution |
+| `artifact` | `artifact()` | Output artifact produced (name, path, mime_type, size) |
+| `checkpoint` | `checkpoint()` | Named execution checkpoint |
+| `progress` | `progress()` | Progress percentage update |
+
+Source: `container/openclaw/events.py`
+
+---
+
+## Event Streaming
+
+The Bridge tails `_events.jsonl` during step execution for real-time progress visibility.
+
+### EventReader (event_reader.go)
+
+`EventReader` incrementally reads new events from `<stateDir>/_events.jsonl`. Each call to `ReadNew()` returns only lines appended since the previous call, tracked via byte offset and sequence number. If the file does not exist, it returns `(nil, 0, nil)` so callers can poll without special casing.
+
+**10 MB cap**: If the file exceeds `maxEventLogSize` (10 MB), `ReadNew()` returns `ErrEventLogExceeded`. The calling code in `waitForCompletion()` handles this by calling `factory.Kill()` (SIGKILL, not graceful), then `cleanupStateDir()`, and returning an error.
+
+### Event routing
+
+During the 500ms polling loop in `waitForCompletion()`, events are read and routed by type:
+
+1. **step, progress** events are converted to `EmitStepProgress()` workflow events via `WorkflowEventEmitter`, extracting `percent` from `detail`.
+2. **error** events are converted to `EmitStepError()` workflow events.
+3. **blocker** events are converted to `EmitBlockerWarning()` workflow events with blocker_type and message from detail.
+4. All other events are collected into `ExtendedStepResult.Events` for timeline formatting.
+
+### State directory cleanup
+
+After step completion (success or failure), `cleanupStateDir()` removes the entire state directory including `_events.jsonl`. The ordering is:
+
+1. **Parse** result.json and _events.jsonl into `ExtendedStepResult`
+2. **Purge** the state directory via `cleanupStateDir()`
+3. **Notify** subscribers with the parsed result
+
+This ensures events are never lost before they can be processed.
 
 ---
 
@@ -319,21 +402,165 @@ StepExecutor                    MatrixEventBus              ArmorChat
 
 ---
 
+## Blocker Protocol
+
+The blocker protocol is a human-in-the-loop resolution mechanism for obstacles encountered during step execution. It is distinct from PII approval: blockers handle missing input or ambiguous situations, while PII approval gates access to sensitive data fields.
+
+### How it works
+
+1. **Container signals blocker.** The container writes a `blocker` event to `_events.jsonl` via `EventEmitter.blocker()`, or appends to the `_blockers` list in the config dict. On completion, these are merged into `ExtendedStepResult.Blockers`.
+
+2. **Bridge detects blocker.** `executeStepWithBlockerHandling()` checks `ExtendedStepResult.Blockers` after step completion. If blockers are present, it calls `orchestrator.BlockWorkflow()` to transition the workflow to `StatusBlocked`.
+
+3. **Notification.** `BlockWorkflow()` persists the status change and emits a `workflow.blocked` event via `EmitBlocked()`. The notification reaches the user's Matrix room as a formatted blocker message (via `FormatBlockerMessage()`).
+
+4. **Wait for resolution.** `waitForBlockerResponse()` registers a channel in the `pendingBlockers` sync.Map, keyed by `"blocker:{workflowID}:{stepID}"`, and waits for one of:
+   - **Response received.** An external caller (RPC or Matrix handler) calls `DeliverBlockerResponse()` which sends the response down the channel.
+   - **Timeout.** `BlockerTimeout` (10 minutes). Returns error.
+   - **Cancellation.** Context cancelled (workflow cancelled). Returns error.
+
+5. **Re-spawn.** On resolution, `appendBlockerResponse()` adds `_blocker_response` to the step config, `UnblockWorkflow()` transitions back to `StatusRunning`, and the container is re-spawned with the updated config.
+
+6. **Retry limit.** Max `MaxBlockerRetries` (3) attempts. After that, the step fails.
+
+### PII safety
+
+Blocker responses may contain sensitive input (passwords, API keys). The response payload is:
+- Never logged (intentional omission from log statements)
+- Passed to the container via the `_blocker_response` config key (environment variable only, never written to disk as a standalone file)
+- The `BlockerResponse.Input` field carries the raw user input
+
+### RPC handler
+
+The `resolve_blocker` RPC method (`bridge/pkg/rpc/server.go`) accepts `workflow_id`, `step_id`, and `input` parameters, constructs a `BlockerResponse`, and calls `DeliverBlockerResponse()`.
+
+```
+Container                    Bridge                          User (ArmorChat)
+    │                          │                                  │
+    ├─ emit blocker event      │                                  │
+    │   to _events.jsonl       │                                  │
+    │                          │                                  │
+    ├─ write result.json       │                                  │
+    │   with _blockers         │                                  │
+    │                          │                                  │
+    │   ── exit ──────────────▶│                                  │
+    │                          │                                  │
+    │                          ├─ BlockWorkflow()                 │
+    │                          │   status → blocked               │
+    │                          │                                  │
+    │                          ├─ EmitBlocked() ──▶ Matrix ──────▶│
+    │                          │   FormatBlockerMessage()         │
+    │                          │                                  │
+    │                          │         user provides input      │
+    │                          │◀── resolve_blocker RPC ──────────│
+    │                          │   or Matrix /sync event          │
+    │                          │                                  │
+    │                          ├─ DeliverBlockerResponse()        │
+    │                          │   channel ← response             │
+    │                          │                                  │
+    │                          ├─ UnblockWorkflow()               │
+    │                          │   status → running               │
+    │                          │                                  │
+    │◀───── re-spawn ──────────│                                  │
+    │   STEP_CONFIG with       │                                  │
+    │   _blocker_response      │                                  │
+```
+
+Sources: `bridge/pkg/secretary/orchestrator_integration.go`, `bridge/pkg/rpc/server.go`, `container/openclaw/events.py`
+
+---
+
+## Learned Skills Pipeline
+
+The learned skills pipeline extracts reusable execution patterns from successful task completions and suggests them for future similar tasks.
+
+### Extraction (bridge/pkg/skills/extractor.go)
+
+`ExtractFromResult()` analyzes an `ExtendedStepResult` using three strategies:
+
+1. **Self-reported candidates.** The container may include `_skill_candidates` in `result.json`. Each `SkillCandidate` (name, description, pattern_type, confidence) is converted directly into a `LearnedSkill`. If confidence is unset, defaults to 0.5.
+
+2. **Command sequence.** If the events contain 2+ `command_run` events, a `command_sequence` skill is extracted with the command list as pattern data. Confidence: 0.6.
+
+3. **File operations.** If the events contain 1+ `file_write` or 2+ `file_read` events, a `file_transform` skill is extracted with file paths grouped by operation type. Confidence: 0.5.
+
+Skills are deduplicated by name before saving.
+
+### Persistence (bridge/pkg/skills/learned_store.go)
+
+`LearnedStore` persists skills in **plain SQLite** (not SQLCipher, since learned skills contain no secrets). Key operations:
+
+- `Save()`: Persists a `LearnedSkill`. Generates UUID if no ID provided. Rejects duplicate names.
+- `FindForTask()`: Searches for skills matching a task description. Filters by `confidence >= 0.4`, ranks by keyword overlap with the task description, returns top N results.
+- `RecordOutcome()`: Updates confidence based on success/failure. Success adds +0.1 (capped at 1.0). Failure subtracts 0.2 (floored at 0.0). Skills below 0.4 are effectively filtered out by `FindForTask()`.
+- `Delete()`: Removes a skill by ID.
+- `ListForAgent()`: Returns skills ordered by confidence for browsing.
+
+### Injection at dispatch
+
+`injectLearnedSkills()` in `StepExecutor` is called before spawning the container. It:
+1. Calls `skillFinder.FindForTask(taskDesc, 3)` to get up to 3 matching skills.
+2. Adds a `relevant_skills` array to the step config with name, confidence, pattern, and source task ID.
+3. The container reads this via `StepConfig.relevant_skills`.
+
+### Outcome recording
+
+After step completion (success or failure), `recordSkillOutcomes()` iterates over the `relevant_skills` from the original config and calls `onSkillOutcome()` for each. This adjusts confidence up or down based on whether the skill suggestion was helpful.
+
+Sources: `bridge/pkg/skills/extractor.go`, `bridge/pkg/skills/learned_store.go`, `bridge/pkg/secretary/orchestrator_integration.go`
+
+---
+
+## Matrix Commands
+
+The secretary workflow exposes learned skill management through Matrix commands, handled by `CommandHandler` in `bridge/internal/adapter/commands_integration.go`.
+
+### Available commands
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `!agent skills <agent_id>` | `!agent skills researcher-1` | Lists learned skills for the agent. Shows name, confidence (0.0 to 1.0), and success count. Limited to 20 results. |
+| `!agent forget-skill <agent_id> <skill_id>` | `!agent forget-skill researcher-1 ls_xxx_123` | Deletes a learned skill by ID. The agent_id parameter is accepted for future per-agent scoping but currently lists globally. |
+
+Both commands require the `learnedStore` to be configured (non-nil) on the `CommandHandler`. If not available, they return an error message.
+
+Source: `bridge/internal/adapter/commands_integration.go`
+
+---
+
 ## Event System
 
 ### Workflow events (orchestrator_events.go)
 
-`WorkflowEventEmitter` publishes five event types to the `MatrixEventBus`:
+`WorkflowEventEmitter` publishes event types to the `MatrixEventBus`:
 
 | Event type | Constant | Triggered by |
 |------------|----------|-------------|
 | `workflow.started` | `WorkflowEventStarted` | `StartWorkflow()` |
 | `workflow.progress` | `WorkflowEventProgress` | `AdvanceWorkflow()`, `UpdateProgress()`, `executeWorkflow()` ticker |
+| `workflow.blocked` | `WorkflowEventBlocked` | `BlockWorkflow()` |
 | `workflow.completed` | `WorkflowEventCompleted` | `completeWorkflowLocked()` |
 | `workflow.failed` | `WorkflowEventFailed` | `FailWorkflow()` |
 | `workflow.cancelled` | `WorkflowEventCancelled` | `CancelWorkflow()` |
+| `workflow.step_progress` | `WorkflowEventStepProgress` | `EmitStepProgress()` from container `_events.jsonl` |
+| `workflow.step_error` | `WorkflowEventStepError` | `EmitStepError()` from container `_events.jsonl` |
+| `workflow.blocker_warning` | `WorkflowEventBlockerWarning` | `EmitBlockerWarning()` from container `_events.jsonl` |
 
 Each event carries: workflow ID, template ID, status, optional step info, progress percentage, error message, duration in milliseconds, and arbitrary metadata.
+
+### Container step events (_events.jsonl)
+
+Containers emit structured `StepEvent` entries to `_events.jsonl` during execution. The Bridge tails this file via `EventReader` and routes events into workflow events:
+
+| Container event type | Routed to |
+|---------------------|-----------|
+| `step` | `EmitStepProgress()` with progress percent from `detail["percent"]` |
+| `error` | `EmitStepError()` |
+| `blocker` | `EmitBlockerWarning()` with blocker_type, message from detail |
+
+Other container event types (`file_read`, `file_write`, `file_delete`, `command_run`, `observation`, `artifact`, `checkpoint`) are parsed and included in `ExtendedStepResult.Events` for timeline formatting.
+
+The event file is purged after step completion via `cleanupStateDir()`. Purge ordering: parse result → purge directory → notify subscribers (never lose events before notification).
 
 ### PII events (pending_approval.go)
 
@@ -353,7 +580,7 @@ The bus is a fixed size ring buffer (default 1024 slots, max batch 128 events). 
 
 Subscribers that are too slow are silently skipped (non blocking send). The ring buffer wraps around, dropping the oldest events when full.
 
-> **Note**: `workflow.progress` events are emitted by the Bridge when it polls the container's Docker status and finds it still running. This is **not** agent-reported progress. It merely indicates the container process has not exited yet. There is no mechanism for the container to report its actual execution phase.
+> **Note**: `workflow.progress` events were originally Bridge-inferred only (polling Docker status). With the `_events.jsonl` event streaming pipeline, containers now report real-time progress. The `workflow.step_progress` events carry structured data from container `StepEvent` entries. The original `workflow.progress` events from Docker polling still exist but are supplemented by the richer step events.
 
 ---
 
@@ -391,7 +618,7 @@ The secretary workflow engine operates in **Mode A (Agent Studio)**:
 | PII approval gating | ✅ Works | Matrix → user → approve/deny |
 | Workflow state tracking | ✅ Works | Bridge-level: pending → running → completed/failed |
 | Structured step results | ✅ Step mode | `result.json` in state dir (step mode only) |
-| Agent-reported progress | ❌ Not available | Bridge-inferred only |
+| Agent-reported progress | ✅ Available | Via `_events.jsonl` event streaming (step, file ops, commands, observations) |
 | Browser automation | ❌ Not available | No network access |
 | Warm dispatch | ❌ Non-functional | No Matrix connection in container |
 
@@ -441,24 +668,37 @@ TaskScheduler
 
 | File | Key types/functions |
 |------|-------------------|
-| `orchestrator.go` | `WorkflowOrchestratorImpl`, `NewWorkflowOrchestrator`, `StartWorkflow`, `AdvanceWorkflow`, `CancelWorkflow`, `CompleteWorkflow`, `FailWorkflow`, `validateTransition` |
-| `orchestrator_integration.go` | `StepExecutor`, `NewStepExecutor`, `ExecuteSteps`, `executeStep`, `executeStepWithRetry`, `waitForCompletion`, `OrchestratorIntegration`, `StartWorkflowExecution`, `runWorkflow` |
-| `orchestrator_events.go` | `EventEmitter` interface, `WorkflowEventEmitter`, `WorkflowEvent`, `WorkflowEventBuilder` |
+| `orchestrator.go` | `WorkflowOrchestratorImpl`, `NewWorkflowOrchestrator`, `StartWorkflow`, `AdvanceWorkflow`, `CancelWorkflow`, `CompleteWorkflow`, `FailWorkflow`, `BlockWorkflow`, `UnblockWorkflow`, `validateTransition` |
+| `orchestrator_integration.go` | `StepExecutor`, `NewStepExecutor`, `ExecuteSteps`, `executeStep`, `executeStepWithRetry`, `waitForCompletion`, `OrchestratorIntegration`, `StartWorkflowExecution`, `runWorkflow`, `executeStepWithBlockerHandling`, `DeliverBlockerResponse`, `injectLearnedSkills`, `appendBlockerResponse` |
+| `orchestrator_events.go` | `EventEmitter` interface, `WorkflowEventEmitter`, `WorkflowEvent`, `WorkflowEventBuilder`, `EmitStepProgress`, `EmitStepError`, `EmitBlockerWarning` |
 | `approvals.go` | `ApprovalEngineImpl`, `Evaluate`, `EvaluateStep`, `EvaluateWorkflow`, `evaluatePolicies`, `ApprovalPolicy`, `ApprovalRequest` |
 | `pending_approval.go` | `PendingApproval`, `HandlePIIResponse`, PII event constants |
-| `notifications.go` | `NotificationService`, `Notification`, `NotificationSubscriber` interface, `MatrixNotificationAdapter` |
+| `notifications.go` | `NotificationService`, `Notification`, `NotificationSubscriber` interface, `MatrixNotificationAdapter`, `FormatTimelineMessage`, `stepIcon`, `FormatBlockerMessage` |
+| `event_reader.go` | `EventReader`, `NewEventReader`, `ReadNew`, `maxEventLogSize`, `ErrEventLogExceeded` |
+| `cleanup.go` | `cleanupStateDir`, `stateDirExists` |
+| `result.go` | `ContainerStepResult`, `ParseContainerStepResult`, `ParseExtendedStepResult`, `StepEvent`, `Blocker`, `SkillCandidate`, `ExtendedStepResult`, `EventsSummary`, `ReadEventsFile` |
 | `task_scheduler.go` | `TaskScheduler`, `NewTaskScheduler`, `Start`, `Stop`, `tick`, `dispatchTask`, `templateDispatch`, `warmDispatch`, `coldDispatch` |
 | `types.go` | `TaskTemplate`, `Workflow`, `WorkflowStep`, `StepType`, `WorkflowStatus`, `ApprovalResult`, `ApprovalPolicy`, `ScheduledTask`, interface definitions |
 | `bridge/internal/events/matrix_event_bus.go` | `MatrixEventBus`, `MatrixEvent`, `Publish`, `GetEventsAfter`, `Subscribe` |
+| `bridge/pkg/skills/extractor.go` | `ExtractFromResult`, `PatternCommandSequence`, `PatternFileTransform`, `PatternConfigTemplate` |
+| `bridge/pkg/skills/learned_store.go` | `LearnedStore`, `LearnedSkill`, `Save`, `FindForTask`, `RecordOutcome`, `Delete`, `ListForAgent` |
+| `bridge/pkg/rpc/server.go` | `handleResolveBlocker` (resolve_blocker RPC handler) |
+| `bridge/internal/adapter/commands_integration.go` | `CommandHandler`, `handleAgentSkills`, `handleAgentForgetSkill` |
+| `container/openclaw/events.py` | `EventEmitter`, `StepEvent`, `EventType`, `PIPE_BUF` |
+| `container/openclaw/step_runner.py` | `StepRunner`, `_extract_blockers_from_events`, `_summarize_events` |
+| `container/openclaw/step_config.py` | `StepConfig`, `_blocker_response` property, `relevant_skills` property |
 
 ---
 
 ## Remaining Prerequisites
 
-The backward communication channel (`result.json`) and PII socket wiring are now implemented. Remaining gaps:
+The backward communication channel (`result.json`), event streaming (`_events.jsonl`), blocker protocol, and learned skills pipeline are now implemented. Remaining gaps:
 
 1. ~~**Shared state dir**: Container writes `result.json` to the bind-mounted state directory before exit~~ ✅ Done
 2. ~~**Bridge reads result**: After container exit, Bridge reads and parses `result.json`~~ ✅ Done
 3. **Structured step results**: Multi-step workflows can pass data between steps via `result.json` `data` field — container handlers needed for each step type
 4. ~~**PII socket wiring**: Secure PII delivery via Unix socket instead of environment variables~~ ✅ Done
-5. **Browser automation**: Requires network access — still needs Mode B or AI proxy socket
+5. ~~**Event streaming**: Containers emit StepEvents to `_events.jsonl`, Bridge tails for real-time progress~~ ✅ Done
+6. ~~**Blocker protocol**: Human-in-the-loop blocker resolution with re-spawn~~ ✅ Done
+7. ~~**Learned skills**: Extraction, persistence, injection, and outcome recording~~ ✅ Done
+8. **Browser automation**: Requires network access — still needs Mode B or AI proxy socket

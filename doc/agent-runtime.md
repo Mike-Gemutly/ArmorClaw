@@ -6,11 +6,11 @@
 >
 > The agent runtime and state machine described in this document are **Bridge-side only**. They run inside the Go Bridge process, not inside agent containers.
 >
-> **No container-to-Bridge state reporting exists.** The 11-state state machine (`IDLE` through `OFFLINE`) is a Bridge-internal library used for lifecycle tracking. Containers cannot report which state they are in. The Bridge only observes: `running` (container exists) -> `completed` (exit 0) -> `failed` (exit non-zero).
+> **Container-to-Bridge reporting.** Containers in step mode now emit structured events to `_events.jsonl` during execution (via `EventEmitter` in `events.py`). The Bridge tails this file via `EventReader` for real-time progress. The 11-state state machine (`IDLE` through `OFFLINE`) is a Bridge-internal library used for lifecycle tracking. Containers cannot report which high-level state they are in. The Bridge observes: `running` (container exists) -> `completed` (exit 0) -> `failed` (exit non-zero), plus structured `StepEvent` entries from the event stream.
 >
-> **Backward channel:** Containers in step mode (STEP_CONFIG present) write structured results to `result.json` in the bind-mounted state dir before exit. The Bridge reads this via `ParseContainerStepResult()`. See [Step Mode](#step-mode-step_config) below.
+> **Backward channel:** Containers in step mode (STEP_CONFIG present) write structured results to `result.json` in the bind-mounted state dir before exit, and emit `StepEvent` entries to `_events.jsonl` throughout execution. The Bridge reads results via `ParseContainerStepResult()` (or `ParseExtendedStepResult()` for enriched output) and tails events via `EventReader`. See [Step Mode](#step-mode-step_config) below.
 >
-> Agent containers execute with `NetworkMode: "none"` and have zero network access. Communication: environment variables in, exit code + `result.json` out (step mode) or exit code only out (agent mode).
+> Agent containers execute with `NetworkMode: "none"` and have zero network access. Communication: environment variables in, exit code + `result.json` + `_events.jsonl` out (step mode) or exit code only out (agent mode).
 
 ## Overview
 
@@ -49,6 +49,7 @@ The runtime is *not* the same thing as the agent state machine documented in [ar
 
     Task config (STEP_CONFIG env var) ──────▶ Container (NetworkMode: "none")
     Bridge polls Docker ContainerInspect ◀────── Container (exit code + result.json)
+    Bridge tails _events.jsonl via EventReader ◀────── Container (StepEvent entries during execution)
 ```
 
 ## Step Mode (STEP_CONFIG)
@@ -58,29 +59,82 @@ When the Bridge sets `STEP_CONFIG` via `factory.go:Spawn()`, the container enter
 **Flow:**
 1. Bridge calls `factory.Spawn()` with `step.Config` → sets `STEP_CONFIG` env var
 2. `entrypoint.py` detects `STEP_CONFIG` → imports `step_runner`
-3. `step_runner.py` parses config via `step_config.py`, dispatches to a handler, writes `result.json`
+3. `step_runner.py` creates an `EventEmitter`, parses config via `step_config.py`, dispatches to a handler, emits events to `_events.jsonl`, writes `result.json`
 4. Container exits (0 for success, 1 for failure)
-5. Bridge's `waitForCompletion()` polls Docker, then calls `ParseContainerStepResult(stateDir)`
+5. Bridge's `waitForCompletion()` polls Docker (500ms interval) and tails `_events.jsonl` via `EventReader.ReadNew()`, then calls `ParseExtendedStepResult(stateDir)`
 
 **Container-side modules** (in `container/openclaw/`):
-- `step_config.py` — Parses `STEP_CONFIG` env var into `StepConfig` object
-- `step_runner.py` — Executes step via handler (echo, transform, default), writes result
+- `step_config.py` — Parses `STEP_CONFIG` env var into `StepConfig` object. Provides `_blocker_response` and `relevant_skills` properties.
+- `step_runner.py` — Executes step via handler (echo, transform, default), writes enriched result. Creates `EventEmitter` per step, merges blockers from config and events.
 - `result_writer.py` — Atomic write of `result.json` (temp file + `os.rename()`)
+- `events.py` — `EventEmitter` class. Writes `StepEvent` entries to `_events.jsonl`. Enforces `PIPE_BUF` (4096 bytes) atomic writes.
 
-**result.json schema** (matches `ContainerStepResult` in `bridge/pkg/secretary/result.go`):
+**result.json schema** (matches `ContainerStepResult` in `bridge/pkg/secretary/result.go`, enriched via `ExtendedStepResult`):
 ```json
 {
   "status": "success",
   "output": "human-readable output",
   "data": {"key": "value"},
   "error": "error message if failed",
-  "duration_ms": 1500
+  "duration_ms": 1500,
+  "_comments": ["optional annotations"],
+  "_blockers": [{"blocker_type": "missing_input", "message": "...", "suggestion": "..."}],
+  "_skill_candidates": [{"name": "...", "pattern_type": "...", "confidence": 0.7}],
+  "_events_summary": {"total": 12, "types": {"step": 3, "command_run": 5}}
 }
 ```
 
-Fields: `status` (string, required), `output` (string, required), `data` (map, omitempty), `error` (string, omitempty), `duration_ms` (int, required).
+Base fields: `status` (string, required), `output` (string, required), `data` (map, omitempty), `error` (string, omitempty), `duration_ms` (int, required). Enriched underscore-prefixed fields: `_comments`, `_blockers`, `_skill_candidates`, `_events_summary`. Parsed by `ParseExtendedStepResult()` which also reads `_events.jsonl` for the full event list.
 
 **Handlers:** Computation-only (no network). `echo` (for testing), `transform` (JSON-to-JSON), default (logs task received). Additional handlers require a separate plan with AI proxy socket.
+
+### Observable Containers / Event Emission
+
+Containers in step mode emit structured events to `_events.jsonl` throughout execution. This is implemented by the `EventEmitter` class in `events.py`.
+
+**EventEmitter** (`container/openclaw/events.py`):
+
+- Constructor takes a `state_dir` path and opens `_events.jsonl` for append.
+- Each `emit()` call serializes a `StepEvent` dataclass as a single JSON line.
+- `PIPE_BUF` (4096 bytes) enforcement: lines exceeding this limit are progressively truncated (detail replaced, then name shortened, then detail dropped). This guarantees atomic writes on Linux when the file is read concurrently by the Bridge.
+- Convenience methods: `step()`, `file_read()`, `file_write()`, `file_delete()`, `command_run()`, `observation()`, `blocker()`, `error()`, `artifact()`, `progress()`, `checkpoint()`.
+- `close()` writes a `_summary` event and closes the file handle.
+
+**`_events.jsonl` format:** One JSON object per line. Schema matches Go `StepEvent` struct:
+
+```json
+{"seq": 1, "type": "step", "name": "processing data", "ts_ms": 500, "detail": {}, "duration_ms": null}
+{"seq": 2, "type": "command_run", "name": "python transform.py", "ts_ms": 1200, "detail": {"exit_code": 0}, "duration_ms": 700}
+```
+
+**10 MB cap:** The Bridge's `EventReader` enforces a 10 MB limit. If `_events.jsonl` exceeds this, the container is SIGKILLed (not gracefully stopped) via `factory.Kill()`.
+
+**Integration with StepRunner:** `StepRunner.run()` creates the `EventEmitter` as the first action and injects it into `step_config.config["_emitter_ref"]` so handlers can emit events without importing `events.py`. On completion, the runner reads `_events.jsonl` to extract blockers and event summaries for the enriched result.
+
+### Blocker Protocol (Container Side)
+
+Containers can signal that they need human input to proceed, distinct from the PII approval flow. Blockers handle missing input, ambiguous situations, or required decisions. PII approval gates access to sensitive data fields.
+
+**Container signaling:**
+
+1. The handler calls `emitter.blocker(blocker_type, message, suggestion, field)` to write a blocker event to `_events.jsonl`.
+2. Alternatively, the handler appends to `step_config.config["_blockers"]` list.
+3. On completion, `StepRunner` merges blockers from both sources into the enriched result.
+
+**Bridge detection:**
+
+1. `executeStepWithBlockerHandling()` in `orchestrator_integration.go` checks `ExtendedStepResult.Blockers` after the container exits.
+2. If blockers are found, the workflow transitions to `StatusBlocked`.
+3. The Bridge waits for a response via the `resolve_blocker` RPC or Matrix event.
+
+**Container receives resolution:**
+
+1. The Bridge calls `appendBlockerResponse()` to add `_blocker_response` to the step config.
+2. `UnblockWorkflow()` transitions back to `StatusRunning`.
+3. The container is re-spawned with the updated config.
+4. The handler reads `step_config._blocker_response` property to get the response data (input, note, user_id, provided_at).
+
+**PII safety distinction:** PII approval operates via `PendingApproval()` + `HandlePIIResponse()` with `app.armorclaw.pii_request`/`pii_response` Matrix events and a 120-second timeout. Blocker resolution operates via `waitForBlockerResponse()` + `DeliverBlockerResponse()` with a 10-minute timeout and up to 3 retries. Blocker input is never logged or written to disk, passed via environment variable only.
 
 The `Runtime` struct in `internal/agent/runtime.go` holds all subsystems together:
 
@@ -296,13 +350,14 @@ The runtime sits between the container factory and the Matrix control plane. The
 
 ### Bridge Observable States vs State Machine States
 
-The Bridge can only observe three container states via Docker `ContainerInspect`:
+The Bridge can observe four container states via Docker `ContainerInspect` and `_events.jsonl`:
 
 | Bridge-Observable State | How Detected |
 |------------------------|-------------|
 | **Running** | Container exists and `State.Running == true` |
 | **Completed** | Container exited with code 0 |
 | **Failed** | Container exited with non-zero code, or container gone |
+| **Events** | `StepEvent` entries in `_events.jsonl` (step, file ops, commands, observations, blockers, errors) |
 
 The 11-state agent state machine (`IDLE`, `INITIALIZING`, `BROWSING`, `FORM_FILLING`, `AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`, `ERROR`, `COMPLETE`, `OFFLINE`) is defined in `bridge/pkg/agent/state.go` but transitions are **programmatic only**: triggered by Bridge-side code, not by agent-reported events. The `BroadcastStatus()` method that would relay states to clients is currently a stub returning nil.
 
