@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package armorclaw.email.v1;
+
+option go_package = "github.com/armorclaw/bridge/pkg/email/proto;email";
+
+// EmailIngestService handles inbound email ingestion from Postfix pipe handler
+service EmailIngestService {
+    // IngestEmail accepts a raw email from the MTA pipe handler
+    rpc IngestEmail(IngestEmailRequest) returns (IngestEmailResponse);
+}
+
+// EmailSendService handles outbound email sending
+service EmailSendService {
+    // SendEmail sends an outbound email via Gmail/Outlook/SMTP
+    rpc SendEmail(EmailSendRequest) returns (EmailSendResponse);
+}
+
+// IngestEmailRequest is the raw email from Postfix pipe(8) transport
+message IngestEmailRequest {
+    // Raw email data (full MIME message including headers and body)
+    bytes raw_email = 1;
+    // Envelope sender from SMTP MAIL FROM
+    string envelope_from = 2;
+    // Envelope recipient from SMTP RCPT TO
+    string envelope_to = 3;
+    // Queue ID from Postfix for tracking
+    string queue_id = 4;
+}
+
+// IngestEmailResponse confirms email was accepted or rejected
+message IngestEmailResponse {
+    // Whether the email was accepted for processing
+    bool accepted = 1;
+    // File IDs for stored email parts (attachments, body)
+    repeated string file_ids = 2;
+    // Rejection reason if not accepted
+    string rejection_reason = 3;
+    // Internal tracking ID for this email
+    string email_id = 4;
+}
+
+// EmailSendRequest is an outbound email to be sent
+message EmailSendRequest {
+    // Recipient email address
+    string to = 1;
+    // Email subject line
+    string subject = 2;
+    // Email body (plain text)
+    string body_text = 3;
+    // Email body (HTML, optional)
+    string body_html = 4;
+    // Sender email address (from configured provider)
+    string from = 5;
+    // Reply-to header (optional)
+    string reply_to = 6;
+    // Provider to use: "gmail", "outlook", "smtp"
+    string provider = 7;
+    // Attachments (optional)
+    repeated Attachment attachments = 8;
+}
+
+// EmailSendResponse confirms the email was sent
+message EmailSendResponse {
+    // Whether the email was sent successfully
+    bool sent = 1;
+    // Provider message ID for tracking
+    string message_id = 2;
+    // Provider that actually sent the email (may differ from request if fallback used)
+    string provider_used = 3;
+    // Error message if send failed
+    string error = 4;
+}
+
+// Attachment represents an email attachment
+message Attachment {
+    // Filename
+    string filename = 1;
+    // File content
+    bytes content = 2;
+    // MIME content type (e.g., "application/pdf")
+    string content_type = 3;
+    // Content-ID for inline images
+    string content_id = 4;
+}
