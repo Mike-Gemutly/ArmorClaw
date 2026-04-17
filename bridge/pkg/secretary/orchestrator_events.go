@@ -1,6 +1,7 @@
 package secretary
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -393,4 +394,106 @@ func EmitStepErrorEvent(bus *events.MatrixEventBus, roomID string, event StepEve
 func EmitBlockerWarningEvent(bus *events.MatrixEventBus, roomID string, event StepEvent) uint64 {
 	emitter := NewWorkflowEventEmitter(bus)
 	return emitter.EmitBlockerWarning(roomID, event)
+}
+
+//=============================================================================
+// Matrix Event Forwarder (bus → m.room.message)
+//=============================================================================
+
+// MatrixSendFunc sends a message to a Matrix room. Mirrors the callback
+// signature used by MatrixNotificationAdapter so no Matrix client import is
+// needed in this package.
+type MatrixSendFunc func(ctx context.Context, roomID, message string) error
+
+// MatrixEventForwarder subscribes to the MatrixEventBus and forwards
+// workflow step_progress and step_error events as m.room.message
+// (msgtype m.notice) to the associated Matrix room. This bridges the gap
+// between internal MatrixEventBus events and actual Matrix room messages
+// that ArmorChat can receive via /sync.
+type MatrixEventForwarder struct {
+	bus      *events.MatrixEventBus
+	sendFunc MatrixSendFunc
+	cancel   context.CancelFunc
+	done     chan struct{}
+}
+
+// NewMatrixEventForwarder creates a new forwarder. Call Start to begin
+// consuming events and Stop to shut down.
+func NewMatrixEventForwarder(bus *events.MatrixEventBus, sendFunc MatrixSendFunc) *MatrixEventForwarder {
+	return &MatrixEventForwarder{
+		bus:      bus,
+		sendFunc: sendFunc,
+		done:     make(chan struct{}),
+	}
+}
+
+// Start begins consuming events from the bus in a background goroutine.
+func (f *MatrixEventForwarder) Start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	f.cancel = cancel
+
+	sub := f.bus.Subscribe()
+
+	go func() {
+		defer close(f.done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-sub:
+				if !ok {
+					return
+				}
+				f.handleEvent(ctx, ev)
+			}
+		}
+	}()
+}
+
+// Stop cancels the forwarding goroutine and waits for it to finish.
+func (f *MatrixEventForwarder) Stop() {
+	if f.cancel != nil {
+		f.cancel()
+	}
+	<-f.done
+}
+
+// handleEvent filters and forwards relevant workflow events.
+func (f *MatrixEventForwarder) handleEvent(ctx context.Context, ev events.MatrixEvent) {
+	switch ev.Type {
+	case WorkflowEventStepProgress:
+		f.forwardStepProgress(ctx, ev)
+	case WorkflowEventStepError:
+		f.forwardStepError(ctx, ev)
+	}
+}
+
+// forwardStepProgress formats and sends a step progress notice.
+func (f *MatrixEventForwarder) forwardStepProgress(ctx context.Context, ev events.MatrixEvent) {
+	if ev.RoomID == "" || f.sendFunc == nil {
+		return
+	}
+
+	wf, ok := ev.Content.(WorkflowEvent)
+	if !ok {
+		return
+	}
+
+	msg := fmt.Sprintf("🔹 Step: %s (%.0f%%)", wf.StepName, wf.Progress*100)
+	_ = f.sendFunc(ctx, ev.RoomID, msg)
+}
+
+// forwardStepError formats and sends a step error notice.
+func (f *MatrixEventForwarder) forwardStepError(ctx context.Context, ev events.MatrixEvent) {
+	if ev.RoomID == "" || f.sendFunc == nil {
+		return
+	}
+
+	wf, ok := ev.Content.(WorkflowEvent)
+	if !ok {
+		return
+	}
+
+	msg := fmt.Sprintf("❌ Error: %s", wf.Error)
+	_ = f.sendFunc(ctx, ev.RoomID, msg)
 }

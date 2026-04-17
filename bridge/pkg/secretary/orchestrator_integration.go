@@ -340,7 +340,7 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 		e.mu.Unlock()
 	}()
 
-	completionResult, waitErr := e.waitForCompletion(stepCtx, instanceID, stateDir)
+	completionResult, waitErr := e.waitForCompletion(stepCtx, instanceID, stateDir, workflow.CreatedBy)
 
 	stepResult := &StepResult{
 		StepID:      step.StepID,
@@ -370,7 +370,11 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 	return stepResult
 }
 
-func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string, stateDir string) (*CompletionResult, error) {
+func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string, stateDir string, roomIDOpt ...string) (*CompletionResult, error) {
+	roomID := ""
+	if len(roomIDOpt) > 0 {
+		roomID = roomIDOpt[0]
+	}
 	reader := NewEventReader(stateDir)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -398,9 +402,17 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 				}
 				// Non-fatal read error — log and continue polling.
 			}
-			// Route events by type (logged for observability; T13 adds emission methods).
-			for _, evt := range events {
-				_ = evt // placeholder: event routing added in T13
+			// Route events by type to Matrix room.
+			if e.eventBus != nil && roomID != "" {
+				emitter := NewWorkflowEventEmitter(e.eventBus)
+				for _, evt := range events {
+					switch evt.Type {
+					case "step", "checkpoint", "progress":
+						emitter.EmitStepProgress(roomID, evt)
+					case "error":
+						emitter.EmitStepError(roomID, evt)
+					}
+				}
 			}
 
 			switch instance.Status {
@@ -554,7 +566,7 @@ func (e *StepExecutor) executeStepWithBlockerHandling(
 		e.mu.Unlock()
 
 		// 2. Wait for completion
-		completionResult, waitErr := e.waitForCompletion(stepCtx, instanceID, stateDir)
+		completionResult, waitErr := e.waitForCompletion(stepCtx, instanceID, stateDir, workflow.CreatedBy)
 
 		// Clean up running step tracking
 		e.mu.Lock()

@@ -88,6 +88,59 @@ func TestTimelineTruncatedDetail(t *testing.T) {
 	}
 }
 
+func TestGetTimelineEvents_ConvertsEvents(t *testing.T) {
+	d200 := 200
+	pct75 := 75
+	result := &ExtendedStepResult{
+		Events: []StepEvent{
+			{Seq: 1, Type: "step", Name: "Init", TsMs: 1000, DurationMs: &d200},
+			{Seq: 2, Type: "PROGRESS", Name: "Loading", TsMs: 1200, Detail: map[string]interface{}{"percent": 75.0}},
+			{Seq: 3, Type: "file_read", Name: "config.yaml", TsMs: 1400, Detail: map[string]interface{}{"lines": 42}},
+		},
+	}
+
+	events := GetTimelineEvents(result)
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	if events[0].Type != "step" || events[0].Name != "Init" || *events[0].DurationMs != 200 {
+		t.Errorf("event 0 mismatch: %+v", events[0])
+	}
+
+	if events[1].Type != "PROGRESS" || events[1].Percent == nil || *events[1].Percent != pct75 {
+		t.Errorf("event 1: expected Percent=75, got %+v", events[1])
+	}
+
+	if events[2].Type != "file_read" || events[2].Name != "config.yaml" {
+		t.Errorf("event 2 mismatch: %+v", events[2])
+	}
+}
+
+func TestGetTimelineEvents_SkipsSummary(t *testing.T) {
+	result := &ExtendedStepResult{
+		Events: []StepEvent{
+			{Seq: 1, Type: "step", Name: "Start"},
+			{Seq: 2, Type: "_summary", Name: "Summary"},
+			{Seq: 3, Type: "progress", Name: "Progressing"},
+			{Seq: 4, Type: "file_write", Name: "out.txt"},
+		},
+	}
+
+	events := GetTimelineEvents(result)
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events (skipped _summary and progress), got %d", len(events))
+	}
+	if events[0].Type != "step" {
+		t.Errorf("expected first event type step, got %s", events[0].Type)
+	}
+	if events[1].Type != "file_write" {
+		t.Errorf("expected second event type file_write, got %s", events[1].Type)
+	}
+}
+
 func TestBlockerNotif_FormatSingle(t *testing.T) {
 	blockers := []Blocker{
 		{

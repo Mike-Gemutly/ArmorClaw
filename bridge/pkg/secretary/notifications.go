@@ -567,6 +567,54 @@ func (b *NotificationBuilder) Build() *Notification {
 }
 
 //=============================================================================
+// Timeline Structured Events
+//=============================================================================
+
+type TimelineEvent struct {
+	Seq        int                    `json:"seq"`
+	Type       string                 `json:"type"`
+	Name       string                 `json:"name"`
+	TsMs       int                    `json:"ts_ms"`
+	Detail     map[string]interface{} `json:"detail,omitempty"`
+	DurationMs *int                   `json:"duration_ms,omitempty"`
+	Percent    *int                   `json:"percent,omitempty"`
+}
+
+// GetTimelineEvents converts ExtendedStepResult.Events into a []TimelineEvent.
+// Skips _summary and progress events (same as FormatTimelineMessage).
+func GetTimelineEvents(result *ExtendedStepResult) []TimelineEvent {
+	if result == nil || len(result.Events) == 0 {
+		return nil
+	}
+
+	out := make([]TimelineEvent, 0, len(result.Events))
+	for _, evt := range result.Events {
+		if evt.Type == "_summary" || evt.Type == "progress" {
+			continue
+		}
+
+		te := TimelineEvent{
+			Seq:        evt.Seq,
+			Type:       evt.Type,
+			Name:       evt.Name,
+			TsMs:       int(evt.TsMs),
+			Detail:     evt.Detail,
+			DurationMs: evt.DurationMs,
+		}
+
+		if evt.Type == "PROGRESS" && evt.Detail != nil {
+			if pct, ok := evt.Detail["percent"].(float64); ok {
+				p := int(pct)
+				te.Percent = &p
+			}
+		}
+
+		out = append(out, te)
+	}
+	return out
+}
+
+//=============================================================================
 // Timeline Formatting
 //=============================================================================
 

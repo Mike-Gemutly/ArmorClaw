@@ -1,7 +1,9 @@
 package secretary
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/armorclaw/bridge/internal/events"
 	"github.com/stretchr/testify/assert"
@@ -100,4 +102,147 @@ func requireTrue(t *testing.T, ok bool) {
 	if !ok {
 		t.Fatal("assertion failed: expected true")
 	}
+}
+
+//=============================================================================
+// MatrixEventForwarder Tests
+//=============================================================================
+
+func TestMatrixForwardStepProgress(t *testing.T) {
+	bus := events.NewMatrixEventBus(64)
+
+	var sentMessages []struct {
+		roomID  string
+		message string
+	}
+	sendFunc := func(_ context.Context, roomID, message string) error {
+		sentMessages = append(sentMessages, struct {
+			roomID  string
+			message string
+		}{roomID, message})
+		return nil
+	}
+
+	forwarder := NewMatrixEventForwarder(bus, sendFunc)
+	forwarder.Start()
+	defer forwarder.Stop()
+
+	bus.Publish(events.MatrixEvent{
+		ID:      "test-progress-1",
+		RoomID:  "!room:test",
+		Sender:  "orchestrator",
+		Type:    WorkflowEventStepProgress,
+		Content: WorkflowEvent{StepName: "navigate", Progress: 0.5, Status: StatusRunning},
+	})
+
+	assert.Eventually(t, func() bool {
+		return len(sentMessages) == 1
+	}, time.Second, 10*time.Millisecond, "expected 1 forwarded message")
+
+	assert.Equal(t, "!room:test", sentMessages[0].roomID)
+	assert.Equal(t, "🔹 Step: navigate (50%)", sentMessages[0].message)
+}
+
+func TestMatrixForwardStepError(t *testing.T) {
+	bus := events.NewMatrixEventBus(64)
+
+	var sentMessages []struct {
+		roomID  string
+		message string
+	}
+	sendFunc := func(_ context.Context, roomID, message string) error {
+		sentMessages = append(sentMessages, struct {
+			roomID  string
+			message string
+		}{roomID, message})
+		return nil
+	}
+
+	forwarder := NewMatrixEventForwarder(bus, sendFunc)
+	forwarder.Start()
+	defer forwarder.Stop()
+
+	bus.Publish(events.MatrixEvent{
+		ID:      "test-error-1",
+		RoomID:  "!room:test",
+		Sender:  "orchestrator",
+		Type:    WorkflowEventStepError,
+		Content: WorkflowEvent{Error: "connection refused", Status: StatusFailed},
+	})
+
+	assert.Eventually(t, func() bool {
+		return len(sentMessages) == 1
+	}, time.Second, 10*time.Millisecond, "expected 1 forwarded message")
+
+	assert.Equal(t, "!room:test", sentMessages[0].roomID)
+	assert.Equal(t, "❌ Error: connection refused", sentMessages[0].message)
+}
+
+func TestMatrixForwardIgnoresOtherEvents(t *testing.T) {
+	bus := events.NewMatrixEventBus(64)
+
+	sentCount := 0
+	sendFunc := func(_ context.Context, _, _ string) error {
+		sentCount++
+		return nil
+	}
+
+	forwarder := NewMatrixEventForwarder(bus, sendFunc)
+	forwarder.Start()
+	defer forwarder.Stop()
+
+	bus.Publish(events.MatrixEvent{
+		ID:      "other-1",
+		RoomID:  "!room:test",
+		Sender:  "orchestrator",
+		Type:    WorkflowEventStarted,
+		Content: WorkflowEvent{Status: StatusRunning},
+	})
+	bus.Publish(events.MatrixEvent{
+		ID:      "other-2",
+		RoomID:  "!room:test",
+		Sender:  "orchestrator",
+		Type:    WorkflowEventCompleted,
+		Content: WorkflowEvent{Status: StatusCompleted},
+	})
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 0, sentCount, "should not forward non-step events")
+}
+
+func TestMatrixForwardSkipsEmptyRoom(t *testing.T) {
+	bus := events.NewMatrixEventBus(64)
+
+	sentCount := 0
+	sendFunc := func(_ context.Context, _, _ string) error {
+		sentCount++
+		return nil
+	}
+
+	forwarder := NewMatrixEventForwarder(bus, sendFunc)
+	forwarder.Start()
+	defer forwarder.Stop()
+
+	bus.Publish(events.MatrixEvent{
+		ID:      "no-room",
+		RoomID:  "",
+		Sender:  "orchestrator",
+		Type:    WorkflowEventStepProgress,
+		Content: WorkflowEvent{StepName: "navigate", Progress: 0.75, Status: StatusRunning},
+	})
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 0, sentCount, "should not forward when RoomID is empty")
+}
+
+func TestMatrixForwardStop(t *testing.T) {
+	bus := events.NewMatrixEventBus(64)
+
+	forwarder := NewMatrixEventForwarder(bus, func(_ context.Context, _, _ string) error { return nil })
+	forwarder.Start()
+	forwarder.Stop()
+
+	assert.NotPanics(t, func() {
+		forwarder.Stop()
+	})
 }
