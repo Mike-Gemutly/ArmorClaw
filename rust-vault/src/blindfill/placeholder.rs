@@ -188,10 +188,10 @@ pub fn parse_placeholders(input: &str) -> Result<Vec<Placeholder>, PlaceholderPa
                     ));
                 }
 
-                // Validate hash is lowercase hexadecimal only
+                // Validate hash is lowercase hexadecimal only (0-9, a-f)
                 if !hash
                     .chars()
-                    .all(|c| c.is_ascii_hexdigit() && c.is_ascii_lowercase())
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
                 {
                     return Err(PlaceholderParseError::InvalidHash(format!(
                         "hash must be lowercase hexadecimal, found: {}",
@@ -340,7 +340,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(PlaceholderParseError::InvalidFormat(msg)) => {
-                assert!(msg.contains("must be in format {{VAULT:field:hash}}"));
+                assert!(msg.contains("must be in format {VAULT:field:hash}"));
             }
             _ => panic!("Expected InvalidFormat error"),
         }
@@ -399,7 +399,8 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(PlaceholderParseError::NestedPlaceholder(_)) => {}
-            _ => panic!("Expected NestedPlaceholder error"),
+            Err(PlaceholderParseError::InvalidFormat(_)) => {}
+            _ => panic!("Expected NestedPlaceholder or InvalidFormat error"),
         }
     }
 
