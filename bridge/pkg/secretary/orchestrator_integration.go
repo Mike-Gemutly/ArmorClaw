@@ -137,30 +137,21 @@ type ApprovalChecker interface {
 }
 
 type StepExecutorConfig struct {
-	Factory        *studio.AgentFactory
-	Validator      *DependencyValidator
-	ApprovalEngine ApprovalChecker
-	EventBus       *events.MatrixEventBus
-	DefaultTimeout time.Duration
-	StepRetryCount int
-	StepRetryDelay time.Duration
-	StateDirBase   string
-	SkillFinder    SkillFinder
-	FailoverPolicy FailoverPolicy
+	Factory          *studio.AgentFactory
+	Validator        *DependencyValidator
+	ApprovalEngine   ApprovalChecker
+	ApprovalManager  *PendingApprovalManager
+	EventBus         *events.MatrixEventBus
+	DefaultTimeout   time.Duration
+	StepRetryCount   int
+	StepRetryDelay   time.Duration
+	StateDirBase     string
+	SkillFinder      SkillFinder
+	FailoverPolicy   FailoverPolicy
+	ParallelConfig   ParallelConfig
 
-	// ParallelConfig configures concurrent step execution.
-	// If zero, parallel execution uses DefaultParallelConfig().
-	ParallelConfig ParallelConfig
-
-	// OnSkillExtraction is called after successful step completion to extract
-	// reusable skill patterns from the result. Errors are silently ignored to
-	// avoid disrupting the workflow. Uses callback to avoid importing pkg/skills.
 	OnSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
-
-	// OnSkillOutcome records whether a previously suggested skill was helpful.
-	// Called for each skill in the relevant_skills config field after step
-	// completion (success or failure). Uses callback to avoid import cycle.
-	OnSkillOutcome func(skillID string, success bool) error
+	OnSkillOutcome    func(skillID string, success bool) error
 }
 
 type FailoverAttempt struct {
@@ -198,17 +189,18 @@ func joinStrings(ss []string, sep string) string {
 }
 
 type StepExecutor struct {
-	factory        *studio.AgentFactory
-	validator      *DependencyValidator
-	approvalEngine ApprovalChecker
-	eventBus       *events.MatrixEventBus
-	defaultTimeout time.Duration
-	retryCount     int
-	retryDelay     time.Duration
-	stateDirBase   string
-	skillFinder    SkillFinder
-	failoverPolicy FailoverPolicy
-	parallelExec   *ParallelExecutor
+	factory          *studio.AgentFactory
+	validator        *DependencyValidator
+	approvalEngine   ApprovalChecker
+	approvalManager  *PendingApprovalManager
+	eventBus         *events.MatrixEventBus
+	defaultTimeout   time.Duration
+	retryCount       int
+	retryDelay       time.Duration
+	stateDirBase     string
+	skillFinder      SkillFinder
+	failoverPolicy   FailoverPolicy
+	parallelExec     *ParallelExecutor
 
 	onSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
 	onSkillOutcome    func(skillID string, success bool) error
@@ -246,6 +238,7 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		factory:           cfg.Factory,
 		validator:         cfg.Validator,
 		approvalEngine:    cfg.ApprovalEngine,
+		approvalManager:   cfg.ApprovalManager,
 		eventBus:          cfg.EventBus,
 		defaultTimeout:    cfg.DefaultTimeout,
 		retryCount:        cfg.StepRetryCount,
@@ -479,7 +472,11 @@ func (e *StepExecutor) checkApproval(
 			if e.eventBus == nil {
 				return fmt.Errorf("step %s requires PII approval but no event bus configured", stepID)
 			}
-			approvedFields, err := PendingApproval(ctx, e.eventBus, workflow.RoomID, stepID, approvalResult.DeniedFields)
+			mgr := e.approvalManager
+			if mgr == nil {
+				mgr = defaultManager
+			}
+			approvedFields, err := mgr.RequestApproval(ctx, e.eventBus, workflow.RoomID, stepID, approvalResult.DeniedFields)
 			if err != nil {
 				return fmt.Errorf("PII approval failed for step %s: %w", stepID, err)
 			}
