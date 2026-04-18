@@ -45,7 +45,6 @@ import (
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/trust"
 	"github.com/armorclaw/bridge/pkg/turn"
-	"github.com/armorclaw/bridge/pkg/vault"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -56,12 +55,6 @@ import (
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/appservice"
-	"github.com/armorclaw/bridge/pkg/audit"
-	"github.com/armorclaw/bridge/pkg/governor"
-	"github.com/armorclaw/bridge/pkg/mcp"
-	"github.com/armorclaw/bridge/pkg/pii"
-	"github.com/armorclaw/bridge/pkg/toolsidecar"
-	"github.com/armorclaw/bridge/pkg/translator"
 	"github.com/armorclaw/bridge/pkg/webrtc"
 
 	bridgeHTTP "github.com/armorclaw/bridge/pkg/http"
@@ -2265,25 +2258,7 @@ func runBridgeServer(cliCfg cliConfig) {
 	defer cancel()
 
 	// Initialize vault governance client when v6_microkernel is enabled
-	var vaultClient *vault.VaultGovernanceClient
-	var vaultEventBridge *vault.VaultEventBridge
-
-	if cfg.Vault.V6Microkernel {
-		log.Println("[VAULT] v6 microkernel enabled, connecting to vault governance...")
-		var err error
-		vaultClient, err = vault.NewGovernanceClient(cfg.Vault.SocketPath)
-		if err != nil {
-			log.Printf("[VAULT] Failed to connect to vault governance: %v (degrading gracefully)", err)
-		} else {
-			if eventBus != nil {
-				vaultEventBridge = vault.NewVaultEventBridge(vaultClient, eventBus)
-				go vaultEventBridge.StartSyncLoop(shutdownCtx)
-				log.Println("[VAULT] Vault governance client connected, event bridge started")
-			} else {
-				log.Println("[VAULT] Vault governance client connected (event bus unavailable, event bridge skipped)")
-			}
-		}
-	}
+	vaultClient, vaultEventBridge := setupVaultClient(cfg, eventBus, shutdownCtx)
 
 	// Initialize high-throughput event bus for Matrix event streaming
 	var matrixBus *events.MatrixEventBus
@@ -2491,212 +2466,25 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 
 	// Initialize v6 MCP Router (if enabled)
-	var mcpRouter *mcp.MCPRouter
-	var mcpTranslator *translator.RPCToMCPTranslator
-	if cfg.Vault.V6Microkernel {
-		log.Println("Initializing v6 Microkernel MCP Router...")
-		mcpTranslator = translator.NewRPCToMCPTranslator()
+	mcpRouter, mcpTranslator := setupMCPRouter(cfg, toolsidecarDocker)
 
-		gov := governor.NewGovernor(nil, nil)
-		prov, provErr := toolsidecar.NewProvisioner(toolsidecar.Config{
-			DockerClient: toolsidecarDocker,
-		})
-		if provErr != nil {
-			log.Printf("V6 Microkernel disabled: toolsidecar provisioner: %v", provErr)
-		} else {
-			consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{
-				Timeout: 60 * time.Second,
-			})
-			auditor, auditErr := audit.NewAuditLog(audit.DefaultConfig())
-			if auditErr != nil {
-				log.Printf("V6 Microkernel disabled: audit log: %v", auditErr)
-			} else {
-				mcpRouter, err = mcp.New(mcp.Config{
-					SkillGate:      gov,
-					Provisioner:    prov,
-					ConsentManager: consentMgr,
-					Auditor:        auditor,
-					V6Microkernel:  true,
-				})
-				if err != nil {
-					log.Printf("V6 Microkernel disabled: %v", err)
-					mcpRouter = nil
-				} else {
-					log.Println("v6 Microkernel MCP Router initialized")
-				}
-			}
-		}
-	}
-
-	// Initialize Rolodex service for contact management
-	log.Println("Initializing Rolodex service...")
-	rolodexStore, err := secretary.NewStore(secretary.StoreConfig{
-		Path:   "/var/lib/armorclaw/rolodex.db",
-		Logger: nil,
-	})
-	if err != nil {
-		log.Printf("Warning: Failed to initialize Rolodex store: %v", err)
-		rolodexStore = nil
-	}
-
-	var rolodexService *secretary.RolodexService
+	rolodexStore, rolodexService, webdavService, calendarService := setupSecretaryServices(ks)
 	if rolodexStore != nil {
 		defer rolodexStore.Close()
-		rolodexService, err = secretary.NewRolodexService(secretary.RolodexConfig{
-			Store:    rolodexStore,
-			Keystore: ks,
-			Logger:   nil,
-		})
-		if err != nil {
-			log.Printf("Warning: Failed to initialize Rolodex service: %v", err)
-			rolodexService = nil
-		} else {
-			log.Println("Rolodex service initialized")
-		}
 	}
 
-	// Initialize WebDAV service
-	log.Println("Initializing WebDAV service...")
-	webdavService := secretary.NewWebDAVService()
-	log.Println("WebDAV service initialized")
+	approvalEngine, trustEngine := setupApprovalAndTrust(rolodexStore)
 
-	// Initialize Calendar service
-	log.Println("Initializing Calendar service...")
-	calendarService := secretary.NewCalendarService()
-	log.Println("Calendar service initialized")
+	workflowOrchestrator, orchestratorIntegration := setupWorkflowEngine(rolodexStore, matrixBus, studioService)
 
-	// Initialize Approval Engine
-	// This comment marks the start of the Approval Engine initialization block,
-	// which is a significant initialization step alongside other services.
-	var approvalEngine *secretary.ApprovalEngineImpl
-	if rolodexStore != nil {
-		approvalEngine, err = secretary.NewApprovalEngine(secretary.ApprovalEngineConfig{
-			Store:  rolodexStore,
-			Logger: nil,
-		})
-		if err != nil {
-			log.Printf("Warning: Failed to initialize Approval engine: %v", err)
-			approvalEngine = nil
-		} else {
-			log.Println("Approval engine initialized")
-		}
-	}
-
-	// Initialize Trusted Workflow Engine
-	var trustEngine *secretary.TrustedWorkflowEngine
-	if rolodexStore != nil {
-		trustEngine, err = secretary.NewTrustedWorkflowEngine(secretary.TrustedWorkflowConfig{
-			Store:  rolodexStore,
-			Logger: nil,
-		})
-		if err != nil {
-			log.Printf("Warning: Failed to initialize Trust engine: %v", err)
-			trustEngine = nil
-		} else {
-			log.Println("Trust engine initialized")
-		}
-	}
-
-	// Construct workflow orchestrator for secretary wiring
-	var workflowOrchestrator *secretary.WorkflowOrchestratorImpl
-	if rolodexStore != nil && matrixBus != nil {
-		workflowEmitter := secretary.NewWorkflowEventEmitter(matrixBus)
-
-		var orchestratorFactory secretary.Factory
-		if studioService != nil {
-			if fac := studioService.GetFactory(); fac != nil {
-				orchestratorFactory = fac
-			}
-		}
-
-		var orchErr error
-		workflowOrchestrator, orchErr = secretary.NewWorkflowOrchestrator(secretary.OrchestratorConfig{
-			Store:    rolodexStore,
-			Factory:  orchestratorFactory,
-			EventBus: workflowEmitter,
-		})
-		if orchErr != nil {
-			log.Printf("Warning: failed to create workflow orchestrator: %v", orchErr)
-			workflowOrchestrator = nil
-		}
-	}
-
-	// Construct workflow execution engine
-	var orchestratorIntegration *secretary.OrchestratorIntegration
-	if rolodexStore != nil && studioService != nil {
-		dependencyValidator := secretary.NewDependencyValidator()
-
-		var stepExecutor *secretary.StepExecutor
-		if fac := studioService.GetFactory(); fac != nil {
-			stepExecutor = secretary.NewStepExecutor(secretary.StepExecutorConfig{
-				Factory:        fac,
-				Validator:      dependencyValidator,
-				ApprovalEngine: nil,
-				EventBus:       matrixBus,
-			})
-		}
-
-		notificationService := secretary.NewNotificationService(secretary.NotificationServiceConfig{
-			Store: rolodexStore,
-		})
-
-		if workflowOrchestrator != nil && stepExecutor != nil {
-			orchestratorIntegration = secretary.NewOrchestratorIntegration(secretary.IntegrationConfig{
-				Orchestrator:        workflowOrchestrator,
-				Executor:            stepExecutor,
-				Store:               rolodexStore,
-				ApprovalEngine:      nil,
-				NotificationService: notificationService,
-			})
-			log.Println("Workflow execution engine initialized")
-		}
-	}
-
-	// Wire secretary command handler to Matrix adapter
-	if matrixAdapter != nil {
-		secretaryHandler := secretary.NewSecretaryCommandHandler(secretary.SecretaryCommandHandlerConfig{
-			Store:          rolodexStore,
-			Orchestrator:   workflowOrchestrator,
-			Integration:    orchestratorIntegration,
-			Studio:         nil,
-			Matrix:         secretary.WrapMatrixAdapter(matrixAdapter),
-			Prefix:         "!",
-			Rolodex:        rolodexService,
-			WebDAV:         webdavService,
-			Calendar:       calendarService,
-			ApprovalEngine: approvalEngine,
-			TrustEngine:    trustEngine,
-		})
-		matrixAdapter.SetStudioCommandHandler(&compositeStudioHandler{
-			studio:    studioService,
-			secretary: secretaryHandler,
-		})
-		log.Println("Studio command handler wired to Matrix adapter")
-	}
-
-	// Initialize task scheduler
-	var taskScheduler *secretary.TaskScheduler
-	if rolodexStore != nil && studioService != nil {
-		var schedulerFactory secretary.FactoryInterface
-		if fac := studioService.GetFactory(); fac != nil {
-			schedulerFactory = &studioFactoryAdapter{factory: fac}
-		}
-
-		var schedulerMatrix secretary.MatrixAdapter
-		if matrixAdapter != nil {
-			schedulerMatrix = &schedulerMatrixAdapter{adapter: matrixAdapter}
-		}
-
-		if schedulerFactory != nil {
-			taskScheduler = secretary.NewTaskScheduler(rolodexStore, schedulerFactory, schedulerMatrix, nil, workflowOrchestrator, orchestratorIntegration)
-			defer func() {
-				if taskScheduler != nil {
-					taskScheduler.Stop()
-				}
-			}()
-			taskScheduler.Start()
-			log.Println("Task scheduler started (15s tick interval)")
-		}
+	taskScheduler := setupSecretaryCommandHandler(
+		rolodexStore, workflowOrchestrator, orchestratorIntegration,
+		matrixAdapter, studioService,
+		rolodexService, webdavService, calendarService,
+		approvalEngine, trustEngine,
+	)
+	if taskScheduler != nil {
+		defer taskScheduler.Stop()
 	}
 
 	// Log RPC dependency status
