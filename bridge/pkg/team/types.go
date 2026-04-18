@@ -35,6 +35,7 @@ type Team struct {
 	LifecycleState LifecycleState `json:"lifecycle_state"`
 	Budgets        *TeamBudgets   `json:"budgets,omitempty"`
 	Version        int            `json:"version"` // optimistic locking
+	Members        []TeamMember   `json:"members,omitempty"`
 }
 
 // Validate ensures ID, Name are non-empty and LifecycleState is recognised.
