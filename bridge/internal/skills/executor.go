@@ -101,17 +101,7 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 		}, fmt.Errorf("policy violation: skill %s not allowed", skillName)
 	}
 
-	// Step 3: Schema validation
-	if err := se.registry.ValidateParameters(skillName, params); err != nil {
-		return &SkillResult{
-			Success:   false,
-			Error:     fmt.Sprintf("Parameter validation failed: %s", err.Error()),
-			Type:      "error",
-			Timestamp: startTime,
-		}, err
-	}
-
-	// Step 4: Pre-execution security checks
+	// Step 3: Pre-execution security checks
 	if err := se.preExecutionChecks(skill, params); err != nil {
 		return &SkillResult{
 			Success:   false,
@@ -121,10 +111,10 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 		}, err
 	}
 
-	// Step 5: Get appropriate handler for skill's domain
+	// Step 4: Get appropriate handler for skill's domain
 	handler := se.getHandlerForDomain(skill.Domain)
 
-	// Step 6: Execute skill with timeout
+	// Step 5: Execute skill with timeout
 	executionCtx, cancel := context.WithTimeout(ctx, skill.Timeout)
 	defer cancel()
 

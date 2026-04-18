@@ -105,7 +105,6 @@ func parseSkillFile(path string) (*Skill, error) {
 	}
 
 	frontmatter := strings.TrimSpace(parts[1])
-	body := strings.TrimSpace(parts[2])
 
 	// Parse YAML frontmatter (simplified for Phase 1)
 	// In production, use a proper YAML parser like gopkg.in/yaml.v2
@@ -140,14 +139,6 @@ func parseSkillFile(path string) (*Skill, error) {
 
 	// Extract parameters (simplified for now)
 	skill.Parameters = make(map[string]Param)
-
-	// Extract metadata
-	if metadata, ok := frontmatterMap["metadata"].(map[string]interface{}); ok {
-		skill.Metadata = convertInterfaceMap(metadata)
-	}
-
-	// Extract parameters from body (simplified)
-	skill.Parameters = extractParametersFromBody(body)
 
 	return skill, nil
 }
@@ -224,16 +215,6 @@ func getCommandForSkill(name string) string {
 	return "curl" // default
 }
 
-// extractParametersFromBody extracts parameters from skill body (simplified)
-func extractParametersFromBody(body string) map[string]Param {
-	params := make(map[string]Param)
-
-	// For Phase 1, we'll define minimal parameters based on skill
-	// In a full implementation, this would parse the body more carefully
-
-	return params
-}
-
 // GetByDomain returns all skills for a given domain
 func (r *Registry) GetByDomain(domain string) []*Skill {
 	r.mutex.RLock()
@@ -266,62 +247,6 @@ func (r *Registry) GetSkill(name string) (*Skill, bool) {
 
 	skill, exists := r.skills[name]
 	return skill, exists
-}
-
-// ValidateParameters validates parameters against a skill's schema
-func (r *Registry) ValidateParameters(skillName string, params map[string]interface{}) error {
-	skill, exists := r.GetSkill(skillName)
-	if !exists {
-		return fmt.Errorf("skill not found: %s", skillName)
-	}
-
-	// Check required parameters
-	for paramName, param := range skill.Parameters {
-		if param.Required {
-			if _, exists := params[paramName]; !exists {
-				return fmt.Errorf("required parameter '%s' is missing", paramName)
-			}
-		}
-	}
-
-	// For Phase 1, simple type validation
-	for paramName, paramValue := range params {
-		if paramDef, exists := skill.Parameters[paramName]; exists {
-			if err := validateParameterType(paramName, paramValue, paramDef.Type); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateParameterType validates a parameter's type
-func validateParameterType(name string, value interface{}, expectedType string) error {
-	switch expectedType {
-	case "string":
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("parameter '%s' must be a string", name)
-		}
-	case "number":
-		if _, ok := value.(float64); !ok {
-			return fmt.Errorf("parameter '%s' must be a number", name)
-		}
-	case "boolean":
-		if _, ok := value.(bool); !ok {
-			return fmt.Errorf("parameter '%s' must be a boolean", name)
-		}
-	case "array":
-		if _, ok := value.([]interface{}); !ok {
-			return fmt.Errorf("parameter '%s' must be an array", name)
-		}
-	case "object":
-		if _, ok := value.(map[string]interface{}); !ok {
-			return fmt.Errorf("parameter '%s' must be an object", name)
-		}
-	}
-
-	return nil
 }
 
 // SetEnabled enables or disables a skill
