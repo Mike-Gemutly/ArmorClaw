@@ -4,16 +4,16 @@ import "time"
 
 // ToolPolicy defines security policies for a tool
 type ToolPolicy struct {
-	Risk              string        // low, medium, high
-	AutoExecute       bool          // Whether to auto-execute without confirmation
-	Timeout           time.Duration // Maximum execution time
-	MaxOutput         int           // Maximum output size in bytes
-	AllowedSchemes    []string      // Allowed URL schemes (e.g., ["https"])
-	BlockPrivateIPs   bool          // Whether to block private IP addresses
-	BlockMetadata     bool          // Whether to block cloud metadata endpoints
-	ResolveDNSFirst   bool          // Whether to resolve DNS before request
-	MaxConcurrent     int           // Maximum concurrent executions
-	RateLimit         int           // Maximum executions per minute
+	Risk            string        // low, medium, high
+	AutoExecute     bool          // Whether to auto-execute without confirmation
+	Timeout         time.Duration // Maximum execution time
+	MaxOutput       int           // Maximum output size in bytes
+	AllowedSchemes  []string      // Allowed URL schemes (e.g., ["https"])
+	BlockPrivateIPs bool          // Whether to block private IP addresses
+	BlockMetadata   bool          // Whether to block cloud metadata endpoints
+	ResolveDNSFirst bool          // Whether to resolve DNS before request
+	MaxConcurrent   int           // Maximum concurrent executions
+	RateLimit       int           // Maximum executions per minute
 }
 
 // Policy holds all tool policies
@@ -80,6 +80,14 @@ var Policy = map[string]ToolPolicy{
 		ResolveDNSFirst: true,
 		MaxConcurrent:   2,
 		RateLimit:       20,
+	},
+
+	"email.send": {
+		Risk:           "high",
+		AutoExecute:    false,
+		Timeout:        30 * time.Second,
+		MaxOutput:      1024,
+		AllowedSchemes: []string{"https"},
 	},
 }
 
