@@ -28,10 +28,23 @@ jobs:
           go-version-file: 'bridge/go.mod'
           cache-dependency-path: 'bridge/go.sum'
 
+      - name: Install CGO dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libyara-dev libsqlcipher-dev
+
       - name: Go vet RPC packages
+        env:
+          CGO_ENABLED: 1
+          CGO_CFLAGS: "-I/usr/include"
+          CGO_LDFLAGS: "-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
         run: cd bridge && go vet ./pkg/rpc/... ./internal/adapter/...
 
       - name: Compile bridge binary
+        env:
+          CGO_ENABLED: 1
+          CGO_CFLAGS: "-I/usr/include"
+          CGO_LDFLAGS: "-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
         run: cd bridge && go build -o /dev/null ./cmd/bridge
 
   rpc-unit-tests:
@@ -46,7 +59,16 @@ jobs:
           go-version-file: 'bridge/go.mod'
           cache-dependency-path: 'bridge/go.sum'
 
+      - name: Install CGO dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libyara-dev libsqlcipher-dev
+
       - name: Run RPC unit tests
+        env:
+          CGO_ENABLED: 1
+          CGO_CFLAGS: "-I/usr/include"
+          CGO_LDFLAGS: "-L/usr/lib/x86_64-linux-gnu -lsqlcipher"
         run: |
           cd bridge
           go test -v -race -coverprofile=coverage.out ./pkg/rpc/...
