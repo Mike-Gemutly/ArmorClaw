@@ -92,6 +92,7 @@ class ArmorClawMessagingService : FirebaseMessagingService() {
             "mention" -> handleMentionNotification(data)
             "invite" -> handleInviteNotification(data)
             "sync" -> triggerBackgroundSync(data)
+            "email_approval_request" -> handleEmailApprovalNotification(data)
             else -> Log.w(TAG, "Unknown message type: ${data["type"]}")
         }
     }
@@ -301,5 +302,35 @@ class ArmorClawMessagingService : FirebaseMessagingService() {
                 listOf(messagesChannel, mentionsChannel, systemChannel)
             )
         }
+    }
+
+    private fun handleEmailApprovalNotification(data: Map<String, String>) {
+        val approvalId = data["approval_id"] ?: return
+        val to = data["to"] ?: "unknown"
+        val piiFields = data["pii_fields"]?.toIntOrNull() ?: 0
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("armorclaw://email/approve/$approvalId")
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            approvalId.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID_SYSTEM)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Email Approval Request")
+            .setContentText("Agent wants to send email to $to ($piiFields PII field(s))")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        notify(approvalId.hashCode(), notification)
     }
 }

@@ -38,6 +38,8 @@ fun SystemAlertCard(
     onDismiss: (() -> Unit)? = null,
     onPiiApprove: ((String, List<String>) -> Unit)? = null,
     onPiiDeny: ((String, String) -> Unit)? = null,
+    onEmailApprove: ((String) -> Unit)? = null,
+    onEmailDeny: ((String, String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // Route PII_ACCESS_REQUEST to dedicated PiiApprovalCard
@@ -49,6 +51,29 @@ fun SystemAlertCard(
             modifier = modifier
         )
         return
+    }
+
+    // Route EMAIL_APPROVAL_REQUEST to dedicated EmailApprovalCard
+    if (alert.alertType == AlertType.EMAIL_APPROVAL_REQUEST && alert.metadata != null) {
+        val approvalId = alert.metadata?.get("approval_id") as? String ?: ""
+        val emailId = alert.metadata?.get("email_id") as? String ?: ""
+        val to = alert.metadata?.get("to") as? String ?: ""
+        val piiFieldCount = (alert.metadata?.get("pii_fields") as? Number)?.toInt() ?: 0
+        val timeoutS = (alert.metadata?.get("timeout_s") as? Number)?.toInt() ?: 300
+
+        if (approvalId.isNotEmpty()) {
+            EmailApprovalCard(
+                approvalId = approvalId,
+                emailId = emailId,
+                to = to,
+                piiFieldCount = piiFieldCount,
+                timeoutSeconds = timeoutS,
+                onApprove = { id -> onEmailApprove?.invoke(id) },
+                onDeny = { id, reason -> onEmailDeny?.invoke(id, reason) },
+                modifier = modifier
+            )
+            return
+        }
     }
 
     val colors = alert.severity.getColors()
@@ -315,6 +340,8 @@ fun AlertType.getIcon(): ImageVector {
         AlertType.MAINTENANCE -> Icons.Default.Build
 
         AlertType.PII_ACCESS_REQUEST -> Icons.Default.PrivacyTip
+
+        AlertType.EMAIL_APPROVAL_REQUEST -> Icons.Default.Email
 
         AlertType.COMPLIANCE_VIOLATION -> Icons.Default.Gavel
 

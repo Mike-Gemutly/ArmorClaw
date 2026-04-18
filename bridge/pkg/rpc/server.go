@@ -892,6 +892,9 @@ func (s *Server) registerHandlers() {
 		"container.terminate":       s.handleTerminateContainer,
 		"container.list":            s.handleListContainers,
 		"resolve_blocker":           s.handleResolveBlocker,
+		"approve_email":             s.handleApproveEmail,
+		"deny_email":                s.handleDenyEmail,
+		"email_approval_status":     s.handleEmailApprovalStatus,
 	}
 
 	s.handlers = h

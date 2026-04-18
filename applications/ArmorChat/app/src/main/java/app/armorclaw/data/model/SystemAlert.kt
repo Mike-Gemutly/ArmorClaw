@@ -74,6 +74,9 @@ enum class AlertType(val displayName: String, val defaultSeverity: AlertSeverity
     // PII / Blind Fill alerts
     PII_ACCESS_REQUEST("PII Access Request", AlertSeverity.WARNING),
 
+    // Email approval alerts
+    EMAIL_APPROVAL_REQUEST("Email Approval Request", AlertSeverity.WARNING),
+
     // Compliance alerts
     COMPLIANCE_VIOLATION("Compliance Violation", AlertSeverity.ERROR),
     AUDIT_EXPORT("Audit Export Ready", AlertSeverity.INFO);

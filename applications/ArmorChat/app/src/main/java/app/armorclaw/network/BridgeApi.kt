@@ -415,6 +415,34 @@ class BridgeApi(private val baseUrl: String = "http://localhost:8080/api") {
 
     //endregion
 
+    //region Email Approval Methods
+
+    @Serializable
+    data class EmailApprovalResponse(
+        val approval_id: String,
+        val status: String,
+        val approved_by: String? = null,
+        val denied_by: String? = null,
+        val message: String? = null
+    )
+
+    fun approveEmail(approvalId: String, userId: String): Result<EmailApprovalResponse> {
+        return rpc("approve_email", mapOf(
+            "approval_id" to approvalId,
+            "user_id" to userId
+        ))
+    }
+
+    fun denyEmail(approvalId: String, userId: String, reason: String = "User denied email send"): Result<EmailApprovalResponse> {
+        return rpc("deny_email", mapOf(
+            "approval_id" to approvalId,
+            "user_id" to userId,
+            "reason" to reason
+        ))
+    }
+
+    //endregion
+
     //region Key Backup Methods
 
     @Serializable
