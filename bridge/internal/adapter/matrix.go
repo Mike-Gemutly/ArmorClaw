@@ -88,6 +88,7 @@ var bridgeSyncFilter = map[string]interface{}{
 				"m.room.member",
 				"m.room.bridge",
 				"app.armorclaw.alert",
+				"com.armorclaw.agent.status",
 			},
 		},
 		"state": map[string]interface{}{
@@ -778,6 +779,12 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 			case strings.HasPrefix(event.Type, "blocker."):
 				// blocker.required, etc.
 				fmt.Printf("[matrix] processEvents: blocker event type=%s room=%s sender=%s\n",
+					event.Type, roomID, event.Sender)
+				m.publishCustomEvent(&event, roomID)
+
+			case strings.HasPrefix(event.Type, "com.armorclaw."):
+				// com.armorclaw.agent.status, com.armorclaw.agent.*, etc.
+				fmt.Printf("[matrix] processEvents: armorclaw event type=%s room=%s sender=%s\n",
 					event.Type, roomID, event.Sender)
 				m.publishCustomEvent(&event, roomID)
 

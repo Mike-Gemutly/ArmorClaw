@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/pkg/pii"
 )
 
@@ -35,6 +36,7 @@ type Integration struct {
 	agentID      string
 	stateMachine *StateMachine
 	hitlManager  *pii.HITLConsentManager
+	roomID       string
 
 	// Callbacks for state changes
 	onStatusChange func(ctx context.Context, event StatusEvent) error
@@ -69,6 +71,20 @@ func (i *Integration) OnStatusChange(callback func(ctx context.Context, event St
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.onStatusChange = callback
+}
+
+// SetRoomID sets the Matrix room ID for this agent's status broadcasts
+func (i *Integration) SetRoomID(roomID string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.roomID = roomID
+}
+
+// RoomID returns the Matrix room ID for this agent
+func (i *Integration) RoomID() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.roomID
 }
 
 // RequestPIIAccess requests PII access and transitions to AWAITING_APPROVAL
@@ -263,6 +279,7 @@ func (i *Integration) processEvents() {
 type AgentCoordinator struct {
 	mu           sync.RWMutex
 	integrations map[string]*Integration
+	eventBus     *events.MatrixEventBus
 }
 
 // NewAgentCoordinator creates a new agent coordinator
@@ -328,14 +345,40 @@ func (c *AgentCoordinator) GetAllStatuses() []StatusEvent {
 	return statuses
 }
 
+// SetEventBus configures the Matrix event bus for status broadcasts
+func (c *AgentCoordinator) SetEventBus(bus *events.MatrixEventBus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.eventBus = bus
+}
+
 // BroadcastStatus sends status updates to all listeners.
-//
-// LIMITATION: Agent status broadcasting is not yet implemented.
-// Container-to-Bridge state reporting does not exist — containers run
-// with NetworkMode "none" and cannot push status events. Status advances
-// are inferred from container lifecycle events (spawn, poll exit code),
-// not agent-reported phase transitions. This method will return an error
-// until a backward communication channel is implemented.
+// It publishes a com.armorclaw.agent.status Matrix event via the event bus,
+// consuming Bridge-inferred state transitions from the inference engine.
+// The event includes: state, workflow_id, step_name, inferred_from, timestamp.
 func (c *AgentCoordinator) BroadcastStatus(ctx context.Context, event StatusEvent) error {
-	return fmt.Errorf("BroadcastStatus: agent status broadcasting not implemented — no container-to-Bridge state reporting channel exists")
+	c.mu.RLock()
+	integration, exists := c.integrations[event.AgentID]
+	bus := c.eventBus
+	c.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("BroadcastStatus: agent %s not found", event.AgentID)
+	}
+
+	if bus == nil {
+		return fmt.Errorf("BroadcastStatus: event bus not configured — call SetEventBus first")
+	}
+
+	roomID := integration.RoomID()
+
+	bus.Publish(events.MatrixEvent{
+		ID:      fmt.Sprintf("%s-%s-%d", event.EventType(), event.AgentID, time.Now().UnixNano()),
+		RoomID:  roomID,
+		Sender:  "bridge",
+		Type:    event.EventType(),
+		Content: event.ToMatrixContent(),
+	})
+
+	return nil
 }

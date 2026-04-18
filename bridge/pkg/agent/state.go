@@ -150,6 +150,10 @@ type StatusMetadata struct {
 	TaskType string `json:"task_type,omitempty"`
 	// FieldsRequested lists PII fields being requested (for AWAITING_APPROVAL).
 	FieldsRequested []string `json:"fields_requested,omitempty"`
+	// WorkflowID identifies the workflow instance associated with this status.
+	WorkflowID string `json:"workflow_id,omitempty"`
+	// InferredFrom indicates the source of the state inference (CDP, workflow, command).
+	InferredFrom string `json:"inferred_from,omitempty"`
 }
 
 // StatusEvent represents a status change event for Matrix.
@@ -224,6 +228,12 @@ func StatusEventFromMatrix(content map[string]interface{}) (*StatusEvent, error)
 					event.Metadata.FieldsRequested = append(event.Metadata.FieldsRequested, s)
 				}
 			}
+		}
+		if workflowID, ok := metadata["workflow_id"].(string); ok {
+			event.Metadata.WorkflowID = workflowID
+		}
+		if inferredFrom, ok := metadata["inferred_from"].(string); ok {
+			event.Metadata.InferredFrom = inferredFrom
 		}
 	}
 
