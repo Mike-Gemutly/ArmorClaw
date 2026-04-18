@@ -126,3 +126,16 @@ func min8(s string) string {
 	}
 	return s
 }
+
+// ComplianceEntryV2 extends the audit schema with team-aware fields.
+type ComplianceEntryV2 struct {
+	ID              string    `json:"id"`
+	Timestamp       time.Time `json:"timestamp"`
+	EventType       string    `json:"event_type"`
+	Action          string    `json:"action"`
+	Status          string    `json:"status"`
+	TeamID          string    `json:"team_id,omitempty"`
+	MemberRole      string    `json:"member_role,omitempty"`
+	DelegationFrom  string    `json:"delegation_from,omitempty"`
+	DelegationTo    string    `json:"delegation_to,omitempty"`
+}
