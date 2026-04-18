@@ -1013,7 +1013,7 @@ func DefaultConfig() *Config {
 		Vault: VaultConfig{
 			V6Microkernel: false,
 			V6AuditMode:   false,
-			SocketPath:    "/run/armorclaw/keystore.sock",
+			SocketPath:    "/run/armorclaw/vault/keystore.sock",
 		},
 	}
 }
