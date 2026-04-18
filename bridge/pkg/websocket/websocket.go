@@ -1,10 +1,9 @@
-// Package websocket provides WebSocket server functionality for ArmorClaw.
-// NOTE: This is a minimal stub implementation for compatibility.
-// Full WebSocket server implementation is planned for future releases.
+// Package websocket provides a WebSocket adapter that bridges EventBus events
+// to the HTTP server's existing gorilla/websocket infrastructure.
 package websocket
 
 import (
-	"fmt"
+	"sync"
 	"time"
 )
 
@@ -29,13 +28,24 @@ type Config struct {
 	DisconnectHandler DisconnectHandler
 }
 
-// Server represents a WebSocket server
-type Server struct {
-	config Config
-	addr   string
+// EventBroadcaster is implemented by the HTTP server to push raw JSON
+// to all connected gorilla/websocket clients.
+type EventBroadcaster interface {
+	BroadcastEvent(eventType string, payload []byte)
 }
 
-// NewServer creates a new WebSocket server
+// Server is a WebSocket adapter that delegates broadcasting to the
+// HTTP server's gorilla/websocket implementation. It does NOT manage
+// its own listener — the HTTP server owns the /ws endpoint.
+type Server struct {
+	config      Config
+	addr        string
+	broadcaster EventBroadcaster
+	mu          sync.RWMutex
+	started     bool
+}
+
+// NewServer creates a new WebSocket adapter.
 func NewServer(cfg Config) *Server {
 	return &Server{
 		config: cfg,
@@ -43,32 +53,66 @@ func NewServer(cfg Config) *Server {
 	}
 }
 
-// Start starts the WebSocket server
-func (s *Server) Start() error {
-	// Stub implementation - WebSocket server not yet implemented
-	// This is a placeholder to allow the build to succeed
-	return fmt.Errorf("websocket server not yet implemented")
+// SetBroadcaster injects the HTTP server's broadcast capability.
+// Must be called before Start.
+func (s *Server) SetBroadcaster(b EventBroadcaster) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.broadcaster = b
 }
 
-// Stop stops the WebSocket server
-func (s *Server) Stop() error {
+// Start marks the adapter as active. Returns an error if no broadcaster
+// has been injected — this matches the crash-only contract in eventbus.go:146.
+func (s *Server) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.broadcaster == nil {
+		return errNoBroadcaster()
+	}
+	s.started = true
 	return nil
 }
 
-// Addr returns the server address
+func (s *Server) Stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.started = false
+	return nil
+}
+
 func (s *Server) Addr() string {
 	return s.addr
 }
 
-// Path returns the WebSocket path
 func (s *Server) Path() string {
 	return s.config.Path
 }
 
-// Broadcast sends a message to all connected WebSocket clients
-// Returns an error if broadcast fails or server is not running
+// Broadcast sends a message to all connected WebSocket clients by
+// delegating to the injected EventBroadcaster (the HTTP server).
 func (s *Server) Broadcast(message []byte) error {
-	// Stub implementation - will broadcast to all clients when implemented
-	// For now, return nil to indicate success (no-op)
+	s.mu.RLock()
+	b := s.broadcaster
+	s.mu.RUnlock()
+
+	if b == nil {
+		return errNoBroadcaster()
+	}
+
+	b.BroadcastEvent("", message)
 	return nil
+}
+
+// errNoBroadcaster returns the sentinel error used when no broadcaster
+// is wired. Kept as a function so the crash-only log.Fatalf in
+// eventbus.go:146 fires correctly.
+func errNoBroadcaster() error {
+	return &noBroadcasterError{}
+}
+
+type noBroadcasterError struct{}
+
+func (e *noBroadcasterError) Error() string {
+	return "websocket adapter: no EventBroadcaster wired — call SetBroadcaster before Start"
 }

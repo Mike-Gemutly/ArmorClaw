@@ -159,6 +159,15 @@ func (b *EventBus) Start() error {
 	return nil
 }
 
+// SetBroadcaster wires the HTTP server's BroadcastEvent capability into
+// the internal WebSocket adapter. Must be called before Start when
+// WebSocketEnabled is true.
+func (b *EventBus) SetBroadcaster(broadcaster websocket.EventBroadcaster) {
+	if b.websocketServer != nil {
+		b.websocketServer.SetBroadcaster(broadcaster)
+	}
+}
+
 // Stop stops the event bus
 func (b *EventBus) Stop() {
 	b.cancel()
@@ -412,11 +421,9 @@ func (b *EventBus) sendToSubscriber(connID string, sub *Subscriber) {
 
 		case wrapper, ok := <-sub.EventChannel:
 			if !ok {
-				// Channel closed
 				return
 			}
 
-			// Send event to WebSocket
 			message := map[string]interface{}{
 				"type":     "event",
 				"event":    wrapper.Event,
@@ -429,20 +436,22 @@ func (b *EventBus) sendToSubscriber(connID string, sub *Subscriber) {
 				b.securityLog.LogSecurityEvent("event_marshal_failed",
 					slog.String("subscriber_id", sub.ID),
 					slog.String("error", err.Error()))
-				continue // Continue processing instead of returning
+				continue
 			}
 
-			// Send via WebSocket (implementation depends on WebSocket server)
-			// This is a placeholder - actual implementation would use the WebSocket connection
-			_ = data // Suppress unused warning for now
+			if b.websocketServer != nil {
+				if broadcastErr := b.websocketServer.Broadcast(data); broadcastErr != nil {
+					b.securityLog.LogSecurityEvent("subscriber_broadcast_failed",
+						slog.String("subscriber_id", sub.ID),
+						slog.String("error", broadcastErr.Error()))
+				}
+			}
 
 			sub.mu.Lock()
 			sub.LastActivity = time.Now()
 			sub.mu.Unlock()
 
 		case <-time.After(30 * time.Second):
-			// Send keepalive - continue processing
-			// Implementation depends on WebSocket server
 			continue
 		}
 	}

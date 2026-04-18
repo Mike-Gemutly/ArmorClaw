@@ -47,7 +47,7 @@
             android:label="@string/app_name"
             android:theme="@style/Theme.ArmorClaw"
             android:windowSoftInputMode="adjustResize"
-            android:launchMode="singleTask">
+            android:launchMode="singleTop">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -71,6 +71,22 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="https" android:host="armorclaw.app" android:pathPrefix="/config" />
+            </intent-filter>
+
+            <!-- Deep link for room navigation -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="armorclaw" android:host="room" />
+            </intent-filter>
+
+            <!-- Deep link for email approval -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="armorclaw" android:host="email" android:pathPrefix="/approve" />
             </intent-filter>
 
             <!-- Matrix URI handling -->

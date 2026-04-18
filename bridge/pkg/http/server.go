@@ -1095,6 +1095,22 @@ func (s *Server) BroadcastHeartbeat() {
 	}
 }
 
+// BroadcastEvent sends a raw JSON event to all connected WebSocket clients.
+// This is the generic bridge used by EventBus to push events through the
+// existing gorilla/websocket infrastructure.
+func (s *Server) BroadcastEvent(eventType string, payload []byte) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, client := range s.clients {
+		select {
+		case client.Send <- payload:
+		default:
+			// Client buffer full — skip to avoid blocking
+		}
+	}
+}
+
 func getLocalIPs() ([]net.IP, error) {
 	var ips []net.IP
 
