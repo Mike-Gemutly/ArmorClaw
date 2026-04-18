@@ -38,10 +38,12 @@ type SkillExecutor struct {
 	allowlist      *AllowlistManager
 	policyEnforcer *PolicyEnforcer
 	skillGate      interfaces.SkillGate
+	authorizer     interfaces.Authorizer
 }
 
 type SkillExecutorConfig struct {
-	SkillGate interfaces.SkillGate
+	SkillGate  interfaces.SkillGate
+	Authorizer interfaces.Authorizer
 }
 
 func NewSkillExecutor() *SkillExecutor {
@@ -59,6 +61,7 @@ func NewSkillExecutorWithConfig(cfg SkillExecutorConfig) *SkillExecutor {
 		allowlist:      NewAllowlistManager(),
 		policyEnforcer: NewPolicyEnforcer(),
 		skillGate:      cfg.SkillGate,
+		authorizer:     cfg.Authorizer,
 	}
 }
 
@@ -79,6 +82,17 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 			Type:      "error",
 			Timestamp: startTime,
 		}, fmt.Errorf("skill not found: %s", skillName)
+	}
+
+	if se.authorizer != nil {
+		if err := se.authorizer.AuthorizeAction(ctx, "", skillName, params); err != nil {
+			return &SkillResult{
+				Success:   false,
+				Error:     err.Error(),
+				Type:      "error",
+				Timestamp: startTime,
+			}, err
+		}
 	}
 
 	call := &interfaces.ToolCall{ToolName: skillName, Arguments: params}

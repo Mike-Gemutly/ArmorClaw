@@ -282,6 +282,25 @@ func (b *Broker) handleDefer(ctx context.Context, req ActionRequest, riskClass R
 	}
 }
 
+// AuthorizeAction adapts the full Authorize flow into a simplified nil/error return
+// satisfying the interfaces.Authorizer contract used by internal packages.
+func (b *Broker) AuthorizeAction(ctx context.Context, agentID, action string, params map[string]interface{}) error {
+	req := ActionRequest{
+		AgentID: agentID,
+		Action:  action,
+		Params:  params,
+	}
+	resp, _ := b.Authorize(ctx, req)
+	if !resp.Allowed {
+		reason := resp.Reason
+		if reason == "" {
+			reason = "capability denied"
+		}
+		return fmt.Errorf("capability denied: %s: %s", action, reason)
+	}
+	return nil
+}
+
 type callDepthKeyType struct{}
 
 var callDepthKey callDepthKeyType

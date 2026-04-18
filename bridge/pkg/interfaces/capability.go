@@ -29,3 +29,13 @@ type CapabilityRegistry interface {
 	// RegisterRole registers a role with its permitted capabilities.
 	RegisterRole(role string, caps capability.CapabilitySet) error
 }
+
+// Authorizer is a simplified authorization check for internal packages.
+// It uses only stdlib types so that internal/ packages can import interfaces
+// without pulling in pkg/capability/ directly.
+// The Broker in pkg/capability implements this interface.
+type Authorizer interface {
+	// AuthorizeAction returns nil if the action is allowed, or an error
+	// with the denial reason if not.
+	AuthorizeAction(ctx context.Context, agentID, action string, params map[string]interface{}) error
+}

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/audit"
+	"github.com/armorclaw/bridge/pkg/capability"
 	"github.com/armorclaw/bridge/pkg/interfaces"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/pii"
@@ -54,6 +55,7 @@ type MCPRouter struct {
 	vaultClient   VaultClient
 	v6Microkernel bool
 	v6AuditMode   bool
+	authorizer    interfaces.CapabilityBroker
 }
 
 // Provisioner interface for ToolSidecar operations
@@ -73,6 +75,7 @@ type Config struct {
 	VaultClient    VaultClient
 	V6Microkernel  bool
 	V6AuditMode    bool
+	Authorizer     interfaces.CapabilityBroker
 }
 
 // New creates a new MCPRouter
@@ -112,6 +115,7 @@ func New(cfg Config) (*MCPRouter, error) {
 		vaultClient:   cfg.VaultClient,
 		v6Microkernel: cfg.V6Microkernel,
 		v6AuditMode:   cfg.V6AuditMode,
+		authorizer:    cfg.Authorizer,
 	}, nil
 }
 
@@ -162,6 +166,29 @@ func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallReques
 		"call_id", toolCall.ID,
 		"tool", req.Params.Name,
 	)
+
+	if r.authorizer != nil {
+		actionReq := capability.ActionRequest{
+			Action: req.Params.Name,
+			Params: r.parseArguments(req.Params.Arguments),
+		}
+		resp, err := r.authorizer.Authorize(ctx, actionReq)
+		if err != nil || !resp.Allowed {
+			reason := "capability denied by broker"
+			if resp.Reason != "" {
+				reason = resp.Reason
+			}
+			if err != nil {
+				reason = fmt.Sprintf("broker error: %s", err.Error())
+			}
+			r.logger.Warn("capability_denied",
+				"call_id", toolCall.ID,
+				"tool", req.Params.Name,
+				"reason", reason,
+			)
+			return r.errorResponse(req.ID, -32603, "Capability denied", reason), nil
+		}
+	}
 
 	if r.v6AuditMode && r.v6Microkernel {
 		return r.handleAuditMode(ctx, req, toolCall)
