@@ -5,6 +5,7 @@ package capability
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -202,6 +203,15 @@ func (v *EmailDraft) Validate() error {
 }
 
 // ---------------------------------------------------------------------------
+// Blocker types
+// ---------------------------------------------------------------------------
+
+// Well-known blocker type constants for WorkflowBlocker.Type.
+const (
+	BlockerTypeCAPTCHA = "captcha"
+)
+
+// ---------------------------------------------------------------------------
 // Approval & workflow
 // ---------------------------------------------------------------------------
 
@@ -233,4 +243,41 @@ func (v *WorkflowBlocker) Validate() error {
 		return fmt.Errorf("capability: %T: field message is required", v)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// CAPTCHA detection
+// ---------------------------------------------------------------------------
+
+var captchaIndicators = []string{
+	"captcha",
+	"recaptcha",
+	"hcaptcha",
+	"g-recaptcha",
+	"h-captcha",
+	"cf-turnstile",
+	"arkose",
+	"funcaptcha",
+}
+
+func NewCAPTABlocker(screenshotURL string) WorkflowBlocker {
+	msg := "CAPTCHA detected during browser automation"
+	if screenshotURL != "" {
+		msg += " (screenshot available)"
+	}
+	return WorkflowBlocker{
+		Type:       BlockerTypeCAPTCHA,
+		Message:    msg,
+		Suggestion: "Delegate to team lead or request human intervention via Matrix",
+	}
+}
+
+func DetectCAPTCHA(pageContent string) bool {
+	lower := strings.ToLower(pageContent)
+	for _, indicator := range captchaIndicators {
+		if strings.Contains(lower, indicator) {
+			return true
+		}
+	}
+	return false
 }

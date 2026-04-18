@@ -3,6 +3,8 @@ package team
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	_ "github.com/mutecomm/go-sqlcipher/v4"
@@ -354,5 +356,79 @@ func TestService_RemoveMember_AutoDissolve(t *testing.T) {
 	}
 	if got.LifecycleState != LifecycleDissolved {
 		t.Fatalf("expected auto-dissolved team, got %q", got.LifecycleState)
+	}
+}
+
+func TestService_CreateTeam_WithCollectionCreator(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	var calledWith string
+	svc.OnTeamCreated = func(_ context.Context, collectionID string) error {
+		calledWith = collectionID
+		return nil
+	}
+
+	team, err := svc.CreateTeam(ctx, "alpha", "")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+
+	expectedCollection := "team_" + team.ID
+	if calledWith != expectedCollection {
+		t.Fatalf("expected creator called with %q, got %q", expectedCollection, calledWith)
+	}
+
+	if team.SharedContext == "" {
+		t.Fatal("expected non-empty SharedContext")
+	}
+
+	var ctxData map[string]string
+	if err := json.Unmarshal([]byte(team.SharedContext), &ctxData); err != nil {
+		t.Fatalf("unmarshal shared context: %v", err)
+	}
+	if ctxData["qdrant_collection"] != expectedCollection {
+		t.Fatalf("expected qdrant_collection=%q, got %q", expectedCollection, ctxData["qdrant_collection"])
+	}
+
+	got, err := svc.GetTeam(ctx, team.ID)
+	if err != nil {
+		t.Fatalf("GetTeam: %v", err)
+	}
+	if got.SharedContext != team.SharedContext {
+		t.Fatalf("shared context not persisted: got %q, want %q", got.SharedContext, team.SharedContext)
+	}
+}
+
+func TestService_CreateTeam_NilCollectionCreator(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	team, err := svc.CreateTeam(ctx, "alpha", "")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	if team.SharedContext != "" {
+		t.Fatalf("expected empty SharedContext, got %q", team.SharedContext)
+	}
+}
+
+func TestService_CreateTeam_CollectionCreatorFailure(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	svc.OnTeamCreated = func(_ context.Context, _ string) error {
+		return fmt.Errorf("qdrant unavailable")
+	}
+
+	team, err := svc.CreateTeam(ctx, "alpha", "")
+	if err != nil {
+		t.Fatalf("CreateTeam should not fail when collection creation fails: %v", err)
+	}
+	if team.ID == "" {
+		t.Fatal("team should still be created")
+	}
+	if team.SharedContext != "" {
+		t.Fatalf("expected empty SharedContext on collection failure, got %q", team.SharedContext)
 	}
 }

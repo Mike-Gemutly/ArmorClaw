@@ -40,3 +40,9 @@ func (e *EmailReceivedEvent) ToJSON() ([]byte, error) {
 }
 
 var _ eventbus.BridgeEvent = (*EmailReceivedEvent)(nil)
+
+type TeamRoutedEmailEvent struct {
+	*EmailReceivedEvent
+	TeamID   string   `json:"team_id"`
+	AgentIDs []string `json:"agent_ids"`
+}

@@ -17,6 +17,14 @@ pub struct QdrantClient {
     collection_name: String,
 }
 
+impl std::fmt::Debug for QdrantClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QdrantClient")
+            .field("collection_name", &self.collection_name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl QdrantClient {
     pub async fn new(url: &str, collection_name: &str) -> Result<Self, SidecarError> {
         let client = Qdrant::from_url(url)

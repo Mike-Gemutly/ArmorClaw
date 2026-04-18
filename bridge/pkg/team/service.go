@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/armorclaw/bridge/pkg/capability"
 )
@@ -13,10 +15,16 @@ import (
 // Service
 // ---------------------------------------------------------------------------
 
+// CollectionCreator is a function that creates a vector collection for a team.
+// It is injected by the caller (typically the sidecar client adapter) to keep
+// the team package free of direct Qdrant imports.
+type CollectionCreator func(ctx context.Context, collectionID string) error
+
 // Service implements the team business logic layer. It wraps a TeamStore
 // and adds validation (roles, membership) and ID generation on top.
 type Service struct {
-	store *TeamStore
+	store        *TeamStore
+	OnTeamCreated CollectionCreator // optional — nil means no collection
 }
 
 // NewTeamService creates a new Service backed by the given TeamStore.
@@ -40,7 +48,8 @@ type TeamService interface {
 // ---------------------------------------------------------------------------
 
 // CreateTeam creates a new team with a generated UUID, validates it, and
-// persists it through the store.
+// persists it through the store. If OnTeamCreated is set, a Qdrant collection
+// is created and its reference is stored in the team's SharedContext.
 func (s *Service) CreateTeam(ctx context.Context, name, templateID string) (*Team, error) {
 	id, err := generateID()
 	if err != nil {
@@ -56,6 +65,24 @@ func (s *Service) CreateTeam(ctx context.Context, name, templateID string) (*Tea
 
 	if err := s.store.CreateTeam(ctx, t); err != nil {
 		return nil, fmt.Errorf("team: create team: %w", err)
+	}
+
+	if s.OnTeamCreated != nil {
+		collectionID := "team_" + t.ID
+		if err := s.OnTeamCreated(ctx, collectionID); err != nil {
+			log.Printf("team: collection creation failed for team %s: %v", t.ID, err)
+		} else {
+			ctxData := map[string]string{"qdrant_collection": collectionID}
+			ctxJSON, jsonErr := json.Marshal(ctxData)
+			if jsonErr != nil {
+				log.Printf("team: marshal shared context for team %s: %v", t.ID, jsonErr)
+			} else {
+				t.SharedContext = string(ctxJSON)
+				if updateErr := s.store.UpdateTeam(ctx, t); updateErr != nil {
+					log.Printf("team: update shared context for team %s: %v", t.ID, updateErr)
+				}
+			}
+		}
 	}
 
 	return t, nil

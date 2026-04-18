@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -190,5 +191,172 @@ func TestDispatcher_MultipleHandlers(t *testing.T) {
 
 	if len(d.handlers) != 3 {
 		t.Fatalf("expected 3 handlers, got %d", len(d.handlers))
+	}
+}
+
+func TestDispatcher_TeamRouting_Matched(t *testing.T) {
+	store := newDispatcherTestStore()
+	log, _ := logger.New(logger.Config{Output: "stdout"})
+
+	matcherCalled := false
+	lookupCalled := false
+
+	matcher := func(ctx context.Context, address string) (string, bool, error) {
+		matcherCalled = true
+		if address == "sales@team.com" {
+			return "team-abc", true, nil
+		}
+		return "", false, nil
+	}
+
+	lookup := func(ctx context.Context, teamID, role string) ([]string, error) {
+		lookupCalled = true
+		if teamID == "team-abc" && role == "email_clerk" {
+			return []string{"agent-email-1"}, nil
+		}
+		return nil, nil
+	}
+
+	d := NewEmailDispatcher(EmailDispatcherConfig{
+		Store:           store,
+		Log:             log,
+		TeamMatcher:     matcher,
+		TeamAgentLookup: lookup,
+	})
+
+	handlerCalled := false
+	d.RegisterHandler(func(evt *EmailReceivedEvent) {
+		handlerCalled = true
+	})
+
+	evt := NewEmailReceivedEvent("client@external.com", "sales@team.com", "Inquiry", "body", "e-team-1", nil, nil)
+	d.OnEmailReceived(evt)
+
+	if !matcherCalled {
+		t.Error("expected TeamMatcher to be called")
+	}
+	if !lookupCalled {
+		t.Error("expected TeamAgentLookup to be called")
+	}
+	if !handlerCalled {
+		t.Error("expected handler to be called for team-routed email")
+	}
+}
+
+func TestDispatcher_TeamRouting_Unmatched(t *testing.T) {
+	store := newDispatcherTestStore()
+	store.addTemplate("fallback@test.com")
+	log, _ := logger.New(logger.Config{Output: "stdout"})
+
+	matcher := func(ctx context.Context, address string) (string, bool, error) {
+		return "", false, nil
+	}
+
+	lookup := func(ctx context.Context, teamID, role string) ([]string, error) {
+		return nil, nil
+	}
+
+	d := NewEmailDispatcher(EmailDispatcherConfig{
+		Store:           store,
+		Log:             log,
+		TeamMatcher:     matcher,
+		TeamAgentLookup: lookup,
+	})
+
+	handlerCalled := false
+	d.RegisterHandler(func(evt *EmailReceivedEvent) {
+		handlerCalled = true
+	})
+
+	evt := NewEmailReceivedEvent("sender@test.com", "fallback@test.com", "Hi", "body", "e-fallback", nil, nil)
+	d.OnEmailReceived(evt)
+
+	if !handlerCalled {
+		t.Error("expected handler to be called via template fallback")
+	}
+}
+
+func TestDispatcher_TeamRouting_NilMatcher_FallsBackToTemplate(t *testing.T) {
+	store := newDispatcherTestStore()
+	store.addTemplate("plain@test.com")
+
+	d := newTestDispatcher(store)
+
+	handlerCalled := false
+	d.RegisterHandler(func(evt *EmailReceivedEvent) {
+		handlerCalled = true
+	})
+
+	evt := NewEmailReceivedEvent("from@test.com", "plain@test.com", "Subject", "body", "e-nil", nil, nil)
+	d.OnEmailReceived(evt)
+
+	if handlerCalled {
+		t.Error("handlers should not fire when template dispatch path has no scheduler")
+	}
+}
+
+func TestDispatcher_TeamRouting_NoEmailClerk_FallsBack(t *testing.T) {
+	store := newDispatcherTestStore()
+	store.addTemplate("noclerk@test.com")
+	log, _ := logger.New(logger.Config{Output: "stdout"})
+
+	matcher := func(ctx context.Context, address string) (string, bool, error) {
+		return "team-no-clerk", true, nil
+	}
+
+	lookup := func(ctx context.Context, teamID, role string) ([]string, error) {
+		return []string{}, nil
+	}
+
+	d := NewEmailDispatcher(EmailDispatcherConfig{
+		Store:           store,
+		Log:             log,
+		TeamMatcher:     matcher,
+		TeamAgentLookup: lookup,
+	})
+
+	handlerCalled := false
+	d.RegisterHandler(func(evt *EmailReceivedEvent) {
+		handlerCalled = true
+	})
+
+	evt := NewEmailReceivedEvent("from@test.com", "noclerk@test.com", "Hi", "body", "e-noclerk", nil, nil)
+	d.OnEmailReceived(evt)
+
+	if handlerCalled {
+		t.Error("handlers should not fire when no email_clerk and no scheduler for template path")
+	}
+}
+
+func TestDispatcher_TeamRouting_MatcherError_FallsBack(t *testing.T) {
+	store := newDispatcherTestStore()
+	store.addTemplate("errmatch@test.com")
+	log, _ := logger.New(logger.Config{Output: "stdout"})
+
+	matcher := func(ctx context.Context, address string) (string, bool, error) {
+		return "", false, errors.New("db connection lost")
+	}
+
+	lookup := func(ctx context.Context, teamID, role string) ([]string, error) {
+		return nil, nil
+	}
+
+	d := NewEmailDispatcher(EmailDispatcherConfig{
+		Store:           store,
+		Log:             log,
+		TeamMatcher:     matcher,
+		TeamAgentLookup: lookup,
+	})
+
+	handlerCalled := false
+	d.RegisterHandler(func(evt *EmailReceivedEvent) {
+		handlerCalled = true
+	})
+
+	evt := NewEmailReceivedEvent("from@test.com", "errmatch@test.com", "Hi", "body", "e-errmatch", nil, nil)
+	d.OnEmailReceived(evt)
+
+	if handlerCalled {
+		t.Error("handlers should not fire when matcher errors and no scheduler for template path")
 	}
 }

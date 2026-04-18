@@ -3,6 +3,8 @@ use crate::connectors::{S3Connector, S3UploadRequest, S3DownloadRequest, S3ListR
 use crate::document::{
     extract_text_from_pdf, extract_text_from_docx, extract_data_from_xlsx,
     extract_text_with_ocr,
+    qdrant::QdrantClient,
+    embeddings::{Embedder, OpenAIEmbedder},
 };
 use crate::error::{Result, SidecarError};
 use crate::grpc::interceptor::SecurityInterceptor;
@@ -12,6 +14,7 @@ use crate::grpc::proto::{
     DownloadBlobRequest, BlobChunk, ListBlobsRequest, ListBlobsResponse,
     DeleteBlobRequest, DeleteBlobResponse, ExtractTextRequest, ExtractTextResponse,
     ProcessDocumentRequest, ProcessDocumentResponse, BlobInfo,
+    QueryDocumentsRequest, QueryDocumentsResponse, DocumentChunk,
     sidecar_service_server::SidecarService as SidecarServiceTrait,
 };
 use prometheus::Registry;
@@ -41,6 +44,13 @@ fn parse_s3_uri(uri: &str) -> std::result::Result<(String, String), String> {
     Ok((bucket, key))
 }
 
+fn extract_string_value(value: &qdrant_client::qdrant::Value) -> Option<&str> {
+    value.kind.as_ref().and_then(|k| match k {
+        qdrant_client::qdrant::value::Kind::StringValue(s) => Some(s.as_str()),
+        _ => None,
+    })
+}
+
 /// Maps a SidecarError to an appropriate gRPC Status.
 fn sidecar_error_to_status(e: SidecarError) -> Status {
     match &e {
@@ -68,14 +78,22 @@ fn sidecar_error_to_status(e: SidecarError) -> Status {
 #[derive(Debug)]
 pub struct SidecarServiceImpl {
     s3_connector: Option<Arc<S3Connector>>,
+    qdrant_client: Option<Arc<QdrantClient>>,
+    embedding_api_key: Option<String>,
 }
 
 type DownloadBlobStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<BlobChunk, tonic::Status>>;
 
 impl SidecarServiceImpl {
-    pub fn new(s3_connector: Option<S3Connector>) -> Self {
+    pub fn new(
+        s3_connector: Option<S3Connector>,
+        qdrant_client: Option<QdrantClient>,
+        embedding_api_key: Option<String>,
+    ) -> Self {
         Self {
             s3_connector: s3_connector.map(Arc::new),
+            qdrant_client: qdrant_client.map(Arc::new),
+            embedding_api_key,
         }
     }
 }
@@ -452,6 +470,81 @@ impl SidecarServiceTrait for SidecarServiceImpl {
             }
         }
     }
+
+    async fn query_documents(
+        &self,
+        request: Request<QueryDocumentsRequest>,
+    ) -> std::result::Result<Response<QueryDocumentsResponse>, Status> {
+        let req = request.into_inner();
+        info!(collection_id = %req.collection_id, "QueryDocuments called");
+
+        if req.query_text.is_empty() {
+            return Err(Status::invalid_argument("query_text is empty"));
+        }
+
+        let qdrant = self.qdrant_client.as_ref()
+            .ok_or_else(|| Status::unimplemented("Qdrant client not configured"))?;
+
+        let api_key = self.embedding_api_key.as_ref()
+            .ok_or_else(|| Status::unimplemented("Embedding API key not configured"))?;
+
+        let embedder = OpenAIEmbedder::new(api_key.clone())
+            .map_err(sidecar_error_to_status)?;
+
+        let query_vector = embedder.generate_embedding(&req.query_text)
+            .await
+            .map_err(sidecar_error_to_status)?;
+
+        if query_vector.is_empty() {
+            return Err(Status::internal("Generated empty embedding vector"));
+        }
+
+        let limit = if req.max_results > 0 { req.max_results as usize } else { 10 };
+
+        let scored_points = qdrant.search(query_vector, limit)
+            .await
+            .map_err(sidecar_error_to_status)?;
+
+        let mut total_score: f32 = 0.0;
+        let mut chunks: Vec<DocumentChunk> = Vec::new();
+
+        for point in scored_points {
+            let score = point.score;
+            total_score += score;
+
+            let chunk_id = point.id
+                .and_then(|id| id.point_id_options)
+                .map(|opts| match opts {
+                    qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => n.to_string(),
+                    qdrant_client::qdrant::point_id::PointIdOptions::Uuid(s) => s,
+                })
+                .unwrap_or_default();
+
+            let content = point.payload
+                .get("content")
+                .and_then(|v| extract_string_value(v))
+                .unwrap_or_default()
+                .to_string();
+
+            let mut metadata = std::collections::HashMap::new();
+
+            if let Some(clearance) = point.payload.get("clearance_level").and_then(|v| extract_string_value(v)) {
+                metadata.insert("clearance_level".to_string(), clearance.to_string());
+            }
+
+            chunks.push(DocumentChunk {
+                chunk_id,
+                content,
+                score,
+                metadata,
+            });
+        }
+
+        Ok(Response::new(QueryDocumentsResponse {
+            chunks,
+            total_score,
+        }))
+    }
 }
 
 pub async fn run_server(config: SidecarConfig) -> Result<()> {
@@ -480,7 +573,29 @@ pub async fn run_server(config: SidecarConfig) -> Result<()> {
         None
     };
 
-    let impl_service = SidecarServiceImpl::new(s3_connector);
+    let qdrant_client = if let Ok(qdrant_url) = std::env::var("QDRANT_URL") {
+        let collection = std::env::var("QDRANT_COLLECTION")
+            .unwrap_or_else(|_| "armorclaw-docs".to_string());
+        match QdrantClient::new(&qdrant_url, &collection).await {
+            Ok(client) => {
+                info!(url = %qdrant_url, collection = %collection, "Qdrant client initialized");
+                Some(client)
+            }
+            Err(e) => {
+                warn!("Qdrant client initialization failed: {}", e);
+                None
+            }
+        }
+    } else {
+        warn!("Qdrant client not configured (QDRANT_URL not set)");
+        None
+    };
+
+    let embedding_api_key = std::env::var("OPEN_AI_KEY")
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .ok();
+
+    let impl_service = SidecarServiceImpl::new(s3_connector, qdrant_client, embedding_api_key);
 
     let addr = format!("unix://{}", socket_path.display());
 
