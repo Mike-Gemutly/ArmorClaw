@@ -103,8 +103,8 @@ func setupRoutingClients(t *testing.T) (*Client, *mockServer, *Client, *mockServ
 	return officeClient, officeMock, rustClient, rustMock
 }
 
-func TestRouteExtractText_XLSX_RoutesToPython(t *testing.T) {
-	office, _, rust, rustMock := setupRoutingClients(t)
+func TestRouteExtractText_XLSX_RoutesToRust(t *testing.T) {
+	office, officeMock, rust, _ := setupRoutingClients(t)
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", zipMagic)
 
@@ -112,13 +112,13 @@ func TestRouteExtractText_XLSX_RoutesToPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rustMock.extractCalled {
-		t.Error("rust client should NOT have been called for .xlsx")
+	if officeMock.extractCalled {
+		t.Error("office client should NOT have been called for .xlsx")
 	}
 }
 
-func TestRouteExtractText_PPTX_RoutesToPython(t *testing.T) {
-	office, _, rust, rustMock := setupRoutingClients(t)
+func TestRouteExtractText_PPTX_RoutesToRust(t *testing.T) {
+	office, officeMock, rust, _ := setupRoutingClients(t)
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.openxmlformats-officedocument.presentationml.presentation", zipMagic)
 
@@ -126,8 +126,8 @@ func TestRouteExtractText_PPTX_RoutesToPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rustMock.extractCalled {
-		t.Error("rust client should NOT have been called for .pptx")
+	if officeMock.extractCalled {
+		t.Error("office client should NOT have been called for .pptx")
 	}
 }
 

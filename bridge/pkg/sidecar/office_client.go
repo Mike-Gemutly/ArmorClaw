@@ -78,13 +78,18 @@ func RouteExtractText(
 	isPpt := strings.Contains(f, "ms-powerpoint") || strings.HasSuffix(f, ".ppt")
 	isPdf := strings.Contains(f, "pdf") || strings.HasSuffix(f, ".pdf")
 
-	// Python sidecar routes (OpenXML spreadsheets/presentations + legacy OLE)
+	// Rust sidecar routes (OpenXML: DOCX, XLSX, PPTX)
+	if isZIP && isDocx {
+		return rustClient.ExtractText(ctx, req)
+	}
 	if isZIP && isXlsx {
-		return officeClient.ExtractText(ctx, req)
+		return rustClient.ExtractText(ctx, req)
 	}
 	if isZIP && isPptx {
-		return officeClient.ExtractText(ctx, req)
+		return rustClient.ExtractText(ctx, req)
 	}
+
+	// Python sidecar routes (legacy OLE formats only)
 	if isOLE && isMsg {
 		return officeClient.ExtractText(ctx, req)
 	}
@@ -98,10 +103,6 @@ func RouteExtractText(
 		return officeClient.ExtractText(ctx, req)
 	}
 
-	// Rust sidecar routes (OpenXML documents + PDF)
-	if isZIP && isDocx {
-		return rustClient.ExtractText(ctx, req)
-	}
 	if isPDF && isPdf {
 		return rustClient.ExtractText(ctx, req)
 	}
