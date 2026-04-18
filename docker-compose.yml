@@ -41,6 +41,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/armorclaw/data:/data
+      - /run/armorclaw:/run/armorclaw
     # LESSON: Explicit flags to force network binding over Unix sockets
     command:
       - --config
@@ -79,6 +80,44 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
       interval: 10s
       timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ========================================
+  # Rust Vault Keystore (gRPC over Unix socket)
+  # ========================================
+  # Hardened keystore service — network_mode: none, non-root,
+  # cap_drop ALL, read-only filesystem.
+  # Shares /run/armorclaw/ with bridge for Unix domain socket IPC.
+  armorclaw-vault:
+    build:
+      context: ./rust-vault
+      dockerfile: Dockerfile
+    image: armorclaw/vault:latest
+    container_name: armorclaw-vault
+    user: "10001:10001"
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - /run/armorclaw:/run/armorclaw
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "test", "-S", "/run/armorclaw/keystore.sock"]
+      interval: 10s
+      timeout: 3s
       retries: 3
       start_period: 5s
 
