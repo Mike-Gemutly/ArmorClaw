@@ -121,7 +121,9 @@ Reuse the existing `PiiApprovalCard.kt` pattern with email-specific extensions:
 - Push notification via existing Matrix notification channel
 - Title: "Email Approval Required"
 - Body: "Response to [recipient] needs your approval"
-- Action: Deep link to approval card in conversation
+- Action: Deep link to approval card in conversation (`armorclaw://email/approve/<approval_id>`, handled by `DeepLinkHandler` → `Route.EmailApproval`)
+
+> **v0.7.0**: Deep link routing for email approvals is now implemented. `DeepLinkHandler.kt` resolves `armorclaw://email/approve/{id}` to `Route.EmailApproval(approvalId)`. Cold-start and warm-resume are handled via `MainActivity.onNewIntent()` + `LaunchedEffect`.
 
 ---
 
@@ -182,3 +184,4 @@ Bridge                          Matrix                          ArmorChat
 | Matrix event routing | Implemented | `bridge/internal/adapter/matrix.go` handles `app.armorclaw.email_*` events |
 | OAuth token storage | Implemented | `bridge/pkg/keystore/oauth.go` (XChaCha20-Poly1305 encrypted) |
 | Bridge-local registry | Implemented | `bridge/pkg/secretary/bridge_local_registry.go` |
+| Deep link routing (v0.7.0) | Implemented | `DeepLinkHandler.kt` → `Route.EmailApproval`, cold-start + warm-resume |

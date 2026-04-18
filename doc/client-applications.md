@@ -56,7 +56,7 @@ The input field is never logged or cached (PII safety). Sensitive values are mas
 |---|---|
 | **Location** | `applications/admin-panel/` |
 | **Tech stack** | React 18, TypeScript, Vite, Tailwind CSS, TanStack React Query, React Router |
-| **Status** | In development |
+| **Status** | In development (v0.7.0: API wiring complete) |
 
 ### Purpose
 
@@ -64,18 +64,20 @@ The admin panel is a browser-based dashboard for managing an ArmorClaw instance 
 
 ### Key Pages
 
-- **AdminDashboard** - System overview and status
-- **DevicesPage** - List, approve, and reject connected devices
-- **AdaptersPage** - Enable, disable, and configure adapters
-- **APIKeysPage** - Manage provider API keys
-- **InvitationsPage** - Create and revoke invite codes
-- **AuditLogPage** - Browse security and system audit events
+- **AdminDashboard** - System overview and status (v0.7.0: real data via `useDashboardStats` hook)
+- **DevicesPage** - List, approve, and reject connected devices (v0.7.0: real data via Bridge RPC)
+- **AdaptersPage** - Enable, disable, and configure adapters (v0.7.0: real data via Bridge RPC)
+- **APIKeysPage** - Manage provider API keys (v0.7.0: real data via Bridge RPC)
+- **InvitationsPage** - Create and revoke invite codes (v0.7.0: real data via Bridge RPC)
+- **AuditLogPage** - Browse security and system audit events (v0.7.0: real data via Bridge RPC)
 - **SecurityConfig** - Configure data categories and security tiers
 - **LoginPage** - Session authentication
 
 ### Bridge Connection
 
 The admin panel talks to the Bridge through an HTTP proxy that forwards requests to the Bridge's Unix domain socket. The client (`src/services/bridgeApi.ts`) sends JSON-RPC 2.0 calls to `/api/*`, which a reverse proxy (Caddy or Nginx) routes to `bridge.sock`. It supports the full lockdown lifecycle: claiming ownership, transitioning between modes (lockdown, bonding, configuring, hardening, operational), and generating QR codes for mobile provisioning.
+
+> **v0.7.0**: Mock data has been removed from all admin panel pages. `bridgeApi.ts` now provides typed React Query hooks (`useDashboardStats`, `useDevices`, `useAdapters`, `useInvitations`, `useAuditLogs`, `useApiKeys`) that call real Bridge RPC endpoints. Mutations use `onSuccess` to invalidate query cache for automatic refetch.
 
 ## ArmorTerminal
 

@@ -1,6 +1,6 @@
 # ArmorChat Project Review
 
-> **Last Updated:** 2026-04-17
+> **Last Updated:** 2026-04-18
 > **Version:** 1.0.0 (versionCode 10000)
 > **Build Status:** ✅ ALL MODULES COMPILE
 > **Deployment:** ✅ SUCCESS (Samsung SM-N986U — Android 13, SDK 33)
@@ -3592,23 +3592,58 @@ How workflow events flow from the container through the Bridge to ArmorChat via 
 
 | Scheme | Format | Purpose |
 |--------|--------|---------|
-| Config | `armorclaw://config?d=<base64>` | Signed server configuration |
+| Config | `armorclaw://config?d=<base64>` | Signed server configuration (handled by `SignedConfigParser`) |
+| Room | `armorclaw://room/<room_id>` | Navigate to agent room (v0.7.0) |
+| Email Approval | `armorclaw://email/approve/<approval_id>` | HITL email approval (v0.7.0) |
 | Setup | `armorclaw://setup?token=xxx&server=xxx` | Device setup with token |
 | Invite | `armorclaw://invite?code=xxx` | Room/server invite |
 | Bond | `armorclaw://bond?token=xxx` | Device bonding (admin pairing) |
 | Web Config | `https://armorclaw.app/config?d=<base64>` | Web-based config |
 | Web Invite | `https://armorclaw.app/invite/<code>` | Web-based invite |
 
+### Deep Link Handler (v0.7.0)
+
+> **Added in v0.7.0** — Deep link routing for notification taps (room navigation and email HITL approval).
+
+`DeepLinkHandler.kt` (`app.armorclaw.navigation`) provides `resolveRoute(uri: Uri): Route?` which maps incoming `armorclaw://` URIs to navigation routes:
+
+- `armorclaw://room/{id}` → `Route.Room(roomId)`
+- `armorclaw://email/approve/{id}` → `Route.EmailApproval(approvalId)`
+- `armorclaw://config?d=...` → `null` (delegates to `SignedConfigParser`)
+- Unknown hosts → `null`
+
+**Cold-start handling:** `MainActivity.kt` uses a `mutableStateOf<Uri?>` field. On launch, `LaunchedEffect` reads `intent` for the initial deep link. `onNewIntent()` handles warm-resume notification taps. Both paths call `DeepLinkHandler.resolveRoute()` and navigate via `NavController`.
+
+**Intent filters** in `AndroidManifest.xml` declare `armorclaw://room` and `armorclaw://email/approve` with `launchMode="singleTop"` to ensure `onNewIntent()` fires for subsequent taps.
+
+### ConfigManager (v0.7.0)
+
+> **Added in v0.7.0** — Server configuration persistence via `EncryptedSharedPreferences`.
+
+`ConfigManager.kt` (`app.armorclaw.config`) persists `ServerConfig` (server URL, Matrix homeserver, device ID) to `EncryptedSharedPreferences`. This replaces the in-memory-only `BridgeRepository` credentials.
+
+- `saveConfig(config: ServerConfig)` — persists to encrypted storage
+- `loadConfig(): ServerConfig?` — reads from encrypted storage
+- `clearConfig()` — removes stored config
+- `isConfigExpired(): Boolean` — checks 24-hour TTL
+
+> **Security note:** Auth tokens (accessToken) are NOT persisted. They remain in memory only, pending v0.8.0 security review.
+
+### Config Expiration (v0.7.0)
+
+`ArmorClawNavHost.kt` checks config expiration at startup. If `ConfigManager.isConfigExpired()` returns true, the app redirects to the bonding/provisioning screen for re-provisioning. This prevents stale configurations from causing cryptic connection failures.
+
 ---
 
 *This document provides a comprehensive overview of the ArmorChat project. For implementation details, see the source code and additional documentation in the `doc/` directory.*
 
-**Document Version:** 3.7
-**Last Updated:** 2026-04-17
+**Document Version:** 3.8
+**Last Updated:** 2026-04-18
 **Matrix Migration:** ✅ COMPLETE
 **Discovery System:** ✅ ENHANCED
 **Governor Strategy:** ✅ COMPLETE
 **Workflow UI (v3):** ✅ COMPLETE (WorkflowTimeline, BlockerResponseDialog, GovernanceBanner, resolveBlocker RPC)
+**Deep Links (v0.7.0):** ✅ COMPLETE (DeepLinkHandler, cold-start/warm-resume, ConfigManager, config expiration)
 
 ---
 

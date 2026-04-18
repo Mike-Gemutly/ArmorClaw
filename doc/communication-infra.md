@@ -12,7 +12,7 @@ The six subsystems covered here:
 |-----------|---------|---------|
 | Push Notifications | `pkg/push/` | Mobile push via FCM, APNS, Web Push, and Matrix Sygnal |
 | Single Sign-On | `pkg/sso/` | Enterprise SAML 2.0 and OIDC authentication |
-| WebSocket Server | `pkg/websocket/` | Real-time event streaming to clients (stub — not yet implemented) |
+| WebSocket Server | `pkg/websocket/` | Real-time event streaming to clients via EventBus adapter |
 | Event Bus Internals | `pkg/eventbus/` | In-process pub/sub with optional durable log |
 | Platform Adapters | `internal/adapter/` | Matrix and Slack message routing |
 | Additional Platform Adapters | `internal/sdtw/` | Discord, Telegram, Teams, WhatsApp adapters |
@@ -79,11 +79,30 @@ Discovers endpoints automatically from the issuer's `/.well-known/openid-configu
 
 ### WebSocket Server (`pkg/websocket/`)
 
-This is a minimal stub. The `Server` type accepts a `Config` with address, path, allowed origins, max connections, inactivity timeout, and handler callbacks. The `Start` method currently returns an error because the full implementation is deferred to a future release. `Broadcast` is a no-op.
+> **Updated in v0.7.0**: The WebSocket server is no longer a stub. It now implements the `EventBroadcaster` interface, acting as an adapter between the EventBus and the HTTP server's existing `/ws` endpoint. See [EventBus–WebSocket Wiring](#eventbus--websocket-wiring-v070) below.
 
-The event bus (`pkg/eventbus`) consumes this package. When the WebSocket server is eventually implemented, the event bus will use it to stream events to connected clients in real time.
+The `Server` type accepts a `Config` with address, path, allowed origins, max connections, inactivity timeout, and handler callbacks. The `Broadcast` method sends serialized events to all connected WebSocket clients.
 
-**Key types:** `Server`, `Config`, `MessageHandler`, `ConnectHandler`, `DisconnectHandler`.
+The event bus (`pkg/eventbus`) consumes this package. When `WebSocketEnabled` is true in the EventBus config, published bridge events are forwarded to the WebSocket server for real-time streaming to connected clients.
+
+**Key types:** `Server`, `Config`, `EventBroadcaster` interface, `MessageHandler`, `ConnectHandler`, `DisconnectHandler`.
+
+#### EventBus–WebSocket Wiring (v0.7.0)
+
+The EventBus publishes events through the HTTP server's existing `/ws` endpoint using an adapter pattern:
+
+```
+EventBus.PublishBridgeEvent()
+  → websocketServer.Broadcast(data)        // EventBroadcaster interface
+    → http.Server.BroadcastEvent()          // implements EventBroadcaster
+      → gorilla/websocket WriteJSON         // to each connected client
+```
+
+- `websocket.EventBroadcaster` is an interface in `pkg/websocket/` that avoids circular imports between `eventbus` and `http` packages
+- `http.Server.BroadcastEvent()` implements this interface, sending JSON-framed events to all clients in the `clients` map
+- `EventBus.sendToSubscriber()` was previously discarding event data (`_ = data`). It now forwards data to the broadcaster when wired
+- The crash-only `log.Fatalf` in `eventbus.Start()` is preserved — if the broadcaster fails to initialize when WebSocket is enabled, the Bridge halts
+- Wire-up happens in `bridge/cmd/bridge/main.go` via `eventBus.SetBroadcaster(httpsServer)` before `eventBus.Start()`
 
 ### Event Bus Internals (`pkg/eventbus/`)
 
@@ -98,7 +117,7 @@ The event bus is the in-process pub/sub backbone for real-time Matrix event dist
 3. If a subscriber's channel is full (slow consumer), the event is dropped and logged. The bus does not block publishers on slow subscribers.
 4. A background goroutine cleans up subscribers inactive for more than 30 minutes.
 5. Optionally, a durable log (`eventlog.Log`) appends every published event for replay or auditing.
-6. Optionally, an embedded WebSocket server streams events to external clients (not yet implemented — currently a stub).
+6. Optionally, an embedded WebSocket server streams events to external clients via the `EventBroadcaster` adapter wired to the HTTP server's `/ws` endpoint (implemented in v0.7.0).
 
 **Filter model:**
 
@@ -106,7 +125,7 @@ The event bus is the in-process pub/sub backbone for real-time Matrix event dist
 
 **Bridge events:**
 
-`PublishBridgeEvent` handles non-Matrix events (agent, workflow, HITL, budget, platform). These events implement the `BridgeEvent` interface (`EventType()`, `Timestamp()`, `ToJSON()`). They are wrapped, serialized, and broadcast to WebSocket clients if the server is enabled. Since the WebSocket server is currently a stub, these broadcasts are no-ops. Broadcast failures are logged but don't fail the publish operation.
+`PublishBridgeEvent` handles non-Matrix events (agent, workflow, HITL, budget, platform). These events implement the `BridgeEvent` interface (`EventType()`, `Timestamp()`, `ToJSON()`). They are wrapped, serialized, and broadcast to WebSocket clients via the `EventBroadcaster` adapter when the server is enabled. Broadcast failures are logged but don't fail the publish operation.
 
 **Error handling:**
 
