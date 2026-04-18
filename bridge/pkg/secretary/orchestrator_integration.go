@@ -6,12 +6,81 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/pkg/studio"
 )
+
+// stepDataRefRegex matches {{steps.<step_id>.data.<key>}} template references.
+var stepDataRefRegex = regexp.MustCompile(`\{\{steps\.([^.}]+)\.data\.([^.}]+)\}\}`)
+
+// resolveStepInput replaces {{steps.step_id.data.key}} references in the
+// step's Input map using accumulated results from prior steps.
+// Returns an error if a reference points to a step that hasn't produced data.
+func resolveStepInput(input map[string]any, accumulatedData map[string]map[string]any) (map[string]any, error) {
+	if len(input) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[string]any, len(input))
+	for k, v := range input {
+		switch val := v.(type) {
+		case string:
+			resolved[k] = resolveTemplateString(val, accumulatedData)
+		default:
+			resolved[k] = v
+		}
+	}
+	return resolved, nil
+}
+
+// resolveTemplateString replaces all {{steps.X.data.Y}} references in a string.
+func resolveTemplateString(s string, accumulatedData map[string]map[string]any) string {
+	return stepDataRefRegex.ReplaceAllStringFunc(s, func(match string) string {
+		sub := stepDataRefRegex.FindStringSubmatch(match)
+		if len(sub) < 3 {
+			return match
+		}
+		stepID, key := sub[1], sub[2]
+		stepData, ok := accumulatedData[stepID]
+		if !ok {
+			return match
+		}
+		val, ok := stepData[key]
+		if !ok {
+			return match
+		}
+		return fmt.Sprintf("%v", val)
+	})
+}
+
+// injectPrevStepData merges resolved input into the step's Config JSON as
+// _prev_step_data. If step.Config is nil, a new JSON object is created.
+func injectPrevStepData(config json.RawMessage, input map[string]any) json.RawMessage {
+	if len(input) == 0 {
+		return config
+	}
+
+	var configMap map[string]interface{}
+	if config != nil {
+		if err := json.Unmarshal(config, &configMap); err != nil {
+			configMap = make(map[string]interface{})
+		}
+	} else {
+		configMap = make(map[string]interface{})
+	}
+
+	configMap["_prev_step_data"] = input
+
+	updated, err := json.Marshal(configMap)
+	if err != nil {
+		return config
+	}
+	return updated
+}
 
 // LearnedSkillInfo is a minimal interface for injecting learned skill suggestions
 // into step config. Avoids importing pkg/skills directly (would create import cycle).
@@ -196,6 +265,36 @@ func (e *StepExecutor) initParallelExecutor() {
 	}
 }
 
+func (e *StepExecutor) mergeParallelGroupData(workflow *Workflow, splitStepID string, parResult *ParallelResult) {
+	merged := make(map[string]any)
+	for stepID, sr := range parResult.BranchResults {
+		if sr != nil && sr.ContainerResult != nil && sr.ContainerResult.Data != nil {
+			merged[stepID] = sr.ContainerResult.Data
+		}
+	}
+	if len(merged) > 0 {
+		if workflow.StepsData == nil {
+			workflow.StepsData = make(map[string]any)
+		}
+		workflow.StepsData[splitStepID] = merged
+	}
+}
+
+func (e *StepExecutor) mergeStandaloneParallelData(workflow *Workflow, stepID string, parResult *ParallelResult) {
+	merged := make(map[string]any)
+	for branchID, sr := range parResult.BranchResults {
+		if sr != nil && sr.ContainerResult != nil && sr.ContainerResult.Data != nil {
+			merged[branchID] = sr.ContainerResult.Data
+		}
+	}
+	if len(merged) > 0 {
+		if workflow.StepsData == nil {
+			workflow.StepsData = make(map[string]any)
+		}
+		workflow.StepsData[stepID] = merged
+	}
+}
+
 func (e *StepExecutor) agentStateDir(agentID string) string {
 	return fmt.Sprintf("%s/%s", e.stateDirBase, agentID)
 }
@@ -238,6 +337,8 @@ func (e *StepExecutor) executeSequential(
 	stepMap map[string]WorkflowStep,
 	executionOrder []string,
 ) error {
+	accumulatedData := make(map[string]map[string]any)
+
 	for i, stepID := range executionOrder {
 		select {
 		case <-ctx.Done():
@@ -250,6 +351,14 @@ func (e *StepExecutor) executeSequential(
 			return fmt.Errorf("%w: step %s not found", ErrInvalidExecutionOrder, stepID)
 		}
 
+		if len(step.Input) > 0 {
+			resolved, err := resolveStepInput(step.Input, accumulatedData)
+			if err != nil {
+				return fmt.Errorf("step %s: %w", stepID, err)
+			}
+			step.Config = injectPrevStepData(step.Config, resolved)
+		}
+
 		progress := float64(i) / float64(len(executionOrder))
 		orchestrator.UpdateProgress(workflow.ID, stepID, progress)
 
@@ -258,6 +367,10 @@ func (e *StepExecutor) executeSequential(
 		}
 
 		result := e.executeStepWithRetry(ctx, workflow, step)
+
+		if result.ContainerResult != nil && len(result.ContainerResult.Data) > 0 {
+			accumulatedData[stepID] = result.ContainerResult.Data
+		}
 
 		if result.Err != nil {
 			if !result.Recoverable {
@@ -440,7 +553,7 @@ func (e *StepExecutor) handleStandaloneParallel(
 		return err
 	}
 
-	_, err := e.parallelExec.ExecuteStandaloneParallel(ctx, workflow, step)
+	parResult, err := e.parallelExec.ExecuteStandaloneParallel(ctx, workflow, step)
 	if err != nil {
 		return &StepExecutionError{
 			StepID:      stepID,
@@ -448,6 +561,8 @@ func (e *StepExecutor) handleStandaloneParallel(
 			Recoverable: false,
 		}
 	}
+
+	e.mergeStandaloneParallelData(workflow, stepID, parResult)
 
 	if advanceErr := orchestrator.AdvanceWorkflow(workflow.ID, stepID); advanceErr != nil {
 		if errors.Is(advanceErr, fmt.Errorf("all steps completed")) ||
@@ -498,6 +613,8 @@ func (e *StepExecutor) handleParallelGroup(
 		}
 		return err
 	}
+
+	e.mergeParallelGroupData(workflow, group.SplitStepID, parResult)
 
 	// Advance past split step.
 	if advanceErr := orchestrator.AdvanceWorkflow(workflow.ID, group.SplitStepID); advanceErr != nil {

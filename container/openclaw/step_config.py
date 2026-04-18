@@ -13,14 +13,15 @@ import os
 class StepConfig:
     """Parsed representation of the STEP_CONFIG env var."""
 
-    __slots__ = ("raw", "task", "config", "step_id", "step_name")
+    __slots__ = ("raw", "task", "config", "step_id", "step_name", "_prev_step_data")
 
-    def __init__(self, raw, task, config, step_id=None, step_name=None):
+    def __init__(self, raw, task, config, step_id=None, step_name=None, prev_step_data=None):
         self.raw = raw
         self.task = task
         self.config = config
         self.step_id = step_id
         self.step_name = step_name
+        self._prev_step_data = prev_step_data
 
     @property
     def _retry(self):
@@ -43,6 +44,11 @@ class StepConfig:
         if not isinstance(inp, str) or not inp:
             return None
         return val
+
+    @property
+    def prev_step_data(self):
+        """Data propagated from prior step results, or None if absent."""
+        return self._prev_step_data
 
     @property
     def relevant_skills(self):
@@ -77,10 +83,17 @@ def parse_step_config():
     step_id = parsed.get("step_id")
     step_name = parsed.get("step_name") or parsed.get("name")
 
+    prev_step_data = None
+    if isinstance(config, dict):
+        psd = config.get("_prev_step_data")
+        if isinstance(psd, dict):
+            prev_step_data = psd
+
     return StepConfig(
         raw=raw,
         task=task,
         config=config if isinstance(config, dict) else {},
         step_id=step_id,
         step_name=step_name,
+        prev_step_data=prev_step_data,
     )

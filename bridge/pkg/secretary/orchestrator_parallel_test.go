@@ -770,3 +770,229 @@ func TestAggregateParallelErrors_Multiple(t *testing.T) {
 	assert.Contains(t, err.Error(), "error 1")
 	assert.Contains(t, err.Error(), "error 2")
 }
+
+//=============================================================================
+// Parallel Step Data Merge Tests
+//=============================================================================
+
+func writeParSuccessWithData(t *testing.T, stateDir string, data map[string]any) {
+	t.Helper()
+	result := ContainerStepResult{Status: "success", Output: "ok", Data: data, DurationMS: 100}
+	resultJSON, _ := json.Marshal(result)
+	require.NoError(t, os.MkdirAll(stateDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stateDir, "result.json"), resultJSON, 0644))
+	ep := filepath.Join(stateDir, "_events.jsonl")
+	if _, err := os.Stat(ep); os.IsNotExist(err) {
+		f, _ := os.Create(ep)
+		f.Close()
+	}
+}
+
+func TestParallel_ThreeBranchDataMerge(t *testing.T) {
+	mockDocker := newParallelMockDocker()
+	executor, _ := setupParallelExecutor(t, mockDocker)
+
+	agent1 := "par-agent-1"
+	agent2 := "par-agent-2"
+	agent3 := "par-agent-3"
+
+	tmpDir := executor.stateDirBase
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, agent1), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, agent2), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, agent3), 0755))
+
+	workflow := &Workflow{
+		ID: "wf-merge", Name: "Merge", Status: StatusRunning,
+		CreatedBy: "@test:example.com", RoomID: "!test:example.com", StartedAt: time.Now(),
+	}
+
+	stepMap := map[string]WorkflowStep{
+		"branch-research": {StepID: "branch-research", Order: 0, Type: StepAction, Name: "Research", AgentIDs: []string{agent1}},
+		"branch-analyze":  {StepID: "branch-analyze", Order: 1, Type: StepAction, Name: "Analyze", AgentIDs: []string{agent2}},
+		"branch-report":   {StepID: "branch-report", Order: 2, Type: StepAction, Name: "Report", AgentIDs: []string{agent3}},
+	}
+
+	group := &ParallelGroup{
+		SplitStepID:   "split",
+		MergeStepID:   "merge",
+		BranchStepIDs: []string{"branch-research", "branch-analyze", "branch-report"},
+	}
+
+	pe := NewParallelExecutor(executor, ParallelConfig{
+		MaxParallelContainers: 3,
+		ErrorPolicy:           FailFast,
+	})
+
+	branchData := map[string]map[string]any{
+		agent1: {"venues": float64(3), "top_pick": "Le Bernardin"},
+		agent2: {"sentiment": "positive", "score": float64(0.87)},
+		agent3: {"pages": float64(5), "format": "pdf"},
+	}
+
+	var completed atomic.Int32
+	go func() {
+		for {
+			time.Sleep(50 * time.Millisecond)
+			mockDocker.mu.Lock()
+			for cid, s := range mockDocker.containers {
+				if !s.Running {
+					continue
+				}
+				s.Running = false
+				s.ExitCode = 0
+				s.FinishedAt = "2025-01-01T00:00:00Z"
+				n := completed.Add(1)
+				var agentID string
+				switch n {
+				case 1:
+					agentID = agent1
+				case 2:
+					agentID = agent2
+				case 3:
+					agentID = agent3
+				default:
+					continue
+				}
+				_ = cid
+				writeParSuccessWithData(t, filepath.Join(tmpDir, agentID), branchData[agentID])
+			}
+			mockDocker.mu.Unlock()
+			if completed.Load() >= 3 {
+				return
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	result, err := pe.ExecuteParallelGroup(ctx, workflow, group, stepMap, 0, 1.0)
+	require.NoError(t, err)
+	assert.True(t, result.AllSucceeded)
+	assert.Len(t, result.BranchResults, 3)
+
+	executor.mergeParallelGroupData(workflow, "split", result)
+
+	require.NotNil(t, workflow.StepsData, "StepsData should be populated")
+	merged, ok := workflow.StepsData["split"].(map[string]any)
+	require.True(t, ok, "StepsData[split] should be a map")
+
+	researchData, ok := merged["branch-research"].(map[string]any)
+	require.True(t, ok, "branch-research data should exist")
+	assert.Equal(t, "Le Bernardin", researchData["top_pick"])
+	assert.Equal(t, float64(3), researchData["venues"])
+
+	analyzeData, ok := merged["branch-analyze"].(map[string]any)
+	require.True(t, ok, "branch-analyze data should exist")
+	assert.Equal(t, "positive", analyzeData["sentiment"])
+	assert.Equal(t, float64(0.87), analyzeData["score"])
+
+	reportData, ok := merged["branch-report"].(map[string]any)
+	require.True(t, ok, "branch-report data should exist")
+	assert.Equal(t, float64(5), reportData["pages"])
+	assert.Equal(t, "pdf", reportData["format"])
+}
+
+func TestParallel_DataMerge_EmptyWhenNoData(t *testing.T) {
+	workflow := &Workflow{
+		ID: "wf-nodata", Name: "NoData", Status: StatusRunning,
+		CreatedBy: "@test:example.com", StartedAt: time.Now(),
+	}
+
+	parResult := &ParallelResult{
+		BranchResults: map[string]*StepResult{
+			"branch-a": {StepID: "branch-a", Err: nil, ContainerResult: nil},
+			"branch-b": {StepID: "branch-b", Err: nil, ContainerResult: &ContainerStepResult{Status: "success"}},
+		},
+		AllSucceeded: true,
+	}
+
+	executor := NewStepExecutor(StepExecutorConfig{})
+	executor.mergeParallelGroupData(workflow, "split", parResult)
+
+	assert.Nil(t, workflow.StepsData, "StepsData should be nil when no branch has data")
+}
+
+func TestParallel_DataMerge_PartialData(t *testing.T) {
+	workflow := &Workflow{
+		ID: "wf-partial", Name: "Partial", Status: StatusRunning,
+		CreatedBy: "@test:example.com", StartedAt: time.Now(),
+	}
+
+	parResult := &ParallelResult{
+		BranchResults: map[string]*StepResult{
+			"branch-a": {
+				StepID: "branch-a",
+				ContainerResult: &ContainerStepResult{
+					Status: "success",
+					Data:   map[string]any{"order_id": "ORD-123"},
+				},
+			},
+			"branch-b": {StepID: "branch-b", ContainerResult: nil},
+			"branch-c": {
+				StepID: "branch-c",
+				ContainerResult: &ContainerStepResult{
+					Status: "success",
+					Data:   map[string]any{"total": float64(99)},
+				},
+			},
+		},
+		AllSucceeded: true,
+	}
+
+	executor := NewStepExecutor(StepExecutorConfig{})
+	executor.mergeParallelGroupData(workflow, "split", parResult)
+
+	require.NotNil(t, workflow.StepsData)
+	merged, ok := workflow.StepsData["split"].(map[string]any)
+	require.True(t, ok)
+
+	_, hasA := merged["branch-a"]
+	assert.True(t, hasA, "branch-a with data should be present")
+	_, hasB := merged["branch-b"]
+	assert.False(t, hasB, "branch-b without data should be absent")
+	_, hasC := merged["branch-c"]
+	assert.True(t, hasC, "branch-c with data should be present")
+}
+
+func TestParallel_StandaloneDataMerge(t *testing.T) {
+	workflow := &Workflow{
+		ID: "wf-standalone", Name: "Standalone", Status: StatusRunning,
+		CreatedBy: "@test:example.com", StartedAt: time.Now(),
+	}
+
+	parResult := &ParallelResult{
+		BranchResults: map[string]*StepResult{
+			"par-step#agent-0": {
+				StepID: "par-step#agent-0",
+				ContainerResult: &ContainerStepResult{
+					Status: "success",
+					Data:   map[string]any{"result": "alpha"},
+				},
+			},
+			"par-step#agent-1": {
+				StepID: "par-step#agent-1",
+				ContainerResult: &ContainerStepResult{
+					Status: "success",
+					Data:   map[string]any{"result": "beta"},
+				},
+			},
+		},
+		AllSucceeded: true,
+	}
+
+	executor := NewStepExecutor(StepExecutorConfig{})
+	executor.mergeStandaloneParallelData(workflow, "par-step", parResult)
+
+	require.NotNil(t, workflow.StepsData)
+	merged, ok := workflow.StepsData["par-step"].(map[string]any)
+	require.True(t, ok)
+
+	agent0Data, ok := merged["par-step#agent-0"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "alpha", agent0Data["result"])
+
+	agent1Data, ok := merged["par-step#agent-1"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "beta", agent1Data["result"])
+}

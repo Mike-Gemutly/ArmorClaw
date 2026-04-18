@@ -1,5 +1,6 @@
 package app.armorclaw.navigation
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -8,16 +9,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import app.armorclaw.config.ConfigManager
 import app.armorclaw.ui.security.BiometricEnableScreen
 import app.armorclaw.ui.security.BondingScreen
 import app.armorclaw.ui.security.KeyBackupSetupScreen
@@ -30,17 +34,40 @@ import app.armorclaw.viewmodel.HardeningWizardViewModel
 @Composable
 fun ArmorClawNavHost(navController: NavHostController) {
     val viewModel: HardeningWizardViewModel = viewModel()
+    val context = LocalContext.current
+    val configManager = remember { ConfigManager.getInstance(context) }
     var startRoute by rememberSaveable { mutableStateOf(Route.Bonding.route) }
+    var configExpired by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        viewModel.loadState()
-        startRoute = when (viewModel.getCurrentStep()) {
-            HardeningStep.ROTATE_PASSWORD -> Route.HardeningPassword.route
-            HardeningStep.WIPE_BOOTSTRAP -> Route.HardeningPassword.route
-            HardeningStep.VERIFY_DEVICE -> Route.HardeningDevice.route
-            HardeningStep.BACKUP_RECOVERY -> Route.KeyBackup.route
-            HardeningStep.ENABLE_BIOMETRICS -> Route.HardeningBiometrics.route
-            HardeningStep.COMPLETE -> Route.SecurityConfig.route
+        val loadedConfig = configManager.loadConfig()
+
+        if (loadedConfig == null) {
+            startRoute = Route.Bonding.route
+        } else if (loadedConfig.isExpired()) {
+            configManager.clearConfig()
+            configExpired = true
+            startRoute = Route.Bonding.route
+        } else {
+            viewModel.loadState()
+            startRoute = when (viewModel.getCurrentStep()) {
+                HardeningStep.ROTATE_PASSWORD -> Route.HardeningPassword.route
+                HardeningStep.WIPE_BOOTSTRAP -> Route.HardeningPassword.route
+                HardeningStep.VERIFY_DEVICE -> Route.HardeningDevice.route
+                HardeningStep.BACKUP_RECOVERY -> Route.KeyBackup.route
+                HardeningStep.ENABLE_BIOMETRICS -> Route.HardeningBiometrics.route
+                HardeningStep.COMPLETE -> Route.SecurityConfig.route
+            }
+        }
+    }
+
+    LaunchedEffect(configExpired) {
+        if (configExpired) {
+            Toast.makeText(
+                context,
+                "Configuration expired, please re-provision",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 

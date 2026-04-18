@@ -1544,3 +1544,253 @@ func TestPostCompletion_RecordOutcomeOnFailure(t *testing.T) {
 	assert.False(t, recordedOutcomes[0].success)
 	outcomeMu.Unlock()
 }
+
+//=============================================================================
+// Sequential Step Data Propagation Tests
+//=============================================================================
+
+func TestResolveTemplateString_BasicRef(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"order_id": "ORD-123", "total": 99.5},
+	}
+
+	result := resolveTemplateString("order={{steps.step_1.data.order_id}}", accumulated)
+	assert.Equal(t, "order=ORD-123", result)
+}
+
+func TestResolveTemplateString_MultipleRefs(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"order_id": "ORD-456"},
+		"step_2": {"tracking": "TRK-789"},
+	}
+
+	result := resolveTemplateString(
+		"order={{steps.step_1.data.order_id}} track={{steps.step_2.data.tracking}}",
+		accumulated,
+	)
+	assert.Equal(t, "order=ORD-456 track=TRK-789", result)
+}
+
+func TestResolveTemplateString_MissingStep(t *testing.T) {
+	accumulated := map[string]map[string]any{}
+
+	result := resolveTemplateString("{{steps.step_1.data.order_id}}", accumulated)
+	assert.Equal(t, "{{steps.step_1.data.order_id}}", result)
+}
+
+func TestResolveTemplateString_MissingKey(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"other_key": "value"},
+	}
+
+	result := resolveTemplateString("{{steps.step_1.data.missing}}", accumulated)
+	assert.Equal(t, "{{steps.step_1.data.missing}}", result)
+}
+
+func TestResolveStepInput_NilInput(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"order_id": "ORD-123"},
+	}
+
+	result, err := resolveStepInput(nil, accumulated)
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestResolveStepInput_EmptyInput(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"order_id": "ORD-123"},
+	}
+
+	result, err := resolveStepInput(map[string]any{}, accumulated)
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestResolveStepInput_MixedValues(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"order_id": "ORD-789"},
+	}
+
+	input := map[string]any{
+		"order_ref": "{{steps.step_1.data.order_id}}",
+		"static":    "hardcoded",
+		"number":    42,
+	}
+
+	result, err := resolveStepInput(input, accumulated)
+	require.NoError(t, err)
+	assert.Equal(t, "ORD-789", result["order_ref"])
+	assert.Equal(t, "hardcoded", result["static"])
+	assert.Equal(t, 42, result["number"])
+}
+
+func TestInjectPrevStepData_NilConfig(t *testing.T) {
+	input := map[string]any{"order_id": "ORD-123"}
+
+	result := injectPrevStepData(nil, input)
+	require.NotNil(t, result)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(result, &parsed))
+	assert.Equal(t, "ORD-123", parsed["_prev_step_data"].(map[string]interface{})["order_id"])
+}
+
+func TestInjectPrevStepData_ExistingConfig(t *testing.T) {
+	config := json.RawMessage(`{"timeout": 30}`)
+	input := map[string]any{"order_id": "ORD-456"}
+
+	result := injectPrevStepData(config, input)
+	require.NotNil(t, result)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(result, &parsed))
+	assert.Equal(t, float64(30), parsed["timeout"])
+	assert.Equal(t, "ORD-456", parsed["_prev_step_data"].(map[string]interface{})["order_id"])
+}
+
+func TestInjectPrevStepData_EmptyInput(t *testing.T) {
+	config := json.RawMessage(`{"timeout": 30}`)
+
+	result := injectPrevStepData(config, nil)
+	assert.Equal(t, config, result)
+}
+
+func TestSequentialDataPropagation_Integration(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {
+			"order_id": "ORD-SEQUENTIAL",
+			"amount":   199.99,
+		},
+	}
+
+	step := WorkflowStep{
+		StepID:   "step_2",
+		Order:    1,
+		Type:     StepAction,
+		Name:     "Confirm Order",
+		AgentIDs: []string{"agent-1"},
+		Input: map[string]any{
+			"order_ref": "{{steps.step_1.data.order_id}}",
+			"amount":    "{{steps.step_1.data.amount}}",
+		},
+		Config: json.RawMessage(`{"action":"confirm"}`),
+	}
+
+	resolved, err := resolveStepInput(step.Input, accumulated)
+	require.NoError(t, err)
+
+	enrichedConfig := injectPrevStepData(step.Config, resolved)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(enrichedConfig, &parsed))
+
+	assert.Equal(t, "confirm", parsed["action"])
+
+	prevData, ok := parsed["_prev_step_data"].(map[string]interface{})
+	require.True(t, ok, "config should contain _prev_step_data")
+	assert.Equal(t, "ORD-SEQUENTIAL", prevData["order_ref"])
+	assert.Equal(t, "199.99", prevData["amount"])
+}
+
+func TestSequentialDataPropagation_NoDataProduced(t *testing.T) {
+	accumulated := map[string]map[string]any{}
+
+	step := WorkflowStep{
+		StepID:   "step_2",
+		Order:    1,
+		Type:     StepAction,
+		Name:     "Step Two",
+		AgentIDs: []string{"agent-1"},
+		Input: map[string]any{
+			"ref": "{{steps.step_1.data.missing}}",
+		},
+		Config: json.RawMessage(`{"action":"use"}`),
+	}
+
+	resolved, err := resolveStepInput(step.Input, accumulated)
+	require.NoError(t, err)
+
+	enrichedConfig := injectPrevStepData(step.Config, resolved)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(enrichedConfig, &parsed))
+
+	assert.Equal(t, "use", parsed["action"])
+
+	prevData := parsed["_prev_step_data"].(map[string]interface{})
+	assert.Equal(t, "{{steps.step_1.data.missing}}", prevData["ref"])
+}
+
+func TestSequentialDataPropagation_NilInputSkipped(t *testing.T) {
+	accumulated := map[string]map[string]any{
+		"step_1": {"key": "val"},
+	}
+
+	step := WorkflowStep{
+		StepID:   "step_2",
+		Order:    1,
+		Type:     StepAction,
+		Name:     "Step Two",
+		AgentIDs: []string{"agent-1"},
+		Config:   json.RawMessage(`{"action":"run"}`),
+	}
+
+	resolved, err := resolveStepInput(step.Input, accumulated)
+	require.NoError(t, err)
+	assert.Nil(t, resolved)
+
+	enrichedConfig := injectPrevStepData(step.Config, resolved)
+	assert.Equal(t, step.Config, enrichedConfig, "config should be unchanged when Input is nil")
+}
+
+func TestDataPass_AccumulatorCollectsResults(t *testing.T) {
+	accumulated := make(map[string]map[string]any)
+
+	result1 := &ContainerStepResult{
+		Status: "success",
+		Data:   map[string]any{"order_id": "A1", "total": 50.0},
+	}
+	if result1.Data != nil {
+		accumulated["step_1"] = result1.Data
+	}
+
+	result2 := &ContainerStepResult{
+		Status: "success",
+		Data:   map[string]any{"tracking": "TRK-XYZ"},
+	}
+	if result2.Data != nil {
+		accumulated["step_2"] = result2.Data
+	}
+
+	assert.Equal(t, "A1", accumulated["step_1"]["order_id"])
+	assert.Equal(t, 50.0, accumulated["step_1"]["total"])
+	assert.Equal(t, "TRK-XYZ", accumulated["step_2"]["tracking"])
+
+	input := map[string]any{
+		"order":   "{{steps.step_1.data.order_id}}",
+		"track":   "{{steps.step_2.data.tracking}}",
+		"verbose": "yes",
+	}
+
+	resolved, err := resolveStepInput(input, accumulated)
+	require.NoError(t, err)
+	assert.Equal(t, "A1", resolved["order"])
+	assert.Equal(t, "TRK-XYZ", resolved["track"])
+	assert.Equal(t, "yes", resolved["verbose"])
+}
+
+func TestDataPass_EmptyDataNotStored(t *testing.T) {
+	accumulated := make(map[string]map[string]any)
+
+	result := &ContainerStepResult{
+		Status: "success",
+		Output: "done",
+	}
+	if result.Data != nil && len(result.Data) > 0 {
+		accumulated["step_1"] = result.Data
+	}
+
+	_, exists := accumulated["step_1"]
+	assert.False(t, exists, "steps with no Data should not be stored in accumulator")
+}

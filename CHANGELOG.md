@@ -12,6 +12,7 @@ All notable changes to ArmorClaw are documented here with commit references.
 ### Added
 - **WorkflowStep.Input field** (`bridge/pkg/secretary/types.go`) — Optional `Input map[string]any` field on `WorkflowStep` with `json:"input,omitempty"` tag. Supports template variable references (`{{steps.step_1.data.order_id}}`) for inter-step data flow. Backward compatible: existing templates without `input` round-trip unchanged.
 - **Migration guide** (`doc/migration/workflow-step-input.md`) — Documents the new field, template variable syntax, resolution rules, and backward compatibility guarantees.
+- **Template migration tool** (`bridge/cmd/migrate-templates/`) — CLI tool that adds `"input": {}` to WorkflowStep objects in existing template JSON files. Validates templates against the WorkflowStep schema (step types, required fields). Idempotent and non-destructive: only adds missing `input` fields, rewrites only if changes were made.
 
 ### Changed
 - **BREAKING SCHEMA CHANGE (additive):** `WorkflowStep` JSON now accepts an optional `input` object. Existing JSON without `input` continues to deserialize correctly. No database migration required.

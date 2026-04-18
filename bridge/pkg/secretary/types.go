@@ -150,6 +150,12 @@ type Workflow struct {
 
 	// ErrorMessage describes any failure
 	ErrorMessage string `json:"error_message,omitempty"`
+
+	// StepsData holds accumulated step outputs keyed by step_id.
+	// For parallel groups, the value is a map of branch_step_id → data.
+	// Available to subsequent steps via {{steps.split_id.data.branch_1.key}} syntax.
+	// Populated during execution, not persisted to store.
+	StepsData map[string]any `json:"steps_data,omitempty"`
 }
 
 // MarshalJSON custom marshals Workflow for API responses
