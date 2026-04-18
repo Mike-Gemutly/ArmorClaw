@@ -643,3 +643,20 @@ Sorted by priority. All items reference specific file:line locations in findings
 **Next Steps:** Implement Top 10 action items above (S3 → S2 → S1 → SSRF → deploy fixes → tests → SkillGate → params → WebDAV). Then execute both test plans. Then re-review to validate fixes and close findings.
 
 **Supersedes:** This document replaces DEPLOYMENT_SKILLS_REVIEW.md (2026-04-05). All 12 prior action items are tracked here with updated finding IDs.
+
+---
+
+## Appendix: Effectiveness Rating
+
+> Independent analysis validated all 46 findings against source code. **D- (2/10) confirmed.**
+> The skills system validates *descriptions* of deployments, not *reality* of deployments.
+
+The D- rating is generous. Three findings make it worse than a testing gap:
+
+| Finding | Stated Impact | Actual Impact |
+|---------|---------------|---------------|
+| S1 (containsDangerousChars) | Skills lack tests | Skills are **functionally broken** — URL params, JSON bodies, HTML content all blocked by security filter. Real invocations fail at runtime. |
+| S3 (hand-rolled YAML parser) | Untested parser | 52+ bundled SKILL.md files **cannot load** through the Bridge. The C-rated structural validation tests a parser that can't parse the repo's own skills. |
+| S2 (allow-by-default policy) | Tests would test wrong thing | Even with 290 test cases, they'd pass against an inverted security model. Fix policy inversion **before** writing tests. |
+
+**Corrected remediation order:** fix parser (S3) → fix security filter (S1) → fix policy inversion (S2) → write tests. Writing tests against current code produces passing tests for a system that shouldn't exist.
