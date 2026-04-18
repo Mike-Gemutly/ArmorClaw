@@ -200,7 +200,8 @@ func setupParallelExecutor(t *testing.T, mockDocker *parallelMockDocker) (*StepE
 	t.Helper()
 
 	tmpDir := t.TempDir()
-	studioStore, err := studio.NewStore(studio.StoreConfig{Path: ":memory:"})
+	dbPath := filepath.Join(tmpDir, "studio.db")
+	studioStore, err := studio.NewStore(studio.StoreConfig{Path: dbPath})
 	require.NoError(t, err)
 	t.Cleanup(func() { studioStore.Close() })
 
@@ -460,14 +461,10 @@ func TestParallel_ExecuteStandaloneParallel_SingleAgent(t *testing.T) {
 // concurrently for a single StepParallel step.
 func TestParallel_ExecuteStandaloneParallel_MultipleAgents(t *testing.T) {
 	mockDocker := newParallelMockDocker()
-	executor, _ := setupParallelExecutor(t, mockDocker)
-
-	agentA := "par-agent-1"
-	agentB := "par-agent-2"
+	executor, defID := setupParallelExecutor(t, mockDocker)
 
 	tmpDir := executor.stateDirBase
-	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, agentA), 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, agentB), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, defID), 0755))
 
 	workflow := &Workflow{
 		ID: "wf-multi", Name: "Multi", Status: StatusRunning,
@@ -476,7 +473,7 @@ func TestParallel_ExecuteStandaloneParallel_MultipleAgents(t *testing.T) {
 
 	step := WorkflowStep{
 		StepID: "par-multi", Order: 0, Type: StepParallel,
-		Name: "Multi Agent", AgentIDs: []string{agentA, agentB},
+		Name: "Multi Agent", AgentIDs: []string{defID, defID},
 	}
 
 	pe := NewParallelExecutor(executor, ParallelConfig{
@@ -484,7 +481,6 @@ func TestParallel_ExecuteStandaloneParallel_MultipleAgents(t *testing.T) {
 		ErrorPolicy:           FailFast,
 	})
 
-	var completed atomic.Int32
 	go func() {
 		for {
 			time.Sleep(50 * time.Millisecond)
@@ -494,14 +490,20 @@ func TestParallel_ExecuteStandaloneParallel_MultipleAgents(t *testing.T) {
 					s.Running = false
 					s.ExitCode = 0
 					s.FinishedAt = "2025-01-01T00:00:00Z"
-					completed.Add(1)
-					for _, aid := range []string{agentA, agentB} {
-						writeParSuccess(t, filepath.Join(tmpDir, aid))
-					}
 				}
 			}
+			running := 0
+			for _, s := range mockDocker.containers {
+				if s.Running {
+					running++
+				}
+			}
+			allDone := len(mockDocker.containers) >= 2 && running == 0
+			if allDone {
+				writeParSuccess(t, filepath.Join(tmpDir, defID))
+			}
 			mockDocker.mu.Unlock()
-			if completed.Load() >= 2 {
+			if allDone {
 				return
 			}
 		}
