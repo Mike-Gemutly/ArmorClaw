@@ -281,3 +281,46 @@ func DetectCAPTCHA(pageContent string) bool {
 	}
 	return false
 }
+
+// ---------------------------------------------------------------------------
+// Matrix secret request/response events
+// ---------------------------------------------------------------------------
+
+// SecretRequestEvent represents a Matrix event when an agent requests a secret.
+// Event type: app.armorclaw.secret_request
+type SecretRequestEvent struct {
+	RequestID      string `json:"request_id"`
+	AgentID        string `json:"agent_id"`
+	TeamID         string `json:"team_id,omitempty"`
+	CredentialName string `json:"credential_name"`
+	TargetDomain   string `json:"target_domain"`
+	Reason         string `json:"reason"`
+	RiskClass      string `json:"risk_class"`
+}
+
+// Validate ensures RequestID and AgentID are non-empty.
+func (v *SecretRequestEvent) Validate() error {
+	if v.RequestID == "" {
+		return fmt.Errorf("capability: %T: field request_id is required", v)
+	}
+	if v.AgentID == "" {
+		return fmt.Errorf("capability: %T: field agent_id is required", v)
+	}
+	return nil
+}
+
+// SecretResponseEvent represents the user's response to a secret request.
+// Event type: app.armorclaw.secret_response
+type SecretResponseEvent struct {
+	RequestID   string `json:"request_id"`
+	Approved    bool   `json:"approved"`
+	RespondedBy string `json:"responded_by,omitempty"`
+}
+
+// Validate ensures RequestID is non-empty.
+func (v *SecretResponseEvent) Validate() error {
+	if v.RequestID == "" {
+		return fmt.Errorf("capability: %T: field request_id is required", v)
+	}
+	return nil
+}

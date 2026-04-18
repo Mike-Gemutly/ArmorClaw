@@ -109,6 +109,26 @@ func TestArtifactRoundTrip(t *testing.T) {
 				Suggestion: "retry tomorrow",
 			},
 		},
+		{
+			name: "SecretRequestEvent",
+			val: &SecretRequestEvent{
+				RequestID:      "req-1",
+				AgentID:        "agent-1",
+				TeamID:         "team-1",
+				CredentialName: "api_key",
+				TargetDomain:   "api.example.com",
+				Reason:         "need to call external API",
+				RiskClass:      "credential_use",
+			},
+		},
+		{
+			name: "SecretResponseEvent",
+			val: &SecretResponseEvent{
+				RequestID:   "req-1",
+				Approved:    true,
+				RespondedBy: "user-1",
+			},
+		},
 	}
 
 	for _, tc := range ptrTests {
@@ -289,6 +309,34 @@ func TestArtifactBackwardCompat(t *testing.T) {
 			t.Errorf("Suggestion should be empty, got %q", wb.Suggestion)
 		}
 	})
+
+	t.Run("SecretRequestEvent_old_format", func(t *testing.T) {
+		raw := `{"request_id":"req-1","agent_id":"agent-1","credential_name":"api_key","target_domain":"x.com","reason":"test","risk_class":"credential_use"}`
+		var sre SecretRequestEvent
+		if err := json.Unmarshal([]byte(raw), &sre); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if sre.RequestID != "req-1" || sre.AgentID != "agent-1" {
+			t.Fatalf("got request_id=%q agent_id=%q", sre.RequestID, sre.AgentID)
+		}
+		if sre.TeamID != "" {
+			t.Errorf("TeamID should be empty, got %q", sre.TeamID)
+		}
+	})
+
+	t.Run("SecretResponseEvent_old_format", func(t *testing.T) {
+		raw := `{"request_id":"req-1","approved":true}`
+		var sre SecretResponseEvent
+		if err := json.Unmarshal([]byte(raw), &sre); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if sre.RequestID != "req-1" || !sre.Approved {
+			t.Fatalf("got request_id=%q approved=%v", sre.RequestID, sre.Approved)
+		}
+		if sre.RespondedBy != "" {
+			t.Errorf("RespondedBy should be empty, got %q", sre.RespondedBy)
+		}
+	})
 }
 
 // ============================================================================
@@ -314,6 +362,8 @@ func TestValidate_ValidCases(t *testing.T) {
 		{"ApprovalDecision", &ApprovalDecision{}},
 		{"ApprovalDecision_denied", &ApprovalDecision{Approved: false}},
 		{"WorkflowBlocker", &WorkflowBlocker{Type: "t", Message: "m"}},
+		{"SecretRequestEvent", &SecretRequestEvent{RequestID: "r", AgentID: "a"}},
+		{"SecretResponseEvent", &SecretResponseEvent{RequestID: "r"}},
 	}
 
 	for _, tc := range valid {
@@ -427,6 +477,24 @@ func TestValidate_InvalidCases(t *testing.T) {
 			val:         &WorkflowBlocker{Type: "t"},
 			wantErr:     true,
 			errContains: "message",
+		},
+		{
+			name:        "SecretRequestEvent_empty_request_id",
+			val:         &SecretRequestEvent{AgentID: "a"},
+			wantErr:     true,
+			errContains: "request_id",
+		},
+		{
+			name:        "SecretRequestEvent_empty_agent_id",
+			val:         &SecretRequestEvent{RequestID: "r"},
+			wantErr:     true,
+			errContains: "agent_id",
+		},
+		{
+			name:        "SecretResponseEvent_empty_request_id",
+			val:         &SecretResponseEvent{Approved: true},
+			wantErr:     true,
+			errContains: "request_id",
 		},
 	}
 
