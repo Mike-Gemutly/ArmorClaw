@@ -567,4 +567,112 @@ mod tests {
         let result = store.consume_token("tok_bc3", "sess1", "tool1").unwrap();
         assert_eq!(result, "secret");
     }
+
+    // ── Test 12: Concurrent scope validation — exactly one succeeds ────────
+    #[tokio::test]
+    async fn concurrent_scope_validation_exactly_one_succeeds() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let store = Arc::new(EphemeralTokenStore::new());
+        store
+            .issue_token(
+                "tok_concurrent",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let successes = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+        for i in 0..10 {
+            let store = store.clone();
+            let successes = successes.clone();
+            handles.push(tokio::spawn(async move {
+                let scope = if i % 2 == 0 { "payment" } else { "shipping" };
+                let result = store.consume_token_with_scope("tok_concurrent", "sess1", "tool1", Some(scope));
+                if result.is_ok() {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(successes.load(Ordering::SeqCst), 1, "exactly one concurrent consume should succeed");
+    }
+
+    // ── Test 13: Token not found with scope → TokenNotFound ──────────────
+    #[tokio::test]
+    async fn token_not_found_returns_not_found_with_scope() {
+        let store = EphemeralTokenStore::new();
+
+        let result =
+            store.consume_token_with_scope("nonexistent", "sess1", "tool1", Some("payment"));
+        assert_eq!(result, Err(TokenError::TokenNotFound));
+    }
+
+    // ── Test 14: Scope validation with empty string scope → matches empty ─
+    #[tokio::test]
+    async fn empty_string_scope_matches_empty() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_empty",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some(String::new()),
+            )
+            .unwrap();
+
+        let result =
+            store.consume_token_with_scope("tok_empty", "sess1", "tool1", Some(""));
+        assert!(result.is_ok(), "empty string scope should match empty string");
+    }
+
+    // ── Test 15: Scope validation — wrong session → Unauthorized first ────
+    #[tokio::test]
+    async fn scope_check_wrong_session_returns_unauthorized() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_wrong_sess",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let result =
+            store.consume_token_with_scope("tok_wrong_sess", "wrong-sess", "tool1", Some("payment"));
+        assert_eq!(result, Err(TokenError::Unauthorized), "wrong session should return Unauthorized before scope check");
+    }
+
+    // ── Test 16: Scope validation — wrong tool → WrongTool first ──────────
+    #[tokio::test]
+    async fn scope_check_wrong_tool_returns_wrong_tool() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_wrong_tool",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let result =
+            store.consume_token_with_scope("tok_wrong_tool", "sess1", "wrong-tool", Some("payment"));
+        assert_eq!(result, Err(TokenError::WrongTool), "wrong tool should return WrongTool before scope check");
+    }
 }

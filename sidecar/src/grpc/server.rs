@@ -672,3 +672,106 @@ pub async fn run_server(config: SidecarConfig) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grpc::proto::{QueryDocumentsRequest, RequestMetadata};
+
+    fn new_test_service() -> SidecarServiceImpl {
+        SidecarServiceImpl::new(None, None, None)
+    }
+
+    fn make_query_request(query: &str, collection: &str, max_results: i32) -> QueryDocumentsRequest {
+        QueryDocumentsRequest {
+            metadata: None,
+            collection_id: collection.to_string(),
+            query_text: query.to_string(),
+            clearance_level: String::new(),
+            max_results,
+        }
+    }
+
+    #[tokio::test]
+    async fn query_documents_empty_query_returns_invalid_argument() {
+        let service = new_test_service();
+        let req = Request::new(make_query_request("", "col-1", 10));
+        let result = service.query_documents(req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        assert!(status.message().contains("query_text is empty"));
+    }
+
+    #[tokio::test]
+    async fn query_documents_no_qdrant_returns_unimplemented() {
+        let service = new_test_service();
+        let req = Request::new(make_query_request("find documents", "col-1", 10));
+        let result = service.query_documents(req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::Unimplemented);
+        assert!(status.message().contains("Qdrant"));
+    }
+
+    #[tokio::test]
+    async fn query_documents_has_qdrant_no_api_key_returns_unimplemented() {
+        let service = SidecarServiceImpl::new(None, None, None);
+        let req = Request::new(make_query_request("find docs", "col-1", 10));
+        let result = service.query_documents(req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::Unimplemented);
+    }
+
+    #[tokio::test]
+    async fn query_documents_non_empty_query_validates_before_qdrant_check() {
+        let service = new_test_service();
+        let req = Request::new(make_query_request("valid query", "col-1", 5));
+        let result = service.query_documents(req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::Unimplemented);
+    }
+
+    #[tokio::test]
+    async fn query_documents_empty_collection_still_validates_query() {
+        let service = new_test_service();
+        let req = Request::new(make_query_request("", "", 0));
+        let result = service.query_documents(req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn query_documents_with_metadata_and_clearance() {
+        let service = new_test_service();
+        let req = Request::new(QueryDocumentsRequest {
+            metadata: Some(RequestMetadata {
+                request_id: "req-123".to_string(),
+                ephemeral_token: String::new(),
+                timestamp_unix: 1234567890,
+                operation_signature: String::new(),
+            }),
+            collection_id: "secure-col".to_string(),
+            query_text: "classified docs".to_string(),
+            clearance_level: "secret".to_string(),
+            max_results: 5,
+        });
+        let result = service.query_documents(req).await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::Unimplemented);
+    }
+
+    #[tokio::test]
+    async fn health_check_returns_ok() {
+        let service = new_test_service();
+        let req = Request::new(HealthCheckRequest {});
+        let result = service.health_check(req).await;
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+        assert!(!response.status.is_empty());
+    }
+}
