@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/internal/ai"
 	"github.com/armorclaw/bridge/internal/cache"
 	"github.com/armorclaw/bridge/internal/executor"
 	"github.com/armorclaw/bridge/internal/memory"
@@ -15,32 +17,35 @@ import (
 )
 
 type RuntimeConfig struct {
-	MaxSteps          int
-	MaxTokens         int
-	Timeout           time.Duration
-	EnableSpeculation bool
-	MaxParallelTools  int
+	MaxSteps                  int
+	MaxTokens                 int
+	CompactionThresholdTokens int
+	Timeout                   time.Duration
+	EnableSpeculation         bool
+	MaxParallelTools          int
 }
 
 type Runtime struct {
-	config       RuntimeConfig
-	executor     *executor.ToolExecutor
-	cache        *cache.ToolCache
+	config      RuntimeConfig
+	executor    *executor.ToolExecutor
+	cache       *cache.ToolCache
 	router      *router.Router
-	memory       *memory.Store
-	speculative  *speculative.SpeculativeExecutor
-	mu             sync.RWMutex
-	pending      map[string]bool
-	running      map[string]*Task
+	memory      *memory.Store
+	speculative *speculative.SpeculativeExecutor
+	aiClient    ai.AIClient
+	mu          sync.RWMutex
+	pending     map[string]bool
+	running     map[string]*Task
 }
 
 func DefaultRuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{
-		MaxSteps:          10,
-		MaxTokens:         4096,
-		Timeout:           30 * time.Second,
-		EnableSpeculation: true,
-		MaxParallelTools:  3,
+		MaxSteps:                  10,
+		MaxTokens:                 4096,
+		CompactionThresholdTokens: 100000,
+		Timeout:                   30 * time.Second,
+		EnableSpeculation:         true,
+		MaxParallelTools:          3,
 	}
 }
 
@@ -65,7 +70,7 @@ func NewRuntime(cfg RuntimeConfig) *Runtime {
 
 	tc := cache.NewToolCache(cache.ToolCacheConfig{
 		MaxSize: 500,
-		TTL:       10 * time.Minute,
+		TTL:     10 * time.Minute,
 	})
 
 	rtr := router.NewRouter(router.RouterConfig{})
@@ -73,13 +78,13 @@ func NewRuntime(cfg RuntimeConfig) *Runtime {
 	mem, _ := memory.NewStore(memory.StoreConfig{})
 
 	rt := &Runtime{
-		config:      cfg,
-		executor:    exec,
-		cache:       tc,
-		router:      rtr,
-		memory:      mem,
-		pending:     make(map[string]bool),
-		running:     make(map[string]*Task),
+		config:   cfg,
+		executor: exec,
+		cache:    tc,
+		router:   rtr,
+		memory:   mem,
+		pending:  make(map[string]bool),
+		running:  make(map[string]*Task),
 	}
 
 	if cfg.EnableSpeculation {
@@ -92,6 +97,11 @@ func NewRuntime(cfg RuntimeConfig) *Runtime {
 	return rt
 }
 
+// SetAIClient injects the AI client for compaction summarization.
+func (r *Runtime) SetAIClient(client ai.AIClient) {
+	r.aiClient = client
+}
+
 func (r *Runtime) Run(ctx context.Context, task *Task) (*Result, error) {
 	if task == nil {
 		return nil, fmt.Errorf("task is nil")
@@ -99,6 +109,15 @@ func (r *Runtime) Run(ctx context.Context, task *Task) (*Result, error) {
 
 	task.Status = TaskStatusRunning
 	task.UpdatedAt = time.Now()
+
+	if len(task.Conversation) > 0 && r.config.CompactionThresholdTokens > 0 {
+		compacted, err := r.compactConversation(ctx, task)
+		if err != nil {
+			slog.Warn("conversation compaction failed", "error", err)
+		} else {
+			task.Conversation = compacted
+		}
+	}
 
 	metrics.RecordTaskStart(task.RoomID)
 	defer func() {
@@ -152,12 +171,12 @@ func (r *Runtime) Run(ctx context.Context, task *Task) (*Result, error) {
 	}
 
 	result := &Result{
-		TaskID:     task.ID,
-		Response:   "completed",
-		ToolCalls:  len(task.Steps),
-		TokensUsed: TokenUsage{},
-		Duration:   time.Since(task.CreatedAt),
-		Steps:      len(task.Steps),
+		TaskID:      task.ID,
+		Response:    "completed",
+		ToolCalls:   len(task.Steps),
+		TokensUsed:  TokenUsage{},
+		Duration:    time.Since(task.CreatedAt),
+		Steps:       len(task.Steps),
 		CompletedAt: time.Now(),
 	}
 
@@ -168,14 +187,40 @@ func (r *Runtime) Run(ctx context.Context, task *Task) (*Result, error) {
 }
 
 func (r *Runtime) executeWithoutTools(task *Task) (*Result, error) {
-    return &Result{
-        TaskID:       task.ID,
-        Response:    "no tools available for this request",
-        ToolCalls:    0,
-        Duration:    time.Since(task.CreatedAt),
-        Steps:        len(task.Steps),
-        CompletedAt:  time.Now(),
-    }, nil
+	return &Result{
+		TaskID:      task.ID,
+		Response:    "no tools available for this request",
+		ToolCalls:   0,
+		Duration:    time.Since(task.CreatedAt),
+		Steps:       len(task.Steps),
+		CompletedAt: time.Now(),
+	}, nil
+}
+
+func (r *Runtime) compactConversation(ctx context.Context, task *Task) ([]Message, error) {
+	aiMsgs := taskToAIMessages(task)
+	compacted, err := ai.CompactHistory(ctx, r.aiClient, aiMsgs, r.config.CompactionThresholdTokens)
+	if err != nil {
+		return nil, err
+	}
+	return aiMessagesToTask(compacted), nil
+}
+
+func taskToAIMessages(task *Task) []ai.Message {
+	msgs := make([]ai.Message, len(task.Conversation))
+	for i, m := range task.Conversation {
+		content, _ := m.Content.(string)
+		msgs[i] = ai.Message{Role: m.Role, Content: content}
+	}
+	return msgs
+}
+
+func aiMessagesToTask(msgs []ai.Message) []Message {
+	result := make([]Message, len(msgs))
+	for i, m := range msgs {
+		result[i] = Message{Role: m.Role, Content: m.Content}
+	}
+	return result
 }
 
 func (r *Runtime) generatePredictions(routeResult *router.RouteResult, step Step) []executor.ToolCall {
