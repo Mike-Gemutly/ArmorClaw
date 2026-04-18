@@ -161,3 +161,12 @@ ALTER TABLE scheduled_tasks ADD COLUMN one_shot INTEGER DEFAULT 0;
 
 -- Add trigger column to scheduled_tasks for event-driven dispatch
 ALTER TABLE scheduled_tasks ADD COLUMN trigger TEXT DEFAULT '';
+
+-- =============================================================================
+-- Team Assignment Migration (v3)
+-- =============================================================================
+
+-- WorkflowStep JSON schema (stored in task_templates.steps) now includes:
+--   team_id TEXT           -- optional, assigns step to a team
+--   assigned_member_id TEXT -- optional, assigns step to a team member (requires team_id)
+-- No ALTER TABLE needed; steps are serialized as JSON in the existing steps column.

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 
 	"github.com/armorclaw/bridge/internal/adapter"
@@ -110,6 +111,12 @@ func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixE
 	if rolodexStore != nil && studioService != nil {
 		dependencyValidator := secretary.NewDependencyValidator()
 
+		bridgeLocalRegistry := secretary.NewBridgeLocalRegistry()
+		bridgeLocalRegistry.Register("echo", func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
+			return config, nil
+		})
+		log.Printf("BridgeLocal registry initialized with %d handler(s)", len(bridgeLocalRegistry.List()))
+
 		var stepExecutor *secretary.StepExecutor
 		if fac := studioService.GetFactory(); fac != nil {
 			stepExecutor = secretary.NewStepExecutor(secretary.StepExecutorConfig{
@@ -117,6 +124,7 @@ func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixE
 				Validator:      dependencyValidator,
 				ApprovalEngine: nil,
 				EventBus:       matrixBus,
+				BridgeLocal:    bridgeLocalRegistry,
 			})
 		}
 

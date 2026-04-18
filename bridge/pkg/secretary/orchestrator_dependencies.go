@@ -11,11 +11,12 @@ import (
 //=============================================================================
 
 var (
-	ErrCircularDependency   = errors.New("circular dependency detected")
-	ErrMissingDependency    = errors.New("missing dependency")
-	ErrInvalidStepReference = errors.New("invalid step reference")
-	ErrEmptyStepID          = errors.New("step ID cannot be empty")
-	ErrDuplicateStepID      = errors.New("duplicate step ID")
+	ErrCircularDependency       = errors.New("circular dependency detected")
+	ErrMissingDependency        = errors.New("missing dependency")
+	ErrInvalidStepReference     = errors.New("invalid step reference")
+	ErrEmptyStepID              = errors.New("step ID cannot be empty")
+	ErrDuplicateStepID          = errors.New("duplicate step ID")
+	ErrMemberWithoutTeam        = errors.New("assigned_member_id requires team_id")
 )
 
 type DependencyError struct {
@@ -130,6 +131,14 @@ func (v *DependencyValidator) validateStepIDs(steps []WorkflowStep, result *Vali
 		}
 
 		stepIDs[step.StepID] = true
+
+		if step.AssignedMemberID != "" && step.TeamID == "" {
+			result.Valid = false
+			result.Errors = append(result.Errors, &DependencyError{
+				StepID: step.StepID,
+				Err:    ErrMemberWithoutTeam,
+			})
+		}
 	}
 
 	return stepIDs

@@ -145,6 +145,7 @@ type StepExecutorConfig struct {
 	ApprovalManager  *PendingApprovalManager
 	EventBus         *events.MatrixEventBus
 	Broker           interfaces.CapabilityBroker // inserted between step start and agent dispatch; nil = all steps execute (backward compatible)
+	BridgeLocal      *BridgeLocalRegistry        // if non-nil, bridge_local steps dispatch here instead of container spawn
 	DefaultTimeout   time.Duration
 	StepRetryCount   int
 	StepRetryDelay   time.Duration
@@ -198,6 +199,7 @@ type StepExecutor struct {
 	approvalManager  *PendingApprovalManager
 	eventBus         *events.MatrixEventBus
 	broker           interfaces.CapabilityBroker
+	bridgeLocal      *BridgeLocalRegistry
 	defaultTimeout   time.Duration
 	retryCount       int
 	retryDelay       time.Duration
@@ -245,6 +247,7 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		approvalManager:   cfg.ApprovalManager,
 		eventBus:          cfg.EventBus,
 		broker:            cfg.Broker,
+		bridgeLocal:       cfg.BridgeLocal,
 		defaultTimeout:    cfg.DefaultTimeout,
 		retryCount:        cfg.StepRetryCount,
 		retryDelay:        cfg.StepRetryDelay,
@@ -726,6 +729,24 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 				Err:         fmt.Errorf("%s: %s", step.StepID, reason),
 				Recoverable: false,
 			}
+		}
+	}
+
+	if e.bridgeLocal != nil {
+		stepCfg, err := ParseStepConfig(step.Config)
+		if err != nil {
+			return &StepResult{
+				StepID:      step.StepID,
+				Err:         fmt.Errorf("parse step config: %w", err),
+				Recoverable: false,
+			}
+		}
+		if stepCfg.ExecutionMode == ExecutionModeBridgeLocal {
+			result := ExecuteBridgeLocal(ctx, e.bridgeLocal, step.Config)
+			if result.StepID == "" {
+				result.StepID = step.StepID
+			}
+			return result
 		}
 	}
 

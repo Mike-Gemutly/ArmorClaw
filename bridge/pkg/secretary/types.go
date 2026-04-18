@@ -93,6 +93,13 @@ type WorkflowStep struct {
 
 	// AgentIDs are the agents that can execute this step
 	AgentIDs []string `json:"agent_ids,omitempty"`
+
+	// TeamID optionally assigns this step to a specific team
+	TeamID string `json:"team_id,omitempty"`
+
+	// AssignedMemberID optionally assigns this step to a specific team member.
+	// If set, TeamID must also be set.
+	AssignedMemberID string `json:"assigned_member_id,omitempty"`
 }
 
 // StepType defines the type of workflow step
