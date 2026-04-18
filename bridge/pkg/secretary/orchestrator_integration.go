@@ -38,6 +38,7 @@ var (
 	ErrAgentTimeout          = errors.New("agent execution timeout")
 	ErrWorkflowNotRunning    = errors.New("workflow not running")
 	ErrInvalidExecutionOrder = errors.New("invalid execution order")
+	ErrAllAgentsFailed       = errors.New("all agents failed for step")
 )
 
 type StepExecutionError struct {
@@ -76,6 +77,7 @@ type StepExecutorConfig struct {
 	StepRetryDelay time.Duration
 	StateDirBase   string
 	SkillFinder    SkillFinder
+	FailoverPolicy FailoverPolicy
 
 	// ParallelConfig configures concurrent step execution.
 	// If zero, parallel execution uses DefaultParallelConfig().
@@ -92,6 +94,40 @@ type StepExecutorConfig struct {
 	OnSkillOutcome func(skillID string, success bool) error
 }
 
+type FailoverAttempt struct {
+	AgentID string
+	Err     error
+}
+
+type FailoverAggregatedError struct {
+	StepID    string
+	Attempts  []FailoverAttempt
+	LastAgent string
+}
+
+func (e *FailoverAggregatedError) Error() string {
+	var parts []string
+	for _, a := range e.Attempts {
+		parts = append(parts, fmt.Sprintf("agent %s: %v", a.AgentID, a.Err))
+	}
+	return fmt.Sprintf("%s: step %s [%s]", ErrAllAgentsFailed, e.StepID, joinStrings(parts, "; "))
+}
+
+func (e *FailoverAggregatedError) Unwrap() error {
+	return ErrAllAgentsFailed
+}
+
+func joinStrings(ss []string, sep string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	result := ss[0]
+	for i := 1; i < len(ss); i++ {
+		result += sep + ss[i]
+	}
+	return result
+}
+
 type StepExecutor struct {
 	factory        *studio.AgentFactory
 	validator      *DependencyValidator
@@ -102,6 +138,7 @@ type StepExecutor struct {
 	retryDelay     time.Duration
 	stateDirBase   string
 	skillFinder    SkillFinder
+	failoverPolicy FailoverPolicy
 	parallelExec   *ParallelExecutor
 
 	onSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
@@ -132,6 +169,9 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 	if cfg.StateDirBase == "" {
 		cfg.StateDirBase = "/var/lib/armorclaw/agent-state"
 	}
+	if cfg.FailoverPolicy == "" {
+		cfg.FailoverPolicy = FailoverRetry
+	}
 
 	return &StepExecutor{
 		factory:           cfg.Factory,
@@ -143,6 +183,7 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		retryDelay:        cfg.StepRetryDelay,
 		stateDirBase:      cfg.StateDirBase,
 		skillFinder:       cfg.SkillFinder,
+		failoverPolicy:    cfg.FailoverPolicy,
 		onSkillExtraction: cfg.OnSkillExtraction,
 		onSkillOutcome:    cfg.OnSkillOutcome,
 		runningSteps:      make(map[string]*runningStep),
@@ -552,8 +593,55 @@ func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step
 		}
 	}
 
-	agentID := step.AgentIDs[0]
+	if e.failoverPolicy == FailoverImmediateFail || len(step.AgentIDs) == 1 {
+		return e.executeStepWithAgent(ctx, workflow, step, step.AgentIDs[0])
+	}
 
+	var attempts []FailoverAttempt
+	for i, agentID := range step.AgentIDs {
+		select {
+		case <-ctx.Done():
+			return &StepResult{
+				StepID:      step.StepID,
+				Err:         ctx.Err(),
+				Recoverable: false,
+			}
+		default:
+		}
+
+		result := e.executeStepWithAgent(ctx, workflow, step, agentID)
+
+		if result.Err == nil {
+			if i > 0 {
+				log.Printf("failover: step %s succeeded on fallback agent %s after %d failed attempt(s)",
+					step.StepID, agentID, i)
+			}
+			return result
+		}
+
+		attempts = append(attempts, FailoverAttempt{
+			AgentID: agentID,
+			Err:     result.Err,
+		})
+
+		log.Printf("failover: step %s agent %s failed: %v (attempt %d/%d)",
+			step.StepID, agentID, result.Err, i+1, len(step.AgentIDs))
+	}
+
+	last := attempts[len(attempts)-1]
+	return &StepResult{
+		StepID:  step.StepID,
+		AgentID: last.AgentID,
+		Err: &FailoverAggregatedError{
+			StepID:    step.StepID,
+			Attempts:  attempts,
+			LastAgent: last.AgentID,
+		},
+		Recoverable: false,
+	}
+}
+
+func (e *StepExecutor) executeStepWithAgent(ctx context.Context, workflow *Workflow, step WorkflowStep, agentID string) *StepResult {
 	taskDesc := fmt.Sprintf("Workflow %s - Step: %s", workflow.ID, step.Name)
 
 	spawnReq := &studio.SpawnRequest{

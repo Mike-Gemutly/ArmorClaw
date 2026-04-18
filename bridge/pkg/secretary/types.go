@@ -423,6 +423,24 @@ type NotificationDispatcher interface {
 }
 
 //=============================================================================
+// Step Failover Types
+//=============================================================================
+
+// FailoverPolicy controls how step failover behaves when an agent fails.
+type FailoverPolicy string
+
+const (
+	// FailoverRetry is the default policy: on primary agent failure, attempt
+	// fallback agents in order (AgentIDs[1], AgentIDs[2], ...) until one
+	// succeeds or all are exhausted.
+	FailoverRetry FailoverPolicy = "retry_on_failure"
+
+	// FailoverImmediateFail skips failover entirely — the first agent failure
+	// is returned immediately without trying fallback agents.
+	FailoverImmediateFail FailoverPolicy = "immediate_fail"
+)
+
+//=============================================================================
 // Helper Functions
 //=============================================================================
 
