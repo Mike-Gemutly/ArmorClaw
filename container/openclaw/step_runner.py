@@ -63,7 +63,10 @@ def _extract_blockers_from_events(state_dir):
                 except json.JSONDecodeError:
                     continue
                 if event.get("type") == "blocker":
-                    blockers.append(event.get("detail", {}))
+                    detail = event.get("detail", {})
+                    if "message" not in detail:
+                        detail["message"] = event.get("name", "")
+                    blockers.append(detail)
     except OSError:
         pass
     return blockers

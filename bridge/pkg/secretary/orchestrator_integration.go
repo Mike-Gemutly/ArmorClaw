@@ -416,6 +416,8 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 						emitter.EmitStepProgress(roomID, evt)
 					case "error":
 						emitter.EmitStepError(roomID, evt)
+					case "blocker":
+						emitter.EmitBlockerWarning(roomID, evt, "", "")
 					}
 				}
 			}
@@ -596,8 +598,15 @@ func (e *StepExecutor) executeStepWithBlockerHandling(
 		if hasBlockers {
 			blocker := completionResult.ExtendedResult.Blockers[0]
 
+			blockerMeta := map[string]interface{}{
+				"blocker_type": blocker.BlockerType,
+				"message":      blocker.Message,
+				"suggestion":   blocker.Suggestion,
+				"field":        blocker.Field,
+			}
+
 			// Block the workflow
-			if blockErr := orchestrator.BlockWorkflow(workflow.ID, "blocker", blocker.Message); blockErr != nil {
+			if blockErr := orchestrator.BlockWorkflow(workflow.ID, "blocker", blocker.Message, blockerMeta); blockErr != nil {
 				return nil, fmt.Errorf("failed to block workflow: %w", blockErr)
 			}
 

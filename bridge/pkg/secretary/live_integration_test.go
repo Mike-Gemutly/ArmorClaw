@@ -510,7 +510,7 @@ func (e *liveTestEventEmitter) EmitCancelled(workflow *Workflow, reason string) 
 	return uint64(len(e.events))
 }
 
-func (e *liveTestEventEmitter) EmitBlocked(workflow *Workflow, reason, message string) uint64 {
+func (e *liveTestEventEmitter) EmitBlocked(workflow *Workflow, reason, message string, blockerMeta ...map[string]interface{}) uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.events = append(e.events, capturedLiveEvent{

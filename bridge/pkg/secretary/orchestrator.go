@@ -256,7 +256,7 @@ func (o *WorkflowOrchestratorImpl) CancelWorkflow(workflowID string, reason stri
 
 // BlockWorkflow transitions a running workflow to blocked status.
 // This is called when an agent hits a blocker during execution.
-func (o *WorkflowOrchestratorImpl) BlockWorkflow(workflowID, reason, message string) error {
+func (o *WorkflowOrchestratorImpl) BlockWorkflow(workflowID, reason, message string, blockerMeta ...map[string]interface{}) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -279,7 +279,11 @@ func (o *WorkflowOrchestratorImpl) BlockWorkflow(workflowID, reason, message str
 
 	_ = o.store.UpdateWorkflow(o.ctx, workflow)
 
-	o.eventEmitter.EmitBlocked(workflow, reason, message)
+	var meta map[string]interface{}
+	if len(blockerMeta) > 0 {
+		meta = blockerMeta[0]
+	}
+	o.eventEmitter.EmitBlocked(workflow, reason, message, meta)
 
 	return nil
 }

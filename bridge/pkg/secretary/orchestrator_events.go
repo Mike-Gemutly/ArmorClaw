@@ -52,7 +52,7 @@ type WorkflowEvent struct {
 type EventEmitter interface {
 	EmitStarted(workflow *Workflow) uint64
 	EmitProgress(workflow *Workflow, stepID, stepName string, progress float64) uint64
-	EmitBlocked(workflow *Workflow, reason, message string) uint64
+	EmitBlocked(workflow *Workflow, reason, message string, blockerMeta ...map[string]interface{}) uint64
 	EmitCompleted(workflow *Workflow, result string) uint64
 	EmitFailed(workflow *Workflow, stepID string, err error, recoverable bool) uint64
 	EmitCancelled(workflow *Workflow, reason string) uint64
@@ -165,7 +165,17 @@ func (e *WorkflowEventEmitter) EmitCancelled(workflow *Workflow, reason string) 
 	return e.publish(workflow.CreatedBy, WorkflowEventCancelled, event)
 }
 
-func (e *WorkflowEventEmitter) EmitBlocked(workflow *Workflow, reason, message string) uint64 {
+func (e *WorkflowEventEmitter) EmitBlocked(workflow *Workflow, reason, message string, blockerMeta ...map[string]interface{}) uint64 {
+	meta := map[string]interface{}{
+		"name":        workflow.Name,
+		"currentStep": workflow.CurrentStep,
+	}
+	if len(blockerMeta) > 0 {
+		for k, v := range blockerMeta[0] {
+			meta[k] = v
+		}
+	}
+
 	event := WorkflowEvent{
 		WorkflowID: workflow.ID,
 		TemplateID: workflow.TemplateID,
@@ -173,10 +183,7 @@ func (e *WorkflowEventEmitter) EmitBlocked(workflow *Workflow, reason, message s
 		Reason:     reason,
 		Result:     message,
 		Timestamp:  time.Now().UnixMilli(),
-		Metadata: map[string]interface{}{
-			"name":        workflow.Name,
-			"currentStep": workflow.CurrentStep,
-		},
+		Metadata:   meta,
 	}
 
 	return e.publish(workflow.CreatedBy, WorkflowEventBlocked, event)
@@ -356,13 +363,26 @@ func (e *WorkflowEventEmitter) EmitStepError(roomID string, event StepEvent) uin
 }
 
 // EmitBlockerWarning publishes a WorkflowEventBlockerWarning event derived from a StepEvent.
-func (e *WorkflowEventEmitter) EmitBlockerWarning(roomID string, event StepEvent) uint64 {
+func (e *WorkflowEventEmitter) EmitBlockerWarning(roomID string, event StepEvent, workflowID, stepID string) uint64 {
+	message := event.Name
+	if msg, ok := event.Detail["message"]; ok && msg != nil {
+		if s, ok := msg.(string); ok && s != "" {
+			message = s
+		}
+	}
+
 	wfEvent := WorkflowEvent{
-		Status:    StatusBlocked,
-		Timestamp: event.TsMs,
+		WorkflowID: workflowID,
+		StepID:     stepID,
+		Status:     StatusBlocked,
+		Timestamp:  event.TsMs,
 		Metadata: map[string]interface{}{
 			"blocker_type": event.Detail["blocker_type"],
-			"message":      event.Detail["message"],
+			"message":      message,
+			"suggestion":   event.Detail["suggestion"],
+			"field":        event.Detail["field"],
+			"workflow_id":  workflowID,
+			"step_id":      stepID,
 			"event_seq":    event.Seq,
 			"event_type":   event.Type,
 		},
@@ -391,9 +411,9 @@ func EmitStepErrorEvent(bus *events.MatrixEventBus, roomID string, event StepEve
 
 // EmitBlockerWarningEvent is a standalone helper that creates an emitter and
 // publishes a blocker warning event in one call.
-func EmitBlockerWarningEvent(bus *events.MatrixEventBus, roomID string, event StepEvent) uint64 {
+func EmitBlockerWarningEvent(bus *events.MatrixEventBus, roomID string, event StepEvent, workflowID, stepID string) uint64 {
 	emitter := NewWorkflowEventEmitter(bus)
-	return emitter.EmitBlockerWarning(roomID, event)
+	return emitter.EmitBlockerWarning(roomID, event, workflowID, stepID)
 }
 
 //=============================================================================
@@ -465,6 +485,8 @@ func (f *MatrixEventForwarder) handleEvent(ctx context.Context, ev events.Matrix
 		f.forwardStepProgress(ctx, ev)
 	case WorkflowEventStepError:
 		f.forwardStepError(ctx, ev)
+	case WorkflowEventBlockerWarning:
+		f.forwardBlockerWarning(ctx, ev)
 	}
 }
 
@@ -495,5 +517,20 @@ func (f *MatrixEventForwarder) forwardStepError(ctx context.Context, ev events.M
 	}
 
 	msg := fmt.Sprintf("❌ Error: %s", wf.Error)
+	_ = f.sendFunc(ctx, ev.RoomID, msg)
+}
+
+// forwardBlockerWarning formats and sends a blocker warning notice.
+func (f *MatrixEventForwarder) forwardBlockerWarning(ctx context.Context, ev events.MatrixEvent) {
+	if ev.RoomID == "" || f.sendFunc == nil {
+		return
+	}
+
+	wf, ok := ev.Content.(WorkflowEvent)
+	if !ok {
+		return
+	}
+
+	msg := fmt.Sprintf("⚠️ Blocker: %s", wf.Metadata["message"])
 	_ = f.sendFunc(ctx, ev.RoomID, msg)
 }

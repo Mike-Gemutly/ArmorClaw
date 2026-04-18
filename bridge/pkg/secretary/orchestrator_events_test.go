@@ -77,15 +77,16 @@ func TestEmitBlockerWarningPublished(t *testing.T) {
 	evt := StepEvent{
 		Seq:  3,
 		Type: "blocker",
-		Name: "auth_required",
+		Name: "Login required to continue",
 		TsMs: 3000,
 		Detail: map[string]interface{}{
 			"blocker_type": "auth",
-			"message":      "Login required to continue",
+			"suggestion":   "Provide credentials",
+			"field":        "password",
 		},
 	}
 
-	emitter.EmitBlockerWarning("!room:test", evt)
+	emitter.EmitBlockerWarning("!room:test", evt, "wf-42", "step-1")
 
 	published := <-sub
 	assert.Equal(t, WorkflowEventBlockerWarning, published.Type)
@@ -95,6 +96,10 @@ func TestEmitBlockerWarningPublished(t *testing.T) {
 	assert.Equal(t, StatusBlocked, content.Status)
 	assert.Equal(t, "auth", content.Metadata["blocker_type"])
 	assert.Equal(t, "Login required to continue", content.Metadata["message"])
+	assert.Equal(t, "Provide credentials", content.Metadata["suggestion"])
+	assert.Equal(t, "password", content.Metadata["field"])
+	assert.Equal(t, "wf-42", content.Metadata["workflow_id"])
+	assert.Equal(t, "step-1", content.Metadata["step_id"])
 	assert.Equal(t, 3, content.Metadata["event_seq"])
 }
 
@@ -176,6 +181,47 @@ func TestMatrixForwardStepError(t *testing.T) {
 
 	assert.Equal(t, "!room:test", sentMessages[0].roomID)
 	assert.Equal(t, "❌ Error: connection refused", sentMessages[0].message)
+}
+
+func TestMatrixForwardBlockerWarning(t *testing.T) {
+	bus := events.NewMatrixEventBus(64)
+
+	var sentMessages []struct {
+		roomID  string
+		message string
+	}
+	sendFunc := func(_ context.Context, roomID, message string) error {
+		sentMessages = append(sentMessages, struct {
+			roomID  string
+			message string
+		}{roomID, message})
+		return nil
+	}
+
+	forwarder := NewMatrixEventForwarder(bus, sendFunc)
+	forwarder.Start()
+	defer forwarder.Stop()
+
+	bus.Publish(events.MatrixEvent{
+		ID:     "test-blocker-1",
+		RoomID: "!room:test",
+		Sender: "orchestrator",
+		Type:   WorkflowEventBlockerWarning,
+		Content: WorkflowEvent{
+			Status: StatusBlocked,
+			Metadata: map[string]interface{}{
+				"blocker_type": "auth",
+				"message":      "Login required",
+			},
+		},
+	})
+
+	assert.Eventually(t, func() bool {
+		return len(sentMessages) == 1
+	}, time.Second, 10*time.Millisecond, "expected 1 forwarded blocker message")
+
+	assert.Equal(t, "!room:test", sentMessages[0].roomID)
+	assert.Equal(t, "⚠️ Blocker: Login required", sentMessages[0].message)
 }
 
 func TestMatrixForwardIgnoresOtherEvents(t *testing.T) {

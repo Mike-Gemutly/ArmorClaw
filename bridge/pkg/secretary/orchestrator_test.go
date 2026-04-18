@@ -287,7 +287,7 @@ func (e *mockEventEmitter) EmitCancelled(workflow *Workflow, reason string) uint
 	return uint64(len(e.events))
 }
 
-func (e *mockEventEmitter) EmitBlocked(workflow *Workflow, reason, message string) uint64 {
+func (e *mockEventEmitter) EmitBlocked(workflow *Workflow, reason, message string, blockerMeta ...map[string]interface{}) uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.events = append(e.events, capturedEvent{
