@@ -7,11 +7,12 @@
 # ============================================================================
 FROM golang:1.25-bookworm AS bridge-builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     libsqlcipher-dev \
-    libyara-dev \
+    libyara-dev/bookworm-backports \
     ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -83,7 +84,8 @@ LABEL org.opencontainers.image.title="ArmorClaw Quick Start" \
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     bash \
     curl \
     jq \
@@ -92,7 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     python3-pip \
     libsqlcipher0 \
-    libyara9 \
+    libyara10/bookworm-backports \
     ca-certificates \
     procps \
     openssl \

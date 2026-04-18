@@ -6,11 +6,12 @@
 FROM golang:1.24-bookworm AS builder
 
 # Install build dependencies for CGO and SQLCipher
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc-dev \
     libsqlcipher-dev \
-    libyara-dev \
+    libyara-dev/bookworm-backports \
     pkg-config \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -34,10 +35,11 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlcipher0 \
-    libyara4 \
+    libyara10/bookworm-backports \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
