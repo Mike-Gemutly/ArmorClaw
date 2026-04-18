@@ -341,10 +341,15 @@ type PolicyEnforcer struct {
 
 // NewPolicyEnforcer creates a new policy enforcer
 func NewPolicyEnforcer() *PolicyEnforcer {
-	return &PolicyEnforcer{
+	pe := &PolicyEnforcer{
 		allowedSkills: make(map[string]bool),
 		blockedSkills: make(map[string]bool),
 	}
+	// Auto-allow skills that have policy entries
+	for toolName := range Policy {
+		pe.allowedSkills[toolName] = true
+	}
+	return pe
 }
 
 // IsAllowed checks if a skill is allowed by policy
@@ -359,8 +364,8 @@ func (pe *PolicyEnforcer) IsAllowed(skillName string) bool {
 		return true
 	}
 
-	// For Phase 1, allow all non-blocked skills
-	return !pe.blockedSkills[skillName]
+	// Deny by default - only explicitly allowed skills pass
+	return false
 }
 
 // AllowSkill adds a skill to the allowed list
