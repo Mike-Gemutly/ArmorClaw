@@ -11,15 +11,12 @@ import (
 	"github.com/armorclaw/bridge/pkg/capability"
 )
 
+// DocQueryInput wraps a DocumentRef with a query string for the doc_query handler.
+// Validation delegates to capability.DocumentRef.Validate() plus query check.
 type DocQueryInput struct {
 	CollectionID string   `json:"collection_id"`
 	ChunkIDs     []string `json:"chunk_ids,omitempty"`
 	Query        string   `json:"query"`
-}
-
-type DocQueryOutput struct {
-	Chunks  []string `json:"chunks"`
-	Summary string   `json:"summary,omitempty"`
 }
 
 // NewDocQueryHandler returns a bridge-local handler function matching
@@ -37,11 +34,8 @@ func NewDocQueryHandler(client *Client, logger *slog.Logger) func(ctx context.Co
 			return nil, fmt.Errorf("doc_query: parse input: %w", err)
 		}
 
-		if input.CollectionID == "" {
-			return nil, fmt.Errorf("doc_query: collection_id is required")
-		}
-		if input.Query == "" {
-			return nil, fmt.Errorf("doc_query: query text is required")
+		if err := ValidateDocQueryInput(&input); err != nil {
+			return nil, err
 		}
 
 		opParams := map[string]string{
@@ -71,33 +65,37 @@ func NewDocQueryHandler(client *Client, logger *slog.Logger) func(ctx context.Co
 			return nil, fmt.Errorf("doc_query: sidecar query failed: %w", err)
 		}
 
-		output := DocQueryOutput{
+		result := &capability.ExtractedChunkSet{
 			Chunks: []string{},
 		}
 
 		if len(resp.GetOutputContent()) > 0 {
-			if unmarshalErr := json.Unmarshal(resp.GetOutputContent(), &output); unmarshalErr != nil {
-				output.Chunks = []string{string(resp.GetOutputContent())}
+			if unmarshalErr := json.Unmarshal(resp.GetOutputContent(), result); unmarshalErr != nil {
+				result.Chunks = []string{string(resp.GetOutputContent())}
 			}
 		}
 
-		if output.Summary == "" {
+		if result.Summary == "" {
 			if s, ok := resp.GetMetadata()["summary"]; ok {
-				output.Summary = s
+				result.Summary = s
 			}
 		}
 
-		result, err := json.Marshal(output)
+		if err := result.Validate(); err != nil {
+			return nil, fmt.Errorf("doc_query: invalid result: %w", err)
+		}
+
+		raw, err := json.Marshal(result)
 		if err != nil {
 			return nil, fmt.Errorf("doc_query: marshal result: %w", err)
 		}
 
 		logger.Info("doc_query: completed",
 			"collection_id", input.CollectionID,
-			"chunks_returned", len(output.Chunks),
+			"chunks_returned", len(result.Chunks),
 		)
 
-		return result, nil
+		return raw, nil
 	}
 }
 
