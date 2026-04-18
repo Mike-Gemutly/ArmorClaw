@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/governor"
 	"github.com/armorclaw/bridge/pkg/interfaces"
 )
 
@@ -48,6 +49,9 @@ func NewSkillExecutor() *SkillExecutor {
 }
 
 func NewSkillExecutorWithConfig(cfg SkillExecutorConfig) *SkillExecutor {
+	if cfg.SkillGate == nil {
+		cfg.SkillGate = governor.NewGovernor(nil, nil)
+	}
 	return &SkillExecutor{
 		registry:       NewRegistry(),
 		router:         NewRouter(),
@@ -77,17 +81,15 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 		}, fmt.Errorf("skill not found: %s", skillName)
 	}
 
-	if se.skillGate != nil {
-		call := &interfaces.ToolCall{ToolName: skillName, Arguments: params}
-		_, err := se.skillGate.InterceptToolCall(ctx, call)
-		if err != nil {
-			return &SkillResult{
-				Success:   false,
-				Error:     fmt.Sprintf("PII interception failed: %s", err.Error()),
-				Type:      "error",
-				Timestamp: startTime,
-			}, err
-		}
+	call := &interfaces.ToolCall{ToolName: skillName, Arguments: params}
+	_, err := se.skillGate.InterceptToolCall(ctx, call)
+	if err != nil {
+		return &SkillResult{
+			Success:   false,
+			Error:     fmt.Sprintf("PII interception failed: %s", err.Error()),
+			Type:      "error",
+			Timestamp: startTime,
+		}, err
 	}
 
 	if !se.policyEnforcer.IsAllowed(skillName) {
