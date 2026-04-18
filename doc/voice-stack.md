@@ -6,7 +6,7 @@
 
 The voice stack lets ArmorClaw agents make and receive real-time phone calls through the mobile app. It handles everything from audio encoding to NAT traversal entirely inside the Bridge. Audio never touches the agent container directly; the Bridge encodes, decodes, and forwards it between the WebRTC peer and the agent's stdin/stdout or gRPC stream.
 
-The stack is built on four packages: `audio` for PCM and Opus processing, `voice` for call budget enforcement, `webrtc` for peer connection management and session lifecycle, and `turn` for NAT traversal with ephemeral credentials.
+The stack is built on four packages: `audio` for PCM and Opus processing, `voice` for call budget enforcement and speech services, `webrtc` for peer connection management and session lifecycle, and `turn` for NAT traversal with ephemeral credentials.
 
 ## Architecture
 
@@ -59,11 +59,14 @@ Default audio config: 48 kHz sample rate, mono, 16-bit depth, 960 samples per fr
 
 ### `bridge/pkg/voice/`
 
-Call budget tracking. Prevents runaway token costs and enforces time limits.
+Call budget tracking and speech service wrappers. Prevents runaway token costs, enforces time limits, and provides abstraction over AI provider speech APIs.
 
 | File | Purpose |
 |------|---------|
 | `budget.go` | `BudgetTracker` manages per-session limits, `VoiceSessionTracker` tracks token usage (input + output) and duration, `TokenUsage` counters, `Config` with default/duration limits and warning thresholds, background `EnforceLimits` loop (30 s interval), security logging for budget events |
+| `stt_service.go` | `STTService` wraps `Transcriber` interface for speech-to-text, `NewSTTService(client Transcriber)` creates service, `Transcribe(ctx, audioData []byte)` returns `*TranscriptionResult`, uses `slog.Logger` for structured logging |
+| `tts_service.go` | `TTSService` wraps `Synthesizer` interface for text-to-speech synthesis, `NewTTSService(client Synthesizer)` creates service, `Synthesize(ctx, text string)` returns `*SynthesisResult` |
+| `vad_service.go` | `VADService` wraps `SpeechDetector` interface for voice activity detection, `NewVADService(client SpeechDetector)` creates service, `DetectSpeech(ctx, audioData []byte)` returns `*VADResult` |
 
 Key defaults:
 - Token limit: 100,000 per call
@@ -95,6 +98,41 @@ NAT traversal with ephemeral per-session TURN credentials. No static passwords.
 | `turn.go` | `Manager` generates time-limited TURN credentials using HMAC-SHA1, `TURNCredentials` with `<expiry>:<session_id>` username format, `ICEGatherer` for host candidate gathering (reflexive/relay gathering return empty — delegated to WebRTC stack), `ICECandidate` parsing and serialization, `STUNMessage` builder/parser for STUN binding requests, `CreateICEServers` helper for Pion integration |
 
 Credential format: username is `<unix_expiry>:<session_id>`, password is `base64(HMAC-SHA1(secret, username))`. Credentials are scoped to a single session and auto-expire. A cleanup goroutine runs every minute to purge stale entries.
+
+### Speech Services (`bridge/pkg/voice/`)
+
+Three service wrappers that provide abstraction over AI provider speech APIs.
+
+#### STTService (stt_service.go)
+- Wraps `Transcriber` interface for speech-to-text
+- `NewSTTService(client Transcriber)` creates service
+- `Transcribe(ctx, audioData []byte)` → `*TranscriptionResult, error`
+- Uses `slog.Logger` for structured logging
+- Return type from `bridge/pkg/interfaces`: `TranscriptionResult`
+
+#### TTSService (tts_service.go)
+- Wraps `Synthesizer` interface for text-to-speech synthesis
+- `NewTTSService(client Synthesizer)` creates service
+- `Synthesize(ctx, text string)` → `*SynthesisResult, error`
+- Return type from `bridge/pkg/interfaces`: `SynthesisResult`
+
+#### VADService (vad_service.go)
+- Wraps `SpeechDetector` interface for voice activity detection
+- `NewVADService(client SpeechDetector)` creates service
+- `DetectSpeech(ctx, audioData []byte)` → `*VADResult, error`
+- Return type from `bridge/pkg/interfaces`: `VADResult`
+
+#### Design Pattern
+All three services follow the same interface+wrapper pattern:
+1. Define a provider interface (`Transcriber`, `Synthesizer`, `SpeechDetector`)
+2. Service struct holds the provider client and a logger
+3. Constructor takes the provider, returns the service
+4. Methods delegate to provider with error passthrough
+
+This allows swapping AI providers (OpenAI Whisper, Google STT, etc.) without changing callers.
+
+#### Production Status
+All three service wrappers are implemented and tested. E2E test harness in `bridge/pkg/voice/e2e_test.go`.
 
 ## Configuration
 

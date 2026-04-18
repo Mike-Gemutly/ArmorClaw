@@ -106,6 +106,10 @@ Extracts text from common document formats. All extractors return structured res
 | HTML Diff | `html_diff.rs` | HTML-aware diff generation |
 | DOCX Diff | `docx_diff.rs` | Stub, redline document generation |
 
+### ShadowMap PII Redaction (XLSX)
+
+The XLSX extractor in `sidecar/src/document/xlsx.rs` integrates ShadowMap-based PII redaction during cell extraction. As cells are read from the Excel file via the calamine library, each cell value is checked against PII patterns (SSN, credit card numbers, phone numbers, email addresses). Matches are replaced with `[REDACTED:hash]` placeholders using SHA256 hash-based references, matching the Governor-Shield placeholder format. The redaction happens at the cell level before text assembly, ensuring PII never enters the extracted text output.
+
 Additional document modules:
 
 | Module | File | Purpose |

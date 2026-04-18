@@ -188,3 +188,16 @@ All client applications connect back to the ArmorClaw control plane, but through
 | ArmorTerminal | HTTP(S) + WebSocket | JSON-RPC 2.0 + Matrix | Device registration + certificate pinning |
 | OpenClaw UI | WebSocket | Gateway protocol (v3) | Ed25519 device identity + token |
 | ArmorChat | Matrix federation + Bridge HTTP RPC | Matrix protocol + JSON-RPC (resolve_blocker) | Matrix E2EE + biometric keystore |
+
+### SDtW Multi-Platform Adapters
+
+The SDtW (Slack, Discord, Teams, WhatsApp) adapters in `bridge/internal/sdtw/` provide a uniform adapter interface for external messaging platforms. Key implementations:
+
+- **WhatsApp** (`whatsapp.go`): Uses WhatsApp Business Cloud API, authenticates with access token + phone number ID, supports text/template/image/document/audio/video messages, includes token-bucket rate limiter
+- **Discord** (`discord.go`): Connects via bot token using Discord Gateway protocol, supports rich embeds, message references (threaded replies), guild-scoped operation, edit/delete capabilities
+- **Teams** (`teams.go`): Authenticates via Azure AD (client ID, client secret, tenant ID), processes messages via webhook, supports OAuth token refresh, includes HMAC-SHA256 webhook verification
+- **Slack** (`slack.go`): Webhook-based message delivery, handles URL verification challenge for event subscriptions
+
+All adapters implement the `SDTWAdapter` interface from `adapter.go` with lifecycle (Initialize, Start, Shutdown), core messaging (SendMessage, ReceiveEvent), reactions, mutation (EditMessage, DeleteMessage), and health check methods. Each declares a `CapabilitySet` for feature discovery. Messages carry HMAC-SHA256 signatures for integrity.
+
+Deployment Skills for AI CLI Tools are available in `.skills/` directory for deploying ArmorClaw via AI assistants (Claude Code, OpenCode, Cursor). Skills include Deploy, Status, Cloudflare, and Provision.

@@ -735,29 +735,42 @@ Browser automation is handled by the Jetski sidecar, a separate container with n
 
 ```
 TaskScheduler
-    │
-    ├── store (SQLCipher) ── templates, workflows, scheduled tasks, policies
-    ├── factory (studio.AgentFactory) ── container spawn/stop/status
-    ├── matrix (MatrixAdapter) ── warm dispatch (currently stub, falls back to cold)
-    │
-    ├── orchestrator (WorkflowOrchestratorImpl)
-    │       ├── store ── workflow CRUD
-    │       ├── factory ── container lifecycle
-    │       └── eventEmitter (WorkflowEventEmitter)
-    │               └── bus (MatrixEventBus) ── ring buffer + subscribers
-    │
-    └── integration (OrchestratorIntegration)
-            ├── orchestrator
-            ├── executor (StepExecutor)
-            │       ├── factory ── spawn containers
-            │       ├── validator (DependencyValidator) ── step order validation
-            │       ├── approvalEngine (ApprovalEngineImpl) ── PII policy eval
-            │       └── eventBus (MatrixEventBus) ── PII request/response
-            ├── store
-            ├── approvalEngine
-            └── notificationService (NotificationService)
-                    └── subscribers [MatrixNotificationAdapter, ...]
+     │
+     ├── store (SQLCipher) ── templates, workflows, scheduled tasks, policies
+     ├── factory (studio.AgentFactory) ── container spawn/stop/status
+     ├── matrix (MatrixAdapter) ── warm dispatch (currently stub, falls back to cold)
+     │
+     ├── orchestrator (WorkflowOrchestratorImpl)
+     │       ├── store ── workflow CRUD
+     │       ├── factory ── container lifecycle
+     │       └── eventEmitter (WorkflowEventEmitter)
+     │               └── bus (MatrixEventBus) ── ring buffer + subscribers
+     │
+     └── integration (OrchestratorIntegration)
+             ├── orchestrator
+             ├── executor (StepExecutor)
+             │       ├── factory ── spawn containers
+             │       ├── validator (DependencyValidator) ── step order validation
+             │       ├── approvalEngine (ApprovalEngineImpl) ── PII policy eval
+             │       └── eventBus (MatrixEventBus) ── PII request/response
+             ├── store
+             ├── approvalEngine
+             └── notificationService (NotificationService)
+                     └── subscribers [MatrixNotificationAdapter, ...]
 ```
+
+### Bridge-Local Registry
+
+The `BridgeLocalRegistry` (`bridge/pkg/secretary/bridge_local_registry.go`) enables certain workflow steps to execute natively in the Bridge process without spawning agent containers. This is used for:
+
+- **Email send steps**: `email_send` → `OutboundExecutor` — validates, resolves PII placeholders, sends via Gmail/Outlook/SMTP
+- **Email approval steps**: `email_approval` → `EmailApprovalManager` — blocks until user approves via ArmorChat
+
+When the `StepExecutor` encounters a step, it checks the registry first. If a native handler is found, the step runs in-process. Otherwise, the standard container spawn path is used. This provides:
+
+- **Performance**: No container overhead for native operations
+- **Security**: Sensitive operations (PII resolution, OAuth token access) remain in the Bridge
+- **Simplicity**: Email pipeline steps run as native Go code
 
 ### Shutdown behavior
 

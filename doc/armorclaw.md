@@ -31,6 +31,8 @@
 | Modify MCP Router / tool routing | `bridge/pkg/mcp/router.go` and `bridge/pkg/interfaces/skillgate.go` |
 | Change vault governance integration | `bridge/pkg/vault/proto/` and `rust-vault/src/governance/` |
 | Add tool sidecar isolation | `bridge/pkg/toolsidecar/toolsidecar.go` (implemented, v6-gated) |
+| Modify Governor-Shield PII interception | `bridge/pkg/governor/skillgate.go`, `bridge/pkg/governor/types.go`, and `bridge/pkg/pii/` |
+| Add or modify voice services (STT/TTS/VAD) | `bridge/pkg/voice/stt_service.go`, `bridge/pkg/voice/tts_service.go`, `bridge/pkg/voice/vad_service.go` |
 | Modify Python office sidecar | `sidecar-python/worker.py`, `sidecar-python/interceptor.py`, `bridge/pkg/sidecar/office_client.go` |
 | Add or manage scheduled tasks | `bridge/pkg/secretary/store.go` and `bridge/pkg/secretary/task_scheduler.go` |
 | Execute or modify workflow steps | `bridge/pkg/secretary/orchestrator_integration.go` |
@@ -51,26 +53,27 @@
 6. [Rust Vault Sidecar](#rust-vault-sidecar)
 7. [Phase 2: Secure Document Pipeline](#phase-2-secure-document-pipeline)
 8. [Sovereign Email Pipeline](#sovereign-email-pipeline)
-9. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
-10. [Security Architecture](#security-architecture)
-11. [Component Integration Patterns](#component-integration-patterns)
-12. [Agent Communication Model](#agent-communication-model)
-13. [Agent Studio](#agent-studio)
-14. [Browser Service](#browser-service)
-15. [Jetski Browser Sidecar](#jetski-browser-sidecar)
-16. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
-17. [Rust Office Sidecar](#rust-office-sidecar)
-18. [ArmorChat Android Client](#armorchat-android-client)
-19. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
-20. [RPC API Reference](#rpc-api-reference)
-21. [Event Types Reference](#event-types-reference)
-22. [Configuration Reference](#configuration-reference)
-23. [Deployment Modes](#deployment-modes)
-24. [Testing & Verification](#testing--verification)
-25. [Local Development Guide](#local-development-guide)
-26. [Document Index](#document-index)
-27. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
-28. [Review Documentation](#review-documentation)
+ 9. [Matrix Conduit Control Plane](#matrix-conduit-control-plane)
+ 10. [Security Architecture](#security-architecture)
+ 11. [Governor-Shield PII Interception](#governor-shield-pii-interception)
+ 12. [Component Integration Patterns](#component-integration-patterns)
+ 13. [Agent Communication Model](#agent-communication-model)
+ 14. [Agent Studio](#agent-studio)
+ 15. [Browser Service](#browser-service)
+ 16. [Jetski Browser Sidecar](#jetski-browser-sidecar)
+ 17. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
+ 18. [Rust Office Sidecar](#rust-office-sidecar)
+ 19. [ArmorChat Android Client](#armorchat-android-client)
+ 20. [OpenClaw Agent Runtime](#openclaw-agent-runtime)
+ 21. [RPC API Reference](#rpc-api-reference)
+ 22. [Event Types Reference](#event-types-reference)
+ 23. [Configuration Reference](#configuration-reference)
+ 24. [Deployment Modes](#deployment-modes)
+ 25. [Testing & Verification](#testing--verification)
+ 26. [Local Development Guide](#local-development-guide)
+ 27. [Document Index](#document-index)
+ 28. [Agent State Machine (Go Bridge)](#agent-state-machine-go-bridge)
+ 29. [Review Documentation](#review-documentation)
 
 ---
 
@@ -444,6 +447,159 @@ type Server struct {
 | `pkg/turn/` | TURN/STUN relay configuration |
 
 > See [doc/voice-stack.md](voice-stack.md) for full documentation.
+
+### Voice STT/TTS/VAD Services
+
+**Package**: `bridge/pkg/voice/`
+
+**Purpose**: Service wrappers for speech-to-text (STT), text-to-speech (TTS), and voice activity detection (VAD) with structured logging.
+
+#### STT Service (Speech-to-Text)
+
+**File**: `bridge/pkg/voice/stt_service.go`
+
+| Component | Description |
+|-----------|-------------|
+| **STTService** | Wrapper service around Transcriber interface |
+| **Transcriber** | Interface for speech-to-text conversion |
+
+**Interface**:
+```go
+type Transcriber interface {
+    Transcribe(ctx context.Context, audioData []byte) (*TranscriptionResult, error)
+}
+```
+
+**Service Methods**:
+- `NewSTTService(client Transcriber)` - Create new STT service with client
+- `Transcribe(ctx context.Context, audioData []byte)` - Convert audio to text
+
+**Return Type** (`bridge/pkg/interfaces/voice.go`):
+```go
+type TranscriptionResult struct {
+    Text       string
+    Confidence float64
+    Duration   time.Duration
+    WordCount  int
+    Timestamp  time.Time
+    Latency    time.Duration
+}
+```
+
+#### TTS Service (Text-to-Speech)
+
+**File**: `bridge/pkg/voice/tts_service.go`
+
+| Component | Description |
+|-----------|-------------|
+| **TTSService** | Wrapper service around Synthesizer interface |
+| **Synthesizer** | Interface for text-to-speech conversion |
+
+**Interface**:
+```go
+type Synthesizer interface {
+    Synthesize(ctx context.Context, text string) (*SynthesisResult, error)
+}
+```
+
+**Service Methods**:
+- `NewTTSService(client Synthesizer)` - Create new TTS service with client
+- `Synthesize(ctx context.Context, text string)` - Convert text to audio
+
+**Return Type** (`bridge/pkg/interfaces/voice.go`):
+```go
+type SynthesisResult struct {
+    AudioData  []byte
+    TextLength int
+    Duration   time.Duration
+    Timestamp  time.Time
+    Latency    time.Duration
+}
+```
+
+#### VAD Service (Voice Activity Detection)
+
+**File**: `bridge/pkg/voice/vad_service.go`
+
+| Component | Description |
+|-----------|-------------|
+| **VADService** | Wrapper service around SpeechDetector interface |
+| **SpeechDetector** | Interface for voice activity detection |
+
+**Interface**:
+```go
+type SpeechDetector interface {
+    DetectSpeech(ctx context.Context, audioData []byte) (*VADResult, error)
+}
+```
+
+**Service Methods**:
+- `NewVADService(client SpeechDetector)` - Create new VAD service with client
+- `DetectSpeech(ctx context.Context, audioData []byte)` - Detect speech in audio
+
+**Return Type** (`bridge/pkg/interfaces/voice.go`):
+```go
+type VADResult struct {
+    SpeechDetected bool
+    Confidence     float64
+    Timestamp      time.Time
+    Latency        time.Duration
+}
+```
+
+#### Common Pattern
+
+All three voice services follow the same architectural pattern:
+1. Define an interface for the core functionality (`Transcriber`, `Synthesizer`, `SpeechDetector`)
+2. Create a service wrapper with `slog` logging
+3. Implement a simple constructor (`NewXxxService`)
+4. Delegate to the underlying client with context propagation
+
+**Example Usage**:
+```go
+// Create STT service
+sttClient := &MyTranscriber{} // Implements Transcriber interface
+sttService := voice.NewSTTService(sttClient)
+
+// Transcribe audio
+result, err := sttService.Transcribe(ctx, audioData)
+if err != nil {
+    return err
+}
+fmt.Printf("Transcribed: %s (confidence: %.2f)\n", result.Text, result.Confidence)
+
+// Create TTS service
+ttsClient := &MySynthesizer{} // Implements Synthesizer interface
+ttsService := voice.NewTTSService(ttsClient)
+
+// Synthesize text
+audioResult, err := ttsService.Synthesize(ctx, "Hello, world")
+if err != nil {
+    return err
+}
+fmt.Printf("Audio data length: %d bytes\n", len(audioResult.AudioData))
+
+// Create VAD service
+vadClient := &MySpeechDetector{} // Implements SpeechDetector interface
+vadService := voice.NewVADService(vadClient)
+
+// Detect speech activity
+vadResult, err := vadService.DetectSpeech(ctx, audioData)
+if err != nil {
+    return err
+}
+if vadResult.SpeechDetected {
+    fmt.Printf("Speech detected (confidence: %.2f)\n", vadResult.Confidence)
+}
+```
+
+#### Integration
+
+| Component | Integration Point |
+|-----------|------------------|
+| **Voice Manager** | `bridge/pkg/interfaces/voice.go` - `VoiceManager` interface for Matrix call events |
+| **WebRTC** | `bridge/pkg/webrtc/` - Session engine for voice calls |
+| **Audio Encoding** | `bridge/pkg/audio/` - Opus and PCM encoding/decoding |
 
 #### Identity & Access
 | Package | Purpose |
@@ -1519,6 +1675,108 @@ curl -X POST http://localhost:8443/rpc -d '{
 - Can be triggered automatically on security violation detection
 - Integrates with prompt injection detection for automated response
 - Audit logged via `EventSecurityViolation` event type
+
+### Governor-Shield PII Interception
+
+**Package**: `bridge/pkg/governor/`
+
+**Purpose**: DefaultSkillGate layer for PII interception in AI tool calls and prompts, preventing sensitive data from reaching external AI models.
+
+**Core Components**:
+
+| Component | Description |
+|-----------|-------------|
+| **Governor** | Main PII interceptor with config, scrubber, and mapping management |
+| **Config** | Configuration for logging, scrubbing behavior, Shadow Mapping, and performance |
+| **PIIMapping** | Placeholder to original value mapping for restoration |
+
+#### Governor Configuration
+
+| Field | Type | Default | Description |
+|-------|------|----------|-------------|
+| `LogViolations` | bool | true | Log PII violations to audit trail |
+| `LogMaskedPII` | bool | true | Include masked snippets in logs (safe for audit) |
+| `StrictMode` | bool | false | Block all tool calls with any PII detected |
+| `UseShadowMapping` | bool | true | Use Shadow Mapping (SHA256 hash-based placeholders) |
+| `PlaceholderPrefix` | string | "[REDACTED:" | Prefix for placeholders |
+| `MaxConcurrentCalls` | int | 100 | Maximum concurrent tool calls |
+| `CacheMappings` | bool | true | Cache PII mappings for performance |
+
+#### Core Methods
+
+| Method | Purpose |
+|--------|---------|
+| `InterceptToolCall()` | Scrubs PII from tool call arguments using Shadow Mapping |
+| `InterceptPrompt()` | Scans and redacts PII from user prompts before AI model |
+| `RestoreOutput()` | Restores redacted PII placeholders in AI output using PIIMapping |
+| `ValidateArgs()` | Validates tool call arguments for PII violations without modifying |
+
+#### Shadow Mapping Implementation
+
+**Process**:
+1. Detect PII patterns using `bridge/pkg/pii` scrubber
+2. Compute SHA256 hash of detected PII value
+3. Replace with placeholder: `[REDACTED:{8-char-hash}]`
+4. Store mapping: placeholder → original value
+5. Restore in output before returning to user
+
+**Benefits**:
+- AI never sees raw PII values
+- Reversible for legitimate use cases
+- Audit trail with masked snippets
+- Pattern-aware severity classification
+
+#### Severity Classification
+
+| Severity | Patterns | Examples |
+|----------|-----------|-----------|
+| **critical** | credit_card, aws_secret, aws_key_id, api_key (sk/pk/ai) | Payment cards, AWS credentials, API keys |
+| **high** | ssn, github_token | Social Security Numbers, GitHub tokens |
+| **medium** | email, phone, ip_address, bearer_token, token, secret, password | Contact info, auth tokens |
+| **low** | All other patterns | Default classification |
+
+#### Integration Points
+
+| Component | Integration Point |
+|-----------|------------------|
+| **MCP Router** | `bridge/pkg/mcp/router.go` - Tool call PII gate |
+| **PII Scrubber** | `bridge/pkg/pii/` - Detection patterns and redaction logic |
+
+#### Usage Example
+
+```go
+// Initialize Governor with config
+governor := NewGovernor(&Config{
+    LogViolations:      true,
+    UseShadowMapping:   true,
+    PlaceholderPrefix:  "[REDACTED:",
+    MaxConcurrentCalls: 100,
+    CacheMappings:      true,
+}, logger)
+
+// Intercept tool call
+scrubbedCall, err := governor.InterceptToolCall(ctx, &ToolCall{
+    ToolName: "search_web",
+    Arguments: map[string]interface{}{
+        "query": "Call 555-123-4567 for John Doe",
+    },
+})
+
+// scrubbedCall.Arguments["query"] = "Call [REDACTED:a1b2c3d4] for [REDACTED:e5f6g7h8]"
+```
+
+#### Audit Logging
+
+Governor logs all PII violations with:
+- Tool name and argument key
+- Masked snippet (first 2 + *** + last 2 chars)
+- Pattern types detected
+- Severity classification
+
+**Example Log Entry**:
+```
+WARN PII violation detected in tool_call tool=search_web key=query violations=2 masked_snippet=55********67 pattern_types=[phone, name]
+```
 
 ---
 

@@ -419,3 +419,13 @@ The memory store is shared across the runtime. Conversations and per-room contex
 ### Cache Layer
 
 The `ToolCache` (an LRU instance) sits in front of the executor. Tool results that are expensive to compute but deterministic can be served from cache. The speculative executor maintains its own separate LRU for predicted results, preventing cache pollution from speculative calls that never materialize.
+
+### Proactive Compaction Hooks
+
+The OpenClaw runtime provides two plugin hooks for triggering session compaction before context window overflow:
+
+1. **`agent_end` hook** (primary): Fires after every successful LLM run with `{messages, success, error, durationMs}`. Gates on `success === true`, checks `estimateMessagesTokens(messages)` against the context window (~75% threshold), and calls compaction. Runs at natural task boundaries where summaries are most coherent.
+
+2. **`before_prompt_build` hook** (safety net): Fires at each LLM call before the prompt is assembled. Checks token estimate against threshold. Catches long single-task sessions that never cross a task boundary. More disruptive than `agent_end` since it fires mid-task.
+
+These hooks are OpenClaw-side (TypeScript) and do not require Bridge changes. The `agent_end` hook is the recommended primary trigger. See [Context Management Architecture in armorclaw.md](armorclaw.md#context-management-architecture) for the full three-tier approach.
