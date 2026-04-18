@@ -50,14 +50,16 @@ type RateLimitEntry struct {
 
 // License represents a license in the database
 type License struct {
-	ID            int
-	LicenseKey    string
-	Tier          string
-	CustomerEmail string
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
-	Status        string
-	MaxInstances  int // Maximum allowed instances (0 = unlimited)
+	ID                int
+	LicenseKey        string
+	Tier              string
+	CustomerEmail     string
+	CreatedAt         time.Time
+	ExpiresAt         time.Time
+	Status            string
+	MaxInstances      int // Maximum allowed instances (0 = unlimited)
+	MaxTeams          int // Maximum allowed teams (0 = unlimited)
+	MaxMembersPerTeam int // Maximum members per team (0 = unlimited)
 }
 
 // Feature represents an available feature
@@ -724,6 +726,44 @@ func getDefaultMaxInstances(tier string) int {
 	default:
 		return 1 // Free/Essential: 1 instance
 	}
+}
+
+// TierTeamLimits returns team-related limits for a given tier.
+func TierTeamLimits(tier string) (maxTeams, maxMembersPerTeam int) {
+	switch tier {
+	case "ent", "enterprise":
+		return 50, 50
+	case "pro", "professional":
+		return 5, 10
+	default:
+		return 1, 3
+	}
+}
+
+// ValidateTeamCreation checks that creating a new team would not exceed the
+// license's MaxTeams limit. Returns nil if allowed.
+func ValidateTeamCreation(license License, currentTeamCount int) error {
+	maxTeams := license.MaxTeams
+	if maxTeams == 0 {
+		maxTeams, _ = TierTeamLimits(license.Tier)
+	}
+	if maxTeams > 0 && currentTeamCount >= maxTeams {
+		return fmt.Errorf("team limit exceeded: license allows %d teams, currently %d", maxTeams, currentTeamCount)
+	}
+	return nil
+}
+
+// ValidateTeamMembership checks that adding a member would not exceed the
+// license's MaxMembersPerTeam limit. Returns nil if allowed.
+func ValidateTeamMembership(license License, currentMemberCount int) error {
+	maxMembers := license.MaxMembersPerTeam
+	if maxMembers == 0 {
+		_, maxMembers = TierTeamLimits(license.Tier)
+	}
+	if maxMembers > 0 && currentMemberCount >= maxMembers {
+		return fmt.Errorf("member limit exceeded: license allows %d members per team, currently %d", maxMembers, currentMemberCount)
+	}
+	return nil
 }
 
 // handleAdminRevoke handles DELETE /admin/v1/licenses/{key}

@@ -399,3 +399,68 @@ func getTierFeatures(tier string) []string {
 		return []string{"containers"}
 	}
 }
+
+func TestValidateTeamCreation_UnderLimit(t *testing.T) {
+	lic := License{Tier: "pro", MaxTeams: 5}
+	if err := ValidateTeamCreation(lic, 3); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
+func TestValidateTeamCreation_AtLimit(t *testing.T) {
+	lic := License{Tier: "pro", MaxTeams: 5}
+	if err := ValidateTeamCreation(lic, 5); err == nil {
+		t.Fatal("expected error when at limit, got nil")
+	}
+}
+
+func TestValidateTeamCreation_OverLimit(t *testing.T) {
+	lic := License{Tier: "pro", MaxTeams: 5}
+	if err := ValidateTeamCreation(lic, 6); err == nil {
+		t.Fatal("expected error when over limit, got nil")
+	}
+}
+
+func TestValidateTeamMembership_UnderLimit(t *testing.T) {
+	lic := License{Tier: "pro", MaxMembersPerTeam: 10}
+	if err := ValidateTeamMembership(lic, 5); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
+func TestValidateTeamMembership_AtLimit(t *testing.T) {
+	lic := License{Tier: "pro", MaxMembersPerTeam: 10}
+	if err := ValidateTeamMembership(lic, 10); err == nil {
+		t.Fatal("expected error when at limit, got nil")
+	}
+}
+
+func TestTierDefaults_Free(t *testing.T) {
+	maxTeams, maxMembers := TierTeamLimits("free")
+	if maxTeams != 1 {
+		t.Errorf("Free MaxTeams = %d, want 1", maxTeams)
+	}
+	if maxMembers != 3 {
+		t.Errorf("Free MaxMembersPerTeam = %d, want 3", maxMembers)
+	}
+}
+
+func TestTierDefaults_Pro(t *testing.T) {
+	maxTeams, maxMembers := TierTeamLimits("pro")
+	if maxTeams != 5 {
+		t.Errorf("Pro MaxTeams = %d, want 5", maxTeams)
+	}
+	if maxMembers != 10 {
+		t.Errorf("Pro MaxMembersPerTeam = %d, want 10", maxMembers)
+	}
+}
+
+func TestTierDefaults_Enterprise(t *testing.T) {
+	maxTeams, maxMembers := TierTeamLimits("ent")
+	if maxTeams != 50 {
+		t.Errorf("Enterprise MaxTeams = %d, want 50", maxTeams)
+	}
+	if maxMembers != 50 {
+		t.Errorf("Enterprise MaxMembersPerTeam = %d, want 50", maxMembers)
+	}
+}
