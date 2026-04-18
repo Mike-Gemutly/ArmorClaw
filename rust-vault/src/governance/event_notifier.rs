@@ -70,7 +70,8 @@ impl std::error::Error for StreamError {}
 // ── VaultEvent ──────────────────────────────────────────────────────────────
 
 /// Valid `event_type` values: "token_issued", "token_consumed", "token_expired",
-/// "secrets_zeroized", "skill_gate_denied", "pii_detected_in_output".
+/// "secrets_zeroized", "skill_gate_denied", "pii_detected_in_output",
+/// "capability_scope_violation".
 #[derive(Debug, Clone, PartialEq)]
 pub struct VaultEvent {
     pub event_type: String,

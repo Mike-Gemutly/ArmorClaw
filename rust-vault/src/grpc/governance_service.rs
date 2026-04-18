@@ -40,6 +40,7 @@ fn token_error_to_status(err: TokenError) -> Status {
         TokenError::Unauthorized => Status::permission_denied("session mismatch"),
         TokenError::WrongTool => Status::permission_denied("wrong tool"),
         TokenError::Expired => Status::deadline_exceeded("token expired"),
+        TokenError::ScopeMismatch => Status::permission_denied("capability scope mismatch"),
     }
 }
 

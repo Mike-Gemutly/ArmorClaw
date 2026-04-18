@@ -100,6 +100,8 @@ pub enum TokenError {
     WrongTool,
     #[error("token expired")]
     Expired,
+    #[error("capability scope mismatch")]
+    ScopeMismatch,
 }
 
 /// Composite key for token lookup in the store.
@@ -212,6 +214,16 @@ impl EphemeralTokenStore {
         session_id: &str,
         tool_name: &str,
     ) -> Result<String, TokenError> {
+        self.consume_token_with_scope(token_id, session_id, tool_name, None)
+    }
+
+    pub fn consume_token_with_scope(
+        &self,
+        token_id: &str,
+        session_id: &str,
+        tool_name: &str,
+        capability_scope: Option<&str>,
+    ) -> Result<String, TokenError> {
         let mut map = match self.tokens.write() {
             Ok(guard) => guard,
             Err(_) => {
@@ -257,6 +269,24 @@ impl EphemeralTokenStore {
                 .with_label_values(&[tool_name, "expired"])
                 .inc();
             return Err(TokenError::Expired);
+        }
+
+        if let (Some(stored_scope), Some(req_scope)) = (&entry.capability_scope, capability_scope)
+        {
+            if stored_scope != req_scope {
+                tracing::warn!(
+                    token_id = %token_id,
+                    tool = %tool_name,
+                    session = %session_id,
+                    stored_scope = %stored_scope,
+                    requested_scope = %req_scope,
+                    "capability_scope_violation: scope mismatch on token consume"
+                );
+                blindfill_consume_failed()
+                    .with_label_values(&[tool_name, "scope_mismatch"])
+                    .inc();
+                return Err(TokenError::ScopeMismatch);
+            }
         }
 
         let entry = map.remove(&key).expect("key exists (just found it)");
@@ -434,5 +464,107 @@ mod tests {
         // Verify the store is effectively empty for these tokens
         let result = store.consume_token("tok_0", "sess1", "agentmail");
         assert_eq!(result, Err(TokenError::TokenNotFound));
+    }
+
+    // ── Test 7: Scope match → token consumed ───────────────────────────
+    #[tokio::test]
+    async fn scope_match_consumes_successfully() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_scope",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let result = store
+            .consume_token_with_scope("tok_scope", "sess1", "tool1", Some("payment"))
+            .unwrap();
+        assert_eq!(result, "secret");
+    }
+
+    // ── Test 8: Scope mismatch → denied ────────────────────────────────
+    #[tokio::test]
+    async fn scope_mismatch_denies_token() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_scope2",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let result =
+            store.consume_token_with_scope("tok_scope2", "sess1", "tool1", Some("shipping"));
+        assert_eq!(result, Err(TokenError::ScopeMismatch));
+    }
+
+    // ── Test 9: Consume with None scope (stored has scope) → allowed ───
+    #[tokio::test]
+    async fn consume_none_scope_with_stored_scope_allowed() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_bc1",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let result = store
+            .consume_token_with_scope("tok_bc1", "sess1", "tool1", None)
+            .unwrap();
+        assert_eq!(result, "secret");
+    }
+
+    // ── Test 10: Stored None scope, consume with scope → allowed ───────
+    #[tokio::test]
+    async fn stored_none_scope_consume_with_scope_allowed() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_bc2",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                None,
+            )
+            .unwrap();
+
+        let result = store
+            .consume_token_with_scope("tok_bc2", "sess1", "tool1", Some("any_scope"))
+            .unwrap();
+        assert_eq!(result, "secret");
+    }
+
+    // ── Test 11: consume_token (original) still backward compatible ────
+    #[tokio::test]
+    async fn consume_token_original_backward_compatible_with_stored_scope() {
+        let store = EphemeralTokenStore::new();
+        store
+            .issue_token(
+                "tok_bc3",
+                "secret",
+                "sess1",
+                "tool1",
+                Duration::from_secs(1800),
+                Some("payment".to_string()),
+            )
+            .unwrap();
+
+        let result = store.consume_token("tok_bc3", "sess1", "tool1").unwrap();
+        assert_eq!(result, "secret");
     }
 }
