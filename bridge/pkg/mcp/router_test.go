@@ -552,3 +552,172 @@ func TestExecuteTool_VaultIssueErrorDegradesGracefully(t *testing.T) {
 		t.Errorf("Expected 1 zeroize call (cleanup still runs), got %d", len(mv.zeroizeCalls))
 	}
 }
+
+func TestAuditMode_ToolCallsPassThroughUnmodified(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_audit_mode.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+	mockProv := &mockProvisioner{}
+	mv := &mockVaultClient{issueTokenID: "tok_audit", zeroizeDestroyedCount: 0}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+		VaultClient:    mv,
+		V6Microkernel:  true,
+		V6AuditMode:    true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	ctx := context.Background()
+	args, _ := json.Marshal(map[string]interface{}{
+		"email": "user@example.com",
+		"ssn":   "123-45-6789",
+	})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "audit_test_1",
+		Params:  &MCPParams{Name: "pii_request", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success in audit mode, got error: %v", resp)
+	}
+
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected map result")
+	}
+	if result["status"] != "audit_logged" {
+		t.Errorf("Expected status 'audit_logged', got %v", result["status"])
+	}
+
+	mv.mu.Lock()
+	if len(mv.issueCalls) != 0 {
+		t.Errorf("Expected 0 vault issue calls in audit mode, got %d", len(mv.issueCalls))
+	}
+	if len(mv.zeroizeCalls) != 0 {
+		t.Errorf("Expected 0 vault zeroize calls in audit mode, got %d", len(mv.zeroizeCalls))
+	}
+	mv.mu.Unlock()
+
+	if mockProv.spawned {
+		t.Error("Expected NO ToolSidecar to be spawned in audit mode")
+	}
+
+	entries, _ := router.auditor.Query(audit.QueryParams{Limit: 10})
+	if len(entries) == 0 {
+		t.Error("Expected audit log entries in audit mode")
+	}
+}
+
+func TestAuditMode_RequiresV6Microkernel(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_audit_no_mk.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+	mockProv := &mockProvisioner{}
+	mv := &mockVaultClient{issueTokenID: "tok_no_mk", zeroizeDestroyedCount: 0}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+		VaultClient:    mv,
+		V6Microkernel:  false,
+		V6AuditMode:    true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	ctx := context.Background()
+	args, _ := json.Marshal(map[string]interface{}{"query": "test"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "no_mk_audit",
+		Params:  &MCPParams{Name: "test_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success on legacy path, got error: %v", resp)
+	}
+
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected map result")
+	}
+	if result["status"] == "audit_logged" {
+		t.Error("Audit mode should NOT activate when v6_microkernel=false")
+	}
+
+	if !mockProv.spawned {
+		t.Error("Expected ToolSidecar to be spawned on legacy path")
+	}
+}
+
+func TestAuditMode_BothFlagsFalse_LegacyUnchanged(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_audit_both_false.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+	mockProv := &mockProvisioner{}
+	mv := &mockVaultClient{}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+		VaultClient:    mv,
+		V6Microkernel:  false,
+		V6AuditMode:    false,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	ctx := context.Background()
+	args, _ := json.Marshal(map[string]interface{}{"query": "legacy test"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "legacy_both_false",
+		Params:  &MCPParams{Name: "legacy_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success on legacy path, got error: %v", resp)
+	}
+
+	mv.mu.Lock()
+	if len(mv.issueCalls) != 0 {
+		t.Errorf("Expected 0 vault calls with both flags false, got %d issue calls", len(mv.issueCalls))
+	}
+	if len(mv.zeroizeCalls) != 0 {
+		t.Errorf("Expected 0 vault calls with both flags false, got %d zeroize calls", len(mv.zeroizeCalls))
+	}
+	mv.mu.Unlock()
+
+	if !mockProv.spawned {
+		t.Error("Expected ToolSidecar to be spawned on legacy path with both flags false")
+	}
+}

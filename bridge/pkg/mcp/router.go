@@ -53,6 +53,7 @@ type MCPRouter struct {
 	consentNotify func(ctx context.Context, request *pii.AccessRequest) error
 	vaultClient   VaultClient
 	v6Microkernel bool
+	v6AuditMode   bool
 }
 
 // Provisioner interface for ToolSidecar operations
@@ -71,6 +72,7 @@ type Config struct {
 	ConsentNotify  func(ctx context.Context, request *pii.AccessRequest) error
 	VaultClient    VaultClient
 	V6Microkernel  bool
+	V6AuditMode    bool
 }
 
 // New creates a new MCPRouter
@@ -109,6 +111,7 @@ func New(cfg Config) (*MCPRouter, error) {
 		consentNotify: cfg.ConsentNotify,
 		vaultClient:   cfg.VaultClient,
 		v6Microkernel: cfg.V6Microkernel,
+		v6AuditMode:   cfg.V6AuditMode,
 	}, nil
 }
 
@@ -149,7 +152,6 @@ type ErrorObj struct {
 // 4. Execute tool with sanitized arguments
 // 5. Audit log (PII redacted)
 func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallRequest) (*MCPResponse, error) {
-	// Step 1: Create ToolCall for SkillGate validation
 	toolCall := &interfaces.ToolCall{
 		ID:        generateCallID(),
 		ToolName:  req.Params.Name,
@@ -161,8 +163,10 @@ func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallReques
 		"tool", req.Params.Name,
 	)
 
-	// Step 2: Validate via SkillGate
-	// This intercepts and redacts PII from arguments
+	if r.v6AuditMode && r.v6Microkernel {
+		return r.handleAuditMode(ctx, req, toolCall)
+	}
+
 	sanitizedCall, err := r.skillGate.InterceptToolCall(ctx, toolCall)
 	if err != nil {
 		r.logger.Error("skillgate_validation_failed",
@@ -172,9 +176,7 @@ func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallReques
 		)
 
 		_ = r.auditor.LogEvent(audit.EventSecurityViolation,
-			"", // session_id
-			"", // room_id
-			"", // user_id
+			"", "", "",
 			map[string]interface{}{
 				"call_id": toolCall.ID,
 				"tool":    req.Params.Name,
@@ -187,9 +189,7 @@ func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallReques
 	}
 
 	_ = r.auditor.LogEvent(audit.EventSecurityViolation,
-		"", // session_id
-		"", // room_id
-		"", // user_id
+		"", "", "",
 		map[string]interface{}{
 			"call_id":   toolCall.ID,
 			"tool":      req.Params.Name,
@@ -199,8 +199,6 @@ func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallReques
 		},
 	)
 
-	// Step 3: Check for consent requirement
-	// If PII was redacted, we need user consent
 	if r.requiresConsent(sanitizedCall, toolCall) {
 		r.logger.Info("consent_required",
 			"call_id", toolCall.ID,
@@ -211,8 +209,73 @@ func (r *MCPRouter) HandleToolsCall(ctx context.Context, req *MCPToolsCallReques
 		return r.initiateConsent(ctx, req, sanitizedCall, toolCall)
 	}
 
-	// Step 4: Execute tool with sanitized arguments
 	return r.executeTool(ctx, req, sanitizedCall, toolCall)
+}
+
+// handleAuditMode logs every action that would be taken without executing enforcement.
+// Tool calls pass through unmodified with original arguments.
+func (r *MCPRouter) handleAuditMode(ctx context.Context, req *MCPToolsCallRequest, toolCall *interfaces.ToolCall) (*MCPResponse, error) {
+	r.logger.Info("v6_audit_mode_active",
+		"call_id", toolCall.ID,
+		"tool", toolCall.ToolName,
+		"mode", "audit_only",
+	)
+
+	auditFields := map[string]interface{}{
+		"call_id":    toolCall.ID,
+		"tool":       toolCall.ToolName,
+		"mode":       "v6_audit",
+		"action":     "skillgate_intercept",
+		"would_run":  true,
+		"args_count": len(toolCall.Arguments),
+	}
+
+	violations, err := r.skillGate.ValidateArgs(ctx, toolCall.ToolName, toolCall.Arguments)
+	if err != nil {
+		auditFields["validation_error"] = err.Error()
+		r.logger.Info("v6_audit_skillgate_would_fail",
+			"call_id", toolCall.ID,
+			"tool", toolCall.ToolName,
+			"error", err.Error(),
+		)
+	} else {
+		auditFields["pii_violations"] = len(violations)
+		for _, v := range violations {
+			r.logger.Info("v6_audit_pii_would_be_intercepted",
+				"call_id", toolCall.ID,
+				"tool", toolCall.ToolName,
+				"field", v.Field,
+				"pattern_type", v.PatternType,
+				"severity", v.Severity,
+			)
+		}
+	}
+
+	auditFields["would_require_consent"] = r.requiresConsent(toolCall, toolCall) || len(violations) > 0
+
+	r.logger.Info("v6_audit_governance_check",
+		"call_id", toolCall.ID,
+		"tool", toolCall.ToolName,
+		"would_issue_tokens", r.vaultClient != nil,
+		"would_spawn_sidecar", true,
+		"would_zeroize", r.vaultClient != nil,
+	)
+
+	_ = r.auditor.LogEvent(audit.EventSecurityViolation,
+		"", "", "",
+		auditFields,
+	)
+
+	return &MCPResponse{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"status":     "audit_logged",
+			"tool":       toolCall.ToolName,
+			"call_id":    toolCall.ID,
+			"violations": len(violations),
+		},
+	}, nil
 }
 
 // requiresConsent checks if a tool call requires user consent
@@ -321,7 +384,7 @@ func (r *MCPRouter) executeTool(
 	toolName := sanitizedCall.ToolName
 
 	// Pre-execution: issue ephemeral tokens for blind-fill (security lifecycle hook)
-	if r.v6Microkernel && r.vaultClient != nil {
+	if r.v6Microkernel && !r.v6AuditMode && r.vaultClient != nil {
 		for key, value := range sanitizedCall.Arguments {
 			if str, ok := value.(string); ok && len(str) > 0 {
 				tokenID, err := r.vaultClient.IssueBlindFillToken(execCtx, sessionID, toolName, str, 10*time.Second)
@@ -343,7 +406,7 @@ func (r *MCPRouter) executeTool(
 	}
 
 	// Post-execution: zeroize secrets regardless of success/failure (security lifecycle hook)
-	if r.v6Microkernel && r.vaultClient != nil {
+	if r.v6Microkernel && !r.v6AuditMode && r.vaultClient != nil {
 		defer func() {
 			zCtx, zCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer zCancel()

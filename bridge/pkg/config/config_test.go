@@ -198,3 +198,33 @@ socket_path = "/custom/vault.sock"
 		t.Errorf("expected socket_path '/custom/vault.sock', got %s", cfg.Vault.SocketPath)
 	}
 }
+
+func TestV6AuditModeDefaultFalse(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.Vault.V6AuditMode {
+		t.Error("Vault.V6AuditMode should default to false")
+	}
+}
+
+func TestV6AuditModeTOMLParsing(t *testing.T) {
+	input := `
+[vault]
+v6_microkernel = true
+v6_audit_mode = true
+socket_path = "/custom/vault.sock"
+`
+
+	cfg := DefaultConfig()
+	if _, err := toml.Decode(input, cfg); err != nil {
+		t.Fatalf("failed to parse vault TOML: %v", err)
+	}
+
+	if !cfg.Vault.V6Microkernel {
+		t.Error("expected v6_microkernel = true from TOML")
+	}
+
+	if !cfg.Vault.V6AuditMode {
+		t.Error("expected v6_audit_mode = true from TOML")
+	}
+}

@@ -771,6 +771,13 @@ type VaultConfig struct {
 	// When false, legacy execution paths are used (default).
 	V6Microkernel bool `toml:"v6_microkernel" env:"ARMORCLAW_V6_MICROKERNEL"`
 
+	// V6AuditMode enables audit-only mode for the v6 microkernel.
+	// When true AND v6_microkernel=true, every action that would be taken
+	// (PII interception, governance checks, ToolSidecar spawns, token issuance)
+	// is logged but NOT executed. Tool calls pass through unmodified.
+	// Useful for pre-deployment validation without enforcement.
+	V6AuditMode bool `toml:"v6_audit_mode" env:"ARMORCLAW_V6_AUDIT_MODE"`
+
 	// SocketPath is the path to the Rust Vault governance gRPC socket
 	SocketPath string `toml:"socket_path" env:"ARMORCLAW_VAULT_SOCKET"`
 }
@@ -1005,6 +1012,7 @@ func DefaultConfig() *Config {
 		},
 		Vault: VaultConfig{
 			V6Microkernel: false,
+			V6AuditMode:   false,
 			SocketPath:    "/run/armorclaw/keystore.sock",
 		},
 	}
