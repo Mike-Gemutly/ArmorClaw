@@ -264,7 +264,7 @@ func (se *SkillExecutor) checkDangerousPatterns(params map[string]interface{}) e
 
 // containsDangerousChars checks for dangerous command characters
 func containsDangerousChars(str string) bool {
-	dangerous := []string{"|", "&", ";", "`", "$", "(", ")", "{", "}", "<", ">"}
+	dangerous := []string{"|", ";", "`", "$(", "${"}
 	for _, char := range dangerous {
 		if contains(str, char) {
 			return true
