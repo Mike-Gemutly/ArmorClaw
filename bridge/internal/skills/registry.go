@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Skill represents a single skill from a SKILL.md file
@@ -140,7 +142,7 @@ func parseSkillFile(path string) (*Skill, error) {
 	skill.Parameters = make(map[string]Param)
 
 	// Extract metadata
-	if metadata, ok := frontmatterMap["metadata"].(map[interface{}]interface{}); ok {
+	if metadata, ok := frontmatterMap["metadata"].(map[string]interface{}); ok {
 		skill.Metadata = convertInterfaceMap(metadata)
 	}
 
@@ -336,63 +338,25 @@ func (r *Registry) SetEnabled(name string, enabled bool) bool {
 	return true
 }
 
-// convertInterfaceMap converts map[interface{}]interface{} to map[string]interface{}
-func convertInterfaceMap(m map[interface{}]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range m {
-		if key, ok := k.(string); ok {
-			result[key] = v
+// convertInterfaceMap converts interface maps to map[string]interface{}
+func convertInterfaceMap(m interface{}) map[string]interface{} {
+	switch v := m.(type) {
+	case map[string]interface{}:
+		return v
+	case map[interface{}]interface{}:
+		result := make(map[string]interface{})
+		for key, val := range v {
+			result[fmt.Sprintf("%v", key)] = val
 		}
+		return result
+	default:
+		return make(map[string]interface{})
 	}
-	return result
 }
 
-// parseYAMLFrontmatter parses simple YAML frontmatter for Phase 1
-// In production, use a proper YAML parser like gopkg.in/yaml.v2
+// parseYAMLFrontmatter parses YAML frontmatter using yaml.v3
 func parseYAMLFrontmatter(data string, v interface{}) error {
-	// Simplified YAML parsing for Phase 1
-	// Parse basic key: value pairs
-	lines := strings.Split(data, "\n")
-
-	frontmatterMap, ok := v.(*map[string]interface{})
-	if !ok {
-		return fmt.Errorf("expected map[string]interface{}, got %T", v)
-	}
-
-	*frontmatterMap = make(map[string]interface{})
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Parse key: value pairs
-		if strings.Contains(line, ":") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-
-				// Remove quotes if present
-				if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
-					value = strings.Trim(value, "\"")
-				} else if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
-					value = strings.Trim(value, "'")
-				}
-
-				// Handle special cases like metadata
-				if key == "metadata" && strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
-					// For now, just store as string - in Phase 2 we'd parse JSON
-					(*frontmatterMap)[key] = value
-				} else {
-					(*frontmatterMap)[key] = value
-				}
-			}
-		}
-	}
-
-	return nil
+	return yaml.Unmarshal([]byte(data), v)
 }
 
 // RegisterWebDAV registers the WebDAV skill programmatically
