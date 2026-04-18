@@ -1,9 +1,38 @@
 # ArmorClaw Changelog
 
 > **Last Updated:** 2026-04-17
-> **Current Version:** 0.4.0
+> **Current Version:** 0.6.0
 
 All notable changes to ArmorClaw are documented here with commit references.
+
+---
+
+## [0.6.0] - 2026-04-17 - Operational Transparency, Governance Hardening, Advanced Automation, Mobile Polish
+
+### Phase 1 — Operational Transparency
+
+- **Bridge-side agent state inference** — 11 agent states derived from CDP and workflow signals (Idle, Browsing, WaitingForApproval, Executing, Blocked, Compacting, etc.) with `ForceTransition` for manual override
+- **BroadcastStatus via Matrix events** — Agent state changes published as `com.armorclaw.agent.status` Matrix events, enabling real-time status in ArmorChat
+- **Blocker metadata pipeline fix** — Fixed 7 bugs in the container-to-Bridge-to-Matrix blocker flow: added `case "blocker"` event routing, wired `EmitBlockerWarning()`, captured blocker name as human-readable message, propagated all 5 metadata fields (blocker_type, suggestion, field, message, step_id) end to end
+
+### Phase 2 — Governance Hardening
+
+- **Rust Vault binary entrypoint** — `armorclaw-vault` service with Docker deployment (network_mode none, UID 10001, cap_drop ALL, read_only, no-new-privileges)
+- **PPTX text extraction in Rust sidecar** — ZIP-based extraction with `quick-xml` parsing, zero Python dependency for PowerPoint files
+- **Route XLSX/PPTX to Rust sidecar** — Go Bridge routes PPTX to Rust instead of Python, reducing Python sidecar load
+- **v6 microkernel audit mode** — Structured logging without interception for governance operations, replacing stub audit hooks
+
+### Phase 3 — Advanced Automation
+
+- **Bridge-side session transcript compaction** — Pre-dispatch compaction with token estimation, reducing context window usage before sending to agents
+- **StepParallel execution engine** — `errgroup` goroutine pool (`MaxParallelContainers = 2`) with `StepParallelSplit`/`StepParallelMerge` dependency edges for parallel step execution
+- **Step failover with multi-agent fallback** — Per-step configurable retry policy with automatic fallback to alternate agents on failure
+
+### Phase 4 — Mobile Client Polish
+
+- **WorkflowTimeline duration accuracy** — `parseDurationFromText()` and `fromTimelineEventJson()` for correct `(1234ms)` display in Android timeline
+- **Dynamic PII masking in BlockerResponseDialog** — 8 sensitive keyword patterns (password, secret, token, api_key, credit_card, ssn, email, phone) with `PasswordVisualTransformation`
+- **Email approval card** — Android approval UI for email actions plus Bridge RPC handlers (`approve_email`/`deny_email`) with consent verification
 
 ---
 

@@ -1,6 +1,7 @@
-# Production Readiness - March 17, 2026
+# Production Readiness - April 17, 2026
 
 **Status:** ✅ **PRODUCTION READY** (With Acceptable Limitations)
+**Version:** 0.6.0
 
 ---
 
@@ -33,6 +34,39 @@
 | QR Code | ✅ Generated | Deep link: `armorclaw://config?d=...` |
 | Database Encryption | ✅ Working | SQLCipher keystore |
 | Agent Studio Events | ✅ Working | Container event emission, progress streaming, learned skills |
+
+---
+
+## v0.6.0 Capabilities (2026-04-17)
+
+### Operational Transparency
+| Capability | Status | Details |
+|------------|--------|---------|
+| Agent State Inference | ✅ Working | 11 states from CDP/workflow signals with ForceTransition override |
+| BroadcastStatus Events | ✅ Working | `com.armorclaw.agent.status` Matrix events for real-time status |
+| Blocker Metadata Pipeline | ✅ Working | All 5 fields propagate container→Bridge→Matrix (7 bugs fixed) |
+
+### Governance Hardening
+| Capability | Status | Details |
+|------------|--------|---------|
+| Rust Vault Service | ✅ Working | Docker-deployed `armorclaw-vault` (hardened container, Unix socket IPC) |
+| PPTX Rust Extraction | ✅ Working | ZIP + quick-xml, no Python dependency |
+| XLSX/PPTX Rust Routing | ✅ Working | Go Bridge routes PPTX to Rust sidecar |
+| v6 Microkernel Audit | ✅ Working | Structured logging without interception |
+
+### Advanced Automation
+| Capability | Status | Details |
+|------------|--------|---------|
+| Transcript Compaction | ✅ Working | Pre-dispatch compaction with token estimation |
+| StepParallel Engine | ✅ Working | errgroup goroutine pool, Split→Merge dependency edges |
+| Step Failover | ✅ Working | Per-step retry with multi-agent fallback |
+
+### Mobile Client Polish
+| Capability | Status | Details |
+|------------|--------|---------|
+| WorkflowTimeline Duration | ✅ Working | Accurate `(1234ms)` display from structured and plain-text data |
+| Dynamic PII Masking | ✅ Working | 8 sensitive keyword patterns in BlockerResponseDialog |
+| Email Approval Card | ✅ Working | Android approval UI + Bridge RPC handlers (approve_email/deny_email) |
 
 ---
 
@@ -170,9 +204,9 @@
 
 ## ✅ Production Readiness CONFIRMED
 
-**Date:** 2026-03-17
+**Date:** 2026-04-17
 **Verified By:** Atlas (Orchestrator)
-**Status:** Ready for Production Deployment
+**Status:** Ready for Production Deployment (v0.6.0)
 
 **Summary:** All core features functional. System can go to production with plaintext HTTPS messaging. E2EE and additional platform adapters are documented as roadmap items.
 
