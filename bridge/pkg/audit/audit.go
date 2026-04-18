@@ -42,6 +42,23 @@ const (
 	EventSidecarRetry           EventType = "sidecar_retry"
 )
 
+const (
+	// Governance / capability broker events
+	EventCapabilityRequested  EventType = "capability_requested"
+	EventCapabilityGranted    EventType = "capability_granted"
+	EventCapabilityDenied     EventType = "capability_denied"
+	EventCapabilityDeferred   EventType = "capability_deferred"
+	EventBrokerIntercept      EventType = "broker_intercept"
+	EventArtifactCreated      EventType = "artifact_created"
+	EventArtifactTransformed  EventType = "artifact_transformed"
+	EventArtifactLineageQuery EventType = "artifact_lineage_query"
+	EventTeamCreated          EventType = "team_created"
+	EventTeamDissolved        EventType = "team_dissolved"
+	EventMemberAdded          EventType = "member_added"
+	EventMemberRemoved        EventType = "member_removed"
+	EventRoleAssigned         EventType = "role_assigned"
+)
+
 type Entry struct {
 	Timestamp time.Time   `json:"timestamp"`
 	EventType EventType   `json:"event_type"`
