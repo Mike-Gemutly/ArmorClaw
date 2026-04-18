@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.armorclaw.ArmorClawTheme
+import org.json.JSONObject
 
 /**
  * Represents a single event in a workflow timeline.
@@ -31,7 +32,8 @@ import app.armorclaw.ArmorClawTheme
  * @param name        Human-readable step name
  * @param tsMs        Epoch millis when the event occurred
  * @param detail      Optional detail line (e.g. file path, command)
- * @param durationMs  Optional duration in milliseconds
+ * @param durationMs  Optional duration in milliseconds — sourced from
+ *                    Bridge `StepEvent.duration_ms` via `TimelineEvent.duration_ms`
  */
 data class WorkflowEvent(
     val seq: Int,
@@ -40,7 +42,93 @@ data class WorkflowEvent(
     val tsMs: Long,
     val detail: String = "",
     val durationMs: Long? = null
-)
+) {
+    companion object {
+        /**
+         * Parse a [WorkflowEvent] from a Bridge [TimelineEvent] JSON object.
+         *
+         * The Bridge sends timeline events in the format produced by
+         * [GetTimelineEvents] in `notifications.go`:
+         * ```json
+         * {
+         *   "seq": 1,
+         *   "type": "step",
+         *   "name": "Initializing agent",
+         *   "ts_ms": 1710000000000,
+         *   "detail": {"lines": 100},
+         *   "duration_ms": 1234
+         * }
+         * ```
+         *
+         * The `duration_ms` field is respected directly from the Bridge payload
+         * (originating from `StepEvent.DurationMs` in `_events.jsonl`), not
+         * estimated from timestamps.
+         *
+         * @param json TimelineEvent JSON object from Bridge
+         * @return Parsed WorkflowEvent, or null if required fields are missing
+         */
+        fun fromTimelineEventJson(json: JSONObject): WorkflowEvent? {
+            val seq = json.optInt("seq", -1)
+            val type = json.optString("type", "")
+            val name = json.optString("name", "")
+            val tsMs = json.optLong("ts_ms", 0L)
+
+            if (seq < 0 || type.isBlank() || name.isBlank()) return null
+
+            val detailObj = json.optJSONObject("detail")
+            val detail = detailObj?.let { d ->
+                buildString {
+                    d.optInt("lines").takeIf { it != 0 }?.let { append(it, " lines") }
+                    d.optInt("changes").takeIf { it != 0 }?.let { append(it, " changes") }
+                    d.optInt("exit_code").takeIf { it != 0 }?.let { append("exit ", it) }
+                    d.optLong("size_bytes").takeIf { it != 0L }?.let { append(it, " bytes") }
+                    d.optString("message", "").takeIf { it.isNotBlank() }?.let { append(it) }
+                    d.optString("selector", "").takeIf { it.isNotBlank() }?.let { append(it) }
+                }.trim()
+            } ?: ""
+
+            val durationMs = if (json.has("duration_ms")) {
+                json.optLong("duration_ms")
+            } else {
+                null
+            }
+
+            return WorkflowEvent(
+                seq = seq,
+                type = type,
+                name = name,
+                tsMs = tsMs,
+                detail = detail,
+                durationMs = durationMs
+            )
+        }
+
+        fun fromTimelineEventArray(jsonArray: org.json.JSONArray): List<WorkflowEvent> {
+            val events = mutableListOf<WorkflowEvent>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.optJSONObject(i) ?: continue
+                fromTimelineEventJson(obj)?.let { events.add(it) }
+            }
+            return events
+        }
+
+        /**
+         * Extract duration from a plain-text timeline line.
+         *
+         * The Bridge's [FormatTimelineMessage] appends `(1234ms)` to event lines
+         * when duration is available. This parser extracts that value so that
+         * plain-text timeline messages also display accurate durations.
+         *
+         * @param line A single timeline line, e.g. "🔹 Initializing agent (1234ms)"
+         * @return Duration in ms, or null if not found
+         */
+        fun parseDurationFromText(line: String): Long? {
+            val regex = Regex("""\((\d+)ms\)\s*$""")
+            val match = regex.find(line) ?: return null
+            return match.groupValues[1].toLongOrNull()
+        }
+    }
+}
 
 /**
  * Aggregate state consumed by [WorkflowTimeline].
