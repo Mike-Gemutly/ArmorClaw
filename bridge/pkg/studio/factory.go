@@ -83,6 +83,7 @@ type SpawnRequest struct {
 	UserID          string          `json:"user_id"`
 	RoomID          string          `json:"room_id,omitempty"`
 	Config          json.RawMessage `json:"config,omitempty"`
+	Specialization  *SpecializationConfig `json:"specialization,omitempty"`
 }
 
 // SpawnResult contains the result of spawning an agent
@@ -108,7 +109,7 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 	profile := GetProfile(def.ResourceTier)
 
 	// 3. Build environment variables
-	env, warnings := f.buildEnvironment(def, req.TaskDescription)
+	env, warnings := f.buildEnvironment(def, req.TaskDescription, req.Specialization)
 
 	if len(req.Config) > 0 {
 		env = append(env, "STEP_CONFIG="+string(req.Config))
@@ -217,18 +218,30 @@ func (f *AgentFactory) Spawn(ctx context.Context, req *SpawnRequest) (*SpawnResu
 }
 
 // buildEnvironment creates environment variables for the container
-func (f *AgentFactory) buildEnvironment(def *AgentDefinition, task string) ([]string, []string) {
+func (f *AgentFactory) buildEnvironment(def *AgentDefinition, task string, spec *SpecializationConfig) ([]string, []string) {
 	var env []string
 	var warnings []string
 
-	// Core agent configuration
+	skills := def.Skills
+	if spec != nil {
+		skills = spec.Skills
+	}
+
 	env = append(env,
 		fmt.Sprintf("AGENT_ID=%s", def.ID),
 		fmt.Sprintf("AGENT_NAME=%s", def.Name),
-		fmt.Sprintf("ENABLED_SKILLS=%s", strings.Join(def.Skills, ",")),
+		fmt.Sprintf("ENABLED_SKILLS=%s", strings.Join(skills, ",")),
 		fmt.Sprintf("RESOURCE_TIER=%s", def.ResourceTier),
 		fmt.Sprintf("TASK_DESCRIPTION=%s", task),
 	)
+
+	if spec != nil && spec.SystemPrompt != "" {
+		env = append(env, "SYSTEM_PROMPT="+spec.SystemPrompt)
+	}
+
+	if spec != nil && len(spec.ScopedSecrets) > 0 {
+		env = append(env, "SCOPED_SECRETS="+strings.Join(spec.ScopedSecrets, ","))
+	}
 
 	if f.piiInjector != nil {
 		// Socket-based injection active; PII_SOCKET_PATH env set in Spawn()
