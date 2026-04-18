@@ -9,7 +9,20 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+func newWebDAVClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+}
 
 // WebDAVResponse represents WebDAV PROPFIND response
 type WebDAVResponse struct {
@@ -162,7 +175,7 @@ func executeWebDAVList(ctx context.Context, params *WebDAVParams) (*WebDAVListRe
 	}
 
 	// Create HTTP client
-	client := &http.Client{}
+	client := newWebDAVClient()
 
 	// Build PROPFIND request
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", params.URL, nil)
@@ -177,6 +190,9 @@ func executeWebDAVList(ctx context.Context, params *WebDAVParams) (*WebDAVListRe
 
 	// Add authentication if provided
 	if params.Username != "" && params.Password != "" {
+		if req.URL.Scheme == "http" {
+			return nil, fmt.Errorf("basic auth requires HTTPS: refusing to send credentials over HTTP")
+		}
 		req.SetBasicAuth(params.Username, params.Password)
 	}
 
@@ -251,7 +267,7 @@ func executeWebDAVGet(ctx context.Context, params *WebDAVParams) (*WebDAVDownloa
 	}
 
 	// Create HTTP client
-	client := &http.Client{}
+	client := newWebDAVClient()
 
 	// Build GET request
 	req, err := http.NewRequestWithContext(ctx, "GET", params.URL, nil)
@@ -261,6 +277,9 @@ func executeWebDAVGet(ctx context.Context, params *WebDAVParams) (*WebDAVDownloa
 
 	// Add authentication if provided
 	if params.Username != "" && params.Password != "" {
+		if req.URL.Scheme == "http" {
+			return nil, fmt.Errorf("basic auth requires HTTPS: refusing to send credentials over HTTP")
+		}
 		req.SetBasicAuth(params.Username, params.Password)
 	}
 
@@ -308,7 +327,7 @@ func executeWebDAVPut(ctx context.Context, params *WebDAVParams) (*WebDAVUploadR
 	}
 
 	// Create HTTP client
-	client := &http.Client{}
+	client := newWebDAVClient()
 
 	// Prepare content
 	bodyReader := io.NopCloser(strings.NewReader(string(params.Content)))
@@ -331,6 +350,9 @@ func executeWebDAVPut(ctx context.Context, params *WebDAVParams) (*WebDAVUploadR
 
 	// Add authentication if provided
 	if params.Username != "" && params.Password != "" {
+		if req.URL.Scheme == "http" {
+			return nil, fmt.Errorf("basic auth requires HTTPS: refusing to send credentials over HTTP")
+		}
 		req.SetBasicAuth(params.Username, params.Password)
 	}
 
@@ -386,7 +408,7 @@ func executeWebDAVDelete(ctx context.Context, params *WebDAVParams) (*WebDAVDele
 	}
 
 	// Create HTTP client
-	client := &http.Client{}
+	client := newWebDAVClient()
 
 	// Build DELETE request
 	req, err := http.NewRequestWithContext(ctx, "DELETE", params.URL, nil)
@@ -396,6 +418,9 @@ func executeWebDAVDelete(ctx context.Context, params *WebDAVParams) (*WebDAVDele
 
 	// Add authentication if provided
 	if params.Username != "" && params.Password != "" {
+		if req.URL.Scheme == "http" {
+			return nil, fmt.Errorf("basic auth requires HTTPS: refusing to send credentials over HTTP")
+		}
 		req.SetBasicAuth(params.Username, params.Password)
 	}
 
