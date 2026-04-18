@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     libsqlcipher-dev \
+    libyara-dev \
     ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -34,7 +35,7 @@ ENV CGO_CFLAGS="-I/usr/include"
 RUN ARCH=$(dpkg-architecture -qDEB_HOST_ARCH 2>/dev/null || echo 'amd64') && \
     LIBDIR=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo 'x86_64-linux-gnu') && \
     echo "Building bridge for $ARCH (lib: $LIBDIR)" && \
-    GOARCH=$ARCH CGO_LDFLAGS="-L/usr/lib/$LIBDIR -lsqlcipher" go build -trimpath -ldflags="-s -w" -o /out/armorclaw-bridge ./cmd/bridge && \
+    GOARCH=$ARCH CGO_LDFLAGS="-L/usr/lib/$LIBDIR -lsqlcipher -lyara" go build -trimpath -ldflags="-s -w" -o /out/armorclaw-bridge ./cmd/bridge && \
     echo "Build complete for $ARCH"
 
 # ============================================================================
@@ -91,6 +92,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     python3-pip \
     libsqlcipher0 \
+    libyara9 \
     ca-certificates \
     procps \
     openssl \
