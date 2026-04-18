@@ -3610,21 +3610,6 @@ type studioFactoryAdapter struct {
 	factory *studio.AgentFactory
 }
 
-func (a *studioFactoryAdapter) GetRunningInstance(definitionID string) (*secretary.AgentInstanceRef, error) {
-	inst, err := a.factory.GetRunningInstance(definitionID)
-	if err != nil {
-		return nil, err
-	}
-	if inst == nil {
-		return nil, nil
-	}
-	return &secretary.AgentInstanceRef{
-		ID:     inst.ID,
-		RoomID: inst.RoomID,
-		Status: string(inst.Status),
-	}, nil
-}
-
 func (a *studioFactoryAdapter) Spawn(ctx context.Context, req *secretary.SpawnRequestRef) (*secretary.SpawnResultRef, error) {
 	result, err := a.factory.Spawn(ctx, &studio.SpawnRequest{
 		DefinitionID:    req.DefinitionID,

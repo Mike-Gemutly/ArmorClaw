@@ -231,20 +231,9 @@ func (s *schedulerTestStore) Close() error { return nil }
 //=============================================================================
 
 type mockSchedulerFactory struct {
-	runningInstance  *AgentInstanceRef
-	runningErr       error
-	spawnResult      *SpawnResultRef
-	spawnErr         error
-	spawnCalled      bool
-	getRunningCalled bool
-}
-
-func (f *mockSchedulerFactory) GetRunningInstance(definitionID string) (*AgentInstanceRef, error) {
-	f.getRunningCalled = true
-	if f.runningErr != nil {
-		return nil, f.runningErr
-	}
-	return f.runningInstance, nil
+	spawnResult *SpawnResultRef
+	spawnErr    error
+	spawnCalled bool
 }
 
 func (f *mockSchedulerFactory) Spawn(ctx context.Context, req *SpawnRequestRef) (*SpawnResultRef, error) {
@@ -293,7 +282,7 @@ func (m *mockSchedulerMatrix) getSentEvents() []sentEvent {
 // Scheduler Tests
 //=============================================================================
 
-func TestTaskScheduler_WarmDispatchSkippedForNetworkNone(t *testing.T) {
+func TestTaskScheduler_ColdDispatchOnly(t *testing.T) {
 	store := newSchedulerTestStore()
 	now := time.Now()
 	store.scheduledTasks["task-1"] = &ScheduledTask{
@@ -306,11 +295,6 @@ func TestTaskScheduler_WarmDispatchSkippedForNetworkNone(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-			Status: "running",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -321,9 +305,7 @@ func TestTaskScheduler_WarmDispatchSkippedForNetworkNone(t *testing.T) {
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
-	// Warm dispatch should be skipped (NetworkMode: none), go straight to cold dispatch
-	assert.True(t, factory.getRunningCalled, "should check for running instance")
-	assert.True(t, factory.spawnCalled, "should use cold dispatch since warm is skipped (NetworkMode 'none')")
+	assert.True(t, factory.spawnCalled, "should use cold dispatch (warm dispatch removed)")
 
 	updated := store.scheduledTasks["task-1"]
 	assert.NotNil(t, updated.NextRun)
@@ -344,7 +326,6 @@ func TestTaskScheduler_ColdDispatch(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: nil, // No running instance → cold path
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-new",
 			RoomID:     "!new-room:example.com",
@@ -381,10 +362,6 @@ func TestTaskScheduler_OneShotDeactivation(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -413,10 +390,6 @@ func TestTaskScheduler_CronNextRunUpdate(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -452,7 +425,6 @@ func TestTaskScheduler_EmptyDefinitionIdSkipped(t *testing.T) {
 	scheduler.tick()
 
 	// Task with empty definition_id is excluded by ListDueTasks → not dispatched
-	assert.False(t, factory.getRunningCalled)
 	assert.False(t, factory.spawnCalled)
 	events := matrix.getSentEvents()
 	assert.Empty(t, events)
@@ -471,10 +443,6 @@ func TestTaskScheduler_InvalidCronDeactivation(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -503,10 +471,6 @@ func TestTaskScheduler_NilMatrixAdapter(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -541,7 +505,6 @@ func TestTaskScheduler_StoreListError(t *testing.T) {
 	})
 
 	// No dispatch attempts
-	assert.False(t, factory.getRunningCalled)
 	assert.False(t, factory.spawnCalled)
 }
 
@@ -585,10 +548,6 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -603,8 +562,7 @@ func TestTaskScheduler_TickOnStart(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	scheduler.Stop()
 
-	// Warm dispatch fails, falls back to cold dispatch
-	assert.True(t, factory.spawnCalled, "warm dispatch skipped (NetworkMode 'none'), uses cold dispatch on scheduler start (immediate tick)")
+	assert.True(t, factory.spawnCalled, "cold dispatch on scheduler start (immediate tick)")
 
 	updated := store.scheduledTasks["task-immediate"]
 	assert.NotNil(t, updated.NextRun)
@@ -648,7 +606,6 @@ func TestDispatchTask_TemplateRouting(t *testing.T) {
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, orch, nil)
 	scheduler.tick()
 
-	assert.False(t, factory.getRunningCalled, "template dispatch should not use factory.GetRunningInstance")
 	assert.False(t, factory.spawnCalled, "template dispatch should not use factory.Spawn")
 
 	assert.Len(t, store.workflows, 1, "templateDispatch should create a workflow")
@@ -721,7 +678,6 @@ func TestDispatchTask_TemplateOnlyNoDefinitionID(t *testing.T) {
 	scheduler.tick()
 
 	assert.False(t, factory.spawnCalled, "should use templateDispatch, not cold dispatch")
-	assert.False(t, factory.getRunningCalled, "should use templateDispatch, not warm dispatch")
 
 	updated := store.scheduledTasks["task-tmpl-only"]
 	assert.NotNil(t, updated.LastRun, "task should be marked dispatched via template path")
@@ -741,11 +697,6 @@ func TestDispatchTask_FreeTextUnchanged(t *testing.T) {
 	}
 
 	factory := &mockSchedulerFactory{
-		runningInstance: &AgentInstanceRef{
-			ID:     "inst-1",
-			RoomID: "!room:example.com",
-			Status: "running",
-		},
 		spawnResult: &SpawnResultRef{
 			InstanceID: "inst-cold",
 			RoomID:     "!cold-room:example.com",
@@ -756,8 +707,7 @@ func TestDispatchTask_FreeTextUnchanged(t *testing.T) {
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
-	assert.True(t, factory.getRunningCalled, "empty TemplateID should check for running instance")
-	assert.True(t, factory.spawnCalled, "warm dispatch skipped (NetworkMode 'none'), uses cold dispatch")
+	assert.True(t, factory.spawnCalled, "cold dispatch for free-text task")
 
 	updated := store.scheduledTasks["task-freetext"]
 	assert.NotNil(t, updated.NextRun)

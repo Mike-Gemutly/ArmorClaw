@@ -13,6 +13,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import app.armorclaw.viewmodel.SecurityConfigViewModel
+import app.armorclaw.viewmodel.SecurityConfigUiState
 
 /**
  * Data category configuration for security settings
@@ -42,72 +45,49 @@ enum class PermissionLevel {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SecurityConfigScreen(
+    viewModel: SecurityConfigViewModel = viewModel(),
     currentStep: Int = 3,
     totalSteps: Int = 5,
     onComplete: () -> Unit = {},
     onBack: () -> Unit = {}
 ) {
+    // Collect ViewModel state
+    val uiState by viewModel.uiState.collectAsState()
+    val bridgeCategories by viewModel.categories.collectAsState()
+    val permissions by viewModel.permissions.collectAsState()
+    val isSaving by viewModel.isSaving.collectAsState()
+    val currentError by viewModel.currentError.collectAsState()
+
     var selectedCategory by remember { mutableStateOf<DataCategoryConfig?>(null) }
-    var categories by remember {
-        mutableStateOf(
-            listOf(
-                DataCategoryConfig(
-                    id = "banking",
-                    name = "Banking Information",
-                    description = "Account numbers, routing numbers, balances",
-                    examples = listOf("Account numbers", "Routing numbers", "Balances", "Credit card numbers"),
-                    riskLevel = RiskLevel.HIGH
-                ),
-                DataCategoryConfig(
-                    id = "pii",
-                    name = "Personally Identifiable Information",
-                    description = "Government-issued identifiers and personal documents",
-                    examples = listOf("SSN", "Driver's license", "Passport", "Tax ID"),
-                    riskLevel = RiskLevel.HIGH
-                ),
-                DataCategoryConfig(
-                    id = "medical",
-                    name = "Medical Information",
-                    description = "Health records and medical history",
-                    examples = listOf("Diagnoses", "Prescriptions", "Lab results", "Insurance info"),
-                    riskLevel = RiskLevel.HIGH
-                ),
-                DataCategoryConfig(
-                    id = "residential",
-                    name = "Residential Information",
-                    description = "Physical address and contact details",
-                    examples = listOf("Home address", "Phone number", "Personal email"),
-                    riskLevel = RiskLevel.MEDIUM
-                ),
-                DataCategoryConfig(
-                    id = "network",
-                    name = "Network Information",
-                    description = "Network identifiers and infrastructure details",
-                    examples = listOf("IP address", "MAC address", "Hostname", "DNS records"),
-                    riskLevel = RiskLevel.MEDIUM
-                ),
-                DataCategoryConfig(
-                    id = "identity",
-                    name = "Identity Information",
-                    description = "Personal identity attributes",
-                    examples = listOf("Full name", "Date of birth", "Photo", "Signature"),
-                    riskLevel = RiskLevel.MEDIUM
-                ),
-                DataCategoryConfig(
-                    id = "location",
-                    name = "Location Information",
-                    description = "Geographic location data",
-                    examples = listOf("GPS coordinates", "City", "Country", "Timezone"),
-                    riskLevel = RiskLevel.LOW
-                ),
-                DataCategoryConfig(
-                    id = "credentials",
-                    name = "Credentials",
-                    description = "Authentication and access credentials",
-                    examples = listOf("Usernames", "Passwords", "API keys", "Tokens"),
-                    riskLevel = RiskLevel.HIGH
-                )
-            )
+
+    // Local state for website overrides (ViewModel only tracks permissions)
+    var websiteOverrides by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+
+    // Load categories on first composition
+    LaunchedEffect(Unit) {
+        viewModel.loadCategories()
+    }
+
+    // Build display categories from ViewModel data
+    val categories = bridgeCategories.map { cat ->
+        val permString = permissions[cat.id] ?: cat.permission
+        DataCategoryConfig(
+            id = cat.id,
+            name = cat.name,
+            description = cat.description,
+            examples = emptyList(),
+            riskLevel = when (cat.risk_level.uppercase()) {
+                "HIGH" -> RiskLevel.HIGH
+                "MEDIUM" -> RiskLevel.MEDIUM
+                else -> RiskLevel.LOW
+            },
+            permission = when (permString) {
+                "allow" -> PermissionLevel.ALLOW
+                "allow_all" -> PermissionLevel.ALLOW_ALL
+                else -> PermissionLevel.DENY
+            },
+            allowedWebsites = websiteOverrides[cat.id] ?: cat.allowed_websites,
+            requiresApproval = cat.requires_approval
         )
     }
 
@@ -139,10 +119,29 @@ fun SecurityConfigScreen(
                         Text("Back")
                     }
 
-                    Button(onClick = onComplete) {
-                        Text("Save & Continue")
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Default.ArrowForward, contentDescription = null)
+                    Button(
+                        onClick = {
+                            viewModel.savePermissions { success ->
+                                if (success) {
+                                    onComplete()
+                                }
+                            }
+                        },
+                        enabled = !isSaving
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Saving...")
+                        } else {
+                            Text("Save & Continue")
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Default.ArrowForward, contentDescription = null)
+                        }
                     }
                 }
             }
@@ -181,79 +180,137 @@ fun SecurityConfigScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Summary card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Row(
+            // Error state
+            if (currentError != null) {
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
                 ) {
-                    Column {
-                        Text(
-                            text = "Configuration Status",
-                            style = MaterialTheme.typography.titleSmall
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Error,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
                         )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = currentError!!.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = currentError!!.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                        TextButton(onClick = { viewModel.clearError() }) {
+                            Text("Dismiss")
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // Loading state
+            if (uiState is SecurityConfigUiState.Loading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(16.dp))
                         Text(
-                            text = "$configuredCount of ${categories.size} categories configured",
+                            text = "Loading security categories...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (configuredCount == categories.size) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = "Complete",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.Pending,
-                            contentDescription = "Incomplete",
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(32.dp)
-                        )
+                }
+            } else if (categories.isNotEmpty()) {
+                // Summary card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Configuration Status",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "$configuredCount of ${categories.size} categories configured",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (configuredCount == categories.size) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = "Complete",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Pending,
+                                contentDescription = "Incomplete",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
 
-            // Category list
-            categories.forEach { category ->
-                CategoryCard(
-                    category = category,
-                    isExpanded = selectedCategory?.id == category.id,
-                    onToggle = {
-                        selectedCategory = if (selectedCategory?.id == category.id) null else category
-                    },
-                    onPermissionChange = { newPermission ->
-                        categories = categories.map {
-                            if (it.id == category.id) it.copy(permission = newPermission)
-                            else it
+                // Category list
+                categories.forEach { category ->
+                    CategoryCard(
+                        category = category,
+                        isExpanded = selectedCategory?.id == category.id,
+                        onToggle = {
+                            selectedCategory = if (selectedCategory?.id == category.id) null else category
+                        },
+                        onPermissionChange = { newPermission ->
+                            val permString = when (newPermission) {
+                                PermissionLevel.ALLOW -> "allow"
+                                PermissionLevel.ALLOW_ALL -> "allow_all"
+                                PermissionLevel.DENY -> "deny"
+                            }
+                            viewModel.setPermission(category.id, permString)
+                        },
+                        onWebsiteAdded = { website ->
+                            val current = websiteOverrides[category.id] ?: category.allowedWebsites
+                            websiteOverrides = websiteOverrides + (category.id to (current + website))
+                        },
+                        onWebsiteRemoved = { website ->
+                            val current = websiteOverrides[category.id] ?: category.allowedWebsites
+                            websiteOverrides = websiteOverrides + (category.id to (current - website))
                         }
-                    },
-                    onWebsiteAdded = { website ->
-                        categories = categories.map {
-                            if (it.id == category.id) {
-                                it.copy(allowedWebsites = it.allowedWebsites + website)
-                            } else it
-                        }
-                    },
-                    onWebsiteRemoved = { website ->
-                        categories = categories.map {
-                            if (it.id == category.id) {
-                                it.copy(allowedWebsites = it.allowedWebsites - website)
-                            } else it
-                        }
-                    }
-                )
-                Spacer(Modifier.height(8.dp))
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
 
             Spacer(Modifier.height(80.dp)) // Space for bottom bar

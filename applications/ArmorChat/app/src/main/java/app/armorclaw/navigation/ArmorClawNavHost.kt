@@ -12,16 +12,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import app.armorclaw.ui.security.BiometricEnableScreen
 import app.armorclaw.ui.security.BondingScreen
 import app.armorclaw.ui.security.KeyBackupSetupScreen
 import app.armorclaw.ui.security.PasswordRotationScreen
 import app.armorclaw.ui.security.SecurityConfigScreen
 import app.armorclaw.ui.verification.BridgeVerificationScreen
-import androidx.lifecycle.viewmodel.compose.viewModel
 import app.armorclaw.viewmodel.HardeningStep
 import app.armorclaw.viewmodel.HardeningWizardViewModel
 
@@ -131,6 +133,28 @@ fun ArmorClawNavHost(navController: NavHostController) {
             PlaceholderScreen(
                 title = "Key Recovery",
                 description = "Recover your encryption keys using your recovery passphrase."
+            )
+        }
+
+        composable(
+            route = "room/{roomId}",
+            arguments = listOf(navArgument("roomId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val roomId = backStackEntry.arguments?.getString("roomId").orEmpty()
+            PlaceholderScreen(
+                title = "Chat Room",
+                description = "Room: $roomId"
+            )
+        }
+
+        composable(
+            route = "email/approve/{approvalId}",
+            arguments = listOf(navArgument("approvalId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val approvalId = backStackEntry.arguments?.getString("approvalId").orEmpty()
+            PlaceholderScreen(
+                title = "Email Approval",
+                description = "Approval request: $approvalId"
             )
         }
     }

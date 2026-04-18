@@ -9,4 +9,6 @@ sealed class Route(val route: String) {
     object HardeningDevice : Route("hardening_device")
     object HardeningBiometrics : Route("hardening_biometrics")
     object Home : Route("home")
+    data class Room(val roomId: String) : Route("room/$roomId")
+    data class EmailApproval(val approvalId: String) : Route("email/approve/$approvalId")
 }

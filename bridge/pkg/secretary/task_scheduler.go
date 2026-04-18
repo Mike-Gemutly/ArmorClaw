@@ -20,7 +20,6 @@ import (
 // This bridges the two-database architecture (secretary store + studio store)
 // without importing the studio package directly (avoids circular dependency).
 type FactoryInterface interface {
-	GetRunningInstance(definitionID string) (*AgentInstanceRef, error)
 	Spawn(ctx context.Context, req *SpawnRequestRef) (*SpawnResultRef, error)
 }
 
@@ -51,7 +50,7 @@ type MatrixAdapter interface {
 	SendEvent(ctx context.Context, roomID string, eventType string, payload interface{}) error
 }
 
-// TaskScheduler dispatches due tasks via warm-start (Matrix) or cold-start (container spawn).
+// TaskScheduler dispatches due tasks via cold-start (ephemeral container spawn).
 // It is a stateless dispatcher — reads due tasks from DB, dispatches, updates next_run.
 type TaskScheduler struct {
 	store        Store
@@ -155,19 +154,8 @@ func (ts *TaskScheduler) dispatchTask(ctx context.Context, task ScheduledTask) {
 		return
 	}
 
-	// Check if there's already a running instance for this definition
-	instance, err := ts.factory.GetRunningInstance(task.DefinitionID)
-	if err != nil {
-		ts.log.Error("failed_to_check_running_instance", "definition_id", task.DefinitionID, "error", err)
-		return
-	}
-
-	// All containers use NetworkMode "none" (hardcoded in factory.Spawn),
-	// so warm dispatch is never possible — skip cleanly instead of erroring.
-	if instance != nil && instance.RoomID != "" {
-		ts.log.Warn("warm_dispatch_skipped", "task_id", task.ID, "reason", "all containers use NetworkMode 'none', using cold dispatch")
-	}
-	// COLD START: spawn new container
+	// COLD START: all dispatch is cold-only (ephemeral container spawn).
+	// NetworkMode: none is a hard architectural constraint — warm dispatch is not possible.
 	ts.coldDispatch(ctx, task)
 }
 
@@ -226,10 +214,6 @@ func (ts *TaskScheduler) templateDispatch(ctx context.Context, task ScheduledTas
 
 	ts.log.Info("template_dispatched_task", "task_id", task.ID, "template_id", task.TemplateID, "workflow_id", workflow.ID)
 	ts.updateAfterDispatch(ctx, task)
-}
-
-func (ts *TaskScheduler) warmDispatch(ctx context.Context, task ScheduledTask, instance *AgentInstanceRef) error {
-	return fmt.Errorf("warm dispatch requires backward channel — not implemented: agent containers have no Matrix connectivity (NetworkMode: none)")
 }
 
 // coldDispatch spawns a new container for the task

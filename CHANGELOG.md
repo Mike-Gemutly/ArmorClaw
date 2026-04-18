@@ -1,6 +1,6 @@
 # ArmorClaw Changelog
 
-> **Last Updated:** 2026-04-17
+> **Last Updated:** 2026-04-18
 > **Current Version:** 0.6.0
 
 All notable changes to ArmorClaw are documented here with commit references.
@@ -8,6 +8,10 @@ All notable changes to ArmorClaw are documented here with commit references.
 ---
 
 ## [0.6.0] - 2026-04-17 - Operational Transparency, Governance Hardening, Advanced Automation, Mobile Polish
+
+### Phase 0 — Warm Dispatch Deprecation
+
+- **Deprecated warm dispatch** — architecturally illegal under NetworkMode: none. All dispatch is cold-only (ephemeral container spawn). Removed `warmDispatch()`, `GetRunningInstance()` from FactoryInterface, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go`.
 
 ### Phase 1 — Operational Transparency
 
