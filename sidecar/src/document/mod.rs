@@ -17,6 +17,7 @@ pub fn validate_file_size(size: usize) -> Result<()> {
 pub mod pdf;
 pub mod docx;
 pub mod xlsx;
+pub mod pptx;
 pub mod ocr;
 pub mod diff;
 pub mod rag;
@@ -47,6 +48,12 @@ pub use xlsx::{
     XlsxExtractionResult,
     SheetData,
     extract_data_from_xlsx,
+};
+
+pub use pptx::{
+    PptxExtractor,
+    PptxTextExtractionResult,
+    extract_text_from_pptx,
 };
 
 pub use ocr::{

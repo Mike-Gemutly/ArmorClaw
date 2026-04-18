@@ -47,6 +47,10 @@ docx-rs = "0.4"
 # XLSX Processing
 calamine = "0.24"
 
+# PPTX Processing (ZIP + XML parsing)
+zip = "2.2"
+quick-xml = "0.37"
+
 # Image Processing (for OCR)
 image = "0.25"
 
