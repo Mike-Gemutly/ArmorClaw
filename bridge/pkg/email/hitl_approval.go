@@ -81,7 +81,9 @@ func (m *EmailApprovalManager) RequestApproval(ctx context.Context, req *Outboun
 	case decision := <-resultCh:
 		return decision, nil
 	case <-time.After(m.timeout):
-		m.log.Warn("approval_timeout", "approval_id", approvalID, "email_id", req.EmailID)
+		if m.log != nil {
+			m.log.Warn("approval_timeout", "approval_id", approvalID, "email_id", req.EmailID)
+		}
 		return &ApprovalDecision{
 			Approved:   false,
 			ApprovalID: approvalID,
