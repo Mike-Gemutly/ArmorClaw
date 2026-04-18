@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -30,7 +31,32 @@ import androidx.compose.ui.tooling.preview.Preview
  */
 
 /**
+ * Matrix event type for workflow blocker warnings sent by the Bridge.
+ */
+object BlockerEventType {
+    const val BLOCKER_WARNING = "workflow.blocker_warning"
+
+    // Content field keys
+    const val FIELD_BLOCKER_TYPE = "blocker_type"
+    const val FIELD_MESSAGE = "message"
+    const val FIELD_SUGGESTION = "suggestion"
+    const val FIELD_FIELD = "field"
+    const val FIELD_WORKFLOW_ID = "workflow_id"
+    const val FIELD_STEP_ID = "step_id"
+}
+
+/**
+ * Sensitive field name keywords that trigger password masking.
+ */
+private val SENSITIVE_KEYWORDS = setOf(
+    "password", "card", "key", "token", "secret", "cvv", "pin", "ssn"
+)
+
+/**
  * Describes a blocker that requires user input to proceed.
+ *
+ * Construct via [BlockerInfo.fromContentMap] when parsing from Matrix events,
+ * or directly when creating from local state (e.g., previews).
  */
 data class BlockerInfo(
     val blockerType: String,
@@ -39,7 +65,46 @@ data class BlockerInfo(
     val field: String = "",
     val workflowId: String,
     val stepId: String
-)
+) {
+    /**
+     * Whether this blocker's field contains sensitive data that should be masked.
+     */
+    val isSensitive: Boolean
+        get() {
+            val f = field.lowercase()
+            return SENSITIVE_KEYWORDS.any { f.contains(it) }
+        }
+
+    companion object {
+        /**
+         * Parse BlockerInfo from a Matrix event content map.
+         *
+         * Follows the same pattern as [SystemAlertContent.fromContentMap]
+         * and [EmailApprovalEvent.fromContentMap]. The content map comes from
+         * a `workflow.blocker_warning` Matrix event.
+         *
+         * @param content The event content map from Matrix sync
+         * @return BlockerInfo or null if required fields are missing
+         */
+        fun fromContentMap(content: Map<String, Any>): BlockerInfo? {
+            val blockerType = content[BlockerEventType.FIELD_BLOCKER_TYPE] as? String ?: return null
+            val message = content[BlockerEventType.FIELD_MESSAGE] as? String ?: return null
+            val workflowId = content[BlockerEventType.FIELD_WORKFLOW_ID] as? String ?: return null
+            val stepId = content[BlockerEventType.FIELD_STEP_ID] as? String ?: return null
+            val suggestion = content[BlockerEventType.FIELD_SUGGESTION] as? String ?: ""
+            val field = content[BlockerEventType.FIELD_FIELD] as? String ?: ""
+
+            return BlockerInfo(
+                blockerType = blockerType,
+                message = message,
+                suggestion = suggestion,
+                field = field,
+                workflowId = workflowId,
+                stepId = stepId
+            )
+        }
+    }
+}
 
 /**
  * Dialog state machine for the blocker resolution flow.
@@ -73,22 +138,14 @@ fun BlockerResponseDialog(
     var noteText by remember { mutableStateOf("") }
     var showNoteField by remember { mutableStateOf(false) }
 
-    // Clear input after send (PII safety)
     LaunchedEffect(dialogState) {
         if (dialogState == BlockerDialogState.INPUT || dialogState == BlockerDialogState.ERROR) {
-            // Keep input on retry — only clear on fresh blocker
         }
     }
 
     if (dialogState == BlockerDialogState.DISMISSED) return
 
-    val isSensitive = remember(blocker.field) {
-        val f = blocker.field.lowercase()
-        f.contains("password") || f.contains("card") ||
-            f.contains("key") || f.contains("token") ||
-            f.contains("secret") || f.contains("cvv") ||
-            f.contains("pin") || f.contains("ssn")
-    }
+    val isSensitive = blocker.isSensitive
 
     Dialog(onDismissRequest = {
         if (dialogState != BlockerDialogState.LOADING) onDismiss()
@@ -257,7 +314,7 @@ fun BlockerResponseDialog(
                                 )
                             },
                             visualTransformation = if (isSensitive)
-                                VisualTransformation.Password()
+                                PasswordVisualTransformation()
                             else
                                 VisualTransformation.None,
                             singleLine = true,
