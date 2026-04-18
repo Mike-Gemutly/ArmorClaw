@@ -1,27 +1,67 @@
 # ArmorClaw Changelog
 
 > **Last Updated:** 2026-04-18
-> **Current Version:** 0.6.0
+> **Current Version:** 0.7.0
 
 All notable changes to ArmorClaw are documented here with commit references.
 
 ---
 
-## [0.7.0] - 2026-04-18 - Workflow Inter-Step Data Passing
+## [0.7.0] - 2026-04-18 - Inter-Step Data Passing, Dead Code Purge, Android & Admin Wiring
 
-### Added
+### Phase 1 — Workflow Engine
+
 - **WorkflowStep.Input field** (`bridge/pkg/secretary/types.go`) — Optional `Input map[string]any` field on `WorkflowStep` with `json:"input,omitempty"` tag. Supports template variable references (`{{steps.step_1.data.order_id}}`) for inter-step data flow. Backward compatible: existing templates without `input` round-trip unchanged.
 - **Migration guide** (`doc/migration/workflow-step-input.md`) — Documents the new field, template variable syntax, resolution rules, and backward compatibility guarantees.
 - **Template migration tool** (`bridge/cmd/migrate-templates/`) — CLI tool that adds `"input": {}` to WorkflowStep objects in existing template JSON files. Validates templates against the WorkflowStep schema (step types, required fields). Idempotent and non-destructive: only adds missing `input` fields, rewrites only if changes were made.
 
+### Phase 2 — Dead Code Purge
+
+- **Warm dispatch removed** — `warmDispatch()`, `GetRunningInstance()` from `FactoryInterface`, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go` deleted from `bridge/pkg/secretary/`. All dispatch is now cold-only (ephemeral container spawn). This was architecturally required: `NetworkMode: none` makes warm dispatch impossible since containers cannot receive inbound Matrix events.
+- **Dead code audit** — Swept `bridge/pkg/secretary/` and `bridge/internal/adapter/` for warm dispatch references. All callers updated to use cold dispatch path only.
+
+### Phase 3 — WebSocket EventBus Wiring
+
+- **WebSocket EventBus wiring** (`bridge/pkg/eventbus/eventbus.go`) — EventBus now initializes a WebSocket connection to the Bridge's own HTTP server for real-time event delivery to clients. Uses crash-only design: `log.Fatalf` on WebSocket init failure (intentional, not a bug).
+- **WebSocket server** (`bridge/pkg/websocket/websocket.go`) — Replaced 74-line stub with functional WebSocket server. Accepts connections on the Bridge's HTTP listener, upgrades to WebSocket, and streams `MatrixEventBus` events to connected clients.
+- **Event streaming to clients** — Events from the ring buffer (`MatrixEventBus`) are now pushed to connected WebSocket clients in real time, enabling live status updates in ArmorChat and the admin panel.
+
+### Phase 4 — Android ArmorChat Wiring
+
+- **DeepLinkHandler** (`applications/ArmorChat/.../DeepLinkHandler.kt`) — Notification taps now navigate to the correct screen. Parses `armorclaw://` deep links and routes to the appropriate destination (workflow detail, approval card, agent status).
+- **SecurityConfigViewModel wired** — `SecurityConfigViewModel` connected to `SecurityConfigScreen`. Permission changes now persist across app restarts via the Bridge repository.
+- **BridgeRepository persistence** — `BridgeRepository` credentials now survive app restarts. Uses encrypted SharedPreferences backed by the Android Keystore for server URL, admin token, and Matrix credentials.
+
+### Phase 5 — Admin Panel Wiring
+
+- **Real Bridge API integration** — Admin panel now calls actual Bridge RPC methods instead of using mock data. Replaced mock fetch calls with live RPC client.
+- **Error handling** — Admin panel displays real connection errors, loading states, and empty states from the Bridge.
+
+### Phase 6 — Integration Test Cleanup
+
+- **ArmorChat integration tests** — Replaced all 12 `assertTrue(true)` placeholder tests with meaningful assertions covering deep link routing, credential persistence, SecurityConfig wiring, and notification navigation.
+
+### Added
+
+- **WorkflowStep.Input field** (`bridge/pkg/secretary/types.go`) — Optional `Input map[string]any` field on `WorkflowStep` with `json:"input,omitempty"` tag. Supports template variable references (`{{steps.step_1.data.order_id}}`) for inter-step data flow. Backward compatible: existing templates without `input` round-trip unchanged.
+- **Migration guide** (`doc/migration/workflow-step-input.md`) — Documents the new field, template variable syntax, resolution rules, and backward compatibility guarantees.
+- **Template migration tool** (`bridge/cmd/migrate-templates/`) — CLI tool that adds `"input": {}` to WorkflowStep objects in existing template JSON files. Validates templates against the WorkflowStep schema (step types, required fields). Idempotent and non-destructive: only adds missing `input` fields, rewrites only if changes were made.
+- **DeepLinkHandler.kt** — Android deep link routing for notification taps.
+- **WebSocket event streaming** — Real-time Bridge event delivery to connected clients.
+
 ### Changed
+
 - **BREAKING SCHEMA CHANGE (additive):** `WorkflowStep` JSON now accepts an optional `input` object. Existing JSON without `input` continues to deserialize correctly. No database migration required.
+
+### Removed
+
+- **Warm dispatch dead code** — `warmDispatch()`, `GetRunningInstance()`, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go` removed from `bridge/pkg/secretary/`. All dispatch is cold-only.
 
 ## [0.6.0] - 2026-04-17 - Operational Transparency, Governance Hardening, Advanced Automation, Mobile Polish
 
 ### Phase 0 — Warm Dispatch Deprecation
 
-- **Deprecated warm dispatch** — architecturally illegal under NetworkMode: none. All dispatch is cold-only (ephemeral container spawn). Removed `warmDispatch()`, `GetRunningInstance()` from FactoryInterface, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go`.
+- **Deprecated warm dispatch** — architecturally illegal under NetworkMode: none. All dispatch is cold-only (ephemeral container spawn). Dead code removed in v0.7.0. Removed `warmDispatch()`, `GetRunningInstance()` from FactoryInterface, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go`.
 
 ### Phase 1 — Operational Transparency
 

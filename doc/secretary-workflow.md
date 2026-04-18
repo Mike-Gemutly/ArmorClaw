@@ -36,9 +36,8 @@ ScheduledTask (cron)
        │            waitForCompletion()             ──► 500ms poll
        │            AdvanceWorkflow()
        │
-       └── no template ──► warmDispatch() or coldDispatch()
-                running agent? ──► Matrix event injection
-                no agent?      ──► container spawn
+        └── no template ──► coldDispatch() only
+                 container spawn (no warm dispatch)
 ```
 
 ---
@@ -127,16 +126,17 @@ Triggered when `ScheduledTask.TemplateID` is set.
 5. On completion, calls `Orchestrator.CompleteWorkflow()` or `FailWorkflow()`.
 6. After dispatch, calculates the next run time from the cron expression and updates the scheduled task.
 
-### Path 2: Warm / cold dispatch (no template)
+### Path 2: Cold dispatch only (no template)
 
 Triggered when `ScheduledTask.DefinitionID` is set but `TemplateID` is empty.
 
-The scheduler asks the factory if there is already a running instance for that definition:
+The scheduler always spawns a fresh container via `factory.Spawn()`. There is no warm dispatch path.
 
-- **❌ Warm dispatch (NON-FUNCTIONAL, skips with WARN).** A running agent exists. The scheduler sends a `app.armorclaw.task_dispatch` Matrix event into the agent's room. However, the agent container has **no Matrix connection** (`NetworkMode: "none"`). The event is received only by ArmorChat clients and the Bridge's own Matrix sync. The container never sees it. `warmDispatch()` now explicitly logs a WARN and returns an error, causing the caller to fall back to cold dispatch.
-- **✅ Cold dispatch (FUNCTIONAL, limited).** No running agent. The scheduler calls `factory.Spawn()` to create a fresh container for the task. Functional but limited to exit-code-only results.
+> **Deprecated**: Warm dispatch (`warmDispatch()`) was removed in v0.7.0. It was architecturally illegal under `NetworkMode: none` because containers cannot receive inbound Matrix events. The dead code has been purged.
 
-After either path, the task's `next_run` is updated (cron) or the task is deactivated (one shot).
+- **Cold dispatch (FUNCTIONAL, limited).** The scheduler calls `factory.Spawn()` to create a fresh container for the task. Functional but limited to exit-code-only results.
+
+After dispatch, the task's `next_run` is updated (cron) or the task is deactivated (one shot).
 
 ---
 
@@ -246,6 +246,62 @@ StepExecutor                      Container (NetworkMode: "none")
 Each `WorkflowStep` carries a `Config` field (`json.RawMessage`). This is passed directly to `SpawnRequest.Config` when the container is spawned. The container receives it as the `STEP_CONFIG` environment variable.
 
 This is how template authors pass step specific configuration (API endpoints, parameters, flags) into the agent container without modifying the agent definition.
+
+### Inter-step data passing (v0.7.0)
+
+WorkflowSteps now carry an optional `Input` field (`map[string]any`, JSON tag: `"input,omitempty"`) that enables data to flow from one step's output into the next step's input. This is the primary mechanism for sequential step data propagation.
+
+#### WorkflowStep.Input field
+
+```go
+type WorkflowStep struct {
+    // ... existing fields ...
+    Input map[string]any `json:"input,omitempty"` // v0.7.0: template variables for inter-step data
+}
+```
+
+The `Input` field supports **template variable references** using the `{{steps.<step_id>.data.<key>}}` syntax. When the orchestrator resolves a step's input before execution, it replaces these references with the corresponding values from previously completed steps' `result.json` `data` fields.
+
+#### Resolution rules
+
+1. **Variable syntax**: `{{steps.step_1.data.order_id}}` references the `order_id` key from step `step_1`'s result data.
+2. **Resolution timing**: Variables are resolved just before the container is spawned, after PII approval checks.
+3. **Missing references**: If a referenced step hasn't completed yet or the data key doesn't exist, the variable is replaced with an empty string and a warning is logged.
+4. **Backward compatibility**: Existing templates without `input` fields round-trip unchanged. The field is optional (`omitempty`) and defaults to nil.
+
+#### Example
+
+```json
+{
+  "steps": [
+    {
+      "id": "fetch_order",
+      "type": "action",
+      "agent_ids": ["researcher"],
+      "config": {"task": "Fetch order details for customer ACME-123"}
+    },
+    {
+      "id": "process_order",
+      "type": "action",
+      "agent_ids": ["processor"],
+      "input": {
+        "order_id": "{{steps.fetch_order.data.order_id}}",
+        "customer_email": "{{steps.fetch_order.data.email}}"
+      },
+      "config": {"task": "Process the order"}
+    }
+  ]
+}
+```
+
+In this example, `process_order` receives the `order_id` and `email` from the `fetch_order` step's result data.
+
+#### Migration
+
+Existing templates are unaffected. To add inter-step data passing:
+1. Add an `"input": {}` field to the steps that need upstream data.
+2. Use `{{steps.<step_id>.data.<key>}}` syntax to reference previous step outputs.
+3. A migration tool (`bridge/cmd/migrate-templates/`) is available to add empty `input` fields to existing template JSON files. See `doc/migration/workflow-step-input.md` for the full migration guide.
 
 ### Data flow
 
@@ -723,7 +779,7 @@ The secretary workflow engine operates in **Mode A (Agent Studio)**:
 | Structured step results | ✅ Step mode | `result.json` in state dir (step mode only) |
 | Agent-reported progress | ✅ Available | Via `_events.jsonl` event streaming (step, file ops, commands, observations) |
 | Browser automation | ✅ Via Jetski | Agent delegates to Jetski sidecar (separate container with network) |
-| Warm dispatch | ❌ Stub (skips with WARN, falls back to cold) | `warmDispatch()` logs WARN and returns error; caller falls back to `coldDispatch()` |
+| Warm dispatch | ❌ Removed (v0.7.0) | Dead code purged. `warmDispatch()` removed from `TaskScheduler`. All dispatch is cold-only. |
 
 Browser automation is handled by the Jetski sidecar, a separate container with network access that acts as a CDP proxy to the Lightpanda browser engine. Agent containers never perform browser operations directly.
 
@@ -738,7 +794,7 @@ TaskScheduler
      │
      ├── store (SQLCipher) ── templates, workflows, scheduled tasks, policies
      ├── factory (studio.AgentFactory) ── container spawn/stop/status
-     ├── matrix (MatrixAdapter) ── warm dispatch (currently stub, falls back to cold)
+      ├── matrix (MatrixAdapter) ── cold dispatch only (warm dispatch removed v0.7.0)
      │
      ├── orchestrator (WorkflowOrchestratorImpl)
      │       ├── store ── workflow CRUD
@@ -794,8 +850,8 @@ When the `StepExecutor` encounters a step, it checks the registry first. If a na
 | `event_reader.go` | `EventReader`, `NewEventReader`, `ReadNew`, `maxEventLogSize`, `ErrEventLogExceeded` |
 | `cleanup.go` | `cleanupStateDir`, `stateDirExists` |
 | `result.go` | `ContainerStepResult`, `ParseContainerStepResult`, `ParseExtendedStepResult`, `StepEvent`, `Blocker`, `SkillCandidate`, `ExtendedStepResult`, `EventsSummary`, `ReadEventsFile` |
-| `task_scheduler.go` | `TaskScheduler`, `NewTaskScheduler`, `Start`, `Stop`, `tick`, `dispatchTask`, `templateDispatch`, `warmDispatch`, `coldDispatch` |
-| `types.go` | `TaskTemplate`, `Workflow`, `WorkflowStep`, `StepType`, `WorkflowStatus`, `ApprovalResult`, `ApprovalPolicy`, `ScheduledTask`, interface definitions |
+| `task_scheduler.go` | `TaskScheduler`, `NewTaskScheduler`, `Start`, `Stop`, `tick`, `dispatchTask`, `templateDispatch`, `coldDispatch` |
+| `types.go` | `TaskTemplate`, `Workflow`, `WorkflowStep`, `StepType`, `WorkflowStatus`, `ApprovalResult`, `ApprovalPolicy`, `ScheduledTask`, interface definitions (v0.7.0: `WorkflowStep.Input` field added) |
 | `bridge/internal/events/matrix_event_bus.go` | `MatrixEventBus`, `MatrixEvent`, `Publish`, `GetEventsAfter`, `Subscribe` |
 | `bridge/pkg/skills/extractor.go` | `ExtractFromResult`, `PatternCommandSequence`, `PatternFileTransform`, `PatternStepSequence`, `PatternCheckpointSequence`, `PatternConfigTemplate` |
 | `bridge/pkg/skills/learned_store.go` | `LearnedStore`, `LearnedSkill`, `Save`, `FindForTask`, `RecordOutcome`, `Delete`, `ListForAgent` |
@@ -814,7 +870,7 @@ The backward communication channel (`result.json`), event streaming (`_events.js
 
 1. ~~**Shared state dir**: Container writes `result.json` to the bind-mounted state directory before exit~~ ✅ Done
 2. ~~**Bridge reads result**: After container exit, Bridge reads and parses `result.json`~~ ✅ Done
-3. **Structured step results**: Multi-step workflows can pass data between steps via `result.json` `data` field — container handlers needed for each step type
+3. ~~**Structured step results**: Multi-step workflows can pass data between steps via `result.json` `data` field — container handlers needed for each step type~~ ✅ Done (v0.7.0: `WorkflowStep.Input` field with template variable resolution)
 4. ~~**PII socket wiring**: Secure PII delivery via Unix socket instead of environment variables~~ ✅ Done
 5. ~~**Event streaming**: Containers emit StepEvents to `_events.jsonl`, Bridge tails for real-time progress~~ ✅ Done
 6. ~~**Blocker protocol**: Human-in-the-loop blocker resolution with re-spawn~~ ✅ Done

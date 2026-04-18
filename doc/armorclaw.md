@@ -2,11 +2,13 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 0.6.0
+> **Version**: 0.7.0
 >
-> **Last Updated**: 2026-04-17
+> **Last Updated**: 2026-04-18
 
 > ⚠️ **Architecture Note (v0.4.1)**: Agent containers always run with `NetworkMode: "none"` (no network access). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation runs through the Jetski sidecar, a separate container with its own network stack; agent containers never perform browser operations directly.
+>
+> **v0.7.0 Changes**: WorkflowStep.Input field for inter-step data passing, warm dispatch dead code purged, WebSocket EventBus wiring, Android DeepLinkHandler, SecurityConfigViewModel wired, BridgeRepository persistence, admin panel real API, ArmorChat integration test cleanup.
 >
 > **v0.6.0 Changes**: Bridge-side state inference, Rust Vault deployment, parallel execution, session compaction, step failover, email approval, PPTX Rust migration, v6 audit mode.
 
@@ -40,6 +42,12 @@
 | Change PII masking rules | `bridge/pkg/pii/masker.go` |
 | Modify OAuth token storage | `bridge/pkg/keystore/oauth.go` |
 | Change bridge-local step execution | `bridge/pkg/secretary/bridge_local_registry.go` |
+
+---
+
+## Deprecation Notices
+
+- **Warm dispatch** (removed v0.7.0): `warmDispatch()`, `GetRunningInstance()`, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go` were deleted from `bridge/pkg/secretary/`. All dispatch is cold-only. This was required because `NetworkMode: none` prevents containers from receiving inbound Matrix events, making warm dispatch architecturally impossible.
 
 ---
 
@@ -313,7 +321,7 @@ armorclaw-omo/
 | **JSON-RPC 2.0 (Sentinel)** | TCP | Public API access (via Caddy proxy) | `0.0.0.0:8080` |
 | **Docker Socket** | Docker Engine API | Container lifecycle management | `/var/run/docker.sock` |
 | **gRPC (v6 Vault)** | gRPC over Unix socket | Vault governance: ephemeral tokens, zeroization (v6 only) | `/run/armorclaw/rust-vault.sock` |
-| **HTTP/WebSocket** | REST + WebSocket | Health checks, metrics, real-time events | 8080 |
+| **HTTP/WebSocket** | REST + WebSocket | Health checks, metrics, real-time event streaming (v0.7.0: EventBus wired) | 8080 |
 | **WebRTC** | ICE/STUN/TURN | Voice/video calls | Dynamic |
 | **CDP WebSocket** | Chrome DevTools Protocol | Browser automation (agent → Bridge → Jetski CDP proxy → Lightpanda) | 9222 |
 | **Jetski RPC** | JSON-RPC 2.0 (HTTP) | Jetski sidecar status, sessions, health | 9223 |
@@ -372,10 +380,10 @@ type Server struct {
 | Package | Purpose |
 |---------|---------|
 | `pkg/rpc/` | JSON-RPC 2.0 server with all method handlers |
-| `pkg/eventbus/` | Event broadcasting to WebSocket clients |
+| `pkg/eventbus/` | Event broadcasting to WebSocket clients (v0.7.0: wired to WebSocket for live push) |
 | `pkg/config/` | TOML configuration management |
 | `pkg/logger/` | Structured logging |
-| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator integration |
+| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator integration (v0.7.0: WorkflowStep.Input for inter-step data passing) |
 | `pkg/health/` | Health check and readiness monitoring |
 | `pkg/runtime/` | Bridge runtime configuration and lifecycle |
 
@@ -412,7 +420,7 @@ type Server struct {
 | `pkg/ghost/` | Ghost user management |
 | `pkg/push/` | Mobile push notifications via Matrix Sygnal |
 | `pkg/sso/` | Single sign-on authentication |
-| `pkg/websocket/` | WebSocket server for real-time event streaming |
+| `pkg/websocket/` | WebSocket server for real-time event streaming (v0.7.0: wired to EventBus) |
 | `pkg/translator/` | Message format translation between platforms |
 | `pkg/matrixcmd/` | Matrix command parser and handler |
 | `pkg/notification/` | Cross-channel notification dispatch |
@@ -1853,7 +1861,7 @@ Bridge (Go)                           Container (Docker)
 
 **State directory**: Each agent gets a bind-mounted directory at `/var/lib/armorclaw/agent-state/{id}` mapped to `/home/claw/.openclaw` inside the container. In step mode, the container writes `result.json` here before exit. The Bridge reads it via `ParseContainerStepResult()` after container exit.
 
-**Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. Warm path sends a Matrix event to a running agent's room. Cold path spawns a new container from the agent definition. Uses `robfig/cron/v3` for cron expression parsing.
+**Task Scheduler**: The secretary includes a persistent task scheduler with a 15-second tick interval. It is a stateless dispatcher that reads due tasks from `rolodex.db`, dispatches them, and updates `next_run`. All dispatch is cold-only (ephemeral container spawn). Warm dispatch was removed in v0.7.0 because containers cannot receive inbound Matrix events under `NetworkMode: none`. Uses `robfig/cron/v3` for cron expression parsing.
 
 ### Workflow Execution Lifecycle
 
@@ -1878,8 +1886,8 @@ Template → Workflow Creation → StartWorkflow (status=Running)
 
 | Condition | Path | What happens |
 |-----------|------|--------------|
-| `TemplateID != ""` | Workflow engine | Creates a `Workflow` from the `TaskTemplate`, calls `StartWorkflow` then `StartWorkflowExecution`. Steps execute sequentially through `StepExecutor`. |
-| `TemplateID == ""` | Warm/cold dispatch | Checks for a running agent instance. If found with a room ID, sends an `app.armorclaw.task_dispatch` Matrix event to that room (warm). Otherwise spawns a new container (cold). |
+| `TemplateID != ""` | Workflow engine | Creates a `Workflow` from the `TaskTemplate`, calls `StartWorkflow` then `StartWorkflowExecution`. Steps execute sequentially through `StepExecutor`. Inter-step data passing via `WorkflowStep.Input` template variables (v0.7.0). |
+| `TemplateID == ""` | Cold dispatch only | Spawns a new container via `factory.Spawn()`. No warm dispatch (removed v0.7.0). |
 
 **Room ID semantics**:
 
@@ -1927,7 +1935,11 @@ Parallel execution and step failover are now **implemented** via `orchestrator_p
 
 ### Event Bus Patterns
 
-**Communication Pattern**: Pub/sub with WebSocket push
+**Communication Pattern**: Pub/sub with WebSocket push (v0.7.0)
+
+The EventBus (`bridge/pkg/eventbus/eventbus.go`) initializes a WebSocket connection during startup. All events published to the `MatrixEventBus` ring buffer are pushed to connected WebSocket clients in real time. This enables live status updates in ArmorChat and the admin panel without polling.
+
+**Crash-only design**: EventBus wiring uses `log.Fatalf` when WebSocket initialization fails. The Bridge must crash rather than run in a degraded state where events are silently lost. Do not add graceful fallback or retry logic to this path without CTO approval.
 
 **Event Types:**
 - **Matrix**: `matrix.message`, `matrix.receipt`, `matrix.typing`, `matrix.presence`
@@ -2737,6 +2749,9 @@ ArmorChat is the **Android mobile client** that provides:
 | **Email Approval Card** (v0.6.0) | Email-based HITL approval flow with `EmailApprovalCard` |
 | **Dynamic PII Masking** (v0.6.0) | `BlockerResponseDialog` masks 8 sensitive keywords using `PasswordVisualTransformation` |
 | **Workflow Blocker Events** (v0.6.0) | Parses `workflow.blocker_warning` Matrix events for live blocker status |
+| **Deep Link Navigation** (v0.7.0) | `DeepLinkHandler.kt` routes notification taps to correct screen |
+| **Persistent Credentials** (v0.7.0) | `BridgeRepository` persists credentials via encrypted SharedPreferences |
+| **Security Config Persistence** (v0.7.0) | `SecurityConfigViewModel` wired to `SecurityConfigScreen`, permissions survive app restarts |
 
 ### Provisioning Flow
 

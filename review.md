@@ -1,6 +1,6 @@
 # ArmorClaw — Project Review
 
-**Version**: v4.8.0 | **State**: Production Ready | **Last Updated**: 2026-04-18
+**Version**: v0.7.0 | **State**: Production Ready | **Last Updated**: 2026-04-18
 
 > Entry point for anyone planning or modifying code. Read this before AGENTS.md guardrails take effect.
 > See `CHANGELOG.md` for version history, `doc/` for detailed architecture documentation.
@@ -9,8 +9,8 @@
 
 | Field | Value |
 |-------|-------|
-| Released version | v4.8.0 |
-| Target version | v0.7.0 |
+| Released version | v0.7.0 |
+| Target version | v0.8.0 |
 | Overall health | Stable — production deployed, integration gaps under active development |
 
 ## Subsystem Status
@@ -43,7 +43,7 @@ All agent containers run with `NetworkMode: none`. No container networking, no e
 
 ### Cold-only dispatch
 
-Warm dispatch (`warmDispatch()` in `TaskScheduler`) is architecturally illegal under `NetworkMode: none`. Containers cannot receive inbound connections, so warm dispatch can never work. Deprecated and scheduled for removal in v0.7.0.
+Warm dispatch (`warmDispatch()` in `TaskScheduler`) was architecturally illegal under `NetworkMode: none`. Containers cannot receive inbound connections, so warm dispatch can never work. Dead code removed in v0.7.0.
 
 ### Zero-trust PII
 
@@ -53,24 +53,25 @@ Warm dispatch (`warmDispatch()` in `TaskScheduler`) is architecturally illegal u
 
 ## Deprecation Notices
 
-- **Warm dispatch** — Deprecated in v0.7.0. NetworkMode: none makes it architecturally illegal. Dead code removal in progress.
+No active deprecations. Warm dispatch dead code was fully removed in v0.7.0.
 
-## Known Gaps (v0.7.0 scope)
+## Known Gaps (v0.8.0 scope)
 
-See `.sisyphus/plans/v070-master-plan.md` for the full task breakdown.
+See `.sisyphus/plans/v070-master-plan.md` for the full v0.7.0 task breakdown (all complete).
 
-- Warm dispatch dead code still present in `bridge/pkg/secretary/`
-- WebSocket `bridge/pkg/websocket/websocket.go` is a 74-line stub — EventBus cannot publish to clients
-- `DeepLinkHandler.kt` missing — notification taps do not navigate to correct screen
-- `SecurityConfigViewModel` defined but never wired to `SecurityConfigScreen` — permissions not persisted
-- `WorkflowStep` has no `Input` field — sequential step data propagation impossible
-- Admin panel uses mock data instead of real Bridge API
-- `BridgeRepository` credentials are in-memory only — not persisted across app restarts
-- All 12 ArmorChat integration tests are `assertTrue(true)` placeholders
+- ~~Warm dispatch dead code still present in `bridge/pkg/secretary/`~~ ✅ Removed in v0.7.0
+- ~~WebSocket `bridge/pkg/websocket/websocket.go` is a 74-line stub — EventBus cannot publish to clients~~ ✅ Wired in v0.7.0
+- ~~`DeepLinkHandler.kt` missing — notification taps do not navigate to correct screen~~ ✅ Created in v0.7.0
+- ~~`SecurityConfigViewModel` defined but never wired to `SecurityConfigScreen` — permissions not persisted~~ ✅ Wired in v0.7.0
+- ~~`WorkflowStep` has no `Input` field — sequential step data propagation impossible~~ ✅ Added in v0.7.0 (`Input map[string]any`)
+- ~~Admin panel uses mock data instead of real Bridge API~~ ✅ Replaced with real RPC calls in v0.7.0
+- ~~`BridgeRepository` credentials are in-memory only — not persisted across app restarts~~ ✅ Persisted via encrypted SharedPreferences in v0.7.0
+- ~~All 12 ArmorChat integration tests are `assertTrue(true)` placeholders~~ ✅ Replaced with meaningful assertions in v0.7.0
+- **Browser automation from isolated containers** — Agents still cannot reach the browser service directly. Jetski sidecar routing via Bridge RPC is the current workaround. No timeline for direct CDP access from `NetworkMode: none` containers (this may be a permanent architectural constraint).
 
 ## Active Plan
 
-v0.7.0 master plan: `.sisyphus/plans/v070-master-plan.md`
+v0.7.0 complete. Next: v0.8.0 planning.
 
 ## Security Constraints
 
