@@ -50,8 +50,11 @@ const (
 	EventTypePlatformMessage      = "platform.message"
 	EventTypePlatformError        = "platform.error"
 
+	// Email events
+	EventTypeEmailReceived = "email.received"
+
 	// Bridge events
-	EventTypeBridgeStatus = "bridge.status"
+	EventTypeBridgeStatus   = "bridge.status"
 	EventTypeSessionExpired = "session.expired"
 )
 
@@ -255,12 +258,12 @@ func NewWorkflowProgressEvent(workflowID string, stepNum, totalSteps int, stepNa
 // WorkflowCompletedEvent is emitted when a workflow completes
 type WorkflowCompletedEvent struct {
 	BaseEvent
-	WorkflowID  string        `json:"workflow_id"`
-	Success     bool          `json:"success"`
-	Result      string        `json:"result,omitempty"`
-	Duration    time.Duration `json:"duration"`
-	StepsCompleted int        `json:"steps_completed"`
-	TotalSteps     int        `json:"total_steps"`
+	WorkflowID     string        `json:"workflow_id"`
+	Success        bool          `json:"success"`
+	Result         string        `json:"result,omitempty"`
+	Duration       time.Duration `json:"duration"`
+	StepsCompleted int           `json:"steps_completed"`
+	TotalSteps     int           `json:"total_steps"`
 }
 
 // NewWorkflowCompletedEvent creates a new workflow completed event
@@ -282,10 +285,10 @@ func NewWorkflowCompletedEvent(workflowID string, success bool, result string, d
 // WorkflowFailedEvent is emitted when a workflow fails
 type WorkflowFailedEvent struct {
 	BaseEvent
-	WorkflowID string `json:"workflow_id"`
-	StepNumber int    `json:"step_number"`
-	Error      string `json:"error"`
-	Recoverable bool  `json:"recoverable"`
+	WorkflowID  string `json:"workflow_id"`
+	StepNumber  int    `json:"step_number"`
+	Error       string `json:"error"`
+	Recoverable bool   `json:"recoverable"`
 }
 
 // NewWorkflowFailedEvent creates a new workflow failed event
@@ -309,14 +312,14 @@ func NewWorkflowFailedEvent(workflowID string, stepNum int, errMsg string, recov
 // HitlPendingEvent is emitted when a HITL approval is pending
 type HitlPendingEvent struct {
 	BaseEvent
-	GateID       string    `json:"gate_id"`
-	WorkflowID   string    `json:"workflow_id,omitempty"`
-	AgentID      string    `json:"agent_id,omitempty"`
-	RequestType  string    `json:"request_type"` // file_access, command, data_export, etc.
-	Description  string    `json:"description"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Priority     string    `json:"priority"` // low, medium, high, critical
-	Context      string    `json:"context,omitempty"`
+	GateID      string    `json:"gate_id"`
+	WorkflowID  string    `json:"workflow_id,omitempty"`
+	AgentID     string    `json:"agent_id,omitempty"`
+	RequestType string    `json:"request_type"` // file_access, command, data_export, etc.
+	Description string    `json:"description"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Priority    string    `json:"priority"` // low, medium, high, critical
+	Context     string    `json:"context,omitempty"`
 }
 
 // NewHitlPendingEvent creates a new HITL pending event
@@ -337,10 +340,10 @@ func NewHitlPendingEvent(gateID, requestType, description string, expiresAt time
 // HitlApprovedEvent is emitted when a HITL request is approved
 type HitlApprovedEvent struct {
 	BaseEvent
-	GateID       string `json:"gate_id"`
-	ApprovedBy   string `json:"approved_by"`
-	ApprovedAt   time.Time `json:"approved_at"`
-	Notes        string `json:"notes,omitempty"`
+	GateID     string    `json:"gate_id"`
+	ApprovedBy string    `json:"approved_by"`
+	ApprovedAt time.Time `json:"approved_at"`
+	Notes      string    `json:"notes,omitempty"`
 }
 
 // NewHitlApprovedEvent creates a new HITL approved event
