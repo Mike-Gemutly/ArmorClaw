@@ -3,6 +3,7 @@ package skills
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 )
 
@@ -26,6 +27,12 @@ func init() {
 		"169.254.0.0/16", // link-local
 		"100.64.0.0/10",  // carrier NAT
 		"192.0.0.0/24",   // IANA special purpose
+		"::1/128",        // IPv6 localhost
+		"fc00::/7",       // IPv6 unique local
+		"fe80::/10",      // IPv6 link-local
+		"::ffff:0:0/96",  // IPv4-mapped IPv6
+		"::/128",         // IPv6 unspecified
+		"64:ff9b::/96",   // NAT64
 	}
 
 	for _, cidr := range cidrs {
@@ -109,23 +116,12 @@ func (v *SSRFValidator) ValidateURL(urlStr string) error {
 	return nil
 }
 
-// extractHost extracts hostname from URL (simplified)
 func (v *SSRFValidator) extractHost(urlStr string) string {
-	// Remove https:// prefix
-	urlStr = strings.TrimPrefix(urlStr, "https://")
-
-	// Find first / or : to separate host from path/port
-	parts := strings.SplitN(urlStr, "/", 2)
-	if len(parts) == 0 {
+	u, err := url.Parse(urlStr)
+	if err != nil {
 		return ""
 	}
-
-	host := parts[0]
-
-	// Remove port
-	host = strings.Split(host, ":")[0]
-
-	return host
+	return u.Hostname()
 }
 
 // isMetadataEndpoint checks if a host is a metadata endpoint
