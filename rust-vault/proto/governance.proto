@@ -76,6 +76,7 @@ message IssueTokenRequest {
     string session_id = 3;   // Session that owns this token
     string tool_name = 4;    // Tool that requested this token
     int64 ttl_ms = 5;        // Time-to-live in milliseconds (e.g. 1800000 = 30 min)
+    optional string capability_scope = 6;  // Scope constraint (e.g. "payment.card_number")
 }
 
 // Response from token issuance.
@@ -88,6 +89,7 @@ message ConsumeTokenRequest {
     string token_id = 1;     // The token_id to redeem
     string session_id = 2;   // Session that owns this token (must match issuer)
     string tool_name = 3;    // Tool consuming this token
+    optional string capability_scope = 4;  // Optional scope constraint for consumption
 }
 
 // Response from token consumption containing the unwrapped plaintext.

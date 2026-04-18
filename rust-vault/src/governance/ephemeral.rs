@@ -115,6 +115,7 @@ pub struct TokenEntry {
     pub plaintext: Zeroizing<String>,
     pub created_at: Instant,
     pub ttl: Duration,
+    pub capability_scope: Option<String>,
 }
 
 /// In-memory store for short-lived, single-use secret tokens.
@@ -172,6 +173,7 @@ impl EphemeralTokenStore {
         session_id: &str,
         tool_name: &str,
         ttl: Duration,
+        capability_scope: Option<String>,
     ) -> Result<(), TokenError> {
         let key = TokenKey {
             token_id: token_id.to_string(),
@@ -182,6 +184,7 @@ impl EphemeralTokenStore {
             plaintext: Zeroizing::new(plaintext.to_string()),
             created_at: Instant::now(),
             ttl,
+            capability_scope,
         };
         tracing::info!(
             token_id = %token_id,
@@ -302,6 +305,7 @@ mod tests {
                 "sess1",
                 "tool1",
                 Duration::from_secs(1800),
+                None,
             )
             .unwrap();
 
@@ -320,6 +324,7 @@ mod tests {
                 "sess",
                 "tool",
                 Duration::from_secs(1800),
+                None,
             )
             .unwrap();
 
@@ -364,6 +369,7 @@ mod tests {
                 "session_A",
                 "tool1",
                 Duration::from_secs(1800),
+                None,
             )
             .unwrap();
 
@@ -382,6 +388,7 @@ mod tests {
                 "sess1",
                 "agentmail",
                 Duration::from_secs(1800),
+                None,
             )
             .unwrap();
 
@@ -394,7 +401,7 @@ mod tests {
     async fn ttl_expiration_expired_token_returns_expired() {
         let store = EphemeralTokenStore::new();
         store
-            .issue_token("tok1", "secret", "sess1", "tool1", Duration::from_millis(5))
+            .issue_token("tok1", "secret", "sess1", "tool1", Duration::from_millis(5), None)
             .unwrap();
 
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -416,6 +423,7 @@ mod tests {
                     "sess1",
                     "agentmail",
                     Duration::from_secs(1800),
+                    None,
                 )
                 .unwrap();
         }

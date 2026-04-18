@@ -95,7 +95,7 @@ impl Governance for VaultGovernanceService {
         let ttl = tokio::time::Duration::from_millis(req.ttl_ms as u64);
 
         self.token_store
-            .issue_token(&req.token_id, &req.plaintext, &req.session_id, &req.tool_name, ttl)
+            .issue_token(&req.token_id, &req.plaintext, &req.session_id, &req.tool_name, ttl, req.capability_scope)
             .map_err(token_error_to_status)?;
 
         let timestamp = Self::now_timestamp_ms();
