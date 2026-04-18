@@ -1,6 +1,9 @@
 # Docker Compose: ArmorClaw Complete Stack
 # All-in-one deployment for ArmorClaw with Matrix
 # Launch container and immediately connect via Element X
+#
+# Volume isolation: bridge uses named volume bridge_run for /run/armorclaw.
+# No host bind mounts — each service's runtime directory is isolated.
 
 services:
   # ========================================

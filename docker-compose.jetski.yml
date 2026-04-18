@@ -1,6 +1,10 @@
 # Docker Compose: Jetski Browser Sidecar
 # Part of Topology Separation (G-06)
 #
+# Volume isolation: Jetski has NO /run/armorclaw/ mounts.
+# Communicates with bridge via CDP (port 9222) and RPC (port 9223)
+# over the browser-net and bridge-net Docker networks only.
+#
 # Lightweight headless browser (Lightpanda + Go Observer shield).
 # Can be restarted independently of the main stack.
 #

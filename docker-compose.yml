@@ -38,9 +38,12 @@ services:
       - ARMORCLAW_TOKEN=${ARMORCLAW_ADMIN_TOKEN:?Required}
       - ARMORCLAW_KEYSTORE_SECRET=${ARMORCLAW_KEYSTORE_SECRET:?Required}
       - ARMORCLAW_MATRIX_SECRET=${ARMORCLAW_MATRIX_SECRET:?Required}
+      # Vault socket path — must match vault's isolated mount point
+      - ARMORCLAW_VAULT_SOCKET=/run/armorclaw/vault/keystore.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/armorclaw/data:/data
+      # Broad mount — bridge orchestrator needs access to vault and sidecar sockets
       - /run/armorclaw:/run/armorclaw
     # LESSON: Explicit flags to force network binding over Unix sockets
     command:
@@ -88,7 +91,10 @@ services:
   # ========================================
   # Hardened keystore service — network_mode: none, non-root,
   # cap_drop ALL, read-only filesystem.
-  # Shares /run/armorclaw/ with bridge for Unix domain socket IPC.
+  #
+  # Volume isolation: mounts ONLY /run/armorclaw/vault/ (not the
+  # entire /run/armorclaw/ tree) so the vault cannot see bridge,
+  # office-sidecar, or other service sockets.
   armorclaw-vault:
     build:
       context: ./rust-vault
@@ -99,7 +105,7 @@ services:
     restart: unless-stopped
     network_mode: none
     volumes:
-      - /run/armorclaw:/run/armorclaw
+      - /run/armorclaw/vault:/run/armorclaw
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=0700
