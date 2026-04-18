@@ -11,24 +11,11 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
-
-interface Invite {
-  id: string;
-  code: string;
-  role: 'admin' | 'moderator' | 'user';
-  createdBy: string;
-  createdAt: Date;
-  expiresAt?: Date;
-  maxUses: number;
-  useCount: number;
-  status: 'active' | 'used' | 'expired' | 'revoked' | 'exhausted';
-  usedBy?: {
-    userId: string;
-    usedAt: Date;
-  }[];
-}
+import { useInvites, useCreateInvite, useRevokeInvite } from '../services/bridgeApi';
+import type { Invite } from '../services/bridgeApi';
 
 const ROLE_INFO = {
   admin: {
@@ -57,57 +44,97 @@ const EXPIRATION_OPTIONS = [
   { value: 'never', label: 'Never' }
 ];
 
+function getStatusBadge(status: Invite['status']) {
+  switch (status) {
+    case 'active':
+      return (
+        <span className="flex items-center gap-1 px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">
+          <CheckCircle className="w-3 h-3" />
+          Active
+        </span>
+      );
+    case 'used':
+      return (
+        <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">
+          Used
+        </span>
+      );
+    case 'expired':
+      return (
+        <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
+          <Clock className="w-3 h-3" />
+          Expired
+        </span>
+      );
+    case 'revoked':
+      return (
+        <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">
+          <XCircle className="w-3 h-3" />
+          Revoked
+        </span>
+      );
+    case 'exhausted':
+      return (
+        <span className="flex items-center gap-1 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">
+          <AlertTriangle className="w-3 h-3" />
+          Exhausted
+        </span>
+      );
+  }
+}
+
 export function InvitationsPage() {
-  const [invites, setInvites] = useState<Invite[]>([
-    {
-      id: '1',
-      code: 'a1b2c3d4e5f6',
-      role: 'user',
-      createdBy: 'admin',
-      createdAt: new Date('2026-02-10'),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      maxUses: 5,
-      useCount: 2,
-      status: 'active'
-    }
-  ]);
+  const { data: invites, isLoading, error } = useInvites();
+  const createMutation = useCreateInvite();
+  const revokeMutation = useRevokeInvite();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newRole, setNewRole] = useState<Invite['role']>('user');
   const [newExpiration, setNewExpiration] = useState('7d');
   const [newMaxUses, setNewMaxUses] = useState('1');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
-  const generateCode = () => {
-    return Array.from({ length: 12 }, () =>
-      '0123456789abcdef'[Math.floor(Math.random() * 16)]
-    ).join('');
-  };
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+        <span className="ml-3 text-gray-400">Loading invitations...</span>
+      </div>
+    );
+  }
 
-  const createInvite = () => {
-    const newInvite: Invite = {
-      id: Math.random().toString(36).substring(7),
-      code: generateCode(),
-      role: newRole,
-      createdBy: 'admin',
-      createdAt: new Date(),
-      expiresAt: newExpiration === 'never' ? undefined : new Date(
-        Date.now() + parseExpiration(newExpiration)
-      ),
-      maxUses: parseInt(newMaxUses),
-      useCount: 0,
-      status: 'active'
-    };
-    setInvites(prev => [newInvite, ...prev]);
-    setShowCreateModal(false);
-    setNewRole('user');
-    setNewExpiration('7d');
-    setNewMaxUses('1');
-  };
+  if (error) {
+    return (
+      <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+        <h3 className="font-semibold text-red-400 mb-1">Failed to load invitations</h3>
+        <p className="text-sm text-red-300/80">{error instanceof Error ? error.message : 'Unknown error'}</p>
+      </div>
+    );
+  }
+
+  const inviteList = invites ?? [];
+  const activeCount = inviteList.filter(i => i.status === 'active').length;
 
   const parseExpiration = (exp: string): number => {
     const units: Record<string, number> = { h: 3600000, d: 86400000 };
     const match = exp.match(/^(\d+)([hd])$/);
     return match ? parseInt(match[1]) * units[match[2]] : 0;
+  };
+
+  const createInvite = () => {
+    createMutation.mutate({
+      role: newRole,
+      expiration: newExpiration,
+      max_uses: parseInt(newMaxUses),
+      created_by: 'admin',
+    }, {
+      onSuccess: () => {
+        setShowCreateModal(false);
+        setNewRole('user');
+        setNewExpiration('7d');
+        setNewMaxUses('1');
+      },
+    });
   };
 
   const copyInviteLink = (code: string) => {
@@ -117,52 +144,9 @@ export function InvitationsPage() {
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  const revokeInvite = (id: string) => {
-    setInvites(prev => prev.map(inv =>
-      inv.id === id ? { ...inv, status: 'revoked' as const } : inv
-    ));
+  const handleRevoke = (id: string) => {
+    revokeMutation.mutate({ inviteId: id, revokedBy: 'admin' });
   };
-
-  const getStatusBadge = (invite: Invite) => {
-    switch (invite.status) {
-      case 'active':
-        return (
-          <span className="flex items-center gap-1 px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">
-            <CheckCircle className="w-3 h-3" />
-            Active
-          </span>
-        );
-      case 'used':
-        return (
-          <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">
-            Used
-          </span>
-        );
-      case 'expired':
-        return (
-          <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
-            <Clock className="w-3 h-3" />
-            Expired
-          </span>
-        );
-      case 'revoked':
-        return (
-          <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">
-            <XCircle className="w-3 h-3" />
-            Revoked
-          </span>
-        );
-      case 'exhausted':
-        return (
-          <span className="flex items-center gap-1 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">
-            <AlertTriangle className="w-3 h-3" />
-            Exhausted
-          </span>
-        );
-    }
-  };
-
-  const activeCount = invites.filter(i => i.status === 'active').length;
 
   return (
     <div className="space-y-6">
@@ -218,21 +202,21 @@ export function InvitationsPage() {
         <div className="p-4 border-b border-gray-700">
           <h3 className="font-semibold">All Invitations</h3>
         </div>
-        {invites.length === 0 ? (
+        {inviteList.length === 0 ? (
           <div className="p-8 text-center text-gray-400">
             <Mail className="w-12 h-12 mx-auto mb-3 opacity-50" />
             <p>No invitations created yet</p>
           </div>
         ) : (
           <div className="divide-y divide-gray-700">
-            {invites.map(invite => (
+            {inviteList.map(invite => (
               <div key={invite.id} className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
                     <code className="px-3 py-1 bg-gray-700 rounded font-mono text-sm">
                       {invite.code}
                     </code>
-                    {getStatusBadge(invite)}
+                    {getStatusBadge(invite.status)}
                     <span className={`px-2 py-0.5 rounded text-xs uppercase font-semibold ${ROLE_INFO[invite.role].color}`}>
                       {invite.role}
                     </span>
@@ -252,7 +236,8 @@ export function InvitationsPage() {
                           )}
                         </button>
                         <button
-                          onClick={() => revokeInvite(invite.id)}
+                          onClick={() => handleRevoke(invite.id)}
+                          disabled={revokeMutation.isPending}
                           className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                           title="Revoke invite"
                         >
@@ -265,15 +250,15 @@ export function InvitationsPage() {
                 <div className="flex items-center gap-4 text-sm text-gray-400">
                   <span className="flex items-center gap-1">
                     <Users className="w-3 h-3" />
-                    {invite.useCount}/{invite.maxUses === 0 ? '∞' : invite.maxUses} uses
+                    {invite.use_count}/{invite.max_uses === 0 ? '∞' : invite.max_uses} uses
                   </span>
-                  {invite.expiresAt && (
+                  {invite.expires_at && (
                     <span className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      Expires: {invite.expiresAt.toLocaleDateString()}
+                      Expires: {new Date(invite.expires_at).toLocaleDateString()}
                     </span>
                   )}
-                  <span>Created: {invite.createdAt.toLocaleDateString()}</span>
+                  <span>Created: {new Date(invite.created_at).toLocaleDateString()}</span>
                 </div>
               </div>
             ))}
@@ -346,7 +331,8 @@ export function InvitationsPage() {
               </button>
               <button
                 onClick={createInvite}
-                className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
+                disabled={createMutation.isPending}
+                className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded-lg transition-colors"
               >
                 Create
               </button>

@@ -7,6 +7,15 @@ All notable changes to ArmorClaw are documented here with commit references.
 
 ---
 
+## [0.7.0] - 2026-04-18 - Workflow Inter-Step Data Passing
+
+### Added
+- **WorkflowStep.Input field** (`bridge/pkg/secretary/types.go`) — Optional `Input map[string]any` field on `WorkflowStep` with `json:"input,omitempty"` tag. Supports template variable references (`{{steps.step_1.data.order_id}}`) for inter-step data flow. Backward compatible: existing templates without `input` round-trip unchanged.
+- **Migration guide** (`doc/migration/workflow-step-input.md`) — Documents the new field, template variable syntax, resolution rules, and backward compatibility guarantees.
+
+### Changed
+- **BREAKING SCHEMA CHANGE (additive):** `WorkflowStep` JSON now accepts an optional `input` object. Existing JSON without `input` continues to deserialize correctly. No database migration required.
+
 ## [0.6.0] - 2026-04-17 - Operational Transparency, Governance Hardening, Advanced Automation, Mobile Polish
 
 ### Phase 0 — Warm Dispatch Deprecation

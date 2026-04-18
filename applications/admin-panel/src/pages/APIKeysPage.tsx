@@ -9,18 +9,11 @@ import {
   AlertTriangle,
   CheckCircle,
   Clock,
-  Shield
+  Shield,
+  Loader2
 } from 'lucide-react';
-
-interface APIKey {
-  id: string;
-  provider: string;
-  name: string;
-  prefix: string;
-  createdAt: Date;
-  lastUsed?: Date;
-  status: 'active' | 'revoked' | 'expired';
-}
+import { useAPIKeys, useRevokeAPIKey, useGenerateSecretToken } from '../services/bridgeApi';
+import type { APIKey } from '../services/bridgeApi';
 
 interface PendingToken {
   id: string;
@@ -40,34 +33,36 @@ const PROVIDERS = [
 ];
 
 export function APIKeysPage() {
-  const [keys, setKeys] = useState<APIKey[]>([
-    {
-      id: '1',
-      provider: 'openai',
-      name: 'OpenAI Production',
-      prefix: 'sk-proj-****',
-      createdAt: new Date('2026-01-15'),
-      lastUsed: new Date('2026-02-14'),
-      status: 'active'
-    }
-  ]);
+  const { data: keys, isLoading, error } = useAPIKeys();
+  const revokeMutation = useRevokeAPIKey();
+  const generateTokenMutation = useGenerateSecretToken();
   const [pendingTokens, setPendingTokens] = useState<PendingToken[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  const generateToken = () => {
-    const token = `ac_${Math.random().toString(36).substring(2, 10)}_${Date.now().toString(36)}`;
-    const newToken: PendingToken = {
-      id: Math.random().toString(36).substring(7),
-      token,
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-      used: false
-    };
-    setPendingTokens(prev => [...prev, newToken]);
-    return newToken;
-  };
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+        <span className="ml-3 text-gray-400">Loading API keys...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+        <h3 className="font-semibold text-red-400 mb-1">Failed to load API keys</h3>
+        <p className="text-sm text-red-300/80">{error instanceof Error ? error.message : 'Unknown error'}</p>
+      </div>
+    );
+  }
+
+  const keyList = keys ?? [];
+  const activeKeys = keyList.filter(k => k.status === 'active').length;
+  const pendingCount = pendingTokens.filter(t => !t.used && t.expiresAt > new Date()).length;
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -76,13 +71,27 @@ export function APIKeysPage() {
   };
 
   const revokeKey = (id: string) => {
-    setKeys(prev => prev.map(key =>
-      key.id === id ? { ...key, status: 'revoked' as const } : key
-    ));
+    revokeMutation.mutate(id);
   };
 
-  const activeKeys = keys.filter(k => k.status === 'active').length;
-  const pendingCount = pendingTokens.filter(t => !t.used && t.expiresAt > new Date()).length;
+  const handleGenerateToken = async () => {
+    if (!selectedProvider) return;
+    try {
+      const result = await generateTokenMutation.mutateAsync(selectedProvider);
+      const newToken: PendingToken = {
+        id: Math.random().toString(36).substring(7),
+        token: result.token,
+        createdAt: new Date(),
+        expiresAt: new Date(result.expires_at),
+        used: false
+      };
+      setPendingTokens(prev => [...prev, newToken]);
+      setShowAddModal(false);
+      setSelectedProvider('');
+    } catch {
+      // mutation state surfaces the error in UI
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -169,11 +178,11 @@ export function APIKeysPage() {
       {/* Existing Keys */}
       <div className="bg-gray-800/50 rounded-lg p-4">
         <h3 className="font-semibold mb-3">Stored Keys</h3>
-        {keys.length === 0 ? (
+        {keyList.length === 0 ? (
           <p className="text-gray-400 text-sm">No API keys configured yet</p>
         ) : (
           <div className="space-y-2">
-            {keys.map(key => (
+            {keyList.map(key => (
               <div
                 key={key.id}
                 className={`flex items-center justify-between p-3 rounded-lg ${
@@ -197,8 +206,8 @@ export function APIKeysPage() {
                     </div>
                     <div className="flex items-center gap-2 text-sm text-gray-400">
                       <code>{key.prefix}</code>
-                      {key.lastUsed && (
-                        <span>• Last used: {key.lastUsed.toLocaleDateString()}</span>
+                      {key.last_used && (
+                        <span>• Last used: {new Date(key.last_used).toLocaleDateString()}</span>
                       )}
                     </div>
                   </div>
@@ -210,7 +219,8 @@ export function APIKeysPage() {
                   ) : (
                     <button
                       onClick={() => revokeKey(key.id)}
-                      className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                      disabled={revokeMutation.isPending}
+                      className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-50 rounded-lg transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -266,12 +276,8 @@ export function APIKeysPage() {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  const token = generateToken();
-                  setShowAddModal(false);
-                  setSelectedProvider('');
-                }}
-                disabled={!selectedProvider}
+                onClick={handleGenerateToken}
+                disabled={!selectedProvider || generateTokenMutation.isPending}
                 className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
               >
                 Generate

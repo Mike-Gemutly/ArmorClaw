@@ -86,6 +86,11 @@ type WorkflowStep struct {
 	// NextStepID is the step to execute after this one (empty if last step)
 	NextStepID string `json:"next_step_id,omitempty"`
 
+	// Input contains data references from previous steps, resolved before execution.
+	// Template variables like {{steps.step_1.data.order_id}} are resolved at runtime.
+	// Omit for steps that don't need data from prior steps.
+	Input map[string]any `json:"input,omitempty"`
+
 	// AgentIDs are the agents that can execute this step
 	AgentIDs []string `json:"agent_ids,omitempty"`
 }

@@ -11,101 +11,11 @@ import {
   Search,
   Download,
   Clock,
-  Monitor
+  Monitor,
+  Loader2
 } from 'lucide-react';
-
-interface AuditEvent {
-  id: string;
-  timestamp: Date;
-  category: 'security' | 'auth' | 'data' | 'adapter' | 'system';
-  action: string;
-  actor: string;
-  resource: string;
-  outcome: 'success' | 'failure' | 'warning';
-  details: string;
-  ipAddress: string;
-  deviceId?: string;
-}
-
-const MOCK_EVENTS: AuditEvent[] = [
-  {
-    id: '1',
-    timestamp: new Date(Date.now() - 5 * 60 * 1000),
-    category: 'auth',
-    action: 'device.verified',
-    actor: 'admin',
-    resource: 'device:samsung-s24',
-    outcome: 'success',
-    details: 'Device Samsung Galaxy S24 verified',
-    ipAddress: '192.168.1.100'
-  },
-  {
-    id: '2',
-    timestamp: new Date(Date.now() - 15 * 60 * 1000),
-    category: 'security',
-    action: 'config.updated',
-    actor: 'admin',
-    resource: 'security:banking',
-    outcome: 'success',
-    details: 'Banking data category changed from deny to allow',
-    ipAddress: '192.168.1.100'
-  },
-  {
-    id: '3',
-    timestamp: new Date(Date.now() - 30 * 60 * 1000),
-    category: 'data',
-    action: 'keystore.set',
-    actor: 'system',
-    resource: 'secret:openai-key',
-    outcome: 'success',
-    details: 'API key stored securely',
-    ipAddress: '127.0.0.1'
-  },
-  {
-    id: '4',
-    timestamp: new Date(Date.now() - 45 * 60 * 1000),
-    category: 'auth',
-    action: 'device.pending',
-    actor: 'system',
-    resource: 'device:desktop-chrome',
-    outcome: 'warning',
-    details: 'New device awaiting verification',
-    ipAddress: '192.168.1.105'
-  },
-  {
-    id: '5',
-    timestamp: new Date(Date.now() - 60 * 60 * 1000),
-    category: 'adapter',
-    action: 'adapter.enabled',
-    actor: 'admin',
-    resource: 'adapter:slack',
-    outcome: 'success',
-    details: 'Slack adapter enabled',
-    ipAddress: '192.168.1.100'
-  },
-  {
-    id: '6',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    category: 'security',
-    action: 'auth.failed',
-    actor: 'unknown',
-    resource: 'auth:admin',
-    outcome: 'failure',
-    details: 'Invalid admin claim attempt',
-    ipAddress: '10.0.0.55'
-  },
-  {
-    id: '7',
-    timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000),
-    category: 'system',
-    action: 'lockdown.transition',
-    actor: 'system',
-    resource: 'state:lockdown',
-    outcome: 'success',
-    details: 'Transitioned from lockdown to bonding state',
-    ipAddress: '127.0.0.1'
-  }
-];
+import { useAuditLog } from '../services/bridgeApi';
+import type { AuditEvent } from '../services/bridgeApi';
 
 const CATEGORY_COLORS = {
   security: { bg: 'bg-red-500/20', text: 'text-red-400', icon: Shield },
@@ -115,16 +25,43 @@ const CATEGORY_COLORS = {
   system: { bg: 'bg-gray-500/20', text: 'text-gray-400', icon: Monitor }
 };
 
-const OUTCOME_ICONS = {
-  success: <CheckCircle className="w-4 h-4 text-green-400" />,
-  failure: <XCircle className="w-4 h-4 text-red-400" />,
-  warning: <AlertTriangle className="w-4 h-4 text-yellow-400" />
-};
+function getOutcomeIcon(outcome: AuditEvent['outcome']) {
+  switch (outcome) {
+    case 'success': return <CheckCircle className="w-4 h-4 text-green-400" />;
+    case 'failure': return <XCircle className="w-4 h-4 text-red-400" />;
+    case 'warning': return <AlertTriangle className="w-4 h-4 text-yellow-400" />;
+  }
+}
 
 export function AuditLogPage() {
-  const [events] = useState<AuditEvent[]>(MOCK_EVENTS);
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const { data: auditData, isLoading, error } = useAuditLog({
+    category: filter !== 'all' ? filter : undefined,
+    search: search || undefined,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+        <span className="ml-3 text-gray-400">Loading audit log...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+        <h3 className="font-semibold text-red-400 mb-1">Failed to load audit log</h3>
+        <p className="text-sm text-red-300/80">{error instanceof Error ? error.message : 'Unknown error'}</p>
+      </div>
+    );
+  }
+
+  const events = auditData?.events ?? [];
+  const total = auditData?.total ?? 0;
 
   const filteredEvents = events.filter(event => {
     if (filter !== 'all' && event.category !== filter) return false;
@@ -145,9 +82,9 @@ export function AuditLogPage() {
   };
 
   const stats = {
-    total: events.length,
+    total,
     today: events.filter(e =>
-      e.timestamp > new Date(Date.now() - 24 * 60 * 60 * 1000)
+      new Date(e.timestamp) > new Date(Date.now() - 24 * 60 * 60 * 1000)
     ).length,
     failures: events.filter(e => e.outcome === 'failure').length,
     warnings: events.filter(e => e.outcome === 'warning').length
@@ -243,16 +180,16 @@ export function AuditLogPage() {
                         <code className="text-sm font-mono text-blue-300">
                           {event.action}
                         </code>
-                        {OUTCOME_ICONS[event.outcome]}
+                        {getOutcomeIcon(event.outcome)}
                       </div>
                       <p className="text-sm text-gray-300 mb-1">{event.details}</p>
                       <div className="flex items-center gap-4 text-xs text-gray-400">
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
-                          {event.timestamp.toLocaleString()}
+                          {new Date(event.timestamp).toLocaleString()}
                         </span>
                         <span>Actor: {event.actor}</span>
-                        <span>IP: {event.ipAddress}</span>
+                        <span>IP: {event.ip_address}</span>
                       </div>
                     </div>
                     <div className="text-right text-xs">

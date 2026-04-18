@@ -325,7 +325,7 @@ class BridgeAPIClient {
     return this.rpc('admin.reject_claim', { claim_id: claimId, rejected_by: rejectedBy, reason });
   }
 
-  // Audit methods
+    // Audit methods
   async getAuditLog(params?: {
     category?: string;
     search?: string;
@@ -333,6 +333,22 @@ class BridgeAPIClient {
     offset?: number;
   }): Promise<{ events: AuditEvent[]; total: number }> {
     return this.rpc('audit.get_log', params);
+  }
+
+  // API Key / Secrets methods
+  async listAPIKeys(): Promise<APIKey[]> {
+    return this.rpc<APIKey[]>('secrets.list');
+  }
+
+  async revokeAPIKey(keyId: string): Promise<{ success: boolean }> {
+    return this.rpc('secrets.revoke', { key_id: keyId });
+  }
+
+  async generateSecretToken(provider: string): Promise<{
+    token: string;
+    expires_at: string;
+  }> {
+    return this.rpc('secrets.generate_token', { provider });
   }
 }
 
@@ -444,4 +460,90 @@ export function useAuditLog(params?: { category?: string; search?: string }) {
     queryKey: ['audit', params],
     queryFn: () => bridgeApi.getAuditLog(params),
   });
+}
+
+// API Key hooks
+export function useAPIKeys() {
+  return useQuery({
+    queryKey: ['apiKeys'],
+    queryFn: () => bridgeApi.listAPIKeys(),
+  });
+}
+
+export function useRevokeAPIKey() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) => bridgeApi.revokeAPIKey(keyId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
+    },
+  });
+}
+
+export function useGenerateSecretToken() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: string) => bridgeApi.generateSecretToken(provider),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
+    },
+  });
+}
+
+// Device reject hook
+export function useRejectDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, rejectedBy, reason }: { deviceId: string; rejectedBy: string; reason: string }) =>
+      bridgeApi.rejectDevice(deviceId, rejectedBy, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+// Invite revoke hook
+export function useRevokeInvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ inviteId, revokedBy }: { inviteId: string; revokedBy: string }) =>
+      bridgeApi.revokeInvite(inviteId, revokedBy),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invites'] });
+    },
+  });
+}
+
+// Composite dashboard stats hook
+export interface DashboardStats {
+  lockdownMode: boolean;
+  setupComplete: boolean;
+  totalDevices: number;
+  pendingVerifications: number;
+  activeInvites: number;
+  apiKeysCount: number;
+  enabledAdapters: string[];
+}
+
+export function useDashboardStats() {
+  const lockdown = useLockdownStatus();
+  const devices = useDevices();
+  const invites = useInvites();
+  const adapters = useAdapters();
+  const apiKeys = useAPIKeys();
+
+  const isLoading = lockdown.isLoading || devices.isLoading || invites.isLoading || adapters.isLoading || apiKeys.isLoading;
+  const error = lockdown.error || devices.error || invites.error || adapters.error || apiKeys.error;
+
+  const stats: DashboardStats | undefined = isLoading ? undefined : {
+    lockdownMode: lockdown.data?.mode === 'lockdown' || lockdown.data?.mode === 'bonding',
+    setupComplete: lockdown.data?.setup_complete ?? false,
+    totalDevices: devices.data?.length ?? 0,
+    pendingVerifications: devices.data?.filter(d => d.trust_state === 'pending_approval').length ?? 0,
+    activeInvites: invites.data?.filter(i => i.status === 'active').length ?? 0,
+    apiKeysCount: apiKeys.data?.filter(k => k.status === 'active').length ?? 0,
+    enabledAdapters: adapters.data?.filter(a => a.enabled).map(a => a.name) ?? [],
+  };
+
+  return { stats, isLoading, error };
 }

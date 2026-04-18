@@ -9,20 +9,35 @@ import {
   AlertTriangle,
   CheckCircle,
   Clock,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react';
+import { useDashboardStats } from '../services/bridgeApi';
 
-interface DashboardStats {
-  lockdownMode: boolean;
-  setupComplete: boolean;
-  totalDevices: number;
-  pendingVerifications: number;
-  activeInvites: number;
-  apiKeysCount: number;
-  enabledAdapters: string[];
-}
+export function AdminDashboard() {
+  const { stats, isLoading, error } = useDashboardStats();
 
-export function AdminDashboard({ stats }: { stats: DashboardStats }) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+        <span className="ml-3 text-gray-400">Loading dashboard...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+        <h3 className="font-semibold text-red-400 mb-1">Failed to load dashboard</h3>
+        <p className="text-sm text-red-300/80">{error instanceof Error ? error.message : 'Unknown error'}</p>
+      </div>
+    );
+  }
+
+  if (!stats) return null;
+
   return (
     <div className="space-y-6">
       {/* Status Banner */}

@@ -104,27 +104,15 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Mock stats - would come from bridge API in production
-const MOCK_STATS = {
-  lockdownMode: false,
-  setupComplete: true,
-  totalDevices: 2,
-  pendingVerifications: 1,
-  activeInvites: 1,
-  apiKeysCount: 1,
-  enabledAdapters: ['Slack']
-};
-
 function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const { logout } = useAuth();
   const { data: lockdownStatus } = useLockdownStatus();
 
-  // Use real data if available, otherwise fall back to mock
   const status = lockdownStatus || {
     mode: 'operational',
-    setup_complete: MOCK_STATS.setupComplete,
+    setup_complete: true,
   };
 
   const navItems = [
@@ -265,7 +253,7 @@ function AppRoutes() {
           <ProtectedRoute>
             <Layout>
               <Routes>
-                <Route path="/" element={<AdminDashboard stats={MOCK_STATS} />} />
+                <Route path="/" element={<AdminDashboard />} />
                 <Route path="/security" element={<SecurityConfig />} />
                 <Route path="/adapters" element={<AdaptersPage />} />
                 <Route path="/secrets" element={<APIKeysPage />} />

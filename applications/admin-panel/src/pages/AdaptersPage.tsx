@@ -10,96 +10,71 @@ import {
   Settings,
   ExternalLink,
   AlertTriangle,
-  CheckCircle
+  CheckCircle,
+  Loader2
 } from 'lucide-react';
+import { useAdapters, useToggleAdapter } from '../services/bridgeApi';
+import type { Adapter } from '../services/bridgeApi';
 
-interface Adapter {
-  id: string;
-  name: string;
-  icon: React.ReactNode;
-  description: string;
-  status: 'connected' | 'disconnected' | 'error' | 'pending';
-  enabled: boolean;
-  permissions: string[];
-  lastSync?: Date;
-  error?: string;
+const ADAPTER_ICONS: Record<string, React.ReactNode> = {
+  slack: <Slack className="w-6 h-6" />,
+  discord: <Hash className="w-6 h-6" />,
+  teams: <Users className="w-6 h-6" />,
+  whatsapp: <Phone className="w-6 h-6" />,
+};
+
+function getAdapterIcon(id: string) {
+  return ADAPTER_ICONS[id] || <MessageSquare className="w-6 h-6" />;
 }
 
-const ADAPTERS: Adapter[] = [
-  {
-    id: 'slack',
-    name: 'Slack',
-    icon: <Slack className="w-6 h-6" />,
-    description: 'Connect to Slack workspaces for team messaging',
-    status: 'disconnected',
-    enabled: false,
-    permissions: ['read_messages', 'send_messages', 'read_files']
-  },
-  {
-    id: 'discord',
-    name: 'Discord',
-    icon: <Hash className="w-6 h-6" />,
-    description: 'Connect to Discord servers and channels',
-    status: 'disconnected',
-    enabled: false,
-    permissions: ['read_messages', 'send_messages', 'manage_channels']
-  },
-  {
-    id: 'teams',
-    name: 'Microsoft Teams',
-    icon: <Users className="w-6 h-6" />,
-    description: 'Connect to Microsoft Teams for enterprise communication',
-    status: 'disconnected',
-    enabled: false,
-    permissions: ['read_messages', 'send_messages', 'read_files', 'join_meetings']
-  },
-  {
-    id: 'whatsapp',
-    name: 'WhatsApp',
-    icon: <Phone className="w-6 h-6" />,
-    description: 'Connect to WhatsApp for personal messaging',
-    status: 'disconnected',
-    enabled: false,
-    permissions: ['read_messages', 'send_messages']
+function getStatusColor(status: Adapter['status']) {
+  switch (status) {
+    case 'connected': return 'text-green-400';
+    case 'disconnected': return 'text-gray-400';
+    case 'error': return 'text-red-400';
+    case 'pending': return 'text-yellow-400';
   }
-];
+}
+
+function getStatusIcon(status: Adapter['status']) {
+  switch (status) {
+    case 'connected': return <CheckCircle className="w-4 h-4 text-green-400" />;
+    case 'disconnected': return <div className="w-4 h-4 rounded-full border-2 border-gray-500" />;
+    case 'error': return <AlertTriangle className="w-4 h-4 text-red-400" />;
+    case 'pending': return <div className="w-4 h-4 rounded-full bg-yellow-400 animate-pulse" />;
+  }
+}
 
 export function AdaptersPage() {
-  const [adapters, setAdapters] = useState<Adapter[]>(ADAPTERS);
+  const { data: adapters, isLoading, error } = useAdapters();
+  const toggleMutation = useToggleAdapter();
   const [selectedAdapter, setSelectedAdapter] = useState<string | null>(null);
 
-  const toggleAdapter = (id: string) => {
-    setAdapters(prev => prev.map(adapter => {
-      if (adapter.id === id) {
-        return {
-          ...adapter,
-          enabled: !adapter.enabled,
-          status: !adapter.enabled ? 'pending' : 'disconnected'
-        };
-      }
-      return adapter;
-    }));
-  };
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+        <span className="ml-3 text-gray-400">Loading adapters...</span>
+      </div>
+    );
+  }
 
-  const getStatusColor = (status: Adapter['status']) => {
-    switch (status) {
-      case 'connected': return 'text-green-400';
-      case 'disconnected': return 'text-gray-400';
-      case 'error': return 'text-red-400';
-      case 'pending': return 'text-yellow-400';
-    }
-  };
+  if (error) {
+    return (
+      <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+        <h3 className="font-semibold text-red-400 mb-1">Failed to load adapters</h3>
+        <p className="text-sm text-red-300/80">{error instanceof Error ? error.message : 'Unknown error'}</p>
+      </div>
+    );
+  }
 
-  const getStatusIcon = (status: Adapter['status']) => {
-    switch (status) {
-      case 'connected': return <CheckCircle className="w-4 h-4 text-green-400" />;
-      case 'disconnected': return <div className="w-4 h-4 rounded-full border-2 border-gray-500" />;
-      case 'error': return <AlertTriangle className="w-4 h-4 text-red-400" />;
-      case 'pending': return <div className="w-4 h-4 rounded-full bg-yellow-400 animate-pulse" />;
-    }
-  };
+  const adapterList = adapters ?? [];
+  const enabledCount = adapterList.filter(a => a.enabled).length;
 
-  const enabledCount = adapters.filter(a => a.enabled).length;
+  const toggleAdapter = (id: string, currentlyEnabled: boolean) => {
+    toggleMutation.mutate({ adapterId: id, enabled: !currentlyEnabled });
+  };
 
   return (
     <div className="space-y-6">
@@ -113,7 +88,7 @@ export function AdaptersPage() {
         </div>
         <div className="text-right">
           <p className="text-sm text-gray-400">Enabled</p>
-          <p className="text-2xl font-bold">{enabledCount}/{adapters.length}</p>
+          <p className="text-2xl font-bold">{enabledCount}/{adapterList.length}</p>
         </div>
       </div>
 
@@ -132,7 +107,7 @@ export function AdaptersPage() {
 
       {/* Adapter Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {adapters.map(adapter => (
+        {adapterList.map(adapter => (
           <div
             key={adapter.id}
             className={`bg-gray-800/50 rounded-lg p-4 border-2 transition-colors ${
@@ -146,7 +121,7 @@ export function AdaptersPage() {
                 <div className={`p-2 rounded-lg ${
                   adapter.enabled ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'
                 }`}>
-                  {adapter.icon}
+                  {getAdapterIcon(adapter.id)}
                 </div>
                 <div>
                   <h3 className="font-semibold">{adapter.name}</h3>
@@ -154,7 +129,8 @@ export function AdaptersPage() {
                 </div>
               </div>
               <button
-                onClick={() => toggleAdapter(adapter.id)}
+                onClick={() => toggleAdapter(adapter.id, adapter.enabled)}
+                disabled={toggleMutation.isPending}
                 className="p-1"
               >
                 {adapter.enabled ? (
@@ -171,9 +147,9 @@ export function AdaptersPage() {
               <span className={`text-sm capitalize ${getStatusColor(adapter.status)}`}>
                 {adapter.status}
               </span>
-              {adapter.lastSync && (
+              {adapter.last_sync && (
                 <span className="text-xs text-gray-500 ml-auto">
-                  Last sync: {adapter.lastSync.toLocaleString()}
+                  Last sync: {new Date(adapter.last_sync).toLocaleString()}
                 </span>
               )}
             </div>
