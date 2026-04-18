@@ -7,6 +7,7 @@ import (
 
 	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/internal/events"
+	"github.com/armorclaw/bridge/pkg/browser"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/studio"
@@ -115,6 +116,7 @@ func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixE
 		bridgeLocalRegistry.Register("echo", func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
 			return config, nil
 		})
+		bridgeLocalRegistry.Register(browser.HandlerName, browser.Handler(browser.NewClient("http://localhost:3002")))
 		log.Printf("BridgeLocal registry initialized with %d handler(s)", len(bridgeLocalRegistry.List()))
 
 		var stepExecutor *secretary.StepExecutor
