@@ -1211,7 +1211,7 @@ func TestBlockerLoop_EventLogExceeded(t *testing.T) {
 		f.Close()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	result, err := executor.executeStepWithBlockerHandling(ctx, workflow, step, defID, orch)

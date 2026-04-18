@@ -889,7 +889,6 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 	reader := NewEventReader(stateDir)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	capExceeded := false
 
 	for {
 		select {
@@ -905,17 +904,16 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 
 			// Tail _events.jsonl while container is running.
 			var events []StepEvent
-			if !capExceeded {
-				var readErr error
-				events, _, readErr = reader.ReadNew()
-				if readErr != nil {
-					if errors.Is(readErr, ErrEventLogExceeded) {
-						log.Printf("event log exceeded 10MB soft cap, stopping tail but continuing to poll (stateDir=%s)", stateDir)
-						capExceeded = true
-						events = nil
-					}
-					// Non-fatal read error — log and continue polling.
+			var readErr error
+			events, _, readErr = reader.ReadNew()
+			if readErr != nil {
+				if errors.Is(readErr, ErrEventLogExceeded) {
+					log.Printf("event log exceeded 10MB soft cap, stopping container (stateDir=%s)", stateDir)
+					_ = e.factory.Stop(context.Background(), instanceID, 10*time.Second)
+					_ = cleanupStateDir(stateDir)
+					return nil, ErrEventLogExceeded
 				}
+				// Non-fatal read error — log and continue polling.
 			}
 			// Route events by type to Matrix room.
 			if e.eventBus != nil && roomID != "" {
