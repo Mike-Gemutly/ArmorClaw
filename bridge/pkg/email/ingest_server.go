@@ -13,33 +13,40 @@ import (
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/logger"
 	"github.com/armorclaw/bridge/pkg/pii"
+	"github.com/armorclaw/bridge/pkg/sidecar"
 	"github.com/armorclaw/bridge/pkg/yara"
 )
 
 type IngestServer struct {
-	storage  EmailStorage
-	bus      *eventbus.EventBus
-	masker   *pii.Masker
-	log      *logger.Logger
-	yaraScan func(filePath string) (bool, error)
-	socket   string
-	listener net.Listener
+	storage      EmailStorage
+	bus          *eventbus.EventBus
+	masker       *pii.Masker
+	log          *logger.Logger
+	yaraScan     func(filePath string) (bool, error)
+	socket       string
+	listener     net.Listener
+	officeClient *sidecar.Client
+	rustClient   *sidecar.Client
 }
 
 type IngestServerConfig struct {
-	Storage EmailStorage
-	Bus     *eventbus.EventBus
-	Socket  string
-	Log     *logger.Logger
+	Storage            EmailStorage
+	Bus                *eventbus.EventBus
+	Socket             string
+	Log                *logger.Logger
+	SidecarOfficeClient *sidecar.Client
+	SidecarRustClient   *sidecar.Client
 }
 
 func NewIngestServer(cfg IngestServerConfig) *IngestServer {
 	s := &IngestServer{
-		storage: cfg.Storage,
-		bus:     cfg.Bus,
-		masker:  pii.NewMasker(),
-		socket:  cfg.Socket,
-		log:     cfg.Log,
+		storage:      cfg.Storage,
+		bus:          cfg.Bus,
+		masker:       pii.NewMasker(),
+		socket:       cfg.Socket,
+		log:          cfg.Log,
+		officeClient: cfg.SidecarOfficeClient,
+		rustClient:   cfg.SidecarRustClient,
 	}
 	s.yaraScan = s.defaultYARAScan
 	if s.socket == "" {
@@ -152,6 +159,10 @@ func (s *IngestServer) IngestEmail(ctx context.Context, rawEmail []byte, from, t
 		return &IngestResponse{Accepted: false, RejectionReason: "malware detected"}
 	}
 
+	if yaraOK && (s.officeClient != nil || s.rustClient != nil) {
+		go s.extractAttachments(emailID, parsed.Attachments)
+	}
+
 	bodyMasked, maskedFields := s.masker.MaskPII(parsed.BodyText)
 	subjectMasked, _ := s.masker.MaskPII(parsed.Subject)
 
@@ -181,6 +192,79 @@ func (s *IngestServer) IngestEmail(ctx context.Context, rawEmail []byte, from, t
 		Accepted: true,
 		EmailID:  emailID,
 		FileIDs:  fileIDs,
+	}
+}
+
+var mimeToFormat = map[string]string{
+	"application/pdf":                                                          "pdf",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":  "docx",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":        "xlsx",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+	"application/vnd.ms-excel":                                                 "xls",
+	"application/vnd.ms-powerpoint":                                            "ppt",
+	"application/msword":                                                       "doc",
+	"application/vnd.ms-outlook":                                               "msg",
+}
+
+const maxExtractionSize = 10 * 1024 * 1024 // 10MB
+
+func (s *IngestServer) extractAttachments(emailID string, attachments []ParsedAttachment) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	for _, att := range attachments {
+		if att.Size > maxExtractionSize {
+			s.log.Debug("attachment_extraction_skipped_oversized",
+				"email_id", emailID,
+				"filename", att.Filename,
+				"size", att.Size,
+				"max", maxExtractionSize,
+			)
+			continue
+		}
+
+		format, ok := mimeToFormat[att.ContentType]
+		if !ok {
+			s.log.Debug("attachment_extraction_skipped_format",
+				"email_id", emailID,
+				"filename", att.Filename,
+				"content_type", att.ContentType,
+			)
+			continue
+		}
+
+		req := &sidecar.ExtractTextRequest{
+			DocumentFormat:  format,
+			DocumentContent: att.Content,
+		}
+
+		resp, err := sidecar.RouteExtractText(ctx, req, s.officeClient, s.rustClient)
+		if err != nil {
+			s.log.Warn("attachment_extraction_failed",
+				"email_id", emailID,
+				"filename", att.Filename,
+				"format", format,
+				"error", err,
+			)
+			continue
+		}
+
+		if resp != nil && resp.Text != "" {
+			if err := s.storage.StoreAttachmentText(emailID, att.Filename, resp.Text); err != nil {
+				s.log.Warn("attachment_text_store_failed",
+					"email_id", emailID,
+					"filename", att.Filename,
+					"error", err,
+				)
+			} else {
+				s.log.Info("attachment_text_extracted",
+					"email_id", emailID,
+					"filename", att.Filename,
+					"format", format,
+					"text_len", len(resp.Text),
+				)
+			}
+		}
 	}
 }
 

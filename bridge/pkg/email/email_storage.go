@@ -18,6 +18,7 @@ type EmailStorage interface {
 	StoreAttachment(emailID, filename string, content []byte) (fileID string, err error)
 	GetAttachment(fileID string) ([]byte, error)
 	DeleteEmail(emailID string) error
+	StoreAttachmentText(emailID, filename, text string) error
 }
 
 type LocalFSEmailStorage struct {
@@ -114,6 +115,22 @@ func (s *LocalFSEmailStorage) DeleteEmail(emailID string) error {
 	}
 	attachDir := filepath.Join(s.baseDir, "attachments", emailID)
 	_ = os.RemoveAll(attachDir)
+	return nil
+}
+
+func (s *LocalFSEmailStorage) StoreAttachmentText(emailID, filename, text string) error {
+	dir := filepath.Join(s.baseDir, "extracted-text", emailID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create extracted-text dir: %w", err)
+	}
+	safeName := sanitizeFilename(filename)
+	if safeName == "" {
+		safeName = "unnamed"
+	}
+	path := filepath.Join(dir, safeName+".txt")
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		return fmt.Errorf("write extracted text: %w", err)
+	}
 	return nil
 }
 
