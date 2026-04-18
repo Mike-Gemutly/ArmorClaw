@@ -3,6 +3,7 @@ package sidecar
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -34,6 +35,12 @@ type Version struct {
 
 // ParseVersion parses a semantic version string
 func ParseVersion(versionStr string) (*Version, error) {
+	// Validate that the version string has exactly 3 parts (2 dots)
+	dotCount := strings.Count(versionStr, ".")
+	if dotCount != 2 {
+		return nil, fmt.Errorf("invalid version format: %s (expected MAJOR.MINOR.PATCH)", versionStr)
+	}
+
 	var major, minor, patch int
 	_, err := fmt.Sscanf(versionStr, "%d.%d.%d", &major, &minor, &patch)
 	if err != nil {

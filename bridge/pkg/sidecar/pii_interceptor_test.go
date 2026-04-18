@@ -213,7 +213,7 @@ func TestPIIInterceptor_InterceptRequest_CreditCard(t *testing.T) {
 
 	req := &ExtractTextRequest{
 		DocumentFormat:  "txt",
-		DocumentContent: []byte("Card: 4111-1111-1111-1111"),
+		DocumentContent: []byte("Card: 4111111111111111"),
 	}
 
 	intercepted, err := interceptor.InterceptRequest(context.Background(), "ExtractText", req)
