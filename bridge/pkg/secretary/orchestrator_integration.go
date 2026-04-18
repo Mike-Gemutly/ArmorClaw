@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/armorclaw/bridge/internal/events"
+	"github.com/armorclaw/bridge/pkg/capability"
+	"github.com/armorclaw/bridge/pkg/interfaces"
 	"github.com/armorclaw/bridge/pkg/studio"
 )
 
@@ -142,6 +144,7 @@ type StepExecutorConfig struct {
 	ApprovalEngine   ApprovalChecker
 	ApprovalManager  *PendingApprovalManager
 	EventBus         *events.MatrixEventBus
+	Broker           interfaces.CapabilityBroker // inserted between step start and agent dispatch; nil = all steps execute (backward compatible)
 	DefaultTimeout   time.Duration
 	StepRetryCount   int
 	StepRetryDelay   time.Duration
@@ -194,6 +197,7 @@ type StepExecutor struct {
 	approvalEngine   ApprovalChecker
 	approvalManager  *PendingApprovalManager
 	eventBus         *events.MatrixEventBus
+	broker           interfaces.CapabilityBroker
 	defaultTimeout   time.Duration
 	retryCount       int
 	retryDelay       time.Duration
@@ -240,6 +244,7 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		approvalEngine:    cfg.ApprovalEngine,
 		approvalManager:   cfg.ApprovalManager,
 		eventBus:          cfg.EventBus,
+		broker:            cfg.Broker,
 		defaultTimeout:    cfg.DefaultTimeout,
 		retryCount:        cfg.StepRetryCount,
 		retryDelay:        cfg.StepRetryDelay,
@@ -699,6 +704,31 @@ func (e *StepExecutor) executeStepWithRetry(ctx context.Context, workflow *Workf
 }
 
 func (e *StepExecutor) executeStep(ctx context.Context, workflow *Workflow, step WorkflowStep) *StepResult {
+	if e.broker != nil {
+		req := capability.ActionRequest{
+			TeamID: workflow.ID,
+			Action: step.Name,
+			Params: step.Input,
+		}
+		if len(step.AgentIDs) > 0 {
+			req.AgentID = step.AgentIDs[0]
+		}
+		resp, err := e.broker.Authorize(ctx, req)
+		if err != nil || !resp.Allowed {
+			reason := "broker denied step"
+			if err != nil {
+				reason = fmt.Sprintf("broker error: %v", err)
+			} else if resp.Reason != "" {
+				reason = fmt.Sprintf("capability denied: %s", resp.Reason)
+			}
+			return &StepResult{
+				StepID:      step.StepID,
+				Err:         fmt.Errorf("%s: %s", step.StepID, reason),
+				Recoverable: false,
+			}
+		}
+	}
+
 	if len(step.AgentIDs) == 0 {
 		return &StepResult{
 			StepID:      step.StepID,
