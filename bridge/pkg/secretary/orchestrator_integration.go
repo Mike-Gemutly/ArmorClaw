@@ -77,6 +77,10 @@ type StepExecutorConfig struct {
 	StateDirBase   string
 	SkillFinder    SkillFinder
 
+	// ParallelConfig configures concurrent step execution.
+	// If zero, parallel execution uses DefaultParallelConfig().
+	ParallelConfig ParallelConfig
+
 	// OnSkillExtraction is called after successful step completion to extract
 	// reusable skill patterns from the result. Errors are silently ignored to
 	// avoid disrupting the workflow. Uses callback to avoid importing pkg/skills.
@@ -98,6 +102,7 @@ type StepExecutor struct {
 	retryDelay     time.Duration
 	stateDirBase   string
 	skillFinder    SkillFinder
+	parallelExec   *ParallelExecutor
 
 	onSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
 	onSkillOutcome    func(skillID string, success bool) error
@@ -144,6 +149,12 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 	}
 }
 
+func (e *StepExecutor) initParallelExecutor() {
+	if e.parallelExec == nil {
+		e.parallelExec = NewParallelExecutor(e, DefaultParallelConfig())
+	}
+}
+
 func (e *StepExecutor) agentStateDir(agentID string) string {
 	return fmt.Sprintf("%s/%s", e.stateDirBase, agentID)
 }
@@ -171,7 +182,22 @@ func (e *StepExecutor) ExecuteSteps(
 		stepMap[step.StepID] = step
 	}
 
-	for i, stepID := range validation.ExecutionOrder {
+	if HasParallelSteps(template.Steps) {
+		return e.executeWithParallel(ctx, orchestrator, workflow, template, stepMap, validation.ExecutionOrder)
+	}
+
+	return e.executeSequential(ctx, orchestrator, workflow, template, stepMap, validation.ExecutionOrder)
+}
+
+func (e *StepExecutor) executeSequential(
+	ctx context.Context,
+	orchestrator *WorkflowOrchestratorImpl,
+	workflow *Workflow,
+	template *TaskTemplate,
+	stepMap map[string]WorkflowStep,
+	executionOrder []string,
+) error {
+	for i, stepID := range executionOrder {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -183,29 +209,11 @@ func (e *StepExecutor) ExecuteSteps(
 			return fmt.Errorf("%w: step %s not found", ErrInvalidExecutionOrder, stepID)
 		}
 
-		progress := float64(i) / float64(len(validation.ExecutionOrder))
+		progress := float64(i) / float64(len(executionOrder))
 		orchestrator.UpdateProgress(workflow.ID, stepID, progress)
 
-		if e.approvalEngine != nil && len(template.PIIRefs) > 0 {
-			approvalResult, err := e.approvalEngine.EvaluateStep(ctx, workflow, template, &step, template.PIIRefs, workflow.CreatedBy)
-			if err != nil {
-				return fmt.Errorf("approval evaluation failed for step %s: %w", stepID, err)
-			}
-
-			if approvalResult.Required && !approvalResult.Approved {
-				if approvalResult.NeedsApproval {
-					if e.eventBus == nil {
-						return fmt.Errorf("step %s requires PII approval but no event bus configured", stepID)
-					}
-					approvedFields, err := PendingApproval(ctx, e.eventBus, workflow.RoomID, stepID, approvalResult.DeniedFields)
-					if err != nil {
-						return fmt.Errorf("PII approval failed for step %s: %w", stepID, err)
-					}
-					_ = approvedFields
-				} else if len(approvalResult.DeniedFields) > 0 {
-					return fmt.Errorf("step %s denied: fields %v blocked by policy", stepID, approvalResult.DeniedFields)
-				}
-			}
+		if err := e.checkApproval(ctx, workflow, template, &step, stepID); err != nil {
+			return err
 		}
 
 		result := e.executeStepWithRetry(ctx, workflow, step)
@@ -228,6 +236,255 @@ func (e *StepExecutor) ExecuteSteps(
 			}
 			return fmt.Errorf("failed to advance workflow: %w", err)
 		}
+	}
+
+	return nil
+}
+
+func (e *StepExecutor) executeWithParallel(
+	ctx context.Context,
+	orchestrator *WorkflowOrchestratorImpl,
+	workflow *Workflow,
+	template *TaskTemplate,
+	stepMap map[string]WorkflowStep,
+	executionOrder []string,
+) error {
+	e.initParallelExecutor()
+
+	groups := IdentifyParallelGroups(template.Steps)
+	groupIdx := BuildParallelGroupIndex(groups)
+	stepToGroup := BuildStepToGroupMap(groups)
+
+	skippedSteps := make(map[string]bool)
+
+	for i, stepID := range executionOrder {
+		if skippedSteps[stepID] {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		step, exists := stepMap[stepID]
+		if !exists {
+			return fmt.Errorf("%w: step %s not found", ErrInvalidExecutionOrder, stepID)
+		}
+
+		switch step.Type {
+		case StepParallel:
+			if err := e.handleStandaloneParallel(ctx, orchestrator, workflow, template, stepMap, executionOrder, i, step); err != nil {
+				return err
+			}
+
+		case StepParallelSplit:
+			group, hasGroup := groupIdx[stepID]
+			if !hasGroup {
+				return fmt.Errorf("parallel_split step %s has no matching parallel_merge", stepID)
+			}
+			if err := e.handleParallelGroup(ctx, orchestrator, workflow, template, stepMap, executionOrder, i, group, skippedSteps); err != nil {
+				return err
+			}
+
+		case StepParallelMerge:
+			// Merge steps are executed as synchronization barriers after the split handler.
+			// If we encounter a merge here, it means the split handler already processed it.
+			// Skip it to avoid double execution.
+			continue
+
+		default:
+			if err := e.executeSequentialStep(ctx, orchestrator, workflow, template, stepMap, executionOrder, i, step, stepToGroup); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *StepExecutor) checkApproval(
+	ctx context.Context,
+	workflow *Workflow,
+	template *TaskTemplate,
+	step *WorkflowStep,
+	stepID string,
+) error {
+	if e.approvalEngine == nil || len(template.PIIRefs) == 0 {
+		return nil
+	}
+
+	approvalResult, err := e.approvalEngine.EvaluateStep(ctx, workflow, template, step, template.PIIRefs, workflow.CreatedBy)
+	if err != nil {
+		return fmt.Errorf("approval evaluation failed for step %s: %w", stepID, err)
+	}
+
+	if approvalResult.Required && !approvalResult.Approved {
+		if approvalResult.NeedsApproval {
+			if e.eventBus == nil {
+				return fmt.Errorf("step %s requires PII approval but no event bus configured", stepID)
+			}
+			approvedFields, err := PendingApproval(ctx, e.eventBus, workflow.RoomID, stepID, approvalResult.DeniedFields)
+			if err != nil {
+				return fmt.Errorf("PII approval failed for step %s: %w", stepID, err)
+			}
+			_ = approvedFields
+		} else if len(approvalResult.DeniedFields) > 0 {
+			return fmt.Errorf("step %s denied: fields %v blocked by policy", stepID, approvalResult.DeniedFields)
+		}
+	}
+
+	return nil
+}
+
+func (e *StepExecutor) executeSequentialStep(
+	ctx context.Context,
+	orchestrator *WorkflowOrchestratorImpl,
+	workflow *Workflow,
+	template *TaskTemplate,
+	stepMap map[string]WorkflowStep,
+	executionOrder []string,
+	index int,
+	step WorkflowStep,
+	stepToGroup map[string]*ParallelGroup,
+) error {
+	stepID := step.StepID
+	progress := float64(index) / float64(len(executionOrder))
+	orchestrator.UpdateProgress(workflow.ID, stepID, progress)
+
+	if err := e.checkApproval(ctx, workflow, template, &step, stepID); err != nil {
+		return err
+	}
+
+	result := e.executeStepWithRetry(ctx, workflow, step)
+
+	if result.Err != nil {
+		if !result.Recoverable {
+			return &StepExecutionError{
+				StepID:      stepID,
+				AgentID:     result.AgentID,
+				Err:         result.Err,
+				Recoverable: result.Recoverable,
+			}
+		}
+	}
+
+	if err := orchestrator.AdvanceWorkflow(workflow.ID, stepID); err != nil {
+		if errors.Is(err, fmt.Errorf("all steps completed")) ||
+			(err != nil && err.Error() == "all steps completed") {
+			return nil
+		}
+		return fmt.Errorf("failed to advance workflow: %w", err)
+	}
+
+	return nil
+}
+
+func (e *StepExecutor) handleStandaloneParallel(
+	ctx context.Context,
+	orchestrator *WorkflowOrchestratorImpl,
+	workflow *Workflow,
+	template *TaskTemplate,
+	stepMap map[string]WorkflowStep,
+	executionOrder []string,
+	index int,
+	step WorkflowStep,
+) error {
+	stepID := step.StepID
+	progress := float64(index) / float64(len(executionOrder))
+	orchestrator.UpdateProgress(workflow.ID, stepID, progress)
+
+	if err := e.checkApproval(ctx, workflow, template, &step, stepID); err != nil {
+		return err
+	}
+
+	_, err := e.parallelExec.ExecuteStandaloneParallel(ctx, workflow, step)
+	if err != nil {
+		return &StepExecutionError{
+			StepID:      stepID,
+			Err:         err,
+			Recoverable: false,
+		}
+	}
+
+	if advanceErr := orchestrator.AdvanceWorkflow(workflow.ID, stepID); advanceErr != nil {
+		if errors.Is(advanceErr, fmt.Errorf("all steps completed")) ||
+			(advanceErr != nil && advanceErr.Error() == "all steps completed") {
+			return nil
+		}
+		return fmt.Errorf("failed to advance workflow: %w", advanceErr)
+	}
+
+	return nil
+}
+
+func (e *StepExecutor) handleParallelGroup(
+	ctx context.Context,
+	orchestrator *WorkflowOrchestratorImpl,
+	workflow *Workflow,
+	template *TaskTemplate,
+	stepMap map[string]WorkflowStep,
+	executionOrder []string,
+	splitIndex int,
+	group *ParallelGroup,
+	skippedSteps map[string]bool,
+) error {
+	totalSteps := len(executionOrder)
+	splitProgress := float64(splitIndex) / float64(totalSteps)
+
+	// Mark branch steps and merge step as skipped in the main loop.
+	for _, branchID := range group.BranchStepIDs {
+		skippedSteps[branchID] = true
+	}
+	skippedSteps[group.MergeStepID] = true
+
+	progressSpan := float64(len(group.BranchStepIDs)+1) / float64(totalSteps)
+
+	parResult, err := e.parallelExec.ExecuteParallelGroup(
+		ctx, workflow, group, stepMap, splitProgress, progressSpan,
+	)
+	if err != nil {
+		// Find first branch error for StepExecutionError wrapping.
+		if len(parResult.Errors) > 0 {
+			first := parResult.Errors[0]
+			return &StepExecutionError{
+				StepID:      first.StepID,
+				AgentID:     first.AgentID,
+				Err:         err,
+				Recoverable: false,
+			}
+		}
+		return err
+	}
+
+	// Advance past split step.
+	if advanceErr := orchestrator.AdvanceWorkflow(workflow.ID, group.SplitStepID); advanceErr != nil {
+		if errors.Is(advanceErr, fmt.Errorf("all steps completed")) ||
+			(advanceErr != nil && advanceErr.Error() == "all steps completed") {
+			return nil
+		}
+		return fmt.Errorf("failed to advance workflow past split: %w", advanceErr)
+	}
+
+	// Advance past each branch step.
+	for _, branchID := range group.BranchStepIDs {
+		if advanceErr := orchestrator.AdvanceWorkflow(workflow.ID, branchID); advanceErr != nil {
+			if errors.Is(advanceErr, fmt.Errorf("all steps completed")) ||
+				(advanceErr != nil && advanceErr.Error() == "all steps completed") {
+				return nil
+			}
+			return fmt.Errorf("failed to advance workflow past branch %s: %w", branchID, advanceErr)
+		}
+	}
+
+	// Merge step — synchronization barrier. Execute as a no-op advance.
+	if advanceErr := orchestrator.AdvanceWorkflow(workflow.ID, group.MergeStepID); advanceErr != nil {
+		if errors.Is(advanceErr, fmt.Errorf("all steps completed")) ||
+			(advanceErr != nil && advanceErr.Error() == "all steps completed") {
+			return nil
+		}
+		return fmt.Errorf("failed to advance workflow past merge: %w", advanceErr)
 	}
 
 	return nil
