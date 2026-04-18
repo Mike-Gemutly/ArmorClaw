@@ -359,9 +359,45 @@ The Bridge can observe four container states via Docker `ContainerInspect` and `
 | **Failed** | Container exited with non-zero code, or container gone |
 | **Events** | `StepEvent` entries in `_events.jsonl` (step, file ops, commands, observations, blockers, errors) |
 
-The 11-state agent state machine (`IDLE`, `INITIALIZING`, `BROWSING`, `FORM_FILLING`, `AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`, `ERROR`, `COMPLETE`, `OFFLINE`) is defined in `bridge/pkg/agent/state.go` but transitions are **programmatic only**: triggered by Bridge-side code, not by agent-reported events. The `BroadcastStatus()` method that would relay states to clients is currently unimplemented and returns `fmt.Errorf("BroadcastStatus: agent status broadcasting not implemented — no container-to-Bridge state reporting channel exists")`.
+The 11-state agent state machine (`IDLE`, `INITIALIZING`, `BROWSING`, `FORM_FILLING`, `AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`, `ERROR`, `COMPLETE`, `OFFLINE`) is defined in `bridge/pkg/agent/state.go`. Transitions are **programmatic only**: triggered by Bridge-side state inference (see below), not by agent-reported events. As of v0.6.0, `BroadcastStatus()` relays state transitions to clients via Matrix events (see [BroadcastStatus](#broadcaststatus-v060) below).
 
 For the agent state machine definition (states like `BROWSING`, `AWAITING_APPROVAL`, `PROCESSING_PAYMENT`), see the [Agent State Machine section in armorclaw.md](armorclaw.md#agent-state-machine-go-bridge).
+
+### State Inference (Bridge-Side) (v0.6.0)
+
+Bridge-side state inference maps Chrome DevTools Protocol (CDP) events and workflow engine status to `AgentStatus` values. This runs entirely in the Bridge. It does **not** require container changes.
+
+**Source**: `bridge/pkg/agent/state_inference.go`
+
+**Inference priority order**:
+
+| Priority | Source | Behavior |
+|----------|--------|----------|
+| 1 (highest) | Workflow side-channel overrides | Captcha, 2FA, payment, offline. These are intentional blocking states invisible to CDP. |
+| 2 | Exit-driven states | Workflow completion: `exit_0` → `COMPLETE`, `exit_nonzero` → `ERROR` |
+| 3 | Approval pinning | If currently `AWAITING_APPROVAL`, CDP events do **not** transition away. Approval is managed by `RequestPIIAccess` RPC. |
+| 4 | CDP event-driven | `Page.frameNavigated` → `BROWSING`, `DOM.focus` on input elements → `FORM_FILLING`, `Runtime.executionContextCreated` → `INITIALIZING` (if `IDLE`/`OFFLINE`) |
+| 5 (lowest) | Unknown events | Maintain current state. No transition. |
+
+Uses `ForceTransition` on the `StateMachine` because inferred transitions may not follow the normal valid-transitions graph.
+
+### BroadcastStatus (v0.6.0)
+
+`BroadcastStatus()` is implemented (was previously a stub). It publishes `com.armorclaw.agent.status` Matrix events via the `MatrixEventBus` when state transitions occur.
+
+**Source**: `bridge/pkg/agent/integration.go:359-384`
+
+Event payload:
+
+| Field | Description |
+|-------|-------------|
+| `status` | New `AgentStatus` value |
+| `agent_id` | Agent identifier |
+| `previous` | Prior state |
+| `metadata` | `workflow_id`, `step`, `inferred_from` |
+| `timestamp` | Event time |
+
+Event routing registered in `bridge/internal/adapter/matrix.go` under `com.armorclaw.` prefix.
 
 ### Security Gateway (PETG)
 

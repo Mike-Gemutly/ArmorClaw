@@ -365,3 +365,77 @@ Bridge Core
 The key takeaway: each subsystem is wired into the Bridge core independently. There is no shared subsystem-to-subsystem wiring. The event bus is the closest thing to a shared dependency, but only the Matrix adapter publishes to it directly. Other subsystems don't depend on it.
 
 The observable container flow (v3) adds a second publishing path: `WorkflowEventEmitter` publishes directly to the `MatrixEventBus`, bypassing the general `EventBus`. This keeps high-frequency step events on a dedicated ring buffer that won't interfere with the general pub/sub backbone. The `MatrixEventBus` feeds into `processEvents()` and then out to Matrix rooms, where ArmorChat picks them up via `/sync`.
+
+### BroadcastStatus Events
+
+When agent state transitions occur, the Bridge-side state inference engine detects the change and publishes a `com.armorclaw.agent.status` Matrix event. This gives downstream consumers (ArmorChat, monitoring dashboards) a real-time view of agent lifecycle without requiring polling.
+
+**Event type:** `com.armorclaw.agent.status`
+
+**Event content:**
+
+```json
+{
+  "status": "<new_status>",
+  "agent_id": "<agent_identifier>",
+  "previous": "<prior_status>",
+  "metadata": {
+    "workflow_id": "<optional_workflow>",
+    "step": "<optional_current_step>",
+    "inferred_from": "<signal_source>"
+  },
+  "timestamp": 1710000000000
+}
+```
+
+The `inferred_from` field indicates what signal triggered the status change:
+
+| Value | Meaning |
+|-------|---------|
+| `cdp` | Chrome DevTools Protocol activity (page load, navigation, console events) |
+| `workflow` | Workflow engine side-channel (step transitions, completion, failure) |
+| `command` | Explicit RPC call (user-initiated status change) |
+
+**Routing:** `bridge/internal/adapter/matrix.go` handles all `com.armorclaw.` prefixed events via the `publishCustomEvent()` method. This is the same code path used by `workflow.*`, `agent.*`, and `blocker.*` events described in the Matrix adapter section above.
+
+**Source:** `bridge/pkg/agent/integration.go:359-384`
+
+### Email Approval Events
+
+When an agent requests to send outbound email containing PII, the Bridge emits an `app.armorclaw.email_approval_request` Matrix event. This triggers a human-in-the-loop approval flow on the mobile client before the email is sent.
+
+**Event type:** `app.armorclaw.email_approval_request`
+
+**Event content:**
+
+```json
+{
+  "approval_id": "<unique_approval_identifier>",
+  "email_id": "<email_reference>",
+  "to": "<recipient_address>",
+  "subject": "[masked]",
+  "pii_fields": ["body", "attachment_names"],
+  "timeout_s": 60,
+  "event_type": "EMAIL_APPROVAL_REQUEST"
+}
+```
+
+The `subject` field is masked in transit. The actual subject is only revealed after the user approves. `pii_fields` lists which parts of the email contain personally identifiable information.
+
+**Approval flow:**
+
+1. Agent requests email send via RPC.
+2. Bridge detects PII in the email payload and emits the approval request event to the user's Matrix room.
+3. ArmorChat receives the event via Matrix push, renders the `EmailApprovalCard` composable.
+4. User taps **Approve** or **Deny**.
+5. The mobile client calls `approve_email` or `deny_email` RPC methods on the Bridge.
+6. If approved, the Bridge proceeds with the send. If denied (or timed out), the request is discarded.
+
+**Alert type:** `EMAIL_APPROVAL_REQUEST` in the `SystemAlert` enum.
+
+**Key files:**
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| RPC handlers | `bridge/pkg/rpc/email_approval.go` | `approve_email` and `deny_email` method handlers |
+| Android UI | `applications/ArmorChat/.../EmailApprovalCard.kt` | Approval card composable with approve/deny actions |

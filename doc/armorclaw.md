@@ -2,11 +2,13 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 0.5.0
+> **Version**: 0.6.0
 >
 > **Last Updated**: 2026-04-17
 
 > ⚠️ **Architecture Note (v0.4.1)**: Agent containers always run with `NetworkMode: "none"` (no network access). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation runs through the Jetski sidecar, a separate container with its own network stack; agent containers never perform browser operations directly.
+>
+> **v0.6.0 Changes**: Bridge-side state inference, Rust Vault deployment, parallel execution, session compaction, step failover, email approval, PPTX Rust migration, v6 audit mode.
 
 ---
 
@@ -120,8 +122,9 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **License Server** | Go | Enterprise license validation | `license-server/main.go` |
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
-| **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill library | `rust-vault/src/lib.rs` |
+| **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill service | `rust-vault/src/main.rs` |
 | **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (XLSX, PPTX, MSG, XLS, DOC, PPT) | `sidecar-python/worker.py` |
+| **Email Approval** | Go (Bridge) | Email-based HITL approval for sensitive operations | `bridge/pkg/approval/email.go` |
 </component>
 
 ---
@@ -690,15 +693,26 @@ The Rust Vault is a **security-hardened cryptographic enclave** that provides he
 - **Zeroization** - All secrets zeroized in memory after use
 - **mTLS Authentication** - gRPC over Unix domain sockets with certificate validation
 
-### Runtime Model: Library, Not a Service
+### Runtime Model: Deployed Service (v0.6.0)
 
-> **Important architectural note**: The Rust Vault is a **library crate** (`rust-vault/src/lib.rs`), not a deployed Docker service. It is not referenced in any `docker-compose*.yml` file and has no container image. The Go Bridge imports its compiled artifacts via FFI or uses the generated gRPC proto stubs in `bridge/pkg/vault/proto/`.
+> **Updated in v0.6.0**: The Rust Vault is now a **deployed Docker service** with its own binary entrypoint, hardened container, and docker-compose configuration. It communicates with the Go Bridge via Unix domain socket IPC over a shared volume.
+
+**Binary entrypoint**: `rust-vault/src/main.rs` (28 lines) registers the gRPC governance service and starts the Tokio runtime.
+
+**Cargo.toml** `[[bin]]` section: `name = "armorclaw-vault"`
+
+**Docker build** (multi-stage hardened):
+- `network_mode: none` at build time for dependency fetch
+- Runtime user UID 10001 (non-root)
+- `cap_drop: ALL`, `read_only: true`, `no-new-privileges: true`
+
+**docker-compose** service: `armorclaw-vault` shares `/run/armorclaw/` volume with the bridge for Unix socket IPC (`rust-vault.sock`).
 
 This means:
-- The Rust Vault does **not** run as a standalone process alongside the Bridge
-- There is **no runtime port conflict** with Jetski (see below)
-- The `CdpInterceptor` in `rust-vault/src/blindfill/cdp_interceptor.rs` provides **placeholder parsing and resolution logic**, not an active WebSocket listener
-- The governance gRPC service (`rust-vault/src/governance/`) is activated only when the v6 microkernel flag is enabled
+- The Rust Vault **runs as a standalone process** alongside the Bridge in production
+- There is **no runtime port conflict** with Jetski (see below) — communication is Unix socket only
+- The `CdpInterceptor` in `rust-vault/src/blindfill/cdp_interceptor.rs` provides placeholder parsing and resolution logic
+- The governance gRPC service (`rust-vault/src/governance/`) is activated when the v6 microkernel flag is enabled
 
 ### Relationship to Jetski Browser Sidecar
 
@@ -1632,13 +1646,13 @@ Template → Workflow Creation → StartWorkflow (status=Running)
 - Unrecoverable errors (no agent for step, invalid execution order) fail the workflow immediately.
 - Context cancellation triggers `CancelWorkflow` and stops all running steps via `CancelAllForWorkflow`.
 
-### Multi-Agent Execution
+### Multi-Agent Execution (v0.6.0)
 
-`Step.AgentIDs []string` is a **selection pool** for agent assignment, not a parallel execution directive. Currently only `AgentIDs[0]` is used — `executeStep()` selects the first agent in the pool (see `orchestrator_integration.go:237`).
+Parallel execution and step failover are now **implemented** via `orchestrator_parallel.go`:
 
-The `StepParallel` type exists in the `StepType` enum (`types.go:98`) alongside `StepParallelSplit` and `StepParallelMerge`, but **none are implemented** — the step executor only handles `StepAction` and `StepCondition`.
-
-Multi-agent step execution (parallel dispatch, failover, round-robin) is a **deferred feature**, not a bug. When implemented, `AgentIDs[1:]` will be used for failover or parallel execution paths.
+- **Parallel execution**: Uses `errgroup` goroutine pool with configurable `MaxParallelContainers` (default: 2). Steps with multiple `AgentIDs` are dispatched in parallel when the workflow declares them as parallel-safe.
+- **Step failover**: When an agent fails mid-step, the executor falls back to the next agent in `AgentIDs[1:]` and retries from the last checkpoint.
+- **Single-container scope**: All agents run on the same host. No distributed execution across nodes yet.
 
 > See [doc/secretary-workflow.md](secretary-workflow.md) for the full workflow engine deep dive: two dispatch paths, step execution lifecycle, PII approval flow, and event system.
 
@@ -1988,11 +2002,11 @@ Jetski **complements** (does not replace) the existing `browser-service/`:
 
 ---
 
-## v6 Microkernel Governance (Feature-Flagged)
+## v6 Microkernel Governance (Feature-Flagged, Audit Mode in v0.6.0)
 
 ### Purpose
 
-The v6 microkernel is a **future governance layer** that adds ephemeral token lifecycle management, vault governance, and tool isolation to ArmorClaw. It is fully implemented in code but **disabled by default** — the system operates in v4.x mode where the MCP Router bypasses vault governance entirely.
+The v6 microkernel is a **governance layer** that adds ephemeral token lifecycle management, vault governance, and tool isolation to ArmorClaw. It is fully implemented in code but **disabled by default**. In v0.6.0, it operates in audit-only mode when enabled.
 
 ### Activation
 
@@ -2033,6 +2047,17 @@ socket_path = "/run/armorclaw/rust-vault.sock"
 ```
 
 ### Components
+
+### Audit Mode (v0.6.0)
+
+When v6 is enabled, it operates in **audit-only mode** by default. This logs what *would* happen without actually intercepting tool calls:
+
+- Requires **both** `V6Microkernel=true` **and** `V6AuditMode=true` in VaultConfig
+- Logs PII violations detected by SkillGate
+- Logs governance checks that would block or redirect tool calls
+- Logs would-be ToolSidecar spawns (no containers are actually created)
+- **ToolSidecar communication protocol** is a hard prerequisite for enforcement mode. Until that protocol ships, audit mode is the safe default.
+- Source: `bridge/pkg/mcp/router.go:handleAuditMode()`, `bridge/pkg/config/config.go`
 
 #### MCP Router (`bridge/pkg/mcp/router.go`)
 
@@ -2451,6 +2476,9 @@ ArmorChat is the **Android mobile client** that provides:
 | **PII Approval** | Approve/deny sensitive data access |
 | **Push Notifications** | Real-time alerts via Sygnal |
 | **Biometric Auth** | Secure keystore access |
+| **Email Approval Card** (v0.6.0) | Email-based HITL approval flow with `EmailApprovalCard` |
+| **Dynamic PII Masking** (v0.6.0) | `BlockerResponseDialog` masks 8 sensitive keywords using `PasswordVisualTransformation` |
+| **Workflow Blocker Events** (v0.6.0) | Parses `workflow.blocker_warning` Matrix events for live blocker status |
 
 ### Provisioning Flow
 
@@ -2542,6 +2570,16 @@ When a prompt exceeds the model's context window, the runtime detects the overfl
    - If compaction fails, truncates oversized tool results
 4. **Final fallback** — `run.ts:744-765`:
    - Returns "Context overflow" error to user with `/reset` suggestion
+
+#### Bridge-Side Pre-Dispatch Compaction (v0.6.0)
+
+In addition to the reactive container-side compaction above, the Bridge now performs **pre-dispatch pruning** before sending prompts to the LLM:
+
+- **Source**: `bridge/internal/ai/compaction.go`
+- **Threshold**: `CompactionThresholdTokens` (default: 100,000) in VaultConfig, separate from `MaxTokens`
+- **Behavior**: When estimated token count exceeds the threshold, the Bridge requests a summary from the LLM and replaces older messages with the summary before dispatch
+- **Fallback**: Falls back to windowed truncation (keep most recent N messages) on LLM failure
+- **Relationship**: This runs **before** the container-side reactive pipeline. Both layers cooperate: Bridge prunes proactively, container compacts reactively on overflow errors
 
 #### Compaction Engine
 
@@ -3106,15 +3144,14 @@ When a state transition occurs:
 2. **`Integration.processEvents()`** (`integration.go:232`) reads from the event channel and calls `onStatusChange` callback (if set)
 3. **`StatusEvent`** has `EventType()` → `"com.armorclaw.agent.status"` (Matrix event type)
 
-### Critical Gap: No Signal Reaches OpenClaw Runtime
+### State Signal Propagation (v0.6.0 Partial Close)
 
-**The `onStatusChange` callback is never wired to the OpenClaw container.** The evidence:
+The `onStatusChange` callback is now wired through state inference in v0.6.0. The Bridge infers agent state from container lifecycle events and workflow progress:
 
-- `OnStatusChange()` (`integration.go:66`) accepts a callback, but **no caller sets it** in production code — only in tests (`integration_test.go:268`)
-- `AgentCoordinator.BroadcastStatus()` (`integration.go:339`) is a **stub** — returns `fmt.Errorf("... not implemented")` because containers have no network to push state
-- The eventbus has `EventTypeAgentStatusChanged` defined (`eventbus/events.go:22`) but **no code publishes agent state machine events to it**
-- OpenClaw TypeScript code has **zero references** to `com.armorclaw.agent.status`, `state_machine`, or `StatusEvent`
-- The `→ IDLE` and `→ COMPLETE` transitions are **invisible to the container runtime**
+- `OnStatusChange()` (`integration.go:66`) accepts a callback. In v0.6.0, the workflow executor sets this callback when orchestrating multi-step workflows.
+- `AgentCoordinator.BroadcastStatus()` (`integration.go:339`) was previously a stub. In v0.6.0, state inference is implemented: the Bridge infers agent state from container lifecycle events and workflow progress rather than relying on network push. The eventbus now publishes agent state machine events.
+- The eventbus `EventTypeAgentStatusChanged` (`eventbus/events.go:22`) now receives published agent state events
+- OpenClaw TypeScript code has **zero references** to `com.armorclaw.agent.status`, `state_machine`, or `StatusEvent` (container-side awareness unchanged)
 
 ### Implication for Layer 0 (Context Window Persistence)
 

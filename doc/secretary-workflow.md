@@ -259,6 +259,92 @@ The container writes structured results (status, output, data, error, duration_m
 
 ---
 
+## Parallel Step Execution (v0.6.0)
+
+`StepParallelSplit` and `StepParallelMerge` step types are now **implemented** (previously defined in `StepType` but unused).
+
+### How it works
+
+1. **Group identification.** `IdentifyParallelGroups()` scans the step list for `StepParallelSplit`/`StepParallelMerge` pairs by `Order` field. All steps between a Split and its matching Merge form one parallel group.
+
+2. **Goroutine pool.** Each group runs inside an `errgroup` pool with a configurable concurrency limit (`MaxParallelContainers`, default: 2). Each step in the group gets its own goroutine.
+
+3. **Dependency edges.** The Split and Merge steps create implicit dependency edges: Split → first step in group, last step in group → Merge. No changes to the `WorkflowStep` struct itself.
+
+4. **Collection policies.**
+
+| Policy | Behavior |
+|--------|----------|
+| `FailFast` | Stop on first error. Cancel remaining goroutines. |
+| `CollectAll` | Wait for all steps to finish. Collect every error. |
+
+5. **Sequential backward compatibility.** Templates without Split/Merge steps work unchanged. The executor falls through to the normal sequential loop.
+
+### Configuration
+
+| Field | Default | Location |
+|-------|---------|----------|
+| `MaxParallelContainers` | 2 | `StepExecutorConfig` |
+| Collection policy | `FailFast` | Hardcoded, per-group override planned |
+
+Source: `bridge/pkg/secretary/orchestrator_parallel.go`
+
+---
+
+## Session Transcript Compaction (v0.6.0)
+
+Bridge-side pre-dispatch pruning of session history before sending to the AI model. Prevents token overflow on long-running workflows.
+
+### How it works
+
+1. **Token estimation.** `EstimateMessageTokens()` provides a rough per-message estimate: `len(text) / 4` for text content, character count for tool results. Not exact, but consistent enough for threshold checks.
+
+2. **Threshold check.** `ShouldCompact()` compares the estimated total against `CompactionThresholdTokens` (default: 100,000). Returns true if exceeded.
+
+3. **Compaction.** `CompactHistory()` has a two-tier strategy:
+   - **Primary:** Ask the AI to summarize the conversation history into a condensed form. Preserves key decisions, tool results, and context.
+   - **Fallback:** If the AI call fails, apply windowed truncation. Keep the system prompt + first N messages + last N messages, dropping the middle.
+
+### Configuration
+
+| Field | Default | Location |
+|-------|---------|----------|
+| `CompactionThresholdTokens` | 100,000 | `bridge/internal/agent/runtime.go` |
+
+Source: `bridge/internal/ai/compaction.go`
+
+---
+
+## Step Failover (v0.6.0)
+
+Per-step failover with multi-agent fallback. If the primary agent for a step fails, the executor tries the next agent from the step's agent list.
+
+### How it works
+
+1. **Agent list.** Each `WorkflowStep` can specify multiple agent IDs in its `AgentIDs` field. Previously only the first was used.
+
+2. **Failover loop.** On step failure, the executor advances to the next agent ID (up to `StepRetryCount` attempts total). Each attempt spawns a fresh container for the new agent.
+
+3. **Policy control.**
+
+| `FailoverPolicy` | Behavior |
+|------------------|----------|
+| `FailoverRetry` | Try next agent on failure. Default. |
+| `FailoverImmediateFail` | Fail the step immediately on first error. |
+
+4. **Error aggregation.** `FailoverAggregatedError` collects errors from every attempt (agent ID, error message, timestamp) for diagnostics and logging.
+
+### Configuration
+
+| Field | Default | Location |
+|-------|---------|----------|
+| `FailoverPolicy` | `FailoverRetry` | `StepExecutorConfig` |
+| `StepRetryCount` | 1 (one retry) | `StepExecutorConfig` |
+
+Source: `bridge/pkg/secretary/orchestrator_integration.go`
+
+---
+
 ## Observable Containers
 
 Containers in step mode emit structured events to `_events.jsonl` in the bind-mounted state directory during execution. This is implemented by the `EventEmitter` class in `container/openclaw/events.py`.
@@ -468,6 +554,19 @@ Container                    Bridge                          User (ArmorChat)
 
 Sources: `bridge/pkg/secretary/orchestrator_integration.go`, `bridge/pkg/rpc/server.go`, `container/openclaw/events.py`
 
+### Blocker Metadata Pipeline Fix (v0.6.0)
+
+Fixed 7 bugs in the blocker metadata pipeline from container → Bridge → Matrix:
+
+| Bug | Fix |
+|-----|-----|
+| Container `events.py:blocker()` put human-readable message in `event.name`, not in `event.detail["message"]` | Bridge now extracts from both locations |
+| `EmitBlockerWarning()` was never called — no `case "blocker":` in the event routing switch | `case "blocker":` added to routing switch |
+| Blocker metadata (blocker_type, suggestion, field, workflow_id) dropped during pipeline transit | Metadata now flows through the full pipeline to Matrix events |
+| `BlockWorkflow` and `EmitBlocked`不接受 variadic metadata params | Now accept optional metadata kwargs without breaking existing callers |
+
+Source: `bridge/pkg/secretary/orchestrator_integration.go`
+
 ---
 
 ## Learned Skills Pipeline
@@ -673,7 +772,8 @@ TaskScheduler
 | File | Key types/functions |
 |------|-------------------|
 | `orchestrator.go` | `WorkflowOrchestratorImpl`, `NewWorkflowOrchestrator`, `StartWorkflow`, `AdvanceWorkflow`, `CancelWorkflow`, `CompleteWorkflow`, `FailWorkflow`, `BlockWorkflow`, `UnblockWorkflow`, `validateTransition` |
-| `orchestrator_integration.go` | `StepExecutor`, `NewStepExecutor`, `ExecuteSteps`, `executeStep`, `executeStepWithRetry`, `waitForCompletion`, `OrchestratorIntegration`, `StartWorkflowExecution`, `runWorkflow`, `executeStepWithBlockerHandling`, `DeliverBlockerResponse`, `injectLearnedSkills`, `appendBlockerResponse` |
+| `orchestrator_integration.go` | `StepExecutor`, `NewStepExecutor`, `ExecuteSteps`, `executeStep`, `executeStepWithRetry`, `waitForCompletion`, `OrchestratorIntegration`, `StartWorkflowExecution`, `runWorkflow`, `executeStepWithBlockerHandling`, `DeliverBlockerResponse`, `injectLearnedSkills`, `appendBlockerResponse`, `FailoverPolicy`, `FailoverAggregatedError` |
+| `orchestrator_parallel.go` | `IdentifyParallelGroups`, `executeParallelGroup`, `MaxParallelContainers`, parallel Split/Merge handling |
 | `orchestrator_events.go` | `EventEmitter` interface, `WorkflowEventEmitter`, `WorkflowEvent`, `WorkflowEventBuilder`, `EmitStepProgress`, `EmitStepError`, `EmitBlockerWarning` |
 | `approvals.go` | `ApprovalEngineImpl`, `Evaluate`, `EvaluateStep`, `EvaluateWorkflow`, `evaluatePolicies`, `ApprovalPolicy`, `ApprovalRequest` |
 | `pending_approval.go` | `PendingApproval`, `HandlePIIResponse`, PII event constants |
@@ -688,6 +788,7 @@ TaskScheduler
 | `bridge/pkg/skills/learned_store.go` | `LearnedStore`, `LearnedSkill`, `Save`, `FindForTask`, `RecordOutcome`, `Delete`, `ListForAgent` |
 | `bridge/pkg/rpc/server.go` | `handleResolveBlocker` (resolve_blocker RPC handler) |
 | `bridge/internal/adapter/commands_integration.go` | `CommandHandler`, `handleAgentSkills`, `handleAgentForgetSkill` |
+| `bridge/internal/ai/compaction.go` | `EstimateMessageTokens`, `ShouldCompact`, `CompactHistory`, `CompactionThresholdTokens` |
 | `container/openclaw/events.py` | `EventEmitter`, `StepEvent`, `EventType`, `PIPE_BUF` |
 | `container/openclaw/step_runner.py` | `StepRunner`, `_extract_blockers_from_events`, `_summarize_events` |
 | `container/openclaw/step_config.py` | `StepConfig`, `_blocker_response` property, `relevant_skills` property |
@@ -696,7 +797,7 @@ TaskScheduler
 
 ## Remaining Prerequisites
 
-The backward communication channel (`result.json`), event streaming (`_events.jsonl`), blocker protocol, and learned skills pipeline are now implemented. Remaining gaps:
+The backward communication channel (`result.json`), event streaming (`_events.jsonl`), blocker protocol, learned skills pipeline, parallel execution, compaction, and step failover are now implemented. Remaining gaps:
 
 1. ~~**Shared state dir**: Container writes `result.json` to the bind-mounted state directory before exit~~ ✅ Done
 2. ~~**Bridge reads result**: After container exit, Bridge reads and parses `result.json`~~ ✅ Done
@@ -706,3 +807,6 @@ The backward communication channel (`result.json`), event streaming (`_events.js
 6. ~~**Blocker protocol**: Human-in-the-loop blocker resolution with re-spawn~~ ✅ Done
 7. ~~**Learned skills**: Extraction, persistence, injection, and outcome recording~~ ✅ Done
 8. **Browser automation**: Handled by Jetski sidecar (separate container with network). Agent containers delegate browser operations to Jetski via the Bridge. No direct browser access from isolated containers.
+9. ~~**Parallel step execution**: `StepParallelSplit`/`StepParallelMerge` with `errgroup` goroutine pool~~ ✅ Done (v0.6.0)
+10. ~~**Step failover**: Multi-agent fallback with `FailoverRetry`/`FailoverImmediateFail` policies~~ ✅ Done (v0.6.0)
+11. ~~**Session compaction**: Pre-dispatch token estimation and AI-powered history pruning~~ ✅ Done (v0.6.0)

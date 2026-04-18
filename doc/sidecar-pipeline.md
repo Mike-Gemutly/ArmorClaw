@@ -42,8 +42,9 @@ Agent request ────────▶│  │ Client   │  │ PIIIntercept
                        │                                        │
                        │  ┌────────────┐  ┌───────────────┐     │
                        │  │ Connectors │  │ Document      │     │
-                       │  │ S3, SP     │  │ PDF, DOCX,    │     │
-                       │  │            │  │ XLSX, OCR     │     │
+                        │  │ S3, SP     │  │ PDF, DOCX,    │     │
+                        │  │            │  │ XLSX, PPTX,   │     │
+                        │  │            │  │ OCR           │     │
                        │  └──────┬─────┘  └───────┬───────┘     │
                        │         │                │             │
                        │  ┌──────▼────────────────▼───────┐     │
@@ -99,6 +100,7 @@ Extracts text from common document formats. All extractors return structured res
 | PDF | `pdf.rs` | Text extraction, split, merge |
 | DOCX | `docx.rs` | Text extraction, paragraph insert/delete, find/replace |
 | XLSX | `xlsx.rs` | Functional — calamine-based extraction with ShadowMap redaction |
+| PPTX | `pptx.rs` | ZIP-based extraction using `zip` + `quick-xml` crates (v0.6.0) |
 | OCR | `ocr.rs` | Functional — Tesseract subprocess + ONNX fallback, multi-language |
 | Diff | `diff.rs` | Myers algorithm for text diff |
 | HTML Diff | `html_diff.rs` | HTML-aware diff generation |
@@ -315,7 +317,7 @@ Jetski (`jetski/`) is a separate component that handles browser automation via C
 
 ### Python MarkItDown Sidecar (`sidecar-python/`)
 
-The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust sidecar does not support natively: `.xlsx`, `.pptx`, `.msg`, `.doc`, `.xls`, and `.ppt`.
+The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust sidecar does not support natively: `.xlsx`, `.msg`, `.doc`, `.xls`, and `.ppt`. PPTX was migrated to the Rust sidecar in v0.6.0.
 
 #### Architecture
 
@@ -333,11 +335,12 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
                         │     ┌───────┴────────┐                  │
                         │     ▼                ▼                  │
                         │  ┌────────┐   ┌──────────────┐         │
-                        │  │ Rust   │   │ Python       │         │
-                        │  │ Sidecar│   │ MarkItDown   │         │
-                        │  │ (PDF,  │   │ Sidecar      │         │
-                        │  │ DOCX)  │   │ (XLSX, PPTX, │         │
-                        │  └────────┘   │  MSG, DOC,   │         │
+                         │  │ Rust   │   │ Python       │         │
+                         │  │ Sidecar│   │ MarkItDown   │         │
+                         │  │ (PDF,  │   │ Sidecar      │         │
+                         │  │ DOCX,  │   │ (XLSX, MSG,  │         │
+                         │  │ PPTX)  │   │  DOC, XLS,   │         │
+                         │  └────────┘   │  PPT)        │         │
                         │               │  XLS, PPT)   │         │
                         │               └──────────────┘         │
                         └────────────────────────────────────────┘
@@ -348,7 +351,7 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
 | Layer | Condition | Action |
 |-------|-----------|--------|
 | **Layer 0** | `text/plain`, `text/csv`, `application/json`, `text/markdown` | Decode natively in Go — no sidecar call |
-| **Layer 1** | ZIP magic + xlsx/pptx format → Python; OLE magic + xls/msg/doc/ppt format → Python; ZIP magic + docx/pdf → Rust | Route to appropriate sidecar based on compound magic byte + MIME type validation |
+| **Layer 1** | ZIP magic + xlsx format → Python; OLE magic + xls/msg/doc/ppt format → Python; ZIP magic + pptx/docx/pdf → Rust | Route to appropriate sidecar based on compound magic byte + MIME type validation |
 | **Layer 2** | Magic bytes don't match declared format (e.g., ZIP magic + msg format) | **Strict drop** — return `InvalidArgument` immediately |
 
 #### Key Design Decisions
@@ -380,13 +383,23 @@ HMAC-SHA256 token validation using a sync `grpc.ServerInterceptor`. Tokens carry
 | Format | MIME Type | Magic Bytes | Extension | Converter |
 |--------|-----------|-------------|-----------|-----------|
 | Excel (modern) | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | ZIP (PK) | `.xlsx` | MarkItDown `XlsxConverter` |
-| PowerPoint (modern) | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | ZIP (PK) | `.pptx` | MarkItDown `PptxConverter` |
+| PowerPoint (modern) | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | ZIP (PK) | `.pptx` | Rust PPTX Extractor (pptx.rs) |
 | Outlook Email | `application/vnd.ms-outlook` | OLE (D0CF) | `.msg` | MarkItDown `OutlookMsgConverter` |
 | Word (legacy) | `application/msword` | OLE (D0CF) | `.doc` | Error — XlsConverter intercepts |
 | Excel (legacy) | `application/vnd.ms-excel` | OLE (D0CF) | `.xls` | MarkItDown `XlsConverter` |
 | PowerPoint (legacy) | `application/vnd.ms-powerpoint` | OLE (D0CF) | `.ppt` | Error — XlsConverter intercepts |
 
 > **Limitation**: Legacy `.doc` and `.ppt` files produce conversion errors because MarkItDown's `XlsConverter` claims OLE files before the Word/PowerPoint converters. This is a known MarkItDown library limitation.
+
+#### PPTX Migration to Rust (v0.6.0)
+
+PPTX text extraction has been migrated from Python MarkItDown to the Rust sidecar:
+
+- **Extractor**: `sidecar/src/document/pptx.rs` — ZIP-based extraction using `zip` + `quick-xml` crates
+- **Routing**: `bridge/pkg/sidecar/office_client.go` — `.pptx` files route to Rust sidecar (Layer 1)
+- **Format support**: Multi-slide presentations, speaker notes, embedded media metadata
+- **Security**: Malformed archive protection, XML bomb mitigation, size limits
+- The 3-layer routing architecture is preserved — only the PPTX destination changed from Python to Rust
 
 #### Docker Deployment (`deploy/docker-compose.sidecar-py.yml`)
 
@@ -432,7 +445,7 @@ cd bridge && go test ./pkg/sidecar/...
 The `RouteExtractText()` function implements the 3-layer routing:
 
 1. **Native text bypass**: Detects `text/*` MIME types and returns decoded content immediately without any gRPC call.
-2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based office formats to Python, ZIP-based docx/pdf to Rust.
+2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based xlsx to Python, ZIP-based docx/pdf/pptx to Rust.
 3. **Strict drop**: If magic bytes contradict the declared format (e.g., OLE magic with xlsx MIME), returns `codes.InvalidArgument` without calling any sidecar.
 
 ## References
