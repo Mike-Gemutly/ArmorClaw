@@ -33,6 +33,7 @@ func init() {
 		"::ffff:0:0/96",  // IPv4-mapped IPv6
 		"::/128",         // IPv6 unspecified
 		"64:ff9b::/96",   // NAT64
+		"ff00::/8",       // IPv6 multicast
 	}
 
 	for _, cidr := range cidrs {

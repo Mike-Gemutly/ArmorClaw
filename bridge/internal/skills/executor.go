@@ -39,6 +39,7 @@ type SkillExecutor struct {
 	policyEnforcer *PolicyEnforcer
 	skillGate      interfaces.SkillGate
 	authorizer     interfaces.Authorizer
+	customHandlers map[string]HandlerFunc
 }
 
 type SkillExecutorConfig struct {
@@ -62,6 +63,7 @@ func NewSkillExecutorWithConfig(cfg SkillExecutorConfig) *SkillExecutor {
 		policyEnforcer: NewPolicyEnforcer(),
 		skillGate:      cfg.SkillGate,
 		authorizer:     cfg.Authorizer,
+		customHandlers: make(map[string]HandlerFunc),
 	}
 }
 
@@ -129,13 +131,17 @@ func (se *SkillExecutor) ExecuteSkill(ctx context.Context, skillName string, par
 	handler := se.getHandlerForDomain(skill.Domain)
 
 	// Step 5: Execute skill with timeout
-	executionCtx, cancel := context.WithTimeout(ctx, skill.Timeout)
+	timeout := skill.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	executionCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	result, err := handler(executionCtx, params)
 	if err != nil {
 		errorType := "error"
-		if ctx.Err() == context.DeadlineExceeded {
+		if executionCtx.Err() == context.DeadlineExceeded {
 			errorType = "timeout"
 		}
 
@@ -376,6 +382,9 @@ type HandlerFunc func(ctx context.Context, params map[string]interface{}) (inter
 
 // getHandlerForDomain returns the appropriate handler for a domain
 func (se *SkillExecutor) getHandlerForDomain(domain string) HandlerFunc {
+	if h, ok := se.customHandlers[domain]; ok {
+		return h
+	}
 	switch domain {
 	case "weather":
 		return se.handleWeatherSkill
