@@ -115,6 +115,10 @@ func (ts *TaskScheduler) run() {
 
 // tick processes all due tasks
 func (ts *TaskScheduler) tick() {
+	if ts.store == nil {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

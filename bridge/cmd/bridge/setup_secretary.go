@@ -16,13 +16,15 @@ import (
 
 func setupSecretaryServices(ks *keystore.Keystore) (secretary.Store, *secretary.RolodexService, *secretary.WebDAVService, *secretary.CalendarService) {
 	log.Println("Initializing Rolodex service...")
-	rolodexStore, err := secretary.NewStore(secretary.StoreConfig{
+	var rolodexStore secretary.Store
+	store, err := secretary.NewStore(secretary.StoreConfig{
 		Path:   "/var/lib/armorclaw/rolodex.db",
 		Logger: nil,
 	})
 	if err != nil {
 		log.Printf("Warning: Failed to initialize Rolodex store: %v", err)
-		rolodexStore = nil
+	} else {
+		rolodexStore = store
 	}
 
 	var rolodexService *secretary.RolodexService
