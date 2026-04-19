@@ -10,6 +10,7 @@ Quick reference for AI CLI deployment skills to help you deploy and manage Armor
 | **Status** | Check deployment health | `/status vps_ip=...` |
 | **Cloudflare** | Setup HTTPS with Cloudflare | `/cloudflare domain=... mode=tunnel\|proxy` |
 | **Provision** | Connect mobile devices | `/provision vps_ip=... expiry=300` |
+| **Ops** | Full lifecycle management | `/ops action=health\|redeploy\|logs\|backup\|restore vps_ip=...` |
 
 ## Skills
 
@@ -50,6 +51,15 @@ Generate QR codes and deep links for secure ArmorChat/ArmorTerminal mobile app c
 - Configurable token expiry (max: 3600s)
 - URL-only display mode for scripts
 
+### [Ops](./ops/SKILL.md)
+Consolidated lifecycle management — deploy, health monitoring, remediation, logs, backup, and restore. Single entry point for all ArmorClaw operations.
+
+**Key Features:**
+- Six action paths: deploy, health, redeploy, logs, backup, restore
+- Dependency-aware restart ordering
+- Topology auto-detection
+- Progressive disclosure (simple default, verbose for details)
+
 ## Platform Support
 
 | Platform | Support | Notes |
@@ -74,6 +84,8 @@ Skills are discovered automatically by AI CLI tools from the `.skills/` director
 /status vps_ip=192.168.1.100
 /cloudflare domain=armorclaw.example.com mode=tunnel cf_api_token=...
 /provision vps_ip=192.168.1.100 expiry=600
+/ops action=health vps_ip=192.168.1.100
+/ops action=redeploy vps_ip=192.168.1.100 service=bridge
 ```
 
 ## Deployment Modes
