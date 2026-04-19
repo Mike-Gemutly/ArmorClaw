@@ -25,6 +25,7 @@ pub mod html_diff;
 pub mod docx_diff;
 pub mod embeddings;
 pub mod qdrant;
+pub mod convert;
 
 pub use pdf::{
     PdfExtractor,
@@ -93,6 +94,12 @@ pub use embeddings::{
     generate_text_embedding,
     Embedder,
     OpenAIEmbedder,
+};
+
+pub use convert::{
+    convert_docx_to_pdf,
+    convert_xlsx_to_csv,
+    convert_pptx_to_pdf,
 };
 
 #[cfg(test)]

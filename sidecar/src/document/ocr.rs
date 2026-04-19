@@ -33,6 +33,17 @@ pub struct OcrConfig {
     pub psm: Option<u32>,
     #[serde(default)]
     pub backend: OcrBackend,
+    /// Enable ONNX fallback when Tesseract fails or is unavailable (default: true).
+    #[serde(default = "default_true")]
+    pub onnx_fallback: bool,
+    /// Path to the ONNX model file used for fallback OCR inference.
+    /// When `None`, a default path of `/opt/armorclaw/models/ocr.onnx` is used.
+    #[serde(default)]
+    pub onnx_model_path: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for OcrConfig {
@@ -42,6 +53,8 @@ impl Default for OcrConfig {
             dpi: Some(300),
             psm: Some(3),
             backend: OcrBackend::Auto,
+            onnx_fallback: true,
+            onnx_model_path: None,
         }
     }
 }
@@ -64,15 +77,79 @@ impl OcrExtractor {
                 SidecarError::DocumentProcessingError(format!("Failed to decode image: {}", e))
             })?;
 
+        match self.config.backend {
+            OcrBackend::Tesseract => self.extract_tesseract_primary(&img, image_data),
+            OcrBackend::Onnx => self.extract_onnx_only(image_data),
+            OcrBackend::Auto => self.extract_auto(&img, image_data),
+        }
+    }
+
+    fn extract_auto(&self, img: &DynamicImage, image_data: &[u8]) -> Result<OcrResult> {
+        let tesseract_available = self.check_tesseract_installed();
+
+        if tesseract_available {
+            match self.run_tesseract(img) {
+                Ok(result) if !result.text.trim().is_empty() => return Ok(result),
+                Ok(_) => {
+                    // Tesseract returned empty text — try ONNX fallback
+                }
+                Err(_) => {
+                    // Tesseract failed — try ONNX fallback
+                }
+            }
+        }
+
+        if self.config.onnx_fallback {
+            return self.run_onnx_fallback(image_data);
+        }
+
+        if !tesseract_available {
+            return Err(SidecarError::InvalidRequest(
+                "Tesseract OCR is not installed and ONNX fallback is disabled. Install tesseract-ocr or enable ONNX fallback.".to_string()
+            ));
+        }
+
+        Err(SidecarError::DocumentProcessingError(
+            "Tesseract returned no text and ONNX fallback is disabled.".to_string(),
+        ))
+    }
+
+    fn extract_tesseract_primary(
+        &self,
+        img: &DynamicImage,
+        image_data: &[u8],
+    ) -> Result<OcrResult> {
         let tesseract_available = self.check_tesseract_installed();
 
         if !tesseract_available {
+            if self.config.onnx_fallback {
+                return self.run_onnx_fallback(image_data);
+            }
             return Err(SidecarError::InvalidRequest(
                 "Tesseract OCR is not installed. Install with: apt-get install tesseract-ocr (Debian/Ubuntu) or brew install tesseract (macOS)".to_string()
             ));
         }
 
-        self.run_tesseract(&img)
+        let result = self.run_tesseract(img)?;
+        if result.text.trim().is_empty() && self.config.onnx_fallback {
+            return self.run_onnx_fallback(image_data);
+        }
+        Ok(result)
+    }
+
+    fn extract_onnx_only(&self, image_data: &[u8]) -> Result<OcrResult> {
+        self.run_onnx_fallback(image_data)
+    }
+
+    fn run_onnx_fallback(&self, image_data: &[u8]) -> Result<OcrResult> {
+        let model_path = self
+            .config
+            .onnx_model_path
+            .as_deref()
+            .unwrap_or("/opt/armorclaw/models/ocr.onnx");
+
+        let backend = OnnxBackend::new(model_path)?;
+        backend.extract(image_data)
     }
 
     fn check_tesseract_installed(&self) -> bool {
@@ -419,6 +496,8 @@ mod tests {
         assert_eq!(config.language, "eng");
         assert_eq!(config.dpi, Some(300));
         assert_eq!(config.psm, Some(3));
+        assert!(config.onnx_fallback);
+        assert!(config.onnx_model_path.is_none());
     }
 
     #[test]
@@ -527,6 +606,8 @@ mod tests {
             dpi: Some(300),
             psm: Some(3),
             backend: OcrBackend::Onnx,
+            onnx_fallback: true,
+            onnx_model_path: None,
         };
         assert!(matches!(config.backend, OcrBackend::Onnx));
 
@@ -571,5 +652,92 @@ mod tests {
         let result = extractor.estimate_confidence("hello world");
         assert!(result > 0.5);
         assert!(result <= 1.0);
+    }
+
+    #[test]
+    fn test_onnx_fallback_disabled_config() {
+        let config = OcrConfig {
+            onnx_fallback: false,
+            ..OcrConfig::default()
+        };
+        assert!(!config.onnx_fallback);
+    }
+
+    #[test]
+    fn test_onnx_fallback_default_enabled() {
+        let config = OcrConfig::default();
+        assert!(config.onnx_fallback);
+    }
+
+    #[test]
+    fn test_extract_onnx_backend_missing_model_returns_error() {
+        let config = OcrConfig {
+            backend: OcrBackend::Onnx,
+            onnx_model_path: Some("/nonexistent/path/model.onnx".to_string()),
+            ..OcrConfig::default()
+        };
+        let extractor = OcrExtractor::new(config);
+
+        let png_header = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+        let result = extractor.extract(&png_header);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tesseract_primary_falls_back_to_onnx_on_missing_model() {
+        let config = OcrConfig {
+            backend: OcrBackend::Tesseract,
+            onnx_fallback: true,
+            onnx_model_path: Some("/nonexistent/path/model.onnx".to_string()),
+            ..OcrConfig::default()
+        };
+        let extractor = OcrExtractor::new(config);
+
+        let png_header = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+        let result = extractor.extract(&png_header);
+
+        if !extractor.check_tesseract_installed() {
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_auto_mode_no_tesseract_no_onnx_model_returns_error() {
+        let config = OcrConfig {
+            backend: OcrBackend::Auto,
+            onnx_fallback: true,
+            onnx_model_path: Some("/nonexistent/path/model.onnx".to_string()),
+            ..OcrConfig::default()
+        };
+        let extractor = OcrExtractor::new(config);
+
+        let png_header = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+        let result = extractor.extract(&png_header);
+
+        if !extractor.check_tesseract_installed() {
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_onnx_fallback_disabled_no_tesseract_returns_error() {
+        let config = OcrConfig {
+            backend: OcrBackend::Auto,
+            onnx_fallback: false,
+            ..OcrConfig::default()
+        };
+        let extractor = OcrExtractor::new(config);
+
+        if !extractor.check_tesseract_installed() {
+            let png_header = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+            let result = extractor.extract(&png_header);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_extract_text_from_onnx_output_empty() {
+        let result = extract_text_from_onnx_output(&[]);
+        assert!(result.is_empty());
     }
 }

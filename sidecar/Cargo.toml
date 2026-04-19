@@ -44,6 +44,9 @@ serde_json = "1.0"
 lopdf = "0.34"
 docx-rs = "0.4"
 
+# PDF Generation (for DOCX→PDF conversion)
+printpdf = "0.8"
+
 # XLSX Processing
 calamine = "0.24"
 

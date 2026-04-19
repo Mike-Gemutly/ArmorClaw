@@ -3,6 +3,7 @@ use crate::connectors::{S3Connector, S3UploadRequest, S3DownloadRequest, S3ListR
 use crate::document::{
     extract_text_from_pdf, extract_text_from_docx, extract_data_from_xlsx,
     extract_text_with_ocr,
+    convert_docx_to_pdf, convert_xlsx_to_csv, convert_pptx_to_pdf,
     qdrant::QdrantClient,
     embeddings::{Embedder, OpenAIEmbedder},
 };
@@ -20,6 +21,8 @@ use crate::grpc::proto::{
 use prometheus::Registry;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -75,11 +78,37 @@ fn sidecar_error_to_status(e: SidecarError) -> Status {
     }
 }
 
+/// Reads RSS memory in bytes from `/proc/self/status` VmRSS field (Linux only).
+/// Returns 0 on non-Linux platforms or if the file cannot be read.
+fn read_memory_used_bytes() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(content) = std::fs::read_to_string("/proc/self/status") else {
+            return 0;
+        };
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let trimmed = rest.trim();
+                // Format: "12345 kB"
+                let kb_str = trimmed.strip_suffix(" kB").unwrap_or(trimmed);
+                return kb_str.trim().parse::<u64>().unwrap_or(0) * 1024;
+            }
+        }
+        0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
 #[derive(Debug)]
 pub struct SidecarServiceImpl {
     s3_connector: Option<Arc<S3Connector>>,
     qdrant_client: Option<Arc<QdrantClient>>,
     embedding_api_key: Option<String>,
+    start_time: Instant,
+    active_requests: AtomicU64,
 }
 
 type DownloadBlobStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<BlobChunk, tonic::Status>>;
@@ -94,6 +123,8 @@ impl SidecarServiceImpl {
             s3_connector: s3_connector.map(Arc::new),
             qdrant_client: qdrant_client.map(Arc::new),
             embedding_api_key,
+            start_time: Instant::now(),
+            active_requests: AtomicU64::new(0),
         }
     }
 }
@@ -107,11 +138,15 @@ impl SidecarServiceTrait for SidecarServiceImpl {
     ) -> std::result::Result<Response<HealthCheckResponse>, Status> {
         info!("HealthCheck called");
 
+        let uptime_seconds = self.start_time.elapsed().as_secs() as i64;
+        let active_requests = self.active_requests.load(Ordering::Relaxed) as i32;
+        let memory_used_bytes = read_memory_used_bytes() as i64;
+
         let response = HealthCheckResponse {
             status: "healthy".to_string(),
-            uptime_seconds: 0,
-            active_requests: 0,
-            memory_used_bytes: 0,
+            uptime_seconds,
+            active_requests,
+            memory_used_bytes,
             version: env!("CARGO_PKG_VERSION").to_string(),
         };
 
@@ -455,12 +490,50 @@ impl SidecarServiceTrait for SidecarServiceImpl {
                 }
             }
             "convert" => {
-                Ok(Response::new(ProcessDocumentResponse {
-                    output_uri: req.input_uri,
-                    output_content: req.input_content,
-                    output_format: req.input_format,
-                    metadata: std::collections::HashMap::new(),
-                }))
+                let target_format = req.operation_params.get("target_format")
+                    .cloned()
+                    .unwrap_or_default();
+
+                match (req.input_format.as_str(), target_format.as_str()) {
+                    ("docx" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                     "pdf" | "application/pdf") => {
+                        let pdf_bytes = convert_docx_to_pdf(&req.input_content)
+                            .map_err(sidecar_error_to_status)?;
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert("source_format".to_string(), "docx".to_string());
+                        metadata.insert("target_format".to_string(), "pdf".to_string());
+                        Ok(Response::new(ProcessDocumentResponse {
+                            output_uri: req.input_uri,
+                            output_content: pdf_bytes,
+                            output_format: "application/pdf".to_string(),
+                            metadata,
+                        }))
+                    }
+                    ("xlsx" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     "csv" | "text/csv") => {
+                        let csv_bytes = convert_xlsx_to_csv(&req.input_content)
+                            .map_err(sidecar_error_to_status)?;
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert("source_format".to_string(), "xlsx".to_string());
+                        metadata.insert("target_format".to_string(), "csv".to_string());
+                        Ok(Response::new(ProcessDocumentResponse {
+                            output_uri: req.input_uri,
+                            output_content: csv_bytes,
+                            output_format: "text/csv".to_string(),
+                            metadata,
+                        }))
+                    }
+                    ("pptx" | "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                     "pdf" | "application/pdf") => {
+                        convert_pptx_to_pdf(&req.input_content)
+                            .map_err(sidecar_error_to_status)?;
+                        unreachable!()
+                    }
+                    _ => Err(Status::invalid_argument(format!(
+                        "Unsupported conversion: '{}' → '{}'. Supported: docx→pdf, xlsx→csv",
+                        req.input_format, target_format
+                    ))),
+                }
             }
             other => {
                 Err(Status::invalid_argument(format!(
@@ -773,5 +846,21 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap().into_inner();
         assert!(!response.status.is_empty());
+    }
+
+    #[tokio::test]
+    async fn health_check_returns_real_telemetry() {
+        let service = new_test_service();
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let req = Request::new(HealthCheckRequest {});
+        let result = service.health_check(req).await;
+        assert!(result.is_ok());
+        let response = result.unwrap().into_inner();
+
+        assert_eq!(response.status, "healthy");
+        assert!(response.uptime_seconds >= 1, "uptime_seconds should be >= 1 after 1s sleep");
+        assert_eq!(response.active_requests, 0, "no concurrent requests expected");
+        assert!(response.memory_used_bytes > 0, "memory_used_bytes should be > 0 on Linux");
+        assert!(!response.version.is_empty(), "version should not be empty");
     }
 }

@@ -10,7 +10,11 @@ sealed class Route(val route: String) {
     object HardeningBiometrics : Route("hardening_biometrics")
     object Home : Route("home")
     object Workflow : Route("workflow")
+    object AgentManagement : Route("agent_management")
     object Approvals : Route("approvals")
+    object Secrets : Route("secrets")
+    object Migration : Route("migration")
+    object AccountDeletion : Route("account_deletion")
     data class Room(val roomId: String) : Route("room/$roomId")
     data class EmailApproval(val approvalId: String) : Route("email/approve/$approvalId")
 }

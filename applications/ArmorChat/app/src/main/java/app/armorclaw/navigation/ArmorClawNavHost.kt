@@ -22,8 +22,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.armorclaw.config.ConfigManager
+import app.armorclaw.ui.account.AccountDeletionScreen
 import app.armorclaw.ui.agent.AgentScreen
 import app.armorclaw.ui.approval.ApprovalScreen
+import app.armorclaw.ui.email.EmailApprovalScreen
+import app.armorclaw.ui.home.HomeScreen
 import app.armorclaw.ui.security.BiometricEnableScreen
 import app.armorclaw.ui.security.BondingScreen
 import app.armorclaw.ui.workflow.WorkflowScreen
@@ -153,9 +156,11 @@ fun ArmorClawNavHost(navController: NavHostController) {
         }
 
         composable(Route.Home.route) {
-            PlaceholderScreen(
-                title = "ArmorClaw Home",
-                description = "Welcome to your secure agent dashboard."
+            HomeScreen(
+                onNavigateToAgents = { navController.navigate(Route.AgentManagement.route) },
+                onNavigateToApprovals = { navController.navigate(Route.Approvals.route) },
+                onNavigateToWorkflows = { navController.navigate(Route.Workflow.route) },
+                onNavigateToAccountDeletion = { navController.navigate(Route.AccountDeletion.route) }
             )
         }
 
@@ -175,9 +180,10 @@ fun ArmorClawNavHost(navController: NavHostController) {
 
         // KeyRecovery is a separate recovery flow, not part of onboarding
         composable(Route.KeyRecovery.route) {
-            PlaceholderScreen(
-                title = "Key Recovery",
-                description = "Recover your encryption keys using your recovery passphrase."
+            KeyRecoveryScreen(
+                hasExistingBackup = true,
+                onRecover = { _ -> navController.popBackStack() },
+                onSkip = { navController.popBackStack() }
             )
         }
 
@@ -197,11 +203,42 @@ fun ArmorClawNavHost(navController: NavHostController) {
             arguments = listOf(navArgument("approvalId") { type = NavType.StringType })
         ) { backStackEntry ->
             val approvalId = backStackEntry.arguments?.getString("approvalId").orEmpty()
-            ApprovalScreen()
+            EmailApprovalScreen(
+                approvalId = approvalId,
+                onBack = { navController.popBackStack() }
+            )
         }
 
         composable(Route.Approvals.route) {
             ApprovalScreen()
+        }
+
+        composable(Route.Secrets.route) {
+            SecretsScreen(
+                onAddSecret = { _, _, _ -> },
+                onDeleteSecret = {}
+            )
+        }
+
+        composable(Route.Migration.route) {
+            MigrationScreen(
+                onMigrationComplete = {
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(Route.Migration.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(Route.AccountDeletion.route) {
+            AccountDeletionScreen(
+                onBack = { navController.popBackStack() },
+                onDeleted = {
+                    navController.navigate(Route.Bonding.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
         }
     }
 }
