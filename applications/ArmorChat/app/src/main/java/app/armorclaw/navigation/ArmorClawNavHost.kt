@@ -22,12 +22,16 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import app.armorclaw.config.ConfigManager
+import app.armorclaw.ui.agent.AgentScreen
+import app.armorclaw.ui.approval.ApprovalScreen
 import app.armorclaw.ui.security.BiometricEnableScreen
 import app.armorclaw.ui.security.BondingScreen
+import app.armorclaw.ui.workflow.WorkflowScreen
 import app.armorclaw.ui.security.KeyBackupSetupScreen
 import app.armorclaw.ui.security.PasswordRotationScreen
 import app.armorclaw.ui.security.SecurityConfigScreen
 import app.armorclaw.ui.verification.BridgeVerificationScreen
+import app.armorclaw.viewmodel.AgentManagementViewModel
 import app.armorclaw.viewmodel.HardeningStep
 import app.armorclaw.viewmodel.HardeningWizardViewModel
 
@@ -155,6 +159,20 @@ fun ArmorClawNavHost(navController: NavHostController) {
             )
         }
 
+        composable(Route.Workflow.route) {
+            WorkflowScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Route.AgentManagement.route) {
+            val agentViewModel: AgentManagementViewModel = viewModel()
+            AgentScreen(
+                viewModel = agentViewModel,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
         // KeyRecovery is a separate recovery flow, not part of onboarding
         composable(Route.KeyRecovery.route) {
             PlaceholderScreen(
@@ -179,10 +197,11 @@ fun ArmorClawNavHost(navController: NavHostController) {
             arguments = listOf(navArgument("approvalId") { type = NavType.StringType })
         ) { backStackEntry ->
             val approvalId = backStackEntry.arguments?.getString("approvalId").orEmpty()
-            PlaceholderScreen(
-                title = "Email Approval",
-                description = "Approval request: $approvalId"
-            )
+            ApprovalScreen()
+        }
+
+        composable(Route.Approvals.route) {
+            ApprovalScreen()
         }
     }
 }
