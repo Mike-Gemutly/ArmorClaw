@@ -128,7 +128,8 @@ func (c *IMAPClient) logf() *logger.Logger {
 	if c.log != nil {
 		return c.log
 	}
-	return logger.New(logger.Config{Level: "error", Output: "/dev/null"})
+	l, _ := logger.New(logger.Config{Level: "error", Output: "/dev/null"})
+	return l
 }
 
 // ListFolders returns all mailbox folders on the server.

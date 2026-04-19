@@ -107,7 +107,7 @@ func (d *EmailDispatcher) tryTeamRouting(ctx context.Context, evt *EmailReceived
 	d.mu.Unlock()
 
 	for _, h := range handlers {
-		h(&teamEvt.EmailReceivedEvent)
+		h(teamEvt.EmailReceivedEvent)
 	}
 
 	return true
