@@ -553,6 +553,62 @@ func TestExecuteTool_VaultIssueErrorDegradesGracefully(t *testing.T) {
 	}
 }
 
+// TestVaultClient verifies that a non-nil VaultClient is wired through Config
+// and that the router calls IssueBlindFillToken and ZeroizeToolSecrets when v6 is enabled.
+func TestVaultClient(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_vault_wiring.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+	mockProv := &mockProvisioner{}
+	mv := &mockVaultClient{issueTokenID: "tok_wire_42", zeroizeDestroyedCount: 1}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+		VaultClient:    mv,
+		V6Microkernel:  true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router with VaultClient: %v", err)
+	}
+
+	if router.vaultClient == nil {
+		t.Fatal("Expected vaultClient to be non-nil on router after construction")
+	}
+
+	ctx := context.Background()
+	args, _ := json.Marshal(map[string]interface{}{"api_key": "sk-test-123"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "vault_wiring_test",
+		Params:  &MCPParams{Name: "fill_form", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(ctx, req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success, got error: %v", resp)
+	}
+
+	mv.mu.Lock()
+	defer mv.mu.Unlock()
+
+	if len(mv.issueCalls) != 1 {
+		t.Errorf("Expected 1 IssueBlindFillToken call, got %d", len(mv.issueCalls))
+	}
+	if len(mv.zeroizeCalls) != 1 {
+		t.Errorf("Expected 1 ZeroizeToolSecrets call, got %d", len(mv.zeroizeCalls))
+	}
+	if len(mv.issueCalls) > 0 && mv.issueCalls[0].Secret != "sk-test-123" {
+		t.Errorf("Expected secret 'sk-test-123', got %s", mv.issueCalls[0].Secret)
+	}
+}
+
 func TestAuditMode_ToolCallsPassThroughUnmodified(t *testing.T) {
 	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_audit_mode.db"})
 	mockGovernor := governor.NewGovernor(nil, logger.Global())

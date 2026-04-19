@@ -224,6 +224,43 @@ pub struct ProcessDocumentResponse {
         ::prost::alloc::string::String,
     >,
 }
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDocumentsRequest {
+    #[prost(message, optional, tag = "1")]
+    pub metadata: ::core::option::Option<RequestMetadata>,
+    #[prost(string, tag = "2")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub query_text: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub clearance_level: ::prost::alloc::string::String,
+    #[prost(int32, tag = "5")]
+    pub max_results: i32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDocumentsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub chunks: ::prost::alloc::vec::Vec<DocumentChunk>,
+    #[prost(float, tag = "2")]
+    pub total_score: f32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentChunk {
+    #[prost(string, tag = "1")]
+    pub chunk_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub content: ::prost::alloc::string::String,
+    #[prost(float, tag = "3")]
+    pub score: f32,
+    #[prost(map = "string, string", tag = "4")]
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
 /// Generated client implementations.
 pub mod sidecar_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
@@ -507,6 +544,36 @@ pub mod sidecar_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        pub async fn query_documents(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryDocumentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/armorclaw.sidecar.v1.SidecarService/QueryDocuments",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "armorclaw.sidecar.v1.SidecarService",
+                        "QueryDocuments",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -572,6 +639,13 @@ pub mod sidecar_service_server {
             request: tonic::Request<super::ProcessDocumentRequest>,
         ) -> std::result::Result<
             tonic::Response<super::ProcessDocumentResponse>,
+            tonic::Status,
+        >;
+        async fn query_documents(
+            &self,
+            request: tonic::Request<super::QueryDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryDocumentsResponse>,
             tonic::Status,
         >;
     }
@@ -963,6 +1037,53 @@ pub mod sidecar_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = ProcessDocumentSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/armorclaw.sidecar.v1.SidecarService/QueryDocuments" => {
+                    #[allow(non_camel_case_types)]
+                    struct QueryDocumentsSvc<T: SidecarService>(pub Arc<T>);
+                    impl<
+                        T: SidecarService,
+                    > tonic::server::UnaryService<super::QueryDocumentsRequest>
+                    for QueryDocumentsSvc<T> {
+                        type Response = super::QueryDocumentsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryDocumentsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SidecarService>::query_documents(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = QueryDocumentsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

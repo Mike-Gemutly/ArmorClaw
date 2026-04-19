@@ -406,18 +406,6 @@ func (f *AgentFactory) ListInstances(definitionID string) ([]*AgentInstance, err
 	return f.store.ListInstances(definitionID, "") // Empty status means all statuses
 }
 
-// GetRunningInstance returns the single running instance for a definition, or nil if none
-func (f *AgentFactory) GetRunningInstance(definitionID string) (*AgentInstance, error) {
-	instances, err := f.store.ListInstances(definitionID, StatusRunning)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list running instances: %w", err)
-	}
-	if len(instances) == 0 {
-		return nil, nil
-	}
-	return instances[0], nil
-}
-
 // CleanupStale removes instances whose containers are no longer running
 func (f *AgentFactory) CleanupStale(ctx context.Context) ([]string, error) {
 	var cleaned []string

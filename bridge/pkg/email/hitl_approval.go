@@ -116,3 +116,40 @@ func (m *EmailApprovalManager) PendingCount() int {
 	defer m.mu.RUnlock()
 	return len(m.pending)
 }
+
+// PendingItem is a summary of a pending email approval for listing.
+type PendingItem struct {
+	ApprovalID  string `json:"approval_id"`
+	EmailID     string `json:"email_id"`
+	Sender      string `json:"sender"`
+	To          string `json:"to"`
+	Subject     string `json:"subject"`
+	BodyPreview string `json:"body_preview"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// ListPending returns a slice of all pending email approval requests with detail.
+func (m *EmailApprovalManager) ListPending() []PendingItem {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	items := make([]PendingItem, 0, len(m.pending))
+	for id, pa := range m.pending {
+		preview := pa.request.BodyText
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		items = append(items, PendingItem{
+			ApprovalID:  id,
+			EmailID:     pa.request.EmailID,
+			Sender:      pa.request.From,
+			To:          pa.request.To,
+			Subject:     pa.request.Subject,
+			BodyPreview: preview,
+			Status:      "pending",
+			CreatedAt:   pa.deadline.Add(-m.timeout).Format(time.RFC3339),
+		})
+	}
+	return items
+}

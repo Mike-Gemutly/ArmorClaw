@@ -140,6 +140,19 @@ func (s *Server) handleEmailApprovalStatus(ctx context.Context, req *Request) (i
 	}, nil
 }
 
+// handleEmailListPending handles email.list_pending RPC method.
+// Returns full detail list of pending email approvals (not just count).
+func (s *Server) handleEmailListPending(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	mgr := getEmailApprovalManager()
+
+	pending := mgr.ListPending()
+
+	return map[string]interface{}{
+		"approvals": pending,
+		"count":     len(pending),
+	}, nil
+}
+
 // emitEmailApprovalRequestEvent emits a Matrix event for a new email approval request.
 func (s *Server) emitEmailApprovalRequestEvent(roomID, approvalID, emailID, to string, piiFieldCount int, timeoutS int) error {
 	if s.matrix == nil {

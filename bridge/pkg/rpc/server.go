@@ -149,6 +149,7 @@ type Server struct {
 	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
+	secretaryHandler secretaryRPCHandler
 	heartbeats      sync.Map
 	metrics         *Metrics
 	listener        net.Listener
@@ -181,6 +182,7 @@ type Config struct {
 	Guard           *trust.TrustedProxyGuard
 	MCPRouter       *mcp.MCPRouter
 	Translator      *translator.RPCToMCPTranslator
+	SecretaryHandler secretaryRPCHandler
 }
 
 func New(cfg Config) (*Server, error) {
@@ -212,6 +214,7 @@ func New(cfg Config) (*Server, error) {
 		guard:           cfg.Guard,
 		mcpRouter:       cfg.MCPRouter,
 		translator:      cfg.Translator,
+		secretaryHandler: cfg.SecretaryHandler,
 	}
 
 	s.registerHandlers()
@@ -895,6 +898,21 @@ func (s *Server) registerHandlers() {
 		"approve_email":             s.handleApproveEmail,
 		"deny_email":                s.handleDenyEmail,
 		"email_approval_status":     s.handleEmailApprovalStatus,
+		"email.list_pending":        s.handleEmailListPending,
+		"account.delete":            s.handleAccountDelete,
+		"secretary.start_workflow":  s.handleSecretaryMethod,
+		"secretary.get_workflow":    s.handleSecretaryMethod,
+		"secretary.cancel_workflow": s.handleSecretaryMethod,
+		"secretary.advance_workflow": s.handleSecretaryMethod,
+		"secretary.list_templates":  s.handleSecretaryMethod,
+		"secretary.create_template": s.handleSecretaryMethod,
+		"secretary.get_template":    s.handleSecretaryMethod,
+		"secretary.delete_template": s.handleSecretaryMethod,
+		"secretary.update_template": s.handleSecretaryMethod,
+		"task.create":               s.handleSecretaryMethod,
+		"task.list":                 s.handleSecretaryMethod,
+		"task.cancel":               s.handleSecretaryMethod,
+		"task.get":                  s.handleSecretaryMethod,
 	}
 
 	s.handlers = h

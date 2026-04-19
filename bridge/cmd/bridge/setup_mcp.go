@@ -14,11 +14,12 @@ import (
 	"github.com/armorclaw/bridge/pkg/pii"
 	"github.com/armorclaw/bridge/pkg/toolsidecar"
 	"github.com/armorclaw/bridge/pkg/translator"
+	"github.com/armorclaw/bridge/pkg/vault"
 )
 
 // setupMCPRouter initializes the v6 MCP Router when V6Microkernel is enabled.
 // Returns the router and RPC-to-MCP translator (either may be nil if disabled or on error).
-func setupMCPRouter(cfg *config.Config, toolsidecarDocker *toolsidecarDockerAdapter) (*mcp.MCPRouter, *translator.RPCToMCPTranslator) {
+func setupMCPRouter(cfg *config.Config, toolsidecarDocker *toolsidecarDockerAdapter, vaultClient *vault.VaultGovernanceClient) (*mcp.MCPRouter, *translator.RPCToMCPTranslator) {
 	var mcpRouter *mcp.MCPRouter
 	var mcpTranslator *translator.RPCToMCPTranslator
 
@@ -46,6 +47,7 @@ func setupMCPRouter(cfg *config.Config, toolsidecarDocker *toolsidecarDockerAdap
 					Provisioner:    prov,
 					ConsentManager: consentMgr,
 					Auditor:        auditor,
+					VaultClient:    vaultClient,
 					V6Microkernel:  true,
 				})
 				if err != nil {

@@ -24,7 +24,7 @@ type FactoryInterface interface {
 }
 
 // AgentInstanceRef is a lightweight reference to an agent instance.
-// The scheduler doesn't need the full AgentInstance — just the room_id for warm dispatch.
+// The scheduler doesn't need the full AgentInstance — just the room_id for dispatch.
 type AgentInstanceRef struct {
 	ID     string
 	RoomID string
@@ -159,7 +159,7 @@ func (ts *TaskScheduler) dispatchTask(ctx context.Context, task ScheduledTask) {
 	}
 
 	// COLD START: all dispatch is cold-only (ephemeral container spawn).
-	// NetworkMode: none is a hard architectural constraint — warm dispatch is not possible.
+	// NetworkMode: none is a hard architectural constraint.
 	ts.coldDispatch(ctx, task)
 }
 

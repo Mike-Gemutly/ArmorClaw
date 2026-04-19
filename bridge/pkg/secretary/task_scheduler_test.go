@@ -305,7 +305,7 @@ func TestTaskScheduler_ColdDispatchOnly(t *testing.T) {
 	scheduler := NewTaskScheduler(store, factory, matrix, nil, nil, nil)
 	scheduler.tick()
 
-	assert.True(t, factory.spawnCalled, "should use cold dispatch (warm dispatch removed)")
+	assert.True(t, factory.spawnCalled, "should use cold dispatch")
 
 	updated := store.scheduledTasks["task-1"]
 	assert.NotNil(t, updated.NextRun)

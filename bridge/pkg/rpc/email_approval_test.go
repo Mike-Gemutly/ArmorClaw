@@ -17,6 +17,7 @@ func TestEmailApprovalMethodRegistration(t *testing.T) {
 		"approve_email",
 		"deny_email",
 		"email_approval_status",
+		"email.list_pending",
 	}
 
 	for _, method := range methods {
@@ -298,5 +299,154 @@ func TestDenyEmailNotFound(t *testing.T) {
 	}
 	if errObj.Code != InternalError {
 		t.Errorf("expected InternalError, got %d", errObj.Code)
+	}
+}
+
+func TestEmailListPendingEmpty(t *testing.T) {
+	mgr := email.NewEmailApprovalManager(email.EmailApprovalConfig{
+		Timeout: 300 * time.Second,
+	})
+	setEmailApprovalManager(mgr)
+
+	server := &Server{}
+	server.registerHandlers()
+
+	handler := server.handlers["email.list_pending"]
+	if handler == nil {
+		t.Fatal("email.list_pending handler not registered")
+	}
+
+	req := &Request{
+		Params: json.RawMessage(`{}`),
+	}
+
+	result, errObj := handler(context.Background(), req)
+	if errObj != nil {
+		t.Fatalf("unexpected error: %v", errObj)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatal("result is not a map")
+	}
+
+	if resultMap["count"] != 0 {
+		t.Errorf("expected count 0, got %v", resultMap["count"])
+	}
+
+	approvals, ok := resultMap["approvals"].([]email.PendingItem)
+	if !ok {
+		t.Fatalf("expected approvals to be []email.PendingItem, got %T", resultMap["approvals"])
+	}
+	if len(approvals) != 0 {
+		t.Errorf("expected empty approvals, got %d", len(approvals))
+	}
+}
+
+func TestEmailListPendingWithItems(t *testing.T) {
+	mgr := email.NewEmailApprovalManager(email.EmailApprovalConfig{
+		Timeout: 30 * time.Second,
+	})
+	setEmailApprovalManager(mgr)
+
+	go func() {
+		req := &email.OutboundRequest{
+			To:        "recipient@example.com",
+			From:      "sender@example.com",
+			Subject:   "Urgent Review Needed",
+			BodyText:  "Please review this important document attached.",
+			EmailID:   "email_list_test",
+			PIIFields: []string{"credit_card"},
+		}
+		mgr.RequestApproval(context.Background(), req)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if mgr.PendingCount() != 1 {
+		t.Fatalf("expected 1 pending, got %d", mgr.PendingCount())
+	}
+
+	server := &Server{}
+	server.registerHandlers()
+
+	handler := server.handlers["email.list_pending"]
+
+	req := &Request{
+		Params: json.RawMessage(`{}`),
+	}
+
+	result, errObj := handler(context.Background(), req)
+	if errObj != nil {
+		t.Fatalf("unexpected error: %v", errObj)
+	}
+
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatal("result is not a map")
+	}
+
+	if resultMap["count"] != 1 {
+		t.Errorf("expected count 1, got %v", resultMap["count"])
+	}
+
+	approvals, ok := resultMap["approvals"].([]email.PendingItem)
+	if !ok {
+		t.Fatalf("expected []email.PendingItem, got %T", resultMap["approvals"])
+	}
+	if len(approvals) != 1 {
+		t.Fatalf("expected 1 approval, got %d", len(approvals))
+	}
+
+	item := approvals[0]
+	if item.To != "recipient@example.com" {
+		t.Errorf("expected To=recipient@example.com, got %s", item.To)
+	}
+	if item.Subject != "Urgent Review Needed" {
+		t.Errorf("expected Subject=Urgent Review Needed, got %s", item.Subject)
+	}
+	if item.Status != "pending" {
+		t.Errorf("expected Status=pending, got %s", item.Status)
+	}
+	if item.EmailID != "email_list_test" {
+		t.Errorf("expected EmailID=email_list_test, got %s", item.EmailID)
+	}
+	if item.BodyPreview != "Please review this important document attached." {
+		t.Errorf("unexpected BodyPreview: %s", item.BodyPreview)
+	}
+}
+
+func TestEmailListPendingBodyPreviewTruncation(t *testing.T) {
+	mgr := email.NewEmailApprovalManager(email.EmailApprovalConfig{
+		Timeout: 30 * time.Second,
+	})
+	setEmailApprovalManager(mgr)
+
+	longBody := ""
+	for i := 0; i < 300; i++ {
+		longBody += "x"
+	}
+
+	go func() {
+		req := &email.OutboundRequest{
+			To:        "test@test.com",
+			From:      "from@test.com",
+			Subject:   "Long body",
+			BodyText:  longBody,
+			EmailID:   "email_trunc",
+			PIIFields: []string{},
+		}
+		mgr.RequestApproval(context.Background(), req)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	pending := mgr.ListPending()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending, got %d", len(pending))
+	}
+
+	if len(pending[0].BodyPreview) > 200 {
+		t.Errorf("BodyPreview should be truncated to 200, got %d", len(pending[0].BodyPreview))
 	}
 }

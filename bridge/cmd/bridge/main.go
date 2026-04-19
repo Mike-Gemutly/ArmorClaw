@@ -2466,7 +2466,7 @@ func runBridgeServer(cliCfg cliConfig) {
 	}
 
 	// Initialize v6 MCP Router (if enabled)
-	mcpRouter, mcpTranslator := setupMCPRouter(cfg, toolsidecarDocker)
+	mcpRouter, mcpTranslator := setupMCPRouter(cfg, toolsidecarDocker, vaultClient)
 
 	rolodexStore, rolodexService, webdavService, calendarService := setupSecretaryServices(ks)
 	if rolodexStore != nil {
