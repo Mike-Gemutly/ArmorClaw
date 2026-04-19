@@ -40,20 +40,16 @@ type skillGateAdapter struct {
 
 func (a *skillGateAdapter) InterceptToolCall(ctx context.Context, call *capability.ToolCall) (*capability.ToolCall, error) {
 	ifc := &interfaces.ToolCall{
-		ID:        call.ID,
 		ToolName:  call.ToolName,
 		Arguments: call.Arguments,
-		Priority:  call.Priority,
 	}
 	result, err := a.inner.InterceptToolCall(ctx, ifc)
 	if err != nil {
 		return nil, err
 	}
 	return &capability.ToolCall{
-		ID:        result.ID,
 		ToolName:  result.ToolName,
 		Arguments: result.Arguments,
-		Priority:  result.Priority,
 	}, nil
 }
 
