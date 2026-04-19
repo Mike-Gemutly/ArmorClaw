@@ -157,7 +157,11 @@ steps:
           ENV_VARS="$ENV_VARS ARMORCLAW_ADMIN_PASSWORD=$admin_password"
       fi
 
-      # Pinned to release tag for supply chain integrity
+      # Pinned to v0.7.0 release tag for supply chain integrity.
+      # Manual verification: download first, inspect, then execute:
+      #   curl -fsSL -o /tmp/install.sh https://raw.githubusercontent.com/Gemutly/ArmorClaw/v0.7.0/deploy/install.sh
+      #   less /tmp/install.sh  # Review the script
+      #   bash /tmp/install.sh
       # Execute installer on VPS
       if [ -n "$ENV_VARS" ]; then
           ssh -i "$SSH_KEY" "${ssh_user}@${vps_ip}" \
