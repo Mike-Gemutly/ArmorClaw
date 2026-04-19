@@ -147,7 +147,7 @@ steps:
       if [[ -z "${domain}" ]]; then
         echo "--- SSL/TLS ---"
         echo "ℹ No domain provided, skipping SSL checks (Native mode)"
-        return 0
+        exit 0
       fi
       
       SSH_CMD="ssh -i ${ssh_key/#\~/$HOME} ${ssh_user}@${vps_ip}"

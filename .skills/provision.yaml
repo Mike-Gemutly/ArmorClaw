@@ -32,17 +32,17 @@ parameters:
 #   - guide:    Show instructions for user to perform manually
 steps:
   - name: "generate_qr"
-    automation: "auto"
+    automation: "confirm"
     description: "Generate QR code and deep link using qrencode"
     command: |
       CMD="./deploy/armorclaw-provision.sh --expiry ${expiry:-300}"
       if [ "${show_url}" = "true" ]; then
         CMD="$CMD --show-url"
       fi
-      sudo $CMD
+      sudo "$CMD"
 
   - name: "display_deep_link"
-    automation: "auto"
+    automation: "confirm"
     description: "Display connection details and deep link for manual entry"
     command: |
       sudo ./deploy/armorclaw-provision.sh --show-url

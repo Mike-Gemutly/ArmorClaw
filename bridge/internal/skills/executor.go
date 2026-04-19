@@ -259,24 +259,9 @@ func (se *SkillExecutor) checkDangerousPatterns(params map[string]interface{}) e
 				return fmt.Errorf("ftp:// URLs are not allowed")
 			}
 
-			// Check for potential command injection
-			if containsDangerousChars(str) {
-				return fmt.Errorf("potentially dangerous characters detected")
-			}
 		}
 	}
 	return nil
-}
-
-// containsDangerousChars checks for dangerous command characters
-func containsDangerousChars(str string) bool {
-	dangerous := []string{"|", ";", "`", "$(", "${"}
-	for _, char := range dangerous {
-		if contains(str, char) {
-			return true
-		}
-	}
-	return false
 }
 
 // contains checks if a string contains a substring
