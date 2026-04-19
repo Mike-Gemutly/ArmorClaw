@@ -2,6 +2,7 @@ package secretary
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -116,11 +117,14 @@ func requireTrue(t *testing.T, ok bool) {
 func TestMatrixForwardStepProgress(t *testing.T) {
 	bus := events.NewMatrixEventBus(64)
 
+	var mu sync.Mutex
 	var sentMessages []struct {
 		roomID  string
 		message string
 	}
 	sendFunc := func(_ context.Context, roomID, message string) error {
+		mu.Lock()
+		defer mu.Unlock()
 		sentMessages = append(sentMessages, struct {
 			roomID  string
 			message string
@@ -141,21 +145,28 @@ func TestMatrixForwardStepProgress(t *testing.T) {
 	})
 
 	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 		return len(sentMessages) == 1
 	}, time.Second, 10*time.Millisecond, "expected 1 forwarded message")
 
+	mu.Lock()
 	assert.Equal(t, "!room:test", sentMessages[0].roomID)
 	assert.Equal(t, "🔹 Step: navigate (50%)", sentMessages[0].message)
+	mu.Unlock()
 }
 
 func TestMatrixForwardStepError(t *testing.T) {
 	bus := events.NewMatrixEventBus(64)
 
+	var mu sync.Mutex
 	var sentMessages []struct {
 		roomID  string
 		message string
 	}
 	sendFunc := func(_ context.Context, roomID, message string) error {
+		mu.Lock()
+		defer mu.Unlock()
 		sentMessages = append(sentMessages, struct {
 			roomID  string
 			message string
@@ -176,21 +187,28 @@ func TestMatrixForwardStepError(t *testing.T) {
 	})
 
 	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 		return len(sentMessages) == 1
 	}, time.Second, 10*time.Millisecond, "expected 1 forwarded message")
 
+	mu.Lock()
 	assert.Equal(t, "!room:test", sentMessages[0].roomID)
 	assert.Equal(t, "❌ Error: connection refused", sentMessages[0].message)
+	mu.Unlock()
 }
 
 func TestMatrixForwardBlockerWarning(t *testing.T) {
 	bus := events.NewMatrixEventBus(64)
 
+	var mu sync.Mutex
 	var sentMessages []struct {
 		roomID  string
 		message string
 	}
 	sendFunc := func(_ context.Context, roomID, message string) error {
+		mu.Lock()
+		defer mu.Unlock()
 		sentMessages = append(sentMessages, struct {
 			roomID  string
 			message string
@@ -217,11 +235,15 @@ func TestMatrixForwardBlockerWarning(t *testing.T) {
 	})
 
 	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 		return len(sentMessages) == 1
 	}, time.Second, 10*time.Millisecond, "expected 1 forwarded blocker message")
 
+	mu.Lock()
 	assert.Equal(t, "!room:test", sentMessages[0].roomID)
 	assert.Equal(t, "⚠️ Blocker: Login required", sentMessages[0].message)
+	mu.Unlock()
 }
 
 func TestMatrixForwardIgnoresOtherEvents(t *testing.T) {

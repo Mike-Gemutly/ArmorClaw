@@ -357,10 +357,11 @@ func (m *purgeMockDocker) ContainerInspect(_ context.Context, _ string) (types.C
 	if state == nil {
 		state = &types.ContainerState{Running: true, ExitCode: 0}
 	}
+	cp := *state
 	return types.ContainerJSON{
 		ContainerJSONBase: &types.ContainerJSONBase{
 			ID:    "purge-mock-container",
-			State: state,
+			State: &cp,
 		},
 	}, nil
 }
@@ -737,10 +738,11 @@ func (m *blockerMockDocker) ContainerInspect(_ context.Context, cid string) (typ
 	if !ok {
 		state = &types.ContainerState{Running: true, ExitCode: 0}
 	}
+	cp := *state
 	return types.ContainerJSON{
 		ContainerJSONBase: &types.ContainerJSONBase{
 			ID:    cid,
-			State: state,
+			State: &cp,
 		},
 	}, nil
 }
@@ -1174,7 +1176,7 @@ func TestBlockerLoop_PII_NotLogged(t *testing.T) {
 }
 
 func TestBlockerLoop_EventLogExceeded(t *testing.T) {
-	executor, orch, _, store, workflowID, stepID, tmpDir := setupBlockerTest(t)
+	executor, orch, mockDocker, store, workflowID, stepID, tmpDir := setupBlockerTest(t)
 
 	defID := "blocker-test-agent"
 	stateDir := filepath.Join(tmpDir, "agent-state", defID)
@@ -1189,9 +1191,6 @@ func TestBlockerLoop_EventLogExceeded(t *testing.T) {
 	}
 	workflow := store.workflows[workflowID]
 
-	// The goroutine writes the oversized file AFTER Spawn creates the state dir.
-	// Spawn happens synchronously in executeStepWithBlockerHandling before
-	// waitForCompletion is called, so we delay just enough for Spawn to run.
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 
@@ -1209,16 +1208,26 @@ func TestBlockerLoop_EventLogExceeded(t *testing.T) {
 			f.Write(append(bigLine, '\n'))
 		}
 		f.Close()
+
+		resultJSON, _ := json.Marshal(ContainerStepResult{
+			Status:     "success",
+			Output:     "completed after soft cap",
+			DurationMS: 1000,
+		})
+		os.WriteFile(filepath.Join(stateDir, "result.json"), resultJSON, 0644)
+
+		time.Sleep(500 * time.Millisecond)
+		mockDocker.completeContainer("blocker-container-1")
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	result, err := executor.executeStepWithBlockerHandling(ctx, workflow, step, defID, orch)
 
-	require.Error(t, err, "should return error for event log exceeded")
-	assert.ErrorIs(t, err, ErrEventLogExceeded, "error should wrap ErrEventLogExceeded")
-	assert.Nil(t, result, "result should be nil on event log exceeded")
+	require.NoError(t, err, "soft cap should not return error")
+	require.NotNil(t, result)
+	assert.Equal(t, stepID, result.StepID)
 }
 
 func TestDeliverBlockerResponse_NoWaiter(t *testing.T) {

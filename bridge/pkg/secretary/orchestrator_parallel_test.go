@@ -180,10 +180,11 @@ func (m *parallelMockDocker) ContainerInspect(_ context.Context, cid string) (ty
 	if !ok {
 		state = &types.ContainerState{Running: true, ExitCode: 0}
 	}
+	cp := *state
 	return types.ContainerJSON{
 		ContainerJSONBase: &types.ContainerJSONBase{
 			ID:    cid,
-			State: state,
+			State: &cp,
 		},
 	}, nil
 }

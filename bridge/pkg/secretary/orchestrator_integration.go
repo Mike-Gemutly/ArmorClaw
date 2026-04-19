@@ -905,18 +905,17 @@ func (e *StepExecutor) waitForCompletion(ctx context.Context, instanceID string,
 			// Tail _events.jsonl while container is running.
 			var events []StepEvent
 			var readErr error
-			events, _, readErr = reader.ReadNew()
-			if readErr != nil {
-				if errors.Is(readErr, ErrEventLogExceeded) {
-					log.Printf("event log exceeded 10MB soft cap, stopping container (stateDir=%s)", stateDir)
-					_ = e.factory.Stop(context.Background(), instanceID, 10*time.Second)
-					_ = cleanupStateDir(stateDir)
-					return nil, ErrEventLogExceeded
+			if reader != nil {
+				events, _, readErr = reader.ReadNew()
+				if readErr != nil {
+					if errors.Is(readErr, ErrEventLogExceeded) {
+						log.Printf("event log exceeded 10MB soft cap, stopping event tail (stateDir=%s)", stateDir)
+						reader = nil
+					}
 				}
-				// Non-fatal read error — log and continue polling.
 			}
 			// Route events by type to Matrix room.
-			if e.eventBus != nil && roomID != "" {
+			if reader != nil && e.eventBus != nil && roomID != "" {
 				emitter := NewWorkflowEventEmitter(e.eventBus)
 				for _, evt := range events {
 					switch evt.Type {

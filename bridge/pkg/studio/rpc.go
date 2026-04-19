@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/armorclaw/bridge/pkg/logger"
@@ -1106,18 +1107,16 @@ func (h *RPCHandler) handleRejectMcpRequest(req *RPCRequest) *RPCResponse {
 var idCounter int64
 
 func generateID(prefix string) string {
-	// Use counter for uniqueness within same millisecond
-	idCounter++
-	return fmt.Sprintf("%s_%d_%d_%s", prefix, time.Now().UnixMilli(), idCounter, randomSuffix(4))
+	next := atomic.AddInt64(&idCounter, 1)
+	return fmt.Sprintf("%s_%d_%d_%s", prefix, time.Now().UnixMilli(), next, randomSuffix(4, next))
 }
 
-func randomSuffix(n int) string {
+func randomSuffix(n int, seed int64) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
-	// Use nanosecond variation for randomness
 	ns := time.Now().Nanosecond()
 	for i := range b {
-		b[i] = letters[(ns+i*17+int(idCounter)*31)%len(letters)]
+		b[i] = letters[(ns+i*17+int(seed)*31)%len(letters)]
 	}
 	return string(b)
 }
