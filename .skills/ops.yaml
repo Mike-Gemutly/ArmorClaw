@@ -137,7 +137,7 @@ steps:
       echo "Mode: ${mode}  Domain: ${domain:-none}"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_user}@${vps_ip}" \
-        "ARMORCLAW_SERVER_MODE=${mode} ARMORCLAW_DOMAIN=${domain} bash -c '\$(curl -fsSL https://raw.githubusercontent.com/mikmin/armorclaw/v0.7.0/deploy/install.sh)'"
+        "ARMORCLAW_SERVER_MODE=\"${mode}\" ARMORCLAW_DOMAIN=\"${domain}\" bash -c '\$(curl -fsSL https://raw.githubusercontent.com/mikmin/armorclaw/v0.7.0/deploy/install.sh)'"
       echo ""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo "Running post-deploy health verification..."
@@ -168,7 +168,7 @@ steps:
     command: |
       if [[ "$action" != "health" ]]; then exit 0; fi
       SSH_KEY="${ssh_key/#\~/$HOME}"
-      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      SSH_CMD="ssh -i \"$SSH_KEY\" -o BatchMode=yes -o ConnectTimeout=10 \"${ssh_user}@${vps_ip}\""
       PASS=0
       FAIL=0
       TOTAL=0
@@ -274,7 +274,7 @@ steps:
     command: |
       if [[ "$action" != "redeploy" ]]; then exit 0; fi
       SSH_KEY="${ssh_key/#\~/$HOME}"
-      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      SSH_CMD="ssh -i \"$SSH_KEY\" -o BatchMode=yes -o ConnectTimeout=10 \"${ssh_user}@${vps_ip}\""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo "Redeploy: ${service}"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -360,7 +360,7 @@ steps:
     command: |
       if [[ "$action" != "logs" ]]; then exit 0; fi
       SSH_KEY="${ssh_key/#\~/$HOME}"
-      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      SSH_CMD="ssh -i \"$SSH_KEY\" -o BatchMode=yes -o ConnectTimeout=10 \"${ssh_user}@${vps_ip}\""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo "Logs: ${service} (last ${tail} lines)"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -406,8 +406,9 @@ steps:
     description: "Create backup of ArmorClaw configuration, data, and Docker volumes"
     command: |
       if [[ "$action" != "backup" ]]; then exit 0; fi
+      if [[ "${backup_path}" =~ \$[\(\`] ]]; then echo "✗ backup_path contains unsafe characters"; exit 1; fi
       SSH_KEY="${ssh_key/#\~/$HOME}"
-      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      SSH_CMD="ssh -i \"$SSH_KEY\" -o BatchMode=yes -o ConnectTimeout=10 \"${ssh_user}@${vps_ip}\""
       BACKUP_FILE="${backup_path:-/tmp/armorclaw-backup-\$(date +%Y%m%d-%H%M%S).tar.gz}"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo "Creating backup on ${vps_ip}..."
@@ -457,8 +458,9 @@ steps:
     description: "Restore ArmorClaw from a backup archive with dependency-order restart"
     command: |
       if [[ "$action" != "restore" ]]; then exit 0; fi
+      if [[ "${backup_path}" =~ \$[\(\`] ]]; then echo "✗ backup_path contains unsafe characters"; exit 1; fi
       SSH_KEY="${ssh_key/#\~/$HOME}"
-      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      SSH_CMD="ssh -i \"$SSH_KEY\" -o BatchMode=yes -o ConnectTimeout=10 \"${ssh_user}@${vps_ip}\""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo "Restoring from: ${backup_path}"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
