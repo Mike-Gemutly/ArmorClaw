@@ -80,7 +80,7 @@ func TestIntegration_DeferToApproveFlow(t *testing.T) {
 		done <- resp
 	}()
 
-	consent.ch <- consentResult{Approved: true}
+	consent.ch <- ConsentResult{Approved: true}
 
 	resp := <-done
 	if !resp.Allowed {
@@ -112,7 +112,7 @@ func TestIntegration_DeferToDenyFlow(t *testing.T) {
 		done <- resp
 	}()
 
-	consent.ch <- consentResult{Approved: false}
+	consent.ch <- ConsentResult{Approved: false}
 
 	resp := <-done
 	if resp.Allowed {
@@ -182,7 +182,7 @@ func TestIntegration_TeamRegistryResolvesRole(t *testing.T) {
 		done <- resp
 	}()
 
-	consent.ch <- consentResult{Approved: true}
+	consent.ch <- ConsentResult{Approved: true}
 
 	resp := <-done
 	if !resp.Allowed {
@@ -266,10 +266,10 @@ func TestIntegration_ArtifactRoundTrip(t *testing.T) {
 }
 
 type trackingSkillGate struct {
-	lastCall *toolCall
+	lastCall *ToolCall
 }
 
-func (t *trackingSkillGate) InterceptToolCall(_ context.Context, call *toolCall) (*toolCall, error) {
+func (t *trackingSkillGate) InterceptToolCall(_ context.Context, call *ToolCall) (*ToolCall, error) {
 	t.lastCall = call
 	return call, nil
 }

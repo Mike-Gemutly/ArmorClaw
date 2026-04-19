@@ -137,7 +137,7 @@ func (m *threadSafeRegistry) RegisterRole(_ string, _ CapabilitySet) error {
 
 type noopSkillGate struct{}
 
-func (n *noopSkillGate) InterceptToolCall(_ context.Context, call *toolCall) (*toolCall, error) {
+func (n *noopSkillGate) InterceptToolCall(_ context.Context, call *ToolCall) (*ToolCall, error) {
 	return call, nil
 }
 
@@ -153,7 +153,7 @@ func TestConcurrent_DeferConsentIsolation(t *testing.T) {
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		consent.ch <- consentResult{Approved: true}
+		consent.ch <- ConsentResult{Approved: true}
 	}()
 
 	req := ActionRequest{AgentID: "agent-1", Action: "access_pii"}

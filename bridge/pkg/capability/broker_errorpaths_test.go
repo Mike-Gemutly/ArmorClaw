@@ -171,7 +171,7 @@ func TestBrokerAuthorize_SkillGateModifiesParams(t *testing.T) {
 
 type modifyingSkillGate struct{}
 
-func (m *modifyingSkillGate) InterceptToolCall(_ context.Context, call *toolCall) (*toolCall, error) {
+func (m *modifyingSkillGate) InterceptToolCall(_ context.Context, call *ToolCall) (*ToolCall, error) {
 	call.Arguments["sensitive"] = "[REDACTED]"
 	return call, nil
 }
@@ -205,7 +205,7 @@ func TestBrokerAuthorize_ConcurrentDefersDecrement(t *testing.T) {
 		BrokerConfig{DeferTimeout: 1, MaxConcurrentDefers: 2},
 	)
 
-	consent.ch <- consentResult{Approved: false}
+	consent.ch <- ConsentResult{Approved: false}
 
 	resp, err := b.Authorize(context.Background(), ActionRequest{
 		AgentID: "agent-1",

@@ -20,7 +20,7 @@ import (
 //  1. V6Microkernel=true in config → always enable
 //  2. V6Microkernel=false in config → skip (explicit opt-out)
 //  3. Config not set (default false) → auto-detect by checking socket presence
-func setupVaultClient(cfg config.Config, eventBus *eventbus.EventBus, shutdownCtx context.Context) (*vault.VaultGovernanceClient, *vault.VaultEventBridge) {
+func setupVaultClient(cfg *config.Config, eventBus *eventbus.EventBus, shutdownCtx context.Context) (*vault.VaultGovernanceClient, *vault.VaultEventBridge) {
 	var vaultClient *vault.VaultGovernanceClient
 	var vaultEventBridge *vault.VaultEventBridge
 

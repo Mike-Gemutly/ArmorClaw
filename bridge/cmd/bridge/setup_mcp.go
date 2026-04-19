@@ -18,7 +18,7 @@ import (
 
 // setupMCPRouter initializes the v6 MCP Router when V6Microkernel is enabled.
 // Returns the router and RPC-to-MCP translator (either may be nil if disabled or on error).
-func setupMCPRouter(cfg config.Config, toolsidecarDocker *toolsidecarDockerAdapter) (*mcp.MCPRouter, *translator.RPCToMCPTranslator) {
+func setupMCPRouter(cfg *config.Config, toolsidecarDocker *toolsidecarDockerAdapter) (*mcp.MCPRouter, *translator.RPCToMCPTranslator) {
 	var mcpRouter *mcp.MCPRouter
 	var mcpTranslator *translator.RPCToMCPTranslator
 

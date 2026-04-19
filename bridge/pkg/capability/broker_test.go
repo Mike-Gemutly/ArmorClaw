@@ -40,25 +40,25 @@ func (m *mockRegistry) RegisterRole(_ string, _ CapabilitySet) error {
 }
 
 type mockConsent struct {
-	ch chan consentResult
+	ch chan ConsentResult
 }
 
 func newMockConsent() *mockConsent {
 	return &mockConsent{
-		ch: make(chan consentResult, 1),
+		ch: make(chan ConsentResult, 1),
 	}
 }
 
-func (m *mockConsent) RequestConsent(_ context.Context, _, _ string, _ []string) (<-chan consentResult, error) {
+func (m *mockConsent) RequestConsent(_ context.Context, _, _ string, _ []string) (<-chan ConsentResult, error) {
 	return m.ch, nil
 }
 
 type mockSkillGate struct {
 	err  error
-	call *toolCall
+	call *ToolCall
 }
 
-func (m *mockSkillGate) InterceptToolCall(_ context.Context, call *toolCall) (*toolCall, error) {
+func (m *mockSkillGate) InterceptToolCall(_ context.Context, call *ToolCall) (*ToolCall, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -169,7 +169,7 @@ func TestBrokerAuthorize_DeferConsentGranted(t *testing.T) {
 		close(done)
 	}()
 
-	consent.ch <- consentResult{Approved: true}
+	consent.ch <- ConsentResult{Approved: true}
 	<-done
 
 	if err != nil {
@@ -206,7 +206,7 @@ func TestBrokerAuthorize_DeferConsentDenied(t *testing.T) {
 		close(done)
 	}()
 
-	consent.ch <- consentResult{Approved: false}
+	consent.ch <- ConsentResult{Approved: false}
 	<-done
 
 	if err != nil {
@@ -367,7 +367,7 @@ func TestBrokerAuthorize_QueueFull(t *testing.T) {
 		t.Errorf("expected 'consent queue full' in reason, got: %s", resp.Reason)
 	}
 
-	consent.ch <- consentResult{Approved: true}
+	consent.ch <- ConsentResult{Approved: true}
 	<-done1
 }
 
@@ -470,7 +470,7 @@ func TestBrokerAuthorize_ConsentError(t *testing.T) {
 		close(done)
 	}()
 
-	consent.ch <- consentResult{Error: fmt.Errorf("human rejected")}
+	consent.ch <- ConsentResult{Error: fmt.Errorf("human rejected")}
 	<-done
 
 	if err != nil {

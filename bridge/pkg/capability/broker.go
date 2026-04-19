@@ -34,7 +34,7 @@ type capabilityRegistry interface {
 	RegisterRole(role string, caps CapabilitySet) error
 }
 
-type consentResult struct {
+type ConsentResult struct {
 	Approved       bool
 	ApprovedFields []string
 	DeniedFields   []string
@@ -42,16 +42,16 @@ type consentResult struct {
 }
 
 type consentProvider interface {
-	RequestConsent(ctx context.Context, requestID, reason string, fields []string) (<-chan consentResult, error)
+	RequestConsent(ctx context.Context, requestID, reason string, fields []string) (<-chan ConsentResult, error)
 }
 
-type toolCall struct {
+type ToolCall struct {
 	ToolName  string
 	Arguments map[string]any
 }
 
 type skillGate interface {
-	InterceptToolCall(ctx context.Context, call *toolCall) (*toolCall, error)
+	InterceptToolCall(ctx context.Context, call *ToolCall) (*ToolCall, error)
 }
 
 // Broker is fail-closed: any error, panic, or missing dependency → DENY.
@@ -164,7 +164,7 @@ func (b *Broker) Authorize(ctx context.Context, req ActionRequest) (resp ActionR
 
 	case RiskAllow:
 		if b.skillGate != nil {
-			call := &toolCall{
+			call := &ToolCall{
 				ToolName:  req.Action,
 				Arguments: req.Params,
 			}
