@@ -564,4 +564,333 @@ class BridgeApi(private val baseUrl: String = "http://localhost:8080/api") {
     }
 
     //endregion
+
+    //region Secretary Workflow Methods
+
+    @Serializable
+    data class WorkflowResponse(
+        val workflow_id: String,
+        val status: String,
+        val workflow: Map<String, String>? = null
+    )
+
+    @Serializable
+    data class TemplateListResponse(
+        val templates: List<Map<String, String>>,
+        val count: Int
+    )
+
+    @Serializable
+    data class TemplateResponse(
+        val id: String,
+        val name: String,
+        val description: String = "",
+        val is_active: Boolean = true,
+        val created_at: String = "",
+        val updated_at: String = ""
+    )
+
+    /**
+     * Start a workflow by ID
+     */
+    fun startWorkflow(workflowId: String): Result<WorkflowResponse> {
+        return rpc("secretary.start_workflow", mapOf("workflow_id" to workflowId))
+    }
+
+    /**
+     * Get workflow status
+     */
+    fun getWorkflow(workflowId: String): Result<Map<String, String>> {
+        return rpc("secretary.get_workflow", mapOf("workflow_id" to workflowId))
+    }
+
+    /**
+     * Cancel a running workflow
+     */
+    fun cancelWorkflow(workflowId: String, reason: String = ""): Result<WorkflowResponse> {
+        val params = mutableMapOf("workflow_id" to workflowId)
+        if (reason.isNotEmpty()) params["reason"] = reason
+        return rpc("secretary.cancel_workflow", params)
+    }
+
+    /**
+     * Advance workflow to next step
+     */
+    fun advanceWorkflow(workflowId: String, stepId: String): Result<WorkflowResponse> {
+        return rpc("secretary.advance_workflow", mapOf(
+            "workflow_id" to workflowId,
+            "step_id" to stepId
+        ))
+    }
+
+    /**
+     * List workflow templates
+     */
+    fun listTemplates(activeOnly: Boolean = false): Result<TemplateListResponse> {
+        return rpc("secretary.list_templates", mapOf("active_only" to activeOnly.toString()))
+    }
+
+    /**
+     * Create a workflow template
+     */
+    fun createTemplate(name: String, description: String, createdBy: String): Result<TemplateResponse> {
+        return rpc("secretary.create_template", mapOf(
+            "name" to name,
+            "description" to description,
+            "created_by" to createdBy
+        ))
+    }
+
+    /**
+     * Get a template by ID
+     */
+    fun getTemplate(templateId: String): Result<TemplateResponse> {
+        return rpc("secretary.get_template", mapOf("template_id" to templateId))
+    }
+
+    /**
+     * Delete a template
+     */
+    fun deleteTemplate(templateId: String): Result<Map<String, String>> {
+        return rpc("secretary.delete_template", mapOf("template_id" to templateId))
+    }
+
+    /**
+     * Update a template
+     */
+    fun updateTemplate(templateId: String, name: String = "", description: String = ""): Result<TemplateResponse> {
+        val params = mutableMapOf("template_id" to templateId)
+        if (name.isNotEmpty()) params["name"] = name
+        if (description.isNotEmpty()) params["description"] = description
+        return rpc("secretary.update_template", params)
+    }
+
+    //endregion
+
+    //region Task Methods
+
+    @Serializable
+    data class TaskCreateResponse(
+        val task_id: String,
+        val status: String,
+        val next_run: Long = 0
+    )
+
+    @Serializable
+    data class TaskListResponse(
+        val tasks: List<Map<String, String>>
+    )
+
+    /**
+     * Create a scheduled task
+     */
+    fun createTask(
+        definitionId: String,
+        createdBy: String,
+        description: String = "",
+        cronExpression: String = "",
+        runAt: String = ""
+    ): Result<TaskCreateResponse> {
+        val params = mutableMapOf(
+            "definition_id" to definitionId,
+            "created_by" to createdBy
+        )
+        if (description.isNotEmpty()) params["description"] = description
+        if (cronExpression.isNotEmpty()) params["cron_expression"] = cronExpression
+        if (runAt.isNotEmpty()) params["run_at"] = runAt
+        return rpc("task.create", params)
+    }
+
+    /**
+     * List scheduled tasks
+     */
+    fun listTasks(definitionId: String = ""): Result<TaskListResponse> {
+        if (definitionId.isNotEmpty()) {
+            return rpc("task.list", mapOf("definition_id" to definitionId))
+        }
+        return rpc("task.list")
+    }
+
+    /**
+     * Cancel a scheduled task
+     */
+    fun cancelTask(taskId: String): Result<Map<String, Boolean>> {
+        return rpc("task.cancel", mapOf("task_id" to taskId))
+    }
+
+    /**
+     * Get a task by ID
+     */
+    fun getTask(taskId: String): Result<Map<String, String>> {
+        return rpc("task.get", mapOf("task_id" to taskId))
+    }
+
+    //endregion
+
+    //region Email Methods
+
+    @Serializable
+    data class PendingEmail(
+        val approval_id: String,
+        val sender: String = "",
+        val to: String = "",
+        val subject: String = "",
+        val body_preview: String = "",
+        val status: String = "",
+        val created_at: String = ""
+    )
+
+    @Serializable
+    data class PendingEmailListResponse(
+        val approvals: List<PendingEmail>,
+        val count: Int
+    )
+
+    /**
+     * List pending email approvals with full detail
+     */
+    fun listPendingEmails(): Result<PendingEmailListResponse> {
+        return rpc("email.list_pending")
+    }
+
+    //endregion
+
+    //region Account Methods
+
+    @Serializable
+    data class AccountDeleteResponse(
+        val status: String,
+        val user_id: String,
+        val deactivated_at: String,
+        val erase: Boolean
+    )
+
+    /**
+     * Delete (deactivate) the user account
+     */
+    fun deleteAccount(password: String, erase: Boolean = false): Result<AccountDeleteResponse> {
+        return rpc("account.delete", mapOf(
+            "password" to password,
+            "erase" to erase.toString()
+        ))
+    }
+
+    //endregion
+
+    //region Studio Agent Methods
+
+    @Serializable
+    data class AgentDefinition(
+        val id: String,
+        val name: String,
+        val description: String = "",
+        val skills: List<String> = emptyList(),
+        val pii_access: List<String> = emptyList(),
+        val resource_tier: String = "",
+        val is_active: Boolean = true,
+        val created_at: String = "",
+        val updated_at: String = ""
+    )
+
+    @Serializable
+    data class AgentListResponse(
+        val agents: List<AgentDefinition>,
+        val count: Int
+    )
+
+    @Serializable
+    data class AgentCreateResponse(
+        val agent: AgentDefinition,
+        val requires_approval: Boolean = false
+    )
+
+    @Serializable
+    data class StudioStatsResponse(
+        val total_agents: Int = 0,
+        val active_agents: Int = 0,
+        val running_instances: Int = 0,
+        val total_instances: Int = 0
+    )
+
+    @Serializable
+    data class InstanceListResponse(
+        val instances: List<Map<String, String>>,
+        val count: Int
+    )
+
+    /**
+     * List agent definitions
+     */
+    fun listAgents(activeOnly: Boolean = false): Result<AgentListResponse> {
+        return rpc("studio.deploy", mapOf(
+            "action" to "list_agents",
+            "active_only" to activeOnly.toString()
+        ))
+    }
+
+    /**
+     * Get agent definition by ID
+     */
+    fun getAgent(agentId: String): Result<AgentDefinition> {
+        return rpc("studio.deploy", mapOf(
+            "action" to "get_agent",
+            "id" to agentId
+        ))
+    }
+
+    /**
+     * Create a new agent
+     */
+    fun createAgent(
+        name: String,
+        description: String = "",
+        skills: List<String> = emptyList(),
+        piiAccess: List<String> = emptyList(),
+        resourceTier: String = "medium"
+    ): Result<AgentCreateResponse> {
+        val params = mutableMapOf(
+            "action" to "create_agent",
+            "name" to name,
+            "resource_tier" to resourceTier
+        )
+        if (description.isNotEmpty()) params["description"] = description
+        skills.forEachIndexed { index, skill ->
+            params["skill_$index"] = skill
+        }
+        params["skill_count"] = skills.size.toString()
+        piiAccess.forEachIndexed { index, pii ->
+            params["pii_$index"] = pii
+        }
+        params["pii_count"] = piiAccess.size.toString()
+        return rpc("studio.deploy", params)
+    }
+
+    /**
+     * Delete an agent definition
+     */
+    fun deleteAgent(agentId: String): Result<Map<String, String>> {
+        return rpc("studio.deploy", mapOf(
+            "action" to "delete_agent",
+            "id" to agentId
+        ))
+    }
+
+    /**
+     * List running agent instances
+     */
+    fun listInstances(agentId: String = "", status: String = ""): Result<InstanceListResponse> {
+        val params = mutableMapOf("action" to "list_instances")
+        if (agentId.isNotEmpty()) params["agent_id"] = agentId
+        if (status.isNotEmpty()) params["status"] = status
+        return rpc("studio.deploy", params)
+    }
+
+    /**
+     * Get studio statistics
+     */
+    fun getStudioStats(): Result<StudioStatsResponse> {
+        return rpc("studio.stats")
+    }
+
+    //endregion
 }
