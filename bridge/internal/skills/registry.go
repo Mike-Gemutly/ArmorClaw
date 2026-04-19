@@ -137,8 +137,52 @@ func parseSkillFile(path string) (*Skill, error) {
 	// Extract command
 	skill.Command = getCommandForSkill(skill.Name)
 
-	// Extract parameters (simplified for now)
+	if timeoutVal, ok := frontmatterMap["timeout"]; ok {
+		switch v := timeoutVal.(type) {
+		case int:
+			skill.Timeout = time.Duration(v) * time.Second
+		case float64:
+			skill.Timeout = time.Duration(v) * time.Second
+		case string:
+			if dur, err := time.ParseDuration(v); err == nil {
+				skill.Timeout = dur
+			}
+		}
+	}
+
+	if version, ok := frontmatterMap["version"].(string); ok {
+		skill.Version = version
+	}
+
+	// Enabled defaults to true; only override when explicitly set in frontmatter
+	if enabled, ok := frontmatterMap["enabled"]; ok {
+		switch v := enabled.(type) {
+		case bool:
+			skill.Enabled = v
+		case string:
+			skill.Enabled = strings.ToLower(v) == "true"
+		}
+	}
+
 	skill.Parameters = make(map[string]Param)
+	if paramsRaw, ok := frontmatterMap["parameters"]; ok {
+		if paramsList, ok := paramsRaw.([]interface{}); ok {
+			for _, p := range paramsList {
+				if paramMap, ok := p.(map[string]interface{}); ok {
+					name, _ := paramMap["name"].(string)
+					if name != "" {
+						param := Param{
+							Type:        getStringFromMap(paramMap, "type"),
+							Description: getStringFromMap(paramMap, "description"),
+							Required:    getBoolFromMap(paramMap, "required"),
+							Validation:  getStringFromMap(paramMap, "validation"),
+						}
+						skill.Parameters[name] = param
+					}
+				}
+			}
+		}
+	}
 
 	return skill, nil
 }
@@ -282,6 +326,25 @@ func convertInterfaceMap(m interface{}) map[string]interface{} {
 // parseYAMLFrontmatter parses YAML frontmatter using yaml.v3
 func parseYAMLFrontmatter(data string, v interface{}) error {
 	return yaml.Unmarshal([]byte(data), v)
+}
+
+func getStringFromMap(m map[string]interface{}, key string) string {
+	val, _ := m[key].(string)
+	return val
+}
+
+func getBoolFromMap(m map[string]interface{}, key string) bool {
+	val, ok := m[key]
+	if !ok {
+		return false
+	}
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.ToLower(v) == "true"
+	}
+	return false
 }
 
 // RegisterWebDAV registers the WebDAV skill programmatically
