@@ -1,0 +1,2 @@
+Hello, this is a test document.
+It contains plain text for sidecar E2E testing.

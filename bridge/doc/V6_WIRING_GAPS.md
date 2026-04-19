@@ -14,7 +14,7 @@
 | 2. SealedKeystore never instantiated | NOT_RELEVANT | No |
 | 3. SecurityConfig never loaded | NOT_RELEVANT | No |
 | 4. TrustedWorkflowEngine not wired into step execution | NOT_RELEVANT | No |
-| 5. Vault client not passed to MCPRouter | KNOWN_TECH_DEBT | No |
+| 5. Vault client not passed to MCPRouter | RESOLVED | No |
 
 **Conclusion**: None of the 5 gaps block broker work. The broker uses its own interfaces (`ConsentProvider`, `RiskClassifier`) and does not depend on the existing approval/workflow/security systems.
 
@@ -80,7 +80,7 @@ The engine itself exists in `bridge/pkg/secretary/trusted_workflows.go` and is t
 
 ---
 
-### Gap 5: Vault client never passed to MCPRouter
+### Gap 5: Vault client not passed to MCPRouter — RESOLVED
 
 **File**: `bridge/cmd/bridge/setup_mcp.go:44-50` and `bridge/cmd/bridge/main.go:2261,2469`
 **Issue**: `setupVaultClient()` creates a `*vault.VaultGovernanceClient` (main.go:2261), and `setupMCPRouter()` creates an `*mcp.MCPRouter` (main.go:2469). However, `setupMCPRouter()` never receives the vault client and never sets `VaultClient` in `mcp.Config`. The `mcp.Config` struct has a `VaultClient` field (router.go:73) that supports `IssueBlindFillToken()` and `ZeroizeToolSecrets()`, but it's always nil.
@@ -88,20 +88,22 @@ The engine itself exists in `bridge/pkg/secretary/trusted_workflows.go` and is t
 The MCPRouter already handles nil VaultClient gracefully (router.go:387,409 — checks `r.vaultClient != nil` before calling vault methods). Tests confirm graceful degradation (`TestExecuteTool_NilVaultClientSkipsGracefully`).
 
 ```go
-// setup_mcp.go:44-50 — VaultClient field is never set
+// setup_mcp.go:44-50 — BEFORE FIX: VaultClient field was never set
+// AFTER FIX: setupMCPRouter now takes *vault.VaultGovernanceClient parameter
+// and sets VaultClient on mcp.Config:
 mcpRouter, err = mcp.New(mcp.Config{
     SkillGate:      gov,
     Provisioner:    prov,
     ConsentManager: consentMgr,
     Auditor:        auditor,
     V6Microkernel:  true,
-    // VaultClient:   ???  ← never passed
+    VaultClient:    vaultClient,  // ← NOW PASSED
 })
 ```
 
-**Verdict**: `KNOWN_TECH_DEBT`
-**Rationale**: The broker has its own authorization flow and does not need vault-to-MCP integration for its core operation. However, this gap means the MCPRouter cannot issue BlindFill tokens or zeroize tool secrets via vault governance when V6Microkernel is enabled. This is the only gap that represents actual lost functionality (the vault governance integration for MCP tool execution was designed but never completed).
-**Action**: Pass `vaultClient` from `main.go` into `setupMCPRouter()` and set it on `mcp.Config.VaultClient`. This is a one-line fix in `setup_mcp.go`'s function signature and `mcp.Config` construction. Medium priority — should be done before V6Microkernel is promoted to production, but does not block broker.
+**Verdict**: `RESOLVED`
+**Rationale**: The vaultClient is now passed from `main.go` through `setupMCPRouter()` and set on `mcp.Config.VaultClient`. The MCPRouter can now issue BlindFill tokens and zeroize tool secrets via vault governance when V6Microkernel is enabled. Tool execution is real (Docker exec-based). Feature remains gated (V6Microkernel=false default).
+**Action**: Complete. Additionally, tool execution in MCPRouter was upgraded from mock stub to real Docker exec-based execution.
 
 ---
 
@@ -110,7 +112,7 @@ mcpRouter, err = mcp.New(mcp.Config{
 ```
 main.go
   ├─ setupVaultClient()           → vaultClient (used for shutdown only)
-  ├─ setupMCPRouter()             → mcpRouter  (vaultClient NOT passed in)
+  ├─ setupMCPRouter(vaultClient)  → mcpRouter  (vaultClient NOW PASSED IN) ✓
   ├─ setupSecretaryServices()     → rolodexStore
   ├─ setupApprovalAndTrust()      → approvalEngine, trustEngine
   │                                    ↓ NOT passed to StepExecutor

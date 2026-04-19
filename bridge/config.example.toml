@@ -353,7 +353,9 @@ tls_cert = ""
 tls_key = ""
 
 # Rust Vault Governance (v6 Microkernel Architecture)
-# Controls ephemeral token management and ToolSidecar lifecycle hooks
+# Controls ephemeral token management, vault governance, and Docker exec-based tool execution.
+# VaultClient wiring is complete (setupMCPRouter receives vaultClient).
+# Feature is gated: set to true to enable v6 microkernel architecture.
 [vault]
-v6_microkernel = false  # Set to true to enable v6 microkernel architecture
+v6_microkernel = false  # Default: off. Set true to enable vault governance + Docker exec tools
 socket_path = "/run/armorclaw/keystore.sock"  # UDS path for vault governance gRPC

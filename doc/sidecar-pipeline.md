@@ -102,6 +102,8 @@ Extracts text from common document formats. All extractors return structured res
 | XLSX | `xlsx.rs` | Functional — calamine-based extraction with ShadowMap redaction |
 | PPTX | `pptx.rs` | ZIP-based extraction using `zip` + `quick-xml` crates (v0.6.0) |
 | OCR | `ocr.rs` | Functional — Tesseract subprocess + ONNX fallback, multi-language |
+
+OCR extraction tries Tesseract first. If Tesseract fails or is unavailable, the ONNX runtime model runs as a fallback, ensuring extraction succeeds even without a Tesseract installation.
 | Diff | `diff.rs` | Myers algorithm for text diff |
 | HTML Diff | `html_diff.rs` | HTML-aware diff generation |
 | DOCX Diff | `docx_diff.rs` | Stub, redline document generation |
@@ -119,6 +121,13 @@ Additional document modules:
 | Qdrant | `qdrant.rs` | Implemented — create/upsert/search (needs qdrant-client-rs v1.7 builder migration) |
 
 The `MAX_FILE_SIZE` constant (5 GB) caps all document operations.
+
+#### ProcessDocument Convert
+
+The `ProcessDocument` RPC's `convert` operation supports DOCX-to-PDF and XLSX-to-CSV conversion:
+- **DOCX→PDF**: Extracts text from DOCX via `extract_text_from_docx()`, paginates to A4 pages (210x297mm), renders with printpdf using Helvetica built-in font.
+- **XLSX→CSV**: Extracts structured data from XLSX via `extract_data_from_xlsx()` (calamine), formats rows as RFC 4180 CSV (fields with commas/quotes/newlines are quoted).
+- PPTX→PDF returns a clear "not yet supported" error (not silent passthrough).
 
 #### Encryption (`sidecar/src/encryption/`)
 
@@ -144,17 +153,18 @@ The server in `server.rs` implements the `SidecarService` trait defined in the p
 
 | RPC | Purpose |
 |-----|---------|
-| `HealthCheck` | Returns status, uptime, version |
+| `HealthCheck` | Returns status, uptime, version, active_requests, memory_used_bytes |
 | `UploadBlob` | Upload to S3 via `destination_uri` (s3://bucket/key) |
 | `DownloadBlob` | Server-streaming download, 1 MB chunks |
 | `ListBlobs` | List objects with prefix filter |
 | `DeleteBlob` | Delete an object |
 | `ExtractText` | Extract text from PDF, DOCX, XLSX, or images (OCR) |
-| `ProcessDocument` | General document processing (extract_text, convert) |
+| `ProcessDocument` | General document processing: extract_text, convert (DOCX→PDF, XLSX→CSV) |
+| `QueryDocuments` | Query encrypted chunks from split-storage by clearance level |
 
 `interceptor.rs` implements `SecurityInterceptor`, which validates ephemeral tokens on every incoming request. The server binds to a Unix domain socket with `0600` permissions and handles SIGTERM/SIGINT for graceful shutdown.
 
-The proto definition lives in `sidecar/src/grpc/proto/sidecar.proto` and mirrors `bridge/pkg/sidecar/sidecar.proto`.
+The proto definition lives in `sidecar/src/grpc/proto/sidecar.proto` and is synced with `bridge/pkg/sidecar/sidecar.proto`. Both define 8 RPCs: HealthCheck, UploadBlob, DownloadBlob, ListBlobs, DeleteBlob, ExtractText, ProcessDocument, and QueryDocuments.
 
 ### Go Client (`bridge/pkg/sidecar/`)
 
@@ -231,7 +241,7 @@ Client version `1.0.0`, supported server range `1.0.0` through `1.5.0`. gRPC int
 
 #### `sidecar.proto`
 
-The Protocol Buffers service definition. Defines the `SidecarService` with 7 RPCs, request/response messages, and `RequestMetadata` for authentication. The same proto file is compiled into both Rust (tonic) and Go (protoc-gen-go) stubs.
+The Protocol Buffers service definition. Defines the `SidecarService` with 8 RPCs (HealthCheck, UploadBlob, DownloadBlob, ListBlobs, DeleteBlob, ExtractText, ProcessDocument, QueryDocuments), request/response messages, and `RequestMetadata` for authentication. The same proto file is compiled into both Rust (tonic) and Go (protoc-gen-go) stubs.
 
 ### YARA Scanner (`bridge/pkg/yara/`)
 
@@ -321,7 +331,7 @@ Jetski (`jetski/`) is a separate component that handles browser automation via C
 
 ### Python MarkItDown Sidecar (`sidecar-python/`)
 
-The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust sidecar does not support natively: `.xlsx`, `.msg`, `.doc`, `.xls`, and `.ppt`. PPTX was migrated to the Rust sidecar in v0.6.0.
+The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust sidecar does not support natively: `.msg`, `.doc`, `.xls`, and `.ppt`. PPTX was migrated to the Rust sidecar in v0.6.0. XLSX was migrated to the Rust sidecar in v0.8.0 (calamine-based extraction with ShadowMap PII redaction).
 
 #### Architecture
 
@@ -336,18 +346,17 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
                         │  │ Layer 2: strict drop on mismatch │  │
                         │  └──────────┬───────────────────────┘  │
                         │             │                           │
-                        │     ┌───────┴────────┐                  │
-                        │     ▼                ▼                  │
-                        │  ┌────────┐   ┌──────────────┐         │
-                         │  │ Rust   │   │ Python       │         │
-                         │  │ Sidecar│   │ MarkItDown   │         │
-                         │  │ (PDF,  │   │ Sidecar      │         │
-                         │  │ DOCX,  │   │ (XLSX, MSG,  │         │
-                         │  │ PPTX)  │   │  DOC, XLS,   │         │
-                         │  └────────┘   │  PPT)        │         │
-                        │               │  XLS, PPT)   │         │
-                        │               └──────────────┘         │
-                        └────────────────────────────────────────┘
+                         │     ┌───────┴────────┐                  │
+                         │     ▼                ▼                  │
+                         │  ┌────────┐   ┌──────────────┐         │
+                          │  │ Rust   │   │ Python       │         │
+                          │  │ Sidecar│   │ MarkItDown   │         │
+                          │  │ (PDF,  │   │ Sidecar      │         │
+                          │  │ DOCX,  │   │ (MSG, DOC,   │         │
+                          │  │ XLSX,  │   │  XLS, PPT)   │         │
+                          │  │ PPTX)  │   │              │         │
+                          │  └────────┘   └──────────────┘         │
+                         └────────────────────────────────────────┘
 ```
 
 #### Routing Logic (3-Layer)
@@ -355,7 +364,7 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
 | Layer | Condition | Action |
 |-------|-----------|--------|
 | **Layer 0** | `text/plain`, `text/csv`, `application/json`, `text/markdown` | Decode natively in Go — no sidecar call |
-| **Layer 1** | ZIP magic + xlsx format → Python; OLE magic + xls/msg/doc/ppt format → Python; ZIP magic + pptx/docx/pdf → Rust | Route to appropriate sidecar based on compound magic byte + MIME type validation |
+| **Layer 1** | ZIP magic + xlsx/docx/pptx/pdf → Rust; OLE magic + xls/msg/doc/ppt format → Python | Route to appropriate sidecar based on compound magic byte + MIME type validation |
 | **Layer 2** | Magic bytes don't match declared format (e.g., ZIP magic + msg format) | **Strict drop** — return `InvalidArgument` immediately |
 
 #### Key Design Decisions
@@ -386,7 +395,7 @@ HMAC-SHA256 token validation using a sync `grpc.ServerInterceptor`. Tokens carry
 
 | Format | MIME Type | Magic Bytes | Extension | Converter |
 |--------|-----------|-------------|-----------|-----------|
-| Excel (modern) | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | ZIP (PK) | `.xlsx` | MarkItDown `XlsxConverter` |
+| Excel (modern) | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | ZIP (PK) | `.xlsx` | Rust calamine extractor (xlsx.rs) — migrated from Python in v0.8.0 |
 | PowerPoint (modern) | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | ZIP (PK) | `.pptx` | Rust PPTX Extractor (pptx.rs) |
 | Outlook Email | `application/vnd.ms-outlook` | OLE (D0CF) | `.msg` | MarkItDown `OutlookMsgConverter` |
 | Word (legacy) | `application/msword` | OLE (D0CF) | `.doc` | Error — XlsConverter intercepts |
@@ -449,7 +458,7 @@ cd bridge && go test ./pkg/sidecar/...
 The `RouteExtractText()` function implements the 3-layer routing:
 
 1. **Native text bypass**: Detects `text/*` MIME types and returns decoded content immediately without any gRPC call.
-2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based xlsx to Python, ZIP-based docx/pdf/pptx to Rust.
+2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based xlsx/docx/pptx to Rust sidecar.
 3. **Strict drop**: If magic bytes contradict the declared format (e.g., OLE magic with xlsx MIME), returns `codes.InvalidArgument` without calling any sidecar.
 
 ## References

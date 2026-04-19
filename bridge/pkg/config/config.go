@@ -768,6 +768,9 @@ type ProvisioningConfig struct {
 type VaultConfig struct {
 	// V6Microkernel enables the v6 microkernel architecture with vault governance,
 	// ephemeral tokens, and ToolSidecar lifecycle hooks.
+	// Tool execution is real (Docker exec-based) and vaultClient wiring is complete
+	// (setupMCPRouter receives and sets VaultClient on mcp.Config).
+	// Feature remains gated: V6Microkernel defaults to false.
 	// When false, legacy execution paths are used (default).
 	V6Microkernel bool `toml:"v6_microkernel" env:"ARMORCLAW_V6_MICROKERNEL"`
 
