@@ -1,0 +1,565 @@
+name: "armorclaw_ops"
+version: "1.0.0"
+description: "Consolidated ArmorClaw lifecycle management — deploy, health monitoring, remediation, logs, backup, and restore"
+
+parameters:
+  - name: "action"
+    type: "string"
+    required: true
+    description: "Action to perform: deploy|health|redeploy|logs|backup|restore"
+    default: "health"
+
+  - name: "vps_ip"
+    type: "string"
+    required: true
+    description: "IP address or hostname of target VPS"
+    default: ""
+
+  - name: "ssh_user"
+    type: "string"
+    required: false
+    description: "SSH username for VPS access"
+    default: "root"
+
+  - name: "ssh_key"
+    type: "string"
+    required: false
+    description: "Path to SSH private key"
+    default: "~/.ssh/id_ed25519"
+
+  - name: "service"
+    type: "string"
+    required: false
+    description: "Target service: bridge|matrix|vault|sygnal|qdrant|caddy|jetski|browser|sidecar-office|coturn|catwalk|all"
+    default: "all"
+
+  - name: "mode"
+    type: "string"
+    required: false
+    description: "Deployment mode: native|sentinel"
+    default: "native"
+
+  - name: "verbose"
+    type: "boolean"
+    required: false
+    description: "Show detailed diagnostic output"
+    default: "false"
+
+  - name: "domain"
+    type: "string"
+    required: false
+    description: "Public domain for sentinel mode"
+    default: ""
+
+  - name: "tail"
+    type: "string"
+    required: false
+    description: "Number of log lines to show (logs action)"
+    default: "100"
+
+  - name: "backup_path"
+    type: "string"
+    required: false
+    description: "Path for backup file (backup/restore actions)"
+    default: "/tmp/armorclaw-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+
+steps:
+  - name: "detect_platform"
+    automation: "auto"
+    description: "Detect user's operating system and shell environment"
+    command: |
+      if [ -n "$MSYSTEM" ] || [ -n "$MINGW" ]; then
+          PLATFORM="windows-gitbash"
+      elif [ -n "$WSL_DISTRO_NAME" ] || [ -d /mnt/c ]; then
+          PLATFORM="wsl"
+      elif [[ "$OSTYPE" == "darwin"* ]]; then
+          PLATFORM="macos"
+      elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+          PLATFORM="linux"
+      elif [ -n "$COMSPEC" ] || [ -n "$ComSpec" ]; then
+          PLATFORM="windows-powershell"
+      else
+          PLATFORM="unknown"
+      fi
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Platform: $PLATFORM"
+
+  - name: "validate_ssh"
+    automation: "auto"
+    description: "Validate SSH key exists and test connectivity to VPS"
+    command: |
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      if [ ! -f "$SSH_KEY" ]; then
+          echo "✗ SSH key not found at $SSH_KEY"
+          echo "  Generate one with: ssh-keygen -t ed25519"
+          exit 1
+      fi
+      echo "✓ SSH key found: $SSH_KEY"
+      echo "Testing SSH connection to ${ssh_user}@${vps_ip}..."
+      if ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_user}@${vps_ip}" "echo OK" 2>/dev/null; then
+          echo "✓ SSH connection validated"
+      else
+          echo "✗ Cannot connect to ${ssh_user}@${vps_ip}"
+          echo "  Check: IP address, SSH key path, SSH user, firewall rules"
+          exit 1
+      fi
+
+  - name: "detect_topology"
+    automation: "auto"
+    description: "Detect deployment topology (quickstart, sentinel, full) from running containers"
+    command: |
+      if [[ "$action" == "deploy" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      CONTAINERS=$(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_user}@${vps_ip}" "docker ps --format '{{.Names}}'" 2>/dev/null)
+      TOPOLOGY="unknown"
+      if echo "$CONTAINERS" | grep -q "armorclaw-sentinel" && echo "$CONTAINERS" | grep -q "armorclaw-caddy" && echo "$CONTAINERS" | grep -q "armorclaw-vault"; then
+          if echo "$CONTAINERS" | grep -q "armorclaw-sygnal" && echo "$CONTAINERS" | grep -q "armorclaw-qdrant"; then
+              TOPOLOGY="full"
+          else
+              TOPOLOGY="sentinel"
+          fi
+      elif echo "$CONTAINERS" | grep -q "^armorclaw$" && echo "$CONTAINERS" | grep -q "armorclaw-conduit"; then
+          TOPOLOGY="quickstart"
+      fi
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Detected topology: $TOPOLOGY"
+      echo "Containers:"
+      echo "$CONTAINERS" | sed 's/^/  /'
+
+  - name: "deploy"
+    automation: "confirm"
+    description: "Deploy ArmorClaw to VPS using the official installer"
+    command: |
+      if [[ "$action" != "deploy" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Deploying ArmorClaw to ${vps_ip}..."
+      echo "Mode: ${mode}  Domain: ${domain:-none}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_user}@${vps_ip}" \
+        "ARMORCLAW_SERVER_MODE=${mode} ARMORCLAW_DOMAIN=${domain} bash -c '\$(curl -fsSL https://raw.githubusercontent.com/mikmin/armorclaw/v0.7.0/deploy/install.sh)'"
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Running post-deploy health verification..."
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      HEALTH_OK=true
+      ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_user}@${vps_ip}" \
+        "docker ps --format '{{.Names}}' | grep -q armorclaw" 2>/dev/null || HEALTH_OK=false
+      if [[ "$HEALTH_OK" == "true" ]]; then
+          echo "✓ ArmorClaw containers are running"
+      else
+          echo "⚠ Containers not yet visible — may still be starting"
+      fi
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Deployment Complete"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      if [[ "$mode" == "sentinel" ]] && [[ -n "$domain" ]]; then
+          echo "Public URL: https://${domain}"
+      else
+          echo "Bridge URL: http://${vps_ip}:8443"
+          echo "Matrix URL: http://${vps_ip}:6167"
+      fi
+      echo "Mode: ${mode}"
+
+  - name: "check_health"
+    automation: "auto"
+    description: "Check health of all ArmorClaw services in dependency order"
+    command: |
+      if [[ "$action" != "health" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      PASS=0
+      FAIL=0
+      TOTAL=0
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "ArmorClaw Health Check"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "--- Layer 0: Infrastructure ---"
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "docker info >/dev/null 2>&1"; then
+          echo "✓ Docker daemon running"; PASS=$((PASS+1))
+      else
+          echo "✗ Docker daemon not running"; FAIL=$((FAIL+1))
+      fi
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "test -S /run/armorclaw/keystore.sock"; then
+          echo "✓ Vault keystore socket"; PASS=$((PASS+1))
+      else
+          echo "✗ Vault keystore socket (not found)"; FAIL=$((FAIL+1))
+      fi
+      echo ""
+      echo "--- Layer 1: Matrix ---"
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "curl -sf http://localhost:6167/_matrix/client/versions >/dev/null 2>&1"; then
+          echo "✓ Matrix Conduit responding"; PASS=$((PASS+1))
+      else
+          echo "✗ Matrix Conduit not responding"; FAIL=$((FAIL+1))
+      fi
+      echo ""
+      echo "--- Layer 2: Bridge ---"
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "test -S /run/armorclaw/bridge.sock"; then
+          echo "✓ Bridge socket exists"; PASS=$((PASS+1))
+      else
+          echo "✗ Bridge socket not found"; FAIL=$((FAIL+1))
+      fi
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "curl -sf http://localhost:8443/health >/dev/null 2>&1"; then
+          echo "✓ Bridge HTTP health"; PASS=$((PASS+1))
+      else
+          echo "✗ Bridge HTTP health failed"; FAIL=$((FAIL+1))
+      fi
+      echo ""
+      echo "--- Layer 3: Support Services ---"
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "curl -sf http://localhost:5000/health >/dev/null 2>&1"; then
+          echo "✓ Sygnal push gateway"; PASS=$((PASS+1))
+      else
+          echo "✗ Sygnal push gateway"; FAIL=$((FAIL+1))
+      fi
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "curl -sf http://localhost:6333/healthz >/dev/null 2>&1"; then
+          echo "✓ Qdrant vector DB"; PASS=$((PASS+1))
+      else
+          echo "✗ Qdrant vector DB"; FAIL=$((FAIL+1))
+      fi
+      echo ""
+      echo "--- Layer 4: Sidecars ---"
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "curl -sf http://localhost:9222/health >/dev/null 2>&1"; then
+          echo "✓ Jetski browser sidecar"; PASS=$((PASS+1))
+      else
+          echo "✗ Jetski browser sidecar"; FAIL=$((FAIL+1))
+      fi
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "curl -sf http://localhost:3000/health >/dev/null 2>&1"; then
+          echo "✓ Browser service"; PASS=$((PASS+1))
+      else
+          echo "✗ Browser service"; FAIL=$((FAIL+1))
+      fi
+      TOTAL=$((TOTAL+1))
+      if $SSH_CMD "test -S /run/armorclaw/office-sidecar/sidecar-office.sock"; then
+          echo "✓ Sidecar-Office socket"; PASS=$((PASS+1))
+      else
+          echo "✗ Sidecar-Office socket (not found)"; FAIL=$((FAIL+1))
+      fi
+      echo ""
+      echo "--- Layer 5: Reverse Proxy (Sentinel) ---"
+      CONTAINERS=$($SSH_CMD "docker ps --format '{{.Names}}'" 2>/dev/null)
+      if echo "$CONTAINERS" | grep -q "armorclaw-caddy"; then
+          TOTAL=$((TOTAL+1))
+          if $SSH_CMD "docker exec armorclaw-caddy caddy validate --config /etc/caddy/Caddyfile 2>/dev/null"; then
+              echo "✓ Caddy config valid"; PASS=$((PASS+1))
+          else
+              echo "✗ Caddy config invalid"; FAIL=$((FAIL+1))
+          fi
+      else
+          echo "ℹ Caddy not present (native mode)"
+      fi
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Summary: ${PASS}/${TOTAL} services healthy"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      if [[ "$verbose" == "true" ]]; then
+          echo ""
+          echo "--- Container Details ---"
+          $SSH_CMD "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.RunningFor}}' --filter 'name=armorclaw' --filter 'name=jetski'" 2>/dev/null
+      fi
+
+  - name: "redeploy"
+    automation: "confirm"
+    description: "Restart ArmorClaw services in dependency order with health polling"
+    command: |
+      if [[ "$action" != "redeploy" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Redeploy: ${service}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      poll_health() {
+          local name="$1"
+          local check="$2"
+          local attempts=0
+          while [ $attempts -lt 12 ]; do
+              if $SSH_CMD "$check" 2>/dev/null; then
+                  echo "✓ $name healthy"
+                  return 0
+              fi
+              attempts=$((attempts+1))
+              sleep 5
+          done
+          echo "✗ $name failed to become healthy (60s timeout)"
+          return 1
+      }
+      if [[ "$service" == "all" ]]; then
+          echo "Restarting vault..."
+          $SSH_CMD "docker restart armorclaw-vault" 2>/dev/null && sleep 5
+          poll_health "Vault" "test -S /run/armorclaw/keystore.sock"
+          echo "Restarting matrix..."
+          $SSH_CMD "docker restart armorclaw-conduit" 2>/dev/null && sleep 5
+          poll_health "Matrix" "curl -sf http://localhost:6167/_matrix/client/versions"
+          echo "Restarting bridge..."
+          CONTAINERS=$($SSH_CMD "docker ps --format '{{.Names}}'" 2>/dev/null)
+          if echo "$CONTAINERS" | grep -q "armorclaw-sentinel"; then
+              BRIDGE_CONTAINER="armorclaw-sentinel"
+          else
+              BRIDGE_CONTAINER="armorclaw"
+          fi
+          $SSH_CMD "docker restart $BRIDGE_CONTAINER" 2>/dev/null && sleep 5
+          poll_health "Bridge socket" "test -S /run/armorclaw/bridge.sock"
+          echo "Restarting support services..."
+          $SSH_CMD "docker restart armorclaw-sygnal" 2>/dev/null && sleep 3
+          poll_health "Sygnal" "curl -sf http://localhost:5000/health"
+          $SSH_CMD "docker restart armorclaw-qdrant" 2>/dev/null && sleep 3
+          poll_health "Qdrant" "curl -sf http://localhost:6333/healthz"
+          if echo "$CONTAINERS" | grep -q "armorclaw-caddy"; then
+              echo "Restarting caddy..."
+              $SSH_CMD "docker restart armorclaw-caddy" 2>/dev/null && sleep 3
+              poll_health "Caddy" "docker exec armorclaw-caddy caddy validate --config /etc/caddy/Caddyfile 2>/dev/null"
+          fi
+          echo "Restarting sidecars..."
+          $SSH_CMD "docker restart jetski" 2>/dev/null && sleep 3
+          poll_health "Jetski" "curl -sf http://localhost:9222/health"
+          $SSH_CMD "docker restart armorclaw-browser" 2>/dev/null && sleep 3
+          poll_health "Browser" "curl -sf http://localhost:3000/health"
+      else
+          case "$service" in
+              bridge)
+                  CONTAINERS=$($SSH_CMD "docker ps --format '{{.Names}}'" 2>/dev/null)
+                  if echo "$CONTAINERS" | grep -q "armorclaw-sentinel"; then
+                      CONTAINER="armorclaw-sentinel"
+                  else
+                      CONTAINER="armorclaw"
+                  fi ;;
+              matrix)   CONTAINER="armorclaw-conduit" ;;
+              vault)    CONTAINER="armorclaw-vault" ;;
+              sygnal)   CONTAINER="armorclaw-sygnal" ;;
+              qdrant)   CONTAINER="armorclaw-qdrant" ;;
+              caddy)    CONTAINER="armorclaw-caddy" ;;
+              jetski)   CONTAINER="jetski" ;;
+              browser)  CONTAINER="armorclaw-browser" ;;
+              sidecar-office) CONTAINER="armorclaw-sidecar-office" ;;
+              coturn)   CONTAINER="armorclaw-coturn" ;;
+              catwalk)  CONTAINER="armorclaw-catwalk" ;;
+              *)        echo "✗ Unknown service: $service"; exit 1 ;;
+          esac
+          echo "Restarting $CONTAINER..."
+          $SSH_CMD "docker restart $CONTAINER" 2>/dev/null && sleep 5
+          echo "✓ $CONTAINER restarted"
+      fi
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Redeploy complete. Run /ops action=health to verify."
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  - name: "view_logs"
+    automation: "auto"
+    description: "View container logs for specified service"
+    command: |
+      if [[ "$action" != "logs" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Logs: ${service} (last ${tail} lines)"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      map_service() {
+          case "$1" in
+              bridge)
+                  CONTAINERS=$($SSH_CMD "docker ps --format '{{.Names}}'" 2>/dev/null)
+                  if echo "$CONTAINERS" | grep -q "armorclaw-sentinel"; then
+                      echo "armorclaw-sentinel"
+                  else
+                      echo "armorclaw"
+                  fi ;;
+              matrix)         echo "armorclaw-conduit" ;;
+              vault)          echo "armorclaw-vault" ;;
+              sygnal)         echo "armorclaw-sygnal" ;;
+              qdrant)         echo "armorclaw-qdrant" ;;
+              caddy)          echo "armorclaw-caddy" ;;
+              jetski)         echo "jetski" ;;
+              browser)        echo "armorclaw-browser" ;;
+              sidecar-office) echo "armorclaw-sidecar-office" ;;
+              coturn)         echo "armorclaw-coturn" ;;
+              catwalk)        echo "armorclaw-catwalk" ;;
+              *)              echo "$1" ;;
+          esac
+      }
+      if [[ "$service" == "all" ]]; then
+          echo "--- Bridge Logs ---"
+          BRIDGE=$(map_service "bridge")
+          $SSH_CMD "docker logs --tail 20 $BRIDGE" 2>&1 | head -20
+          echo ""
+          echo "--- Matrix Logs ---"
+          $SSH_CMD "docker logs --tail 20 armorclaw-conduit" 2>&1 | head -20
+          echo ""
+          echo "--- Vault Logs ---"
+          $SSH_CMD "docker logs --tail 20 armorclaw-vault" 2>&1 | head -20
+      else
+          CONTAINER=$(map_service "$service")
+          $SSH_CMD "docker logs --tail \"${tail}\" $CONTAINER" 2>&1
+      fi
+
+  - name: "create_backup"
+    automation: "confirm"
+    description: "Create backup of ArmorClaw configuration, data, and Docker volumes"
+    command: |
+      if [[ "$action" != "backup" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      BACKUP_FILE="${backup_path:-/tmp/armorclaw-backup-\$(date +%Y%m%d-%H%M%S).tar.gz}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Creating backup on ${vps_ip}..."
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      $SSH_CMD "bash -c '
+      set -e
+      TMPDIR=\$(mktemp -d)
+      echo \"Staging backup in \$TMPDIR...\"
+      mkdir -p \"\$TMPDIR/opt/armorclaw\"
+      if [ -f /opt/armorclaw/.env ]; then
+          cp /opt/armorclaw/.env \"\$TMPDIR/opt/armorclaw/.env\"
+          echo \"✓ .env backed up (secrets masked)\"
+      fi
+      if [ -d /opt/armorclaw/configs ]; then
+          cp -r /opt/armorclaw/configs \"\$TMPDIR/opt/armorclaw/configs\"
+          echo \"✓ configs/ backed up\"
+      fi
+      if [ -d /opt/armorclaw/data ]; then
+          cp -r /opt/armorclaw/data \"\$TMPDIR/opt/armorclaw/data\"
+          echo \"✓ data/ backed up\"
+      fi
+      VOLUMES=\"armorclaw-conduit-data armorclaw-qdrant-data\"
+      for vol in \$VOLUMES; do
+          if docker volume ls --format \"{{.Name}}\" | grep -q \"^\$vol\$\"; then
+              mkdir -p \"\$TMPDIR/volumes/\$vol\"
+              docker run --rm -v \"\$vol:/source:ro\" -v \"\$TMPDIR/volumes/\$vol:/dest\" alpine cp -a /source/. /dest/ 2>/dev/null
+              echo \"✓ Volume \$vol backed up\"
+          fi
+      done
+      tar -czf \"$BACKUP_FILE\" -C \"\$TMPDIR\" . 2>/dev/null
+      SIZE=\$(du -h \"$BACKUP_FILE\" | cut -f1)
+      rm -rf \"\$TMPDIR\"
+      echo \"\"
+      echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\"
+      echo \"Backup complete\"
+      echo \"  Path: $BACKUP_FILE\"
+      echo \"  Size: \$SIZE\"
+      echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\"
+       if [ -f /opt/armorclaw/.env ]; then
+           echo \"  Secrets: \$(head -c4 /opt/armorclaw/.env 2>/dev/null)***\"
+       fi
+      '"
+      echo "ℹ Restore with: /ops action=restore backup_path=$BACKUP_FILE vps_ip=${vps_ip}"
+
+  - name: "restore_backup"
+    automation: "confirm"
+    description: "Restore ArmorClaw from a backup archive with dependency-order restart"
+    command: |
+      if [[ "$action" != "restore" ]]; then exit 0; fi
+      SSH_KEY="${ssh_key/#\~/$HOME}"
+      SSH_CMD="ssh -i $SSH_KEY -o BatchMode=yes -o ConnectTimeout=10 ${ssh_user}@${vps_ip}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Restoring from: ${backup_path}"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      $SSH_CMD "bash -c '
+      set -e
+      BACKUP_FILE=\"${backup_path}\"
+      if [ ! -f \"\$BACKUP_FILE\" ]; then
+          echo \"✗ Backup not found at \$BACKUP_FILE\"
+          exit 1
+      fi
+      echo \"Validating backup contents...\"
+      CONTENTS=\$(tar -tzf \"\$BACKUP_FILE\" 2>/dev/null)
+      if ! echo \"\$CONTENTS\" | grep -q \"opt/armorclaw/.env\" && ! echo \"\$CONTENTS\" | grep -q \"opt/armorclaw/configs\"; then
+          echo \"✗ Invalid backup: missing .env or configs/\"
+          exit 1
+      fi
+      echo \"✓ Backup validated\"
+      echo \"Stopping services in reverse dependency order...\"
+      docker stop armorclaw-browser armorclaw-sidecar-office jetski 2>/dev/null || true
+      docker stop armorclaw-sygnal armorclaw-qdrant 2>/dev/null || true
+      docker stop armorclaw-sentinel armorclaw 2>/dev/null || true
+      docker stop armorclaw-conduit 2>/dev/null || true
+      docker stop armorclaw-vault 2>/dev/null || true
+      echo \"✓ Services stopped\"
+      echo \"Restoring files...\"
+      TMPDIR=\$(mktemp -d)
+      tar -xzf \"\$BACKUP_FILE\" -C \"\$TMPDIR\" 2>/dev/null
+      if [ -d \"\$TMPDIR/opt/armorclaw\" ]; then
+          cp -r \"\$TMPDIR/opt/armorclaw/.\" /opt/armorclaw/ 2>/dev/null || true
+          echo \"✓ Config and data restored\"
+      fi
+      if [ -d \"\$TMPDIR/volumes\" ]; then
+          for vol_dir in \"\$TMPDIR\"/volumes/*/; do
+              vol_name=\$(basename \"\$vol_dir\")
+              docker run --rm -v \"\$vol_name:/dest\" -v \"\$vol_dir:/source:ro\" alpine cp -a /source/. /dest/ 2>/dev/null
+              echo \"✓ Volume \$vol_name restored\"
+          done
+      fi
+      rm -rf \"\$TMPDIR\"
+      echo \"Restarting services in dependency order...\"
+      docker start armorclaw-vault 2>/dev/null && sleep 5
+      docker start armorclaw-conduit 2>/dev/null && sleep 5
+      CONTAINERS=\$(docker ps -a --format \"{{.Names}}\")
+      if echo \"\$CONTAINERS\" | grep -q \"armorclaw-sentinel\"; then
+          docker start armorclaw-sentinel 2>/dev/null && sleep 5
+      else
+          docker start armorclaw 2>/dev/null && sleep 5
+      fi
+      docker start armorclaw-sygnal armorclaw-qdrant 2>/dev/null && sleep 3
+      docker start armorclaw-caddy 2>/dev/null && sleep 3
+      docker start jetski armorclaw-browser armorclaw-sidecar-office 2>/dev/null && sleep 3
+      echo \"✓ Services restarted\"
+      echo \"\"
+      echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\"
+      echo \"Restore complete. Run /ops action=health to verify.\"
+      echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\"
+      '"
+
+  - name: "print_summary"
+    automation: "auto"
+    description: "Print next-steps guidance based on the action performed"
+    command: |
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Next Steps"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      case "$action" in
+          health)
+              echo "If issues found, run /ops action=redeploy service=<name>"
+              echo "For detailed logs, run /ops action=logs service=<name>" ;;
+          redeploy)
+              echo "Run /ops action=health to verify all services are healthy" ;;
+          deploy)
+              echo "Run /ops action=health to verify, then /ops action=backup"
+              echo "Install ArmorChat and scan the QR code to connect" ;;
+          logs)
+              echo "For persistent issues, run /ops action=redeploy service=<name>"
+              echo "For comprehensive status, run /ops action=health" ;;
+          backup)
+              echo "Restore with /ops action=restore backup_path=<path>" ;;
+          restore)
+              echo "Run /ops action=health to verify restoration" ;;
+      esac
+
+platforms:
+  - linux
+  - macos
+  - windows-gitbash
+  - windows-powershell
+  - wsl
+
+examples:
+  - description: "Check deployment health"
+    command: "/ops action=health vps_ip=192.168.1.100"
+  - description: "Redeploy all services"
+    command: "/ops action=redeploy vps_ip=192.168.1.100"
+  - description: "Redeploy specific service"
+    command: "/ops action=redeploy vps_ip=192.168.1.100 service=bridge"
+  - description: "View bridge logs"
+    command: "/ops action=logs vps_ip=192.168.1.100 service=bridge tail=50"
+  - description: "Deploy to new VPS"
+    command: "/ops action=deploy vps_ip=192.168.1.100 mode=sentinel domain=armorclaw.example.com"
+  - description: "Create backup"
+    command: "/ops action=backup vps_ip=192.168.1.100"
