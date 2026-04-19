@@ -69,7 +69,7 @@ logging:
   structured: false
 
 approval:
-  enabled: false
+  enabled: true
   bridgeURL: "http://127.0.0.1:8080"
   roomID: ""
   timeout: 60s

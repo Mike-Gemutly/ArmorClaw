@@ -27,10 +27,17 @@ import (
 )
 
 type mockProvisioner struct {
-	shouldFail bool
-	spawned    bool
-	toolName   string
-	sessionID  string
+	shouldFail      bool
+	spawned         bool
+	stopped         bool
+	toolName        string
+	sessionID       string
+	execCalled      bool
+	execResult      []byte
+	execErr         error
+	execContainerID string
+	execToolName    string
+	execArgs        json.RawMessage
 }
 
 func (m *mockProvisioner) SpawnToolSidecar(ctx context.Context, skillName, sessionID string) (*toolsidecar.ToolSidecar, error) {
@@ -50,7 +57,27 @@ func (m *mockProvisioner) SpawnToolSidecar(ctx context.Context, skillName, sessi
 }
 
 func (m *mockProvisioner) StopToolSidecar(ctx context.Context, containerID string) error {
+	m.stopped = true
 	return nil
+}
+
+func (m *mockProvisioner) ExecuteInSidecar(ctx context.Context, containerID string, toolName string, arguments json.RawMessage) ([]byte, error) {
+	if m.shouldFail {
+		return nil, fmt.Errorf("exec intentionally failing")
+	}
+	m.execCalled = true
+	m.execContainerID = containerID
+	m.execToolName = toolName
+	m.execArgs = arguments
+
+	if m.execErr != nil {
+		return m.execResult, m.execErr
+	}
+	if m.execResult != nil {
+		return m.execResult, nil
+	}
+
+	return []byte(`{"status":"success","output":"mock tool result"}`), nil
 }
 
 type mockVaultClient struct {
@@ -775,5 +802,268 @@ func TestAuditMode_BothFlagsFalse_LegacyUnchanged(t *testing.T) {
 
 	if !mockProv.spawned {
 		t.Error("Expected ToolSidecar to be spawned on legacy path with both flags false")
+	}
+}
+
+func TestExecuteTool_RealToolExecution(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_exec_real.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+
+	expectedOutput := []byte(`{"status":"success","result":{"answer":42},"tool":"calc_tool"}`)
+	mockProv := &mockProvisioner{execResult: expectedOutput}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{"query": "what is the answer"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "exec_real_1",
+		Params:  &MCPParams{Name: "calc_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success, got error: %v", resp)
+	}
+
+	if !mockProv.execCalled {
+		t.Fatal("Expected ExecuteInSidecar to be called")
+	}
+	if mockProv.execToolName != "calc_tool" {
+		t.Errorf("Expected exec tool name 'calc_tool', got %s", mockProv.execToolName)
+	}
+	if mockProv.execContainerID != "mock_container_id_123456789012" {
+		t.Errorf("Expected container ID from spawn, got %s", mockProv.execContainerID)
+	}
+
+	var passedArgs map[string]interface{}
+	if err := json.Unmarshal(mockProv.execArgs, &passedArgs); err != nil {
+		t.Fatalf("Failed to parse passed arguments: %v", err)
+	}
+	if passedArgs["query"] != "what is the answer" {
+		t.Errorf("Expected query arg to be passed through, got %v", passedArgs["query"])
+	}
+
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected map result")
+	}
+	if result["status"] != "success" {
+		t.Errorf("Expected status 'success', got %v", result["status"])
+	}
+	if result["tool"] != "calc_tool" {
+		t.Errorf("Expected tool 'calc_tool', got %v", result["tool"])
+	}
+
+	if !mockProv.spawned {
+		t.Error("Expected ToolSidecar to be spawned")
+	}
+	if !mockProv.stopped {
+		t.Error("Expected ToolSidecar to be stopped after execution")
+	}
+}
+
+func TestExecuteTool_ExecFailure(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_exec_fail.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+
+	mockProv := &mockProvisioner{
+		execResult: nil,
+		execErr:    fmt.Errorf("container crashed: OOM killed"),
+	}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{"query": "test"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "exec_fail_1",
+		Params:  &MCPParams{Name: "failing_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("Expected error response for exec failure")
+	}
+	if resp.Error.Message != "Tool execution failed" {
+		t.Errorf("Expected 'Tool execution failed', got %s", resp.Error.Message)
+	}
+
+	if !mockProv.spawned {
+		t.Error("Expected ToolSidecar to be spawned before exec")
+	}
+	if !mockProv.stopped {
+		t.Error("Expected ToolSidecar to be cleaned up after exec failure")
+	}
+	if !mockProv.execCalled {
+		t.Error("Expected ExecuteInSidecar to be called")
+	}
+}
+
+func TestExecuteTool_ExecInvalidJSON(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_exec_invalid.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+
+	mockProv := &mockProvisioner{execResult: []byte(`not valid json`)}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{"query": "test"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "exec_invalid_1",
+		Params:  &MCPParams{Name: "raw_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success with fallback parsing, got error: %v", resp)
+	}
+
+	result, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected map result")
+	}
+	if result["status"] != "success" {
+		t.Errorf("Expected status 'success', got %v", result["status"])
+	}
+	if result["output"] != "not valid json" {
+		t.Errorf("Expected raw output as fallback, got %v", result["output"])
+	}
+}
+
+func TestExecuteTool_ExecTimeout(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_exec_timeout.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+
+	mockProv := &mockProvisioner{
+		execErr: context.DeadlineExceeded,
+	}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{"query": "slow query"})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "exec_timeout_1",
+		Params:  &MCPParams{Name: "slow_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("Expected error response for timeout")
+	}
+	if resp.Error.Message != "Tool execution failed" {
+		t.Errorf("Expected 'Tool execution failed', got %s", resp.Error.Message)
+	}
+
+	if !mockProv.stopped {
+		t.Error("Expected ToolSidecar to be stopped after timeout")
+	}
+}
+
+func TestExecuteTool_ArgumentPassthrough(t *testing.T) {
+	mockAuditLog, _ := audit.NewAuditLog(audit.Config{Path: "/tmp/test_exec_args.db"})
+	mockGovernor := governor.NewGovernor(nil, logger.Global())
+	consentMgr := pii.NewHITLConsentManager(pii.HITLConfig{Timeout: 60 * time.Second})
+
+	mockProv := &mockProvisioner{
+		execResult: []byte(`{"status":"success","output":"done"}`),
+	}
+
+	router, err := New(Config{
+		SkillGate:      mockGovernor,
+		Provisioner:    mockProv,
+		ConsentManager: consentMgr,
+		Auditor:        mockAuditLog,
+		Logger:         logger.Global(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"url":    "https://example.com",
+		"method": "GET",
+		"count":  float64(42),
+	})
+	req := &MCPToolsCallRequest{
+		JSONRPC: "2.0",
+		ID:      "exec_args_1",
+		Params:  &MCPParams{Name: "http_tool", Arguments: args},
+	}
+
+	resp, err := router.HandleToolsCall(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("Expected success, got error: %v", resp)
+	}
+
+	var passedArgs map[string]interface{}
+	if err := json.Unmarshal(mockProv.execArgs, &passedArgs); err != nil {
+		t.Fatalf("Failed to parse arguments: %v", err)
+	}
+	if passedArgs["url"] != "https://example.com" {
+		t.Errorf("Expected url preserved, got %v", passedArgs["url"])
+	}
+	if passedArgs["method"] != "GET" {
+		t.Errorf("Expected method preserved, got %v", passedArgs["method"])
+	}
+	if passedArgs["count"] != float64(42) {
+		t.Errorf("Expected count preserved as float64, got %v", passedArgs["count"])
 	}
 }

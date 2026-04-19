@@ -7,9 +7,11 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/armorclaw/jetski/internal/approval"
 	"github.com/armorclaw/jetski/internal/security"
 	"github.com/gorilla/websocket"
 )
@@ -50,18 +52,24 @@ type PIIScanner interface {
 	ScanJSONMessage(jsonStr string) ([]security.PIIFinding, error)
 }
 
+type ApprovalChecker interface {
+	RequestApproval(ctx context.Context, op approval.OperationType, detail string) (bool, error)
+}
+
 type Proxy struct {
-	mu           sync.Mutex
-	clientConn   *websocket.Conn
-	engineConn   *websocket.Conn
-	engineURL    string
-	ctx          context.Context
-	cancel       context.CancelFunc
-	router       *MethodRouter
-	errorChan    chan error
-	recorder     MessageRecorder
-	piiScanner   PIIScanner
-	tetheredMode bool
+	mu              sync.Mutex
+	clientConn      *websocket.Conn
+	engineConn      *websocket.Conn
+	engineURL       string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	router          *MethodRouter
+	errorChan       chan error
+	recorder        MessageRecorder
+	piiScanner      PIIScanner
+	tetheredMode    bool
+	approvalClient  ApprovalChecker
+	approvalTimeout time.Duration
 }
 
 func NewProxy(engineURL string, router *MethodRouter, piiScanner PIIScanner, tetheredMode bool) *Proxy {
@@ -79,6 +87,14 @@ func NewProxy(engineURL string, router *MethodRouter, piiScanner PIIScanner, tet
 
 func (p *Proxy) SetRecorder(r MessageRecorder) {
 	p.recorder = r
+}
+
+func (p *Proxy) SetApprovalClient(client ApprovalChecker) {
+	p.approvalClient = client
+}
+
+func (p *Proxy) SetApprovalTimeout(timeout time.Duration) {
+	p.approvalTimeout = timeout
 }
 
 func (p *Proxy) Start(clientConn *websocket.Conn) error {
@@ -128,6 +144,76 @@ func (p *Proxy) connectToEngine() error {
 		return nil
 	})
 
+	return nil
+}
+
+func (p *Proxy) needsApproval(msg *CDPMessage) (bool, approval.OperationType, string) {
+	if p.approvalClient == nil {
+		return false, "", ""
+	}
+
+	switch msg.Method {
+	case "Input.insertText":
+		var params struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(msg.Params, &params); err != nil || params.Text == "" {
+			return false, "", ""
+		}
+		piiTypes := p.detectPIITypes(params.Text)
+		if len(piiTypes) > 0 {
+			return true, approval.OpPIIInput, "PII detected: " + strings.Join(piiTypes, ", ")
+		}
+		return false, "", ""
+
+	case "Page.navigate":
+		var params struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(msg.Params, &params); err != nil || params.URL == "" {
+			return false, "", ""
+		}
+		return true, approval.OpNavigation, "Navigate to: " + params.URL
+
+	default:
+		return false, "", ""
+	}
+}
+
+func (p *Proxy) detectPIITypes(text string) []string {
+	var found []string
+	for piiType, pattern := range scrubPatterns {
+		if pattern.MatchString(text) {
+			found = append(found, piiType)
+		}
+	}
+	return found
+}
+
+func (p *Proxy) checkApproval(msg *CDPMessage) error {
+	needed, opType, detail := p.needsApproval(msg)
+	if !needed {
+		return nil
+	}
+
+	timeout := p.approvalTimeout
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(p.ctx, timeout)
+	defer cancel()
+
+	approved, err := p.approvalClient.RequestApproval(ctx, opType, detail)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return errors.New("approval request timed out")
+		}
+		return err
+	}
+	if !approved {
+		return errors.New("approval denied for " + string(opType))
+	}
 	return nil
 }
 
@@ -184,6 +270,11 @@ func (p *Proxy) forwardToEngine() {
 							continue
 						}
 						msg = *translated
+					}
+
+					if err := p.checkApproval(&msg); err != nil {
+						p.sendError(msg.ID, err)
+						continue
 					}
 				}
 			}

@@ -62,6 +62,7 @@ type MCPRouter struct {
 type Provisioner interface {
 	SpawnToolSidecar(ctx context.Context, skillName, sessionID string) (*toolsidecar.ToolSidecar, error)
 	StopToolSidecar(ctx context.Context, containerID string) error
+	ExecuteInSidecar(ctx context.Context, containerID string, toolName string, arguments json.RawMessage) ([]byte, error)
 }
 
 // Config holds MCPRouter configuration
@@ -482,12 +483,43 @@ func (r *MCPRouter) executeTool(
 		"tool", sanitizedCall.ToolName,
 	)
 
-	// Step 4.2: Execute tool
-	// For now, return a mock result
-	// In a full implementation, this would communicate with the ToolSidecar
-	result := map[string]interface{}{
-		"status": "success",
-		"output": fmt.Sprintf("Tool %s executed in container %s", sanitizedCall.ToolName, toolsidecar.ID[:12]),
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cleanupCancel()
+		_ = r.provisioner.StopToolSidecar(cleanupCtx, toolsidecar.ID)
+	}()
+
+	argsJSON, err := json.Marshal(sanitizedCall.Arguments)
+	if err != nil {
+		r.logger.Error("failed_to_marshal_arguments",
+			"call_id", originalCall.ID,
+			"tool", sanitizedCall.ToolName,
+			"error", err.Error(),
+		)
+		return r.errorResponse(req.ID, -32603, "Failed to marshal tool arguments", err.Error()), nil
+	}
+
+	output, execErr := r.provisioner.ExecuteInSidecar(execCtx, toolsidecar.ID, sanitizedCall.ToolName, argsJSON)
+	if execErr != nil {
+		r.logger.Error("tool_execution_failed",
+			"call_id", originalCall.ID,
+			"tool", sanitizedCall.ToolName,
+			"container_id", toolsidecar.ID[:12],
+			"error", execErr.Error(),
+		)
+
+		_ = r.auditor.LogEvent(audit.EventSidecarQueued,
+			"", "", "",
+			map[string]interface{}{
+				"call_id":      originalCall.ID,
+				"tool":         sanitizedCall.ToolName,
+				"container_id": toolsidecar.ID[:12],
+				"error":        execErr.Error(),
+				"status":       "exec_failed",
+			},
+		)
+
+		return r.errorResponse(req.ID, -32603, "Tool execution failed", execErr.Error()), nil
 	}
 
 	r.logger.Info("tool_executed",
@@ -496,11 +528,21 @@ func (r *MCPRouter) executeTool(
 		"container_id", toolsidecar.ID[:12],
 	)
 
-	// Step 5: Audit log (PII redacted)
+	var result map[string]interface{}
+	if err := json.Unmarshal(output, &result); err != nil {
+		r.logger.Warn("tool_output_parse_error",
+			"call_id", originalCall.ID,
+			"tool", sanitizedCall.ToolName,
+			"error", err.Error(),
+		)
+		result = map[string]interface{}{
+			"status": "success",
+			"output": string(output),
+		}
+	}
+
 	_ = r.auditor.LogEvent(audit.EventSidecarQueued,
-		"", // session_id
-		"", // room_id
-		"", // user_id
+		"", "", "",
 		map[string]interface{}{
 			"call_id":      originalCall.ID,
 			"tool":         sanitizedCall.ToolName,
@@ -509,11 +551,6 @@ func (r *MCPRouter) executeTool(
 			"status":       "success",
 		},
 	)
-
-	// Cleanup toolsidecar
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cleanupCancel()
-	_ = r.provisioner.StopToolSidecar(cleanupCtx, toolsidecar.ID)
 
 	return &MCPResponse{
 		JSONRPC: "2.0",

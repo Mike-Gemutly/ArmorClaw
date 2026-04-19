@@ -1,15 +1,10 @@
-use crate::error::SidecarError;
-
-mod config;
-mod error;
-mod grpc;
-mod security;
+use armorclaw_sidecar::{SidecarConfig, SidecarError};
 
 #[tokio::main]
 async fn main() -> Result<(), SidecarError> {
     tracing_subscriber::fmt::init();
 
-    let config = config::SidecarConfig::from_env()?;
+    let config = SidecarConfig::from_env()?;
 
     if config.shared_secret.is_empty() {
         tracing::error!("ARMORCLAW_SIDECAR__SHARED_SECRET must be set");
@@ -22,7 +17,7 @@ async fn main() -> Result<(), SidecarError> {
         "Starting ArmorClaw Sidecar"
     );
 
-    grpc::server::run_server(config).await?;
+    armorclaw_sidecar::grpc::server::run_server(config).await?;
 
     Ok(())
 }

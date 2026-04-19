@@ -1,11 +1,15 @@
 package toolsidecar
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type DockerClient interface {
@@ -13,6 +17,9 @@ type DockerClient interface {
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+	ContainerExecCreate(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error)
+	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
+	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 }
 
 type Config struct {
@@ -98,4 +105,50 @@ func (p *Provisioner) StopToolSidecar(ctx context.Context, containerID string) e
 		return p.docker.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
 	}
 	return nil
+}
+
+// ExecuteInSidecar runs a tool command inside a running ToolSidecar container.
+// It sends the tool arguments as JSON via stdin and returns the raw stdout output.
+func (p *Provisioner) ExecuteInSidecar(ctx context.Context, containerID string, toolName string, arguments json.RawMessage) ([]byte, error) {
+	execResp, err := p.docker.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          []string{"/bin/run-tool", toolName},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("toolsidecar: exec create failed for tool %s: %w", toolName, err)
+	}
+
+	resp, err := p.docker.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("toolsidecar: exec attach failed for tool %s: %w", toolName, err)
+	}
+	defer resp.Close()
+
+	if len(arguments) > 0 {
+		if _, err := resp.Conn.Write(arguments); err != nil {
+			return nil, fmt.Errorf("toolsidecar: failed to write arguments for tool %s: %w", toolName, err)
+		}
+		if _, err := resp.Conn.Write([]byte("\n")); err != nil {
+			return nil, fmt.Errorf("toolsidecar: failed to write newline for tool %s: %w", toolName, err)
+		}
+	}
+	resp.CloseWrite()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
+		return nil, fmt.Errorf("toolsidecar: failed to read output for tool %s: %w", toolName, err)
+	}
+
+	inspect, err := p.docker.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return nil, fmt.Errorf("toolsidecar: exec inspect failed for tool %s: %w", toolName, err)
+	}
+
+	if inspect.ExitCode != 0 {
+		return nil, fmt.Errorf("toolsidecar: tool %s exited with code %d: %s", toolName, inspect.ExitCode, stderr.String())
+	}
+
+	return stdout.Bytes(), nil
 }

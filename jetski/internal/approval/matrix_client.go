@@ -16,6 +16,7 @@ const (
 	OpSessionCreate OperationType = "session_create"
 	OpNavigation    OperationType = "navigation"
 	OpFileDownload  OperationType = "file_download"
+	OpPIIInput      OperationType = "pii_input"
 )
 
 type ApprovalRequest struct {

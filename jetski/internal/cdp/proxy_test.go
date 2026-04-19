@@ -2,6 +2,7 @@ package cdp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/armorclaw/jetski/internal/approval"
 	"github.com/armorclaw/jetski/internal/security"
 	"github.com/gorilla/websocket"
 )
@@ -572,6 +574,417 @@ func TestPII_EmailDetectionLogsWarning(t *testing.T) {
 	}
 	if !strings.Contains(output, "EMAIL") {
 		t.Errorf("Expected EMAIL type in log output, got: %s", output)
+	}
+}
+
+// --- Approval Gating Tests ---
+
+type mockApprovalClient struct {
+	called   chan approvalCall
+	response bool   // approved or denied
+	err      error  // error to return
+	opType   string // captured operation type
+	detail   string // captured detail
+}
+
+type approvalCall struct {
+	opType approval.OperationType
+	detail string
+}
+
+func newMockApprovalClient(response bool) *mockApprovalClient {
+	return &mockApprovalClient{
+		called:   make(chan approvalCall, 10),
+		response: response,
+	}
+}
+
+func (m *mockApprovalClient) RequestApproval(ctx context.Context, op approval.OperationType, detail string) (bool, error) {
+	m.opType = string(op)
+	m.detail = detail
+	m.called <- approvalCall{opType: op, detail: detail}
+	if m.err != nil {
+		return false, m.err
+	}
+	return m.response, nil
+}
+
+func TestApproval_InputInsertTextWithSSN(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	scanner := security.NewPIIScanner()
+	proxy := NewProxy(wsURL, router, scanner, false)
+
+	mockApproval := newMockApprovalClient(true)
+	proxy.SetApprovalClient(mockApproval)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Input.insertText",
+		Params: json.RawMessage(`{"text":"SSN: 123-45-6789"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	select {
+	case call := <-mockApproval.called:
+		if call.opType != approval.OpPIIInput {
+			t.Errorf("Expected opType %s, got %s", approval.OpPIIInput, call.opType)
+		}
+		if !strings.Contains(call.detail, "SSN") {
+			t.Errorf("Expected detail to contain 'SSN', got %s", call.detail)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Approval should have been requested for SSN in Input.insertText")
+	}
+}
+
+func TestApproval_InputInsertTextWithCreditCard(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	scanner := security.NewPIIScanner()
+	proxy := NewProxy(wsURL, router, scanner, false)
+
+	mockApproval := newMockApprovalClient(true)
+	proxy.SetApprovalClient(mockApproval)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Input.insertText",
+		Params: json.RawMessage(`{"text":"Card: 4111-1111-1111-1111"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	select {
+	case call := <-mockApproval.called:
+		if call.opType != approval.OpPIIInput {
+			t.Errorf("Expected opType %s, got %s", approval.OpPIIInput, call.opType)
+		}
+		if !strings.Contains(call.detail, "CREDIT_CARD") {
+			t.Errorf("Expected detail to contain 'CREDIT_CARD', got %s", call.detail)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Approval should have been requested for credit card in Input.insertText")
+	}
+}
+
+func TestApproval_PageNavigateNewDomain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil, false)
+
+	mockApproval := newMockApprovalClient(true)
+	proxy.SetApprovalClient(mockApproval)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Page.navigate",
+		Params: json.RawMessage(`{"url":"https://evil-phishing.com/login"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	select {
+	case call := <-mockApproval.called:
+		if call.opType != approval.OpNavigation {
+			t.Errorf("Expected opType %s, got %s", approval.OpNavigation, call.opType)
+		}
+		if !strings.Contains(call.detail, "evil-phishing.com") {
+			t.Errorf("Expected detail to contain URL, got %s", call.detail)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Approval should have been requested for Page.navigate")
+	}
+}
+
+func TestApproval_NonSensitiveMethodsPassthrough(t *testing.T) {
+	nonSensitive := []struct {
+		method string
+		params string
+	}{
+		{"Runtime.evaluate", `{"expression":"1+1"}`},
+		{"DOM.querySelector", `{"selector":"div"}`},
+		{"Network.enable", `{}`},
+		{"Input.insertText", `{"text":"hello world"}`},
+	}
+
+	for _, tc := range nonSensitive {
+		t.Run(tc.method, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(testHandler))
+			defer server.Close()
+			wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+			router := NewMethodRouter(NewTranslator())
+			proxy := NewProxy(wsURL, router, nil, false)
+
+			mockApproval := newMockApprovalClient(true)
+			proxy.SetApprovalClient(mockApproval)
+
+			clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+			if err != nil {
+				t.Fatalf("Failed to dial websocket: %v", err)
+			}
+
+			if err := proxy.Start(clientConn); err != nil {
+				clientConn.Close()
+				t.Fatalf("Failed to start proxy: %v", err)
+			}
+
+			msg := CDPMessage{
+				ID:     1,
+				Method: tc.method,
+				Params: json.RawMessage(tc.params),
+			}
+			data, _ := json.Marshal(msg)
+			if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+				proxy.Stop()
+				t.Fatalf("Failed to write message for %s: %v", tc.method, err)
+			}
+
+			select {
+			case <-mockApproval.called:
+				proxy.Stop()
+				t.Errorf("Approval should NOT be requested for non-sensitive method %s", tc.method)
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			proxy.Stop()
+		})
+	}
+}
+
+func TestApproval_DenialBlocksForwarding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil, false)
+
+	// Approval denied
+	mockApproval := newMockApprovalClient(false)
+	proxy.SetApprovalClient(mockApproval)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     42,
+		Method: "Page.navigate",
+		Params: json.RawMessage(`{"url":"https://evil.com"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	// Wait for approval to be called
+	select {
+	case <-mockApproval.called:
+		// Good - approval was requested
+	case <-time.After(2 * time.Second):
+		t.Fatal("Approval should have been requested")
+	}
+
+	// Read response from client conn - should be error response
+	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, respData, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("Expected error response on client conn: %v", err)
+	}
+
+	var resp CDPMessage
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.ID != 42 {
+		t.Errorf("Expected response ID 42, got %d", resp.ID)
+	}
+	if resp.Error == nil {
+		t.Error("Expected error in response when approval denied")
+	}
+	if resp.Error.Code != -32000 {
+		t.Errorf("Expected error code -32000, got %d", resp.Error.Code)
+	}
+}
+
+func TestApproval_TimeoutReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil, false)
+
+	// Mock that never responds (simulates timeout)
+	timeoutMock := &timeoutApprovalMock{
+		called: make(chan approvalCall, 10),
+	}
+	proxy.SetApprovalClient(timeoutMock)
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	// Set very short approval timeout for test
+	proxy.SetApprovalTimeout(200 * time.Millisecond)
+
+	msg := CDPMessage{
+		ID:     99,
+		Method: "Page.navigate",
+		Params: json.RawMessage(`{"url":"https://evil.com"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	// Wait for approval to be called
+	select {
+	case <-timeoutMock.called:
+		// Good
+	case <-time.After(2 * time.Second):
+		t.Fatal("Approval should have been requested")
+	}
+
+	// Should get error response after timeout
+	clientConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, respData, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("Expected error response after timeout: %v", err)
+	}
+
+	var resp CDPMessage
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.ID != 99 {
+		t.Errorf("Expected response ID 99, got %d", resp.ID)
+	}
+	if resp.Error == nil {
+		t.Error("Expected error in response when approval times out")
+	}
+	if !strings.Contains(resp.Error.Message, "timed out") && !strings.Contains(resp.Error.Message, "denied") {
+		t.Errorf("Expected timeout/denied error message, got: %s", resp.Error.Message)
+	}
+}
+
+// timeoutApprovalMock never responds - simulates timeout
+type timeoutApprovalMock struct {
+	called chan approvalCall
+}
+
+func (m *timeoutApprovalMock) RequestApproval(ctx context.Context, op approval.OperationType, detail string) (bool, error) {
+	m.called <- approvalCall{opType: op, detail: detail}
+	// Block until context cancelled (simulates timeout)
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
+func TestApproval_NilClientPassthrough(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(testHandler))
+	defer server.Close()
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1)
+
+	router := NewMethodRouter(NewTranslator())
+	proxy := NewProxy(wsURL, router, nil, false)
+	// No approval client set - should passthrough everything
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	if err := proxy.Start(clientConn); err != nil {
+		t.Fatalf("Failed to start proxy: %v", err)
+	}
+	defer proxy.Stop()
+
+	msg := CDPMessage{
+		ID:     1,
+		Method: "Page.navigate",
+		Params: json.RawMessage(`{"url":"https://example.com"}`),
+	}
+	data, _ := json.Marshal(msg)
+	if err := clientConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	// Should NOT get an error - message should passthrough
+	select {
+	case err := <-proxy.Errors():
+		if err != nil {
+			t.Errorf("Expected no proxy errors with nil approval client: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		// Good - no errors, message forwarded
 	}
 }
 
