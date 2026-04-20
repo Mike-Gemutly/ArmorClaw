@@ -3472,17 +3472,13 @@ func (a *toolsidecarDockerAdapter) ContainerRemove(ctx context.Context, containe
 }
 
 func (a *toolsidecarDockerAdapter) ContainerExecCreate(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
-	id, err := a.client.CreateExec(ctx, containerID, config)
-	if err != nil {
-		return container.ExecCreateResponse{}, err
-	}
-	return container.ExecCreateResponse{ID: id}, nil
+	return a.client.ContainerExecCreate(ctx, containerID, config)
 }
 
 func (a *toolsidecarDockerAdapter) ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
-	return a.client.AttachExec(ctx, execID, config)
+	return a.client.ContainerExecAttach(ctx, execID, config)
 }
 
 func (a *toolsidecarDockerAdapter) ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error) {
-	return a.client.InspectExec(ctx, execID)
+	return a.client.ContainerExecInspect(ctx, execID)
 }

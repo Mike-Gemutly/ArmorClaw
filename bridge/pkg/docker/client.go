@@ -479,6 +479,37 @@ func (c *Client) ExecStart(ctx context.Context, execID string) error {
 	return c.client.ContainerExecStart(ctx, execID, container.ExecStartOptions{})
 }
 
+// ContainerExecCreate creates an exec instance - implements toolsidecar.DockerClient interface
+func (c *Client) ContainerExecCreate(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+	if !c.hasScope(ScopeExec) {
+		return container.ExecCreateResponse{}, ErrInvalidOperation
+	}
+
+	resp, err := c.client.ContainerExecCreate(ctx, containerID, config)
+	if err != nil {
+		return container.ExecCreateResponse{}, err
+	}
+	return container.ExecCreateResponse{ID: resp.ID}, nil
+}
+
+// ContainerExecAttach attaches to an exec instance - implements toolsidecar.DockerClient interface
+func (c *Client) ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+	if !c.hasScope(ScopeExec) {
+		return types.HijackedResponse{}, ErrInvalidOperation
+	}
+
+	return c.client.ContainerExecAttach(ctx, execID, config)
+}
+
+// ContainerExecInspect inspects an exec instance - implements toolsidecar.DockerClient interface
+func (c *Client) ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error) {
+	if !c.hasScope(ScopeExec) {
+		return container.ExecInspect{}, ErrInvalidOperation
+	}
+
+	return c.client.ContainerExecInspect(ctx, execID)
+}
+
 // InspectContainer inspects a container (optimized for low latency)
 func (c *Client) InspectContainer(ctx context.Context, containerID string) (types.ContainerJSON, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.latencyTarget)
