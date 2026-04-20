@@ -1,8 +1,8 @@
 # ArmorClaw Docker Hub Overview
 
 > **Image:** `mikegemut/armorclaw:latest`
-> **Version:** 4.3.0
-> **Last Updated:** 2026-03-05
+> **Version:** 4.8.0
+> **Last Updated:** 2026-04-19
 
 ---
 
@@ -56,6 +56,10 @@ ArmorClaw runs AI agents 24/7 on your VPS. They browse websites, fill forms, and
 - **End-to-End Encryption** - All messages secured via Matrix
 - **BlindFill™ Security** - Secrets decrypted only in memory
 - **No-Code Agent Studio** - Define agents via chat
+- **Jetski Browser Sidecar** - CDP proxy with Tethered Mode security (PII scrubbing, SQLCipher sessions)
+- **Secure Document Pipeline** - Split-Storage RAG, YARA CDR, TTL Proxy Guard
+- **Sentinel Mode** - Let's Encrypt TLS, automatic VPS deployment
+- **Cloudflare Tunnel/Proxy** - NAT traversal, CDN, DDoS protection
 
 ---
 
@@ -96,6 +100,12 @@ Watch it browse, gather information, and report back.
 │    Agent    │  Isolated container
 │  OpenClaw   │
 └──────┬──────┘
+       │ CDP (port 9222)
+       ▼
+┌─────────────┐
+│   Jetski    │  Browser sidecar
+│ CDP Proxy   │  (Tethered Mode)
+└──────┬──────┘
        │
        ▼
 ┌─────────────┐
@@ -116,6 +126,18 @@ Watch it browse, gather information, and report back.
 | OS | Linux (Ubuntu 20.04+) | Ubuntu 22.04 |
 | Docker | 24.0+ | Latest |
 
+## Key Components
+
+| Component | Language | Purpose |
+|-----------|----------|---------|
+| **Go Bridge** | Go | Control plane, JSON-RPC server (51+ methods), Matrix adapter |
+| **Rust Sidecar** | Rust | PDF/DOCX extraction, S3 storage, gRPC |
+| **Python Sidecar** | Python | XLSX/PPTX/MSG/XLS/DOC/PPT extraction via MarkItDown |
+| **Jetski** | Go | CDP proxy with PII scrubbing, SQLCipher sessions, Matrix HITL |
+| **browser-service** | TypeScript | Playwright HTTP automation (canonical browser path) |
+| **ArmorChat** | Kotlin | Android mobile client, E2EE, biometric keystore |
+| **Admin Panel** | React/TypeScript | Browser-based management dashboard |
+
 ---
 
 ## Deployment Modes
@@ -124,6 +146,9 @@ Watch it browse, gather information, and report back.
 |------|---------|-------------|----------|
 | **Full Stack** | `bash` (default) | Bridge + Matrix + Push | ArmorChat integration |
 | **Bridge-only** | `bash -s -- --bridge-only` | Bridge only, no Matrix | Testing |
+| **Sentinel** | Enter domain at prompt | Let's Encrypt TLS, public VPS | Production |
+| **Cloudflare Tunnel** | `CF_API_TOKEN=xxx bash` | Outbound tunnel, no public IP | NAT/firewall |
+| **Cloudflare Proxy** | `CF_MODE=proxy bash` | CDN, DDoS protection | Existing Cloudflare |
 | **Bootstrap** | `bash -s -- --bootstrap` | Generate compose file | GitOps, CI/CD |
 | **Show Ports** | `bash -s -- --ports` | Display detected ports | Debugging |
 
@@ -229,11 +254,11 @@ Deploy without any prompts using environment variables.
 
 ```bash
 # Minimal - auto-detects server IP
-export ARMORCLAW_API_KEY=sk-your-api-key
+export OPENROUTER_API_KEY=sk-your-api-key
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 
 # Or specify IP/domain explicitly
-export ARMORCLAW_API_KEY=sk-your-api-key
+export OPENROUTER_API_KEY=sk-your-api-key
 export ARMORCLAW_SERVER_NAME=192.168.1.50  # or your-domain.com
 curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/install.sh | bash
 ```
@@ -242,13 +267,18 @@ curl -fsSL https://raw.githubusercontent.com/armorclaw/armorclaw/main/deploy/ins
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ARMORCLAW_API_KEY` | Yes* | - | API key for AI provider (triggers non-interactive mode) |
+| `OPENROUTER_API_KEY` | Yes* | - | OpenRouter API key (recommended, supports many providers) |
+| `OPEN_AI_KEY` | No | - | OpenAI API key |
+| `ZAI_API_KEY` | No | - | xAI (Grok) API key |
 | `ARMORCLAW_API_BASE_URL` | No | OpenAI URL | Custom API endpoint (for Anthropic, GLM-5, etc.) |
 | `ARMORCLAW_PROFILE` | No | `quick` | Deployment profile: `quick` or `enterprise` |
 | `ARMORCLAW_SERVER_NAME` | No | auto-detected IP | Server IP or hostname (omit to auto-detect) |
 | `ARMORCLAW_ADMIN_PASSWORD` | No | auto-generated | Admin password for Matrix |
+| `CF_API_TOKEN` | No | - | Cloudflare API token (for Tunnel/Proxy modes) |
+| `CF_TUNNEL_DOMAIN` | No | - | Domain for Cloudflare Tunnel |
+| `CF_MODE` | No | - | `tunnel` or `proxy` |
 
-*API key is required for non-interactive mode. Without it, the interactive wizard runs instead.
+*At least one API key is required for non-interactive mode. Without it, the interactive wizard runs instead.
 
 ---
 
@@ -471,7 +501,7 @@ docker run --user root ...
 Use environment variables instead:
 
 ```bash
-export ARMORCLAW_API_KEY=sk-your-key
+export OPENROUTER_API_KEY=sk-your-key
 curl -fsSL ... | bash
 ```
 

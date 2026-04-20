@@ -1,101 +1,122 @@
 # ArmorClaw Documentation Navigation Guide
 
-> **Purpose:** Enable LLMs to navigate from README → Architecture → Feature → Function/Variables
-> **Last Updated:** 2026-02-06
-> **Version:** 1.0.0
+> **Purpose:** Enable LLMs to navigate from README to architecture to feature to function/variable details
+> **Last Updated:** 2026-04-19
+> **Version:** 2.0.0
 
 ## Navigation Path for LLMs
 
-The ArmorClaw documentation is structured as a 5-level hierarchy for LLM navigation:
+The ArmorClaw documentation is structured as a 4-level hierarchy for LLM navigation:
 
 ```
 Level1: Entry Point
-    └─> README.md (Project overview, why ArmorClaw, installation)
+    └─> README.md (Project overview, why ArmorClaw, installation, deployment modes)
 
-Level2: Documentation Hub
-    └─> docs/index.md (Central navigation to all documentation)
+Level2: Documentation Hubs
+    ├─> docs/index.md (Central navigation, feature directory, deployment options)
+    └─> docs/ArmorClaw-overview.md (Docker Hub description, quick start, system requirements)
 
-Level3: Architecture
-    └─> docs/plans/2026-02-05-armorclaw-v1-design.md (Complete system architecture)
+Level3: System Architecture
+    ├─> doc/armorclaw.md (Complete system documentation, 3454 lines)
+    ├─> doc/ArmorChat.md (Android client documentation, 5881 lines)
+    └─> doc/agent-runtime.md (Agent runtime internals)
 
-Level4: Feature Specifications
-    ├─> docs/reference/bridge.md (API methods, configuration, keystore)
-    ├─> docs/reference/container.md (Container hardening, security, entrypoint)
-    └─> docs/reference/deployment.md (Deployment scripts, infrastructure)
-
-Level5: Functions & Variables
-    └─> docs/output/view.md (All 119 documented functions - DESTINATION)
+Level4: Subsystem Documentation
+    ├─> doc/sidecar-pipeline.md (Document processing pipeline, Rust + Python sidecars)
+    ├─> doc/communication-infra.md (Push, SSO, WebSocket, EventBus, adapters)
+    ├─> doc/secretary-workflow.md (Workflow engine)
+    ├─> doc/email-pipeline.md (Email pipeline)
+    ├─> doc/email-android-integration.md (Email approval integration with ArmorChat)
+    ├─> doc/client-applications.md (Admin Panel, ArmorTerminal, Setup Wizard, OpenClaw UI)
+    ├─> doc/license-system.md (License server and state management)
+    └─> doc/voice-stack.md (WebRTC voice communication)
 ```
 
 ## Quick Reference Table
 
 | Level | Document | What You'll Find | Link |
 |-------|----------|------------------|------|
-| **Entry** | README.md | Project overview, value proposition, installation | [README.md](../README.md) |
-| **Hub** | docs/index.md | Central navigation to all documentation | [docs/index.md](index.md) |
-| **Architecture** | V1 Design | System architecture, security model, threat analysis | [V1 Design](plans/2026-02-05-armorclaw-v1-design.md) |
-| **Feature: Bridge** | Bridge Reference | JSON-RPC API, configuration, keystore, Matrix | [Bridge Reference](reference/bridge.md) |
-| **Feature: Container** | Container Reference | Hardening, entrypoint, security properties | [Container Reference](reference/container.md) |
-| **Feature: Deploy** | Deployment Reference | Scripts, infrastructure, verification | [Deployment Reference](reference/deployment.md) |
-| **Functions** | Architecture Review | **119 documented functions** with signatures | [Architecture Review](output/review.md) |
+| **Entry** | README.md | Project overview, deployment modes, architecture | [README.md](../README.md) |
+| **Hub** | docs/index.md | Central navigation, feature directory, RPC API | [docs/index.md](index.md) |
+| **Hub** | ArmorClaw Overview | Docker Hub description, quick start, profiles | [ArmorClaw-overview.md](ArmorClaw-overview.md) |
+| **Architecture** | System Doc | Complete system documentation | [doc/armorclaw.md](../doc/armorclaw.md) |
+| **Mobile** | ArmorChat Doc | Android client, ViewModels, screens, E2EE | [doc/ArmorChat.md](../doc/ArmorChat.md) |
+| **Agents** | Agent Runtime | Agent runtime internals | [doc/agent-runtime.md](../doc/agent-runtime.md) |
+| **Documents** | Sidecar Pipeline | Rust/Python sidecars, Go routing, YARA CDR | [doc/sidecar-pipeline.md](../doc/sidecar-pipeline.md) |
+| **Comms** | Communication Infra | Push, SSO, WebSocket, EventBus, adapters | [doc/communication-infra.md](../doc/communication-infra.md) |
+| **Workflows** | Secretary Workflow | Workflow engine, step execution, blockers | [doc/secretary-workflow.md](../doc/secretary-workflow.md) |
+| **Email** | Email Pipeline | Email processing, PII detection, HITL | [doc/email-pipeline.md](../doc/email-pipeline.md) |
+| **Email+Mobile** | Email Android | Email approval flow on ArmorChat | [doc/email-android-integration.md](../doc/email-android-integration.md) |
+| **Clients** | Client Apps | Admin Panel, ArmorTerminal, Setup Wizard | [doc/client-applications.md](../doc/client-applications.md) |
+| **Licensing** | License System | License server, state machine, grace periods | [doc/license-system.md](../doc/license-system.md) |
+| **Voice** | Voice Stack | WebRTC voice, TURN relay | [doc/voice-stack.md](../doc/voice-stack.md) |
 
 ## By User Intent
 
 | I want to... | Start at | Then go to |
 |-------------|---------|-----------|
-| **Understand why ArmorClaw exists** | [README.md](../README.md) | - |
-| **Deploy ArmorClaw** | [Quick Start Guide](guides/quick-start.md) | [Deployment Guide](guides/deployment-guide.md) |
-| **Understand the architecture** | [V1 Design](plans/2026-02-05-armorclaw-v1-design.md) | [Architecture Review](output/review.md) |
-| **Integrate with the Bridge API** | [Bridge Reference](reference/bridge.md) | [Architecture Review](output/review.md) |
-| **Understand container security** | [Container Reference](reference/container.md) | [V1 Design](plans/2026-02-05-armorclaw-v1-design.md) |
-| **Find a specific function** | [Architecture Review](output/review.md#function-catalog) | - |
-| **Modify container behavior** | [Container Reference](reference/container.md) | [Architecture Review](output/review.md#container-functions) |
-| **Add RPC method** | [Bridge Reference](reference/bridge.md) | [Architecture Review](output/review.md#rpc-functions) |
+| **Understand why ArmorClaw exists** | [README.md](../README.md) | [ArmorClaw-overview.md](ArmorClaw-overview.md) |
+| **Deploy ArmorClaw** | [README.md](../README.md) (Deployment Modes) | [docs/index.md](index.md) (Post-Setup Scripts) |
+| **Understand the architecture** | [doc/armorclaw.md](../doc/armorclaw.md) | [doc/communication-infra.md](../doc/communication-infra.md) |
+| **Integrate with the Bridge API** | [docs/index.md](index.md) (Feature Directory) | [doc/armorclaw.md](../doc/armorclaw.md) |
+| **Work on ArmorChat Android** | [doc/ArmorChat.md](../doc/ArmorChat.md) | [doc/client-applications.md](../doc/client-applications.md) |
+| **Understand document processing** | [doc/sidecar-pipeline.md](../doc/sidecar-pipeline.md) | [doc/armorclaw.md](../doc/armorclaw.md) |
+| **Add an RPC method** | [docs/index.md](index.md) (JSON-RPC Server) | [doc/armorclaw.md](../doc/armorclaw.md) |
+| **Configure email approvals** | [doc/email-pipeline.md](../doc/email-pipeline.md) | [doc/email-android-integration.md](../doc/email-android-integration.md) |
+| **Set up browser automation** | [doc/armorclaw.md](../doc/armorclaw.md) (Jetski) | README.md (Jetski Browser Sidecar) |
 
-## Function Catalog Locations
+## Component Architecture
 
-The complete function catalog (119 functions) is in [Architecture Review](output/review.md#function-catalog), organized by component:
-
-| Component | Functions | Link |
-|-----------|-----------|------|
-| **Container** | 3 functions | [Container Functions](output/review.md#container-functions) |
-| **Config** | 20 functions | [Config Functions](output/review.md#config-functions) |
-| **Keystore** | 12 functions | [Keystore Functions](output/review.md#keystore-functions) |
-| **RPC (pkg/rpc)** | 13 functions | [RPC Functions](output/review.md#rpc-functions) |
-| **Docker Client** | 16 functions | [Docker Client Functions](output/review.md#docker-client-functions) |
-| **Socket (pkg/socket)** | 12 functions | [Socket Functions](output/review.md#socket-functions) |
-| **Matrix (pkg/matrix)** | 6 functions | [Matrix Functions](output/review.md#matrix-functions) |
-| **Matrix Adapter** | 11 functions | [Matrix Adapter Functions](output/review.md#matrix-functions-1) |
-| **Bridge Main** | 4 functions | [Bridge Main Functions](output/review.md#bridge-main-functions) |
-| **Deployment** | 21 functions | [Deployment Functions](output/review.md#deployment-functions) |
-
-## Key Design Decisions
-
-| Decision | Document | Section |
-|----------|----------|---------|
-| **Why hardened container?** | V1 Design | [Container Hardening](plans/2026-02-05-armorclaw-v1-design.md#container-hardening) |
-| **Why Unix socket?** | V1 Design | [Local Bridge Architecture](plans/2026-02-05-armorclaw-v1-design.md#local-bridge-architecture) |
-| **Why FD passing for secrets?** | V1 Design | [Secrets Injection Mechanism](plans/2026-02-05-armorclaw-v1-design.md#secrets-injection-mechanism) |
-| **Why SQLCipher + XChaCha20?** | Architecture Review | [Keystore Component](output/review.md#keystore-component) |
-| **Why Matrix for communication?** | V1 Design | [Supported AI Providers](plans/2026-02-05-armorclaw-v1-design.md#supported-ai-providers) |
-
-## Security Documentation
-
-| Topic | Document | Section |
-|-------|----------|---------|
-| **Threat Model** | V1 Design | [Threat Model & Security Guarantees](plans/2026-02-05-armorclaw-v1-design.md#threat-model--security-guarantees) |
-| **Security Architecture** | Architecture Review | [Security Architecture](output/review.md#security-architecture) |
-| **Container Hardening** | Container Reference | [Hardening Measures](reference/container.md#hardening-measures) |
-| **Keystore Security** | Bridge Reference | [Security Considerations](reference/bridge.md#security-considerations) |
-
-## Getting Started by Role
-
-| Role | Start Here | Then |
-|------|-----------|------|
-| **DevOps Engineer** | [Quick Start Guide](guides/quick-start.md) | [Deployment Guide](guides/deployment-guide.md) |
-| **Security Researcher** | [V1 Design](plans/2026-02-05-armorclaw-v1-design.md) | [Security Architecture](output/review.md#security-architecture) |
-| **Developer** | [Bridge Reference](reference/bridge.md) | [Architecture Review](output/review.md) |
-| **Contributor** | [CONTRIBUTING.md](../CONTRIBUTING.md) | [Documentation Specification](wiki/documentation-specification.md) |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      ARMORCLAW ARCHITECTURE                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   External Platforms          Bridge Components                  │
+│   ┌─────────────┐            ┌─────────────────────┐           │
+│   │    Slack    │───────────▶│   SDTW Adapters     │           │
+│   │   Discord   │            │   (Slack/Discord/   │           │
+│   │    Teams    │            │    Teams/WhatsApp)  │           │
+│   │  WhatsApp   │            └──────────┬──────────┘           │
+│   └─────────────┘                       │                       │
+│                                         ▼                       │
+│                              ┌─────────────────────┐           │
+│                              │   Message Queue     │           │
+│                              │   (SQLite + WAL)    │           │
+│                              └──────────┬──────────┘           │
+│                                         │                       │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    BRIDGE BINARY                         │   │
+│   │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌─────────┐ │   │
+│   │  │ Keystore  │ │  Trust    │ │   Audit   │ │  RPC    │ │   │
+│   │  │(Encrypted)│ │ Middleware│ │   Log     │ │ Server  │ │   │
+│   │  └───────────┘ └───────────┘ └───────────┘ └─────────┘ │   │
+│   │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌─────────┐ │   │
+│   │  │  Budget   │ │  WebRTC   │ │  Errors   │ │  Health │ │   │
+│   │  │  Tracker  │ │  Engine   │ │  System   │ │ Monitor │ │   │
+│   │  └───────────┘ └───────────┘ └───────────┘ └─────────┘ │   │
+│   │  ┌───────────┐ ┌───────────┐ ┌───────────┐             │   │
+│   │  │  Ghost    │ │  License  │ │  Crypto   │             │   │
+│   │  │  Manager  │ │   State   │ │   Store   │             │   │
+│   │  └───────────┘ └───────────┘ └───────────┘             │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│              ┌───────────────┼───────────────┐                  │
+│              ▼               ▼               ▼                  │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│   │    Matrix    │  │   Container  │  │    TURN      │         │
+│   │  Homeserver  │  │   Runtime    │  │   Server     │         │
+│   │  (Conduit)   │  │   (Docker)   │  │  (Coturn)    │         │
+│   └──────────────┘  └──────────────┘  └──────────────┘         │
+│                                                                  │
+│   Sidecars                                                      │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│   │ Rust Sidecar │  │Python Sidecar│  │    Jetski    │         │
+│   │ (PDF/DOCX)   │  │ (XLSX/MSG)  │  │ (CDP Proxy)  │         │
+│   └──────────────┘  └──────────────┘  └──────────────┘         │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## File Structure Reference
 
@@ -103,39 +124,58 @@ The complete function catalog (119 functions) is in [Architecture Review](output
 ArmorClaw/
 ├── README.md                           # Level 1: Entry point
 ├── CLAUDE.md                           # Project guidance for Claude Code
+├── AGENTS.md                           # Agent OS guardrails
 ├── LICENSE                             # MIT License
 │
-├── doc/                                # Documentation root
-│   ├── index.md                        # Level 2: Documentation hub
-│   ├── NAVIGATION.md                   # This file
-│   │
-│   ├── wiki/                           # Documentation standards
-│   │   ├── index.md                    # Wiki index
-│   │   └── documentation-specification.md  # Writing guidelines
-│   │
-│   ├── plans/                          # Level 3: Architecture & design
-│   │   └── 2026-02-05-armorclaw-v1-design.md
-│   │
-│   ├── reference/                      # Level 4: Feature specifications
-│   │   ├── bridge.md                   # Bridge API reference
-│   │   ├── container.md                # Container reference
-│   │   └── deployment.md               # Deployment reference
-│   │
-│   ├── guides/                         # How-to guides
-│   │   ├── quick-start.md              # Get started in 15 minutes
-│   │   ├── element-x-deployment.md     # Element X integration
-│   │   └── deployment-guide.md         # Comprehensive deployment
-│   │
-│   ├── status/                         # Project status
-│   │   └── 2026-02-05-status.md
-│   │
-│   ├── PROGRESS/                       # Milestone tracking
-│   │   └── progress.md                 # Updated after each milestone
-│   │
-│   └── output/                         # Level 5: Architecture reviews
-│       └── review.md                   # All 119 documented functions
+├── doc/                                # System documentation
+│   ├── armorclaw.md                    # Main system doc (3454 lines)
+│   ├── ArmorChat.md                    # Android client doc (5881 lines)
+│   ├── agent-runtime.md                # Agent runtime internals
+│   ├── sidecar-pipeline.md             # Document processing pipeline
+│   ├── communication-infra.md          # Communication subsystems
+│   ├── secretary-workflow.md           # Workflow engine
+│   ├── email-pipeline.md               # Email pipeline
+│   ├── email-android-integration.md    # Email-Android integration
+│   ├── client-applications.md          # Client apps overview
+│   ├── license-system.md               # License system
+│   ├── voice-stack.md                  # Voice stack
+│   ├── armor-runtime.md                # Agent runtime (legacy)
+│   ├── migration/                      # Migration guides
+│   └── ACTIVE/                         # Active work docs
 │
-├── bridge/                             # Local Bridge (Go)
+├── docs/                               # Published documentation hub
+│   ├── index.md                        # Central navigation
+│   ├── NAVIGATION.md                   # This file
+│   ├── ArmorClaw-overview.md           # Docker Hub overview
+│   ├── guides/                         # How-to guides
+│   ├── reference/                      # API references
+│   ├── operations/                     # Operations docs
+│   ├── plans/                          # Design plans
+│   ├── output/                         # Generated docs
+│   └── dockerfiles/                    # Docker guides
+│
+├── bridge/                             # Go Bridge (control plane)
+│   ├── cmd/bridge/                     # Entry point
+│   ├── pkg/rpc/                        # JSON-RPC server (51+ methods)
+│   ├── pkg/keystore/                   # SQLCipher encrypted storage
+│   ├── pkg/eventbus/                   # In-process pub/sub
+│   ├── pkg/websocket/                  # Real-time event streaming
+│   ├── pkg/push/                       # Push notifications
+│   ├── pkg/secretary/                  # Workflow engine
+│   ├── pkg/sidecar/                    # Sidecar routing
+│   ├── internal/adapter/               # Matrix and Slack adapters
+│   └── internal/sdtw/                  # Discord, Teams, WhatsApp adapters
+│
+├── jetski/                             # Jetski CDP proxy (Go)
+├── browser-service/                    # Browser automation (TypeScript/Playwright)
+├── sidecar-rust/                       # Rust Office Sidecar
+├── sidecar-python/                     # Python MarkItDown Sidecar
+├── applications/                       # Client applications
+│   ├── ArmorChat/                      # Android mobile app
+│   ├── admin-panel/                    # React admin dashboard
+│   ├── ArmorTerminal/                  # Android provisioning app
+│   └── setup-wizard/                   # React setup wizard
+│
 ├── container/                          # Container runtime files
 ├── deploy/                             # Deployment scripts
 └── tests/                              # Test suites
@@ -143,22 +183,15 @@ ArmorClaw/
 
 ## Tips for LLM Navigation
 
-1. **Always start at README.md** to understand the project context
-2. **Use docs/index.md** to find relevant documentation sections
-3. **Read V1 Design** for architectural decisions and security model
-4. **Check reference docs** for feature-specific specifications
-5. **Go to review.md** for function/variable level details
-6. **Use NAVIGATION.md (this file)** as a quick reference
-
-## Documentation Standards
-
-All ArmorClaw documentation follows the standards defined in:
-- [Documentation Specification](wiki/documentation-specification.md)
-
-This ensures consistent formatting, structure, and quality across all documentation.
+1. **Always start at README.md** to understand the project context and current version
+2. **Use docs/index.md** for feature directory and deployment options
+3. **Read doc/armorclaw.md** for complete system architecture and all subsystem details
+4. **Read doc/ArmorChat.md** for mobile client specifics (ViewModels, screens, flows)
+5. **Check subsystem docs in doc/** for deep dives into specific areas
+6. **Use NAVIGATION.md (this file)** as a quick reference for file locations
 
 ---
 
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-04-19
 **Maintained By:** ArmorClaw Documentation Team
 **Feedback:** Open an issue on [GitHub](https://github.com/Gemutly/ArmorClaw/issues)

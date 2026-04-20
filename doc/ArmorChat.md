@@ -337,11 +337,34 @@ androidApp/src/main/kotlin/com/armorclaw/app/
 ├── components/               # Android-specific UI components
 │   └── DeepLinkConfirmationDialog.kt
 │
-├── ui/                       # Shared UI composables (v3)
+├── ui/                       # UI screens and components
+│   ├── account/             # Account screens
+│   │   └── AccountDeletionScreen.kt   # Hardening check, password, "type DELETE" (261 lines)
+│   ├── agent/               # Agent management
+│   │   └── AgentScreen.kt             # Agent list, create dialog, detail view (515 lines)
+│   ├── approval/            # HITL approvals
+│   │   └── ApprovalScreen.kt          # Tabbed PII/MCP/Email approval lists (329 lines)
+│   ├── email/               # Email approval deep link
+│   │   └── EmailApprovalScreen.kt     # Email detail with approve/reject (179 lines)
+│   ├── home/                # Home/dashboard
+│   │   └── HomeScreen.kt              # Dashboard with cards, quick actions (365 lines)
+│   ├── workflow/            # Workflow management
+│   │   └── WorkflowScreen.kt          # Workflow list, detail, timeline (412 lines)
+│   ├── security/            # Security/hardening screens
+│   │   ├── BondingScreen.kt
+│   │   ├── SecurityConfigScreen.kt
+│   │   ├── PasswordRotationScreen.kt
+│   │   ├── BiometricEnableScreen.kt
+│   │   └── KeyBackupSetupScreen.kt
+│   ├── verification/        # Verification screens
+│   │   └── BridgeVerificationScreen.kt
 │   └── components/          # Reusable workflow UI components
-│       ├── WorkflowTimeline.kt        # Scrollable vertical timeline (473 lines)
-│       ├── BlockerResponseDialog.kt   # HITL blocker resolution modal (461 lines)
-│       └── GovernanceBanner.kt        # Workflow status banner (317 lines)
+│       ├── WorkflowTimeline.kt        # Scrollable vertical timeline (561 lines)
+│       ├── BlockerResponseDialog.kt   # HITL blocker resolution modal (518 lines)
+│       ├── GovernanceBanner.kt        # Workflow status banner (317 lines)
+│       ├── PiiApprovalCard.kt         # PII approval card (370 lines)
+│       ├── EmailApprovalCard.kt       # Email approval card (194 lines)
+│       └── BlindFillCard.kt           # BlindFill secret injection card (389 lines)
 │
 ├── data/                     # Data implementations
 │   ├── database/            # SQLCipher database
@@ -445,8 +468,13 @@ androidApp/src/main/kotlin/com/armorclaw/app/
 │
 ├── util/                     # Utilities
 │
-├── viewmodels/               # Screen ViewModels (16 files)
-│   ├── AccountDeletionViewModel.kt
+├── viewmodels/               # Screen ViewModels (22 files)
+│   ├── AgentManagementViewModel.kt  # Agent CRUD via BridgeApi (129 lines)
+│   ├── BondingViewModel.kt          # Bonding/pairing flow (179 lines)
+│   ├── HitlViewModel.kt             # HITL approval tabs: PII, MCP, Email (202 lines)
+│   ├── WorkflowViewModel.kt         # Workflow list, detail, timeline (238 lines)
+│   ├── HardeningWizardViewModel.kt  # Hardening wizard state (156 lines)
+│   ├── SecurityConfigViewModel.kt   # Security config screen (158 lines)
 │   ├── AppPreferences.kt    # App preferences (DataStore)
 │   ├── ChangePasswordViewModel.kt
 │   ├── ChangePhoneViewModel.kt
@@ -462,6 +490,10 @@ androidApp/src/main/kotlin/com/armorclaw/app/
 │   ├── UnsealViewModel.kt   # Keystore unseal
 │   ├── UserProfileViewModel.kt
 │   └── WelcomeViewModel.kt  # Welcome state
+│
+│   # Co-located ViewModels (in screen files, not viewmodels/ directory):
+│   #   DashboardViewModel    → ui/home/HomeScreen.kt (365 lines)
+│   #   AccountDeletionViewModel → ui/account/AccountDeletionScreen.kt (261 lines)
 │
 ├── ArmorClawApplication.kt   # Application class (Koin init)
 └── MainActivity.kt           # Main activity
@@ -829,6 +861,7 @@ Key ViewModels and their responsibilities:
 |-----------|--------|-----------|
 | `ChatViewModel` | Chat | Messages, input, typing, call state |
 | `HomeViewModel` | Home | Room list, filters, sync status |
+| `DashboardViewModel` | HomeScreen | Agent/approval/workflow counts via BridgeApi (co-located in HomeScreen.kt) |
 | `ProfileViewModel` | Profile | User data, edit mode |
 | `UserProfileViewModel` | User Profile | Other user's profile data |
 | `SettingsViewModel` | Settings | Settings state, logout |
@@ -841,7 +874,10 @@ Key ViewModels and their responsibilities:
 | `ChangePasswordViewModel` | Change Password | Password change flow |
 | `ChangePhoneViewModel` | Change Phone | Phone change flow |
 | `EditBioViewModel` | Edit Bio | Bio editing |
-| `AccountDeletionViewModel` | Delete Account | Account deletion flow |
+| `AccountDeletionViewModel` | AccountDeletionScreen | Hardening check, password, delete confirmation (co-located in AccountDeletionScreen.kt) |
+| `AgentManagementViewModel` | AgentScreen | Agent CRUD, list, create, detail (129 lines) |
+| `HitlViewModel` | ApprovalScreen | HITL approval tabs: PII, MCP, Email (202 lines) |
+| `WorkflowViewModel` | WorkflowScreen | Workflow list, detail, timeline, blocker resolution (238 lines) |
 | `AppPreferences` | (Global) | DataStore preferences |
 
 ### State Management Pattern
@@ -886,13 +922,16 @@ Screen
 
 ### Workflow Composables (v3)
 
-Three Jetpack Compose components handle agent workflow visualization and blocker resolution:
+Six Jetpack Compose components handle agent workflow visualization, approval, and blocker resolution:
 
 | Composable | Package | Purpose |
 |-----------|---------|---------|
-| `WorkflowTimeline` | `app.armorclaw.ui.components` | Scrollable vertical timeline showing agent step progress, icons, durations |
-| `BlockerResponseDialog` | `app.armorclaw.ui.components` | Modal dialog for resolving HITL blockers with PII-safe input |
-| `GovernanceBanner` | `app.armorclaw.ui.components` | Compact status banner (RUNNING/BLOCKED/COMPLETED/FAILED/CANCELLED) |
+| `WorkflowTimeline` | `app.armorclaw.ui.components` | Scrollable vertical timeline showing agent step progress, icons, durations (561 lines) |
+| `BlockerResponseDialog` | `app.armorclaw.ui.components` | Modal dialog for resolving HITL blockers with PII-safe input (518 lines) |
+| `GovernanceBanner` | `app.armorclaw.ui.components` | Compact status banner (RUNNING/BLOCKED/COMPLETED/FAILED/CANCELLED) (317 lines) |
+| `PiiApprovalCard` | `app.armorclaw.ui.components` | PII access request approval card (370 lines) |
+| `EmailApprovalCard` | `app.armorclaw.ui.components` | Email-based approval card (194 lines) |
+| `BlindFillCard` | `app.armorclaw.ui.components` | BlindFill secret injection card (389 lines) |
 
 State flows from Matrix `/sync` events through the ViewModel/StateFlow pattern into these composables. They do not manage network connections directly.
 
@@ -1009,6 +1048,31 @@ object AppNavigation {
     fun createFilePreviewRoute(fileId: String): String = "file_preview/$fileId"
 }
 ```
+
+### New Navigation (Route sealed class + ArmorClawNavHost)
+
+In addition to the legacy `AppNavigation` routes, ArmorChat uses a `Route` sealed class in `navigation/Route.kt` with `ArmorClawNavHost` wiring all routes to real screens:
+
+| Route | Screen | Status |
+|-------|--------|--------|
+| `Bonding` | `BondingScreen` | ✅ Implemented |
+| `HardeningPassword` | `PasswordRotationScreen` | ✅ Implemented |
+| `HardeningDevice` | `BridgeVerificationScreen` | ✅ Implemented |
+| `KeyBackup` | `KeyBackupSetupScreen` | ✅ Implemented |
+| `HardeningBiometrics` | `BiometricEnableScreen` | ✅ Implemented |
+| `SecurityConfig` | `SecurityConfigScreen` | ✅ Implemented |
+| `Home` | `HomeScreen` (dashboard) | ✅ Implemented |
+| `AgentManagement` | `AgentScreen` | ✅ Implemented |
+| `Approvals` | `ApprovalScreen` (tabbed: PII/MCP/Email) | ✅ Implemented |
+| `Workflow` | `WorkflowScreen` | ✅ Implemented |
+| `Secrets` | `SecretsScreen` | ✅ Implemented |
+| `Migration` | `MigrationScreen` | ✅ Implemented |
+| `KeyRecovery` | `KeyRecoveryScreen` | ✅ Implemented |
+| `AccountDeletion` | `AccountDeletionScreen` | ✅ Implemented |
+| `EmailApproval(approvalId)` | `EmailApprovalScreen` | ✅ Implemented |
+| `Room(roomId)` | `PlaceholderScreen` ("Chat Room") | Pre-existing |
+
+All routes are wired in `ArmorClawNavHost.kt` (258 lines). The `Room` route is the only remaining `PlaceholderScreen`, used for the pre-existing Chat Room feature.
 
 ### Navigation Flows
 
@@ -1350,21 +1414,24 @@ object ArmorClawEventType {
 
 ### Agent Management (NEW in v3.3.0)
 
-ArmorChat now includes a dedicated **Agent Management Screen** for viewing and controlling AI agents:
+ArmorChat now includes a dedicated **Agent Management Screen** (`AgentScreen`, 515 lines) for viewing and controlling AI agents:
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| Agent List | View all running agents with status | ✅ |
-| Agent Status | Real-time status (idle/busy/error) | ✅ |
-| Stop Agent | Safely stop a running agent | ✅ |
-| Room Association | See which room an agent is active in | ✅ |
+| Agent List | View all running agents with status | ✅ Implemented |
+| Agent Status | Real-time status (idle/busy/error) | ✅ Implemented |
+| Stop Agent | Safely stop a running agent | ✅ Implemented |
+| Room Association | See which room an agent is active in | ✅ Implemented |
+| Create Agent | Dialog for creating new agents | ✅ Implemented |
+| Agent Detail | Detailed view of individual agent | ✅ Implemented |
 
-**New ViewModels (planned — routes defined, screens not yet built):**
-| ViewModel | Purpose |
-|-----------|---------|
-| `AgentManagementViewModel` | Manage AI agents |
-| `HitlViewModel` | Handle HITL approvals |
-| `WorkflowViewModel` | Workflow management |
+**New ViewModels (implemented):**
+| ViewModel | Purpose | Lines |
+|-----------|---------|-------|
+| `AgentManagementViewModel` | Agent CRUD, list, create, detail via BridgeApi | 129 |
+| `HitlViewModel` | HITL approval tabs: PII, MCP, Email | 202 |
+| `WorkflowViewModel` | Workflow list, detail, timeline, blocker resolution | 238 |
+| `DashboardViewModel` | Dashboard counts (agents/approvals/workflows) via BridgeApi | co-located in HomeScreen.kt |
 
 **New RPC Methods:**
 | Method | Purpose |
@@ -1377,14 +1444,15 @@ ArmorChat now includes a dedicated **Agent Management Screen** for viewing and c
 
 ### HITL (Human-in-the-Loop) Approvals (NEW in v3.3.0)
 
-The **HITL Approval Screen** allows users to review and approve/reject AI action requests:
+The **HITL Approval Screen** (`ApprovalScreen`, 329 lines) provides tabbed views for PII, MCP, and Email approvals:
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| Pending List | View all pending approvals | ✅ |
-| Approve/Reject | One-click approval or rejection | ✅ |
-| Priority Levels | Critical, High, Medium, Low | ✅ |
-| Reason Input | Optional rejection reason | ✅ |
+| Pending List | View all pending approvals | ✅ Implemented |
+| Approve/Reject | One-click approval or rejection | ✅ Implemented |
+| Priority Levels | Critical, High, Medium, Low | ✅ Implemented |
+| Reason Input | Optional rejection reason | ✅ Implemented |
+| Tabbed UI | Separate tabs for PII, MCP, Email approvals | ✅ Implemented |
 
 **New RPC Methods:**
 | Method | Purpose |
@@ -1394,6 +1462,15 @@ The **HITL Approval Screen** allows users to review and approve/reject AI action
 | `hitl.reject` | Reject a request |
 
 ### Workflow Management (NEW in v3.3.0)
+
+The **Workflow Screen** (`WorkflowScreen`, 412 lines) provides a full workflow management UI with list, detail, and timeline views:
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Workflow List | View all workflows with status | ✅ Implemented |
+| Workflow Detail | Detailed view with step breakdown | ✅ Implemented |
+| Timeline View | Visual timeline with step icons and durations | ✅ Implemented |
+| Blocker Resolution | Resolve blocked workflows inline | ✅ Implemented |
 
 **New RPC Methods:**
 | Method | Purpose |
@@ -1438,6 +1515,42 @@ When a container step hits a blocker (missing PII, approval required, CAPTCHA), 
 | Method | Purpose |
 |--------|---------|
 | `budget.status` | Get budget usage and limits |
+
+### Dashboard (HomeScreen)
+
+The **HomeScreen** (365 lines) is the main dashboard after onboarding. It displays summary cards for agents, approvals, and workflows, plus quick action buttons and an account settings link.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Agent Count Card | Shows number of active agents | ✅ Implemented |
+| Approval Count Card | Shows pending HITL approvals | ✅ Implemented |
+| Workflow Count Card | Shows running workflows | ✅ Implemented |
+| Quick Actions | Navigate to agents, approvals, workflows | ✅ Implemented |
+| Account Settings Link | Navigate to account deletion | ✅ Implemented |
+| `DashboardViewModel` | Fetches counts via BridgeApi (co-located) | ✅ Implemented |
+
+### Email Approval Screen (EmailApprovalScreen)
+
+The **EmailApprovalScreen** (179 lines) handles the `email/approve/{approvalId}` deep link for approving/rejecting email-based actions from notifications.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Email Detail View | Shows email content and approval context | ✅ Implemented |
+| Approve Action | One-click approval | ✅ Implemented |
+| Reject Action | Reject with optional reason | ✅ Implemented |
+| Deep Link Routing | Handles `email/approve/{approvalId}` route | ✅ Implemented |
+
+### Account Deletion Screen (AccountDeletionScreen)
+
+The **AccountDeletionScreen** (261 lines) implements a safe account deletion flow with multiple confirmation steps.
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Hardening Check | Verifies account can be deleted | ✅ Implemented |
+| Password Confirmation | Requires current password | ✅ Implemented |
+| "Type DELETE" Confirmation | Explicit text confirmation | ✅ Implemented |
+| `deleteAccount` API Call | Calls BridgeApi to delete account | ✅ Implemented |
+| `AccountDeletionViewModel` | Manages deletion state (co-located) | ✅ Implemented |
 
 ### Agent Types
 
@@ -1533,7 +1646,7 @@ enum class AgentTaskStatus {
 - ✅ Change password (`ChangePasswordScreen` + `ChangePasswordViewModel`)
 - ✅ Change phone (`ChangePhoneNumberScreen` + `ChangePhoneViewModel`)
 - ✅ Edit bio (`EditBioScreen` + `EditBioViewModel`)
-- ⚠️ Delete account (`DeleteAccountScreen` — screen exists, ViewModel pending)
+- ✅ Delete account (`AccountDeletionScreen`, 261 lines + `AccountDeletionViewModel` co-located)
 
 #### Settings
 - ✅ Settings screen

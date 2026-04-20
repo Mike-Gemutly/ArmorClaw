@@ -1,6 +1,6 @@
 # ArmorClaw Documentation
 
-> **Version:** 0.2.2 | **Last Updated:** 2026-02-23 | **Status:** Production Testing
+> **Version:** 4.8.0 | **Last Updated:** 2026-04-19 | **Status:** Production Ready
 
 ---
 
@@ -114,9 +114,35 @@ curl -fsSL https://install.armorclaw.com | bash
 | **Encrypted Keystore** | SQLCipher + XChaCha20-Poly1305 credential storage | [Config Guide](guides/configuration.md) | `bridge/pkg/keystore` |
 | **Docker Client** | Scoped container operations (create, exec, remove) | [Development Guide](guides/development.md) | `bridge/pkg/docker` |
 | **Matrix Adapter** | E2EE-capable Matrix bridge | [Matrix Deployment](guides/matrix-homeserver-deployment.md) | `bridge/internal/adapter` |
-| **JSON-RPC Server** | Unix socket API with 24 methods | [RPC API Reference](reference/rpc-api.md) | `bridge/pkg/rpc` |
+| **JSON-RPC Server** | Unix socket API with 51+ methods | [RPC API Reference](reference/rpc-api.md) | `bridge/pkg/rpc` |
 | **Configuration System** | TOML + environment variables | [Configuration Guide](guides/configuration.md) | `bridge/pkg/config` |
 | **Secret Injection** | Memory-only, never on disk | [Security Config](guides/security-configuration.md) | `bridge/pkg/secrets` |
+
+### Document Processing
+
+| Feature | Description | Docs | Package |
+|---------|-------------|------|---------|
+| **Rust Office Sidecar** | PDF/DOCX extraction, S3 storage, gRPC (8 RPCs) | [Sidecar Pipeline](../doc/sidecar-pipeline.md) | `sidecar-rust/` |
+| **Python MarkItDown Sidecar** | XLSX/PPTX/MSG/XLS/DOC/PPT extraction, TTL recycling | [Sidecar Pipeline](../doc/sidecar-pipeline.md) | `sidecar-python/` |
+| **3-Layer Document Routing** | Native text bypass, compound validation, strict drop | [Sidecar Pipeline](../doc/sidecar-pipeline.md) | `bridge/pkg/sidecar` |
+| **YARA Content Disarm** | Malicious content detection and neutralization | [Sidecar Pipeline](../doc/sidecar-pipeline.md) | `bridge/pkg/sidecar` |
+
+### Browser Automation
+
+| Feature | Description | Docs | Package |
+|---------|-------------|------|---------|
+| **Jetski CDP Proxy** | Browser sidecar with PII scrubbing, SQLCipher sessions, Matrix HITL | [Jetski README](../jetski/README.md) | `jetski/` |
+| **browser-service** | Playwright HTTP automation (canonical browser path) | - | `browser-service/` |
+| **Tethered Mode** | Active PII scrubbing, encrypted sessions, approval flows | [System Doc](../doc/armorclaw.md) | `jetski/` |
+
+### Deployment Modes (v4.7.0+)
+
+| Mode | Description | Use Case | Docs |
+|------|-------------|---------|------|
+| **Native** | Unix socket, local only | Development, testing | [README](../README.md) |
+| **Sentinel** | Let's Encrypt TLS, public VPS access | Production | [README](../README.md) |
+| **Cloudflare Tunnel** | Outbound tunnel, no public IP needed | NAT/firewall environments | [README](../README.md) |
+| **Cloudflare Proxy** | CDN, DDoS protection via Cloudflare | Existing Cloudflare setups | [README](../README.md) |
 
 ### Security Features
 
@@ -614,11 +640,27 @@ read_only_on_grace = false
 | Document | Purpose |
 |----------|---------|
 | [Production Installer v4](operations/installer-v4.md) | Deterministic, hardened deployment |
-| [RPC API Reference](reference/rpc-api.md) | Complete JSON-RPC 2.0 API (24 methods) |
+| [RPC API Reference](reference/rpc-api.md) | Complete JSON-RPC 2.0 API (51+ methods) |
 | [Error Catalog](guides/error-catalog.md) | Every error with solutions |
 | [Security Configuration](guides/security-configuration.md) | Zero-trust, budget, PII |
 | [Troubleshooting Guide](guides/troubleshooting.md) | Systematic debugging |
 | [Configuration Guide](guides/configuration.md) | TOML config and env vars |
+
+### System Documentation (doc/)
+
+| Document | Purpose |
+|----------|---------|
+| [System Documentation](../doc/armorclaw.md) | Complete system architecture (3454 lines) |
+| [ArmorChat Android](../doc/ArmorChat.md) | Mobile client documentation (5881 lines) |
+| [Sidecar Pipeline](../doc/sidecar-pipeline.md) | Document processing (Rust + Python sidecars, Go routing) |
+| [Communication Infra](../doc/communication-infra.md) | Push, SSO, WebSocket, EventBus, platform adapters |
+| [Secretary Workflow](../doc/secretary-workflow.md) | Workflow engine and step execution |
+| [Email Pipeline](../doc/email-pipeline.md) | Email processing and PII detection |
+| [Email Android Integration](../doc/email-android-integration.md) | Email approval flow on ArmorChat |
+| [Client Applications](../doc/client-applications.md) | Admin Panel, ArmorTerminal, Setup Wizard, OpenClaw UI |
+| [License System](../doc/license-system.md) | License server and state management |
+| [Voice Stack](../doc/voice-stack.md) | WebRTC voice communication |
+| [Agent Runtime](../doc/agent-runtime.md) | Agent runtime internals |
 
 ---
 
@@ -685,4 +727,4 @@ See [CHANGELOG.md](../CHANGELOG.md) for complete version history with commit ref
 
 ---
 
-**Documentation Version:** 5.3.0 | **Last Updated:** 2026-02-21
+**Documentation Version:** 4.8.0 | **Last Updated:** 2026-04-19

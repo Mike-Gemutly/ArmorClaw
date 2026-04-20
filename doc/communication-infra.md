@@ -358,7 +358,7 @@ Bridge Core
   +-- EventBus (pkg/eventbus)
   |     |-- Receives events from Matrix adapter and internal components
   |     |-- Distributes to in-process subscribers
-  |     |-- Optionally broadcasts via WebSocket (pkg/websocket) — stub, not yet implemented
+  |     |-- Optionally broadcasts via WebSocket (pkg/websocket) — wired since v0.7.0 (EventBroadcaster adapter)
   |     |-- Optionally appends to durable log
   |
   +-- MatrixEventBus (internal/events)

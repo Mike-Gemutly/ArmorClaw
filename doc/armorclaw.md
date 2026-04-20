@@ -134,7 +134,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
 | **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill service | `rust-vault/src/main.rs` |
-| **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (XLSX, PPTX, MSG, XLS, DOC, PPT) | `sidecar-python/worker.py` |
+| **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (MSG, XLS, DOC, PPT). XLSX/PPTX migrated to Rust. | `sidecar-python/worker.py` |
 | **Email Approval** | Go (Bridge) | Email-based HITL approval for sensitive operations | `bridge/pkg/approval/email.go` |
 </component>
 
@@ -2193,8 +2193,8 @@ jetski/
 Tethered Mode is the security enforcement layer in Jetski. When enabled:
 
 1. **PII Scrubbing**: All CDP traffic is scanned for PII patterns (SSN, credit card, email, password). Detected values are replaced with `[REDACTED_TYPE]` tokens.
-2. **SQLCipher Sessions**: Browser sessions are encrypted using SQLCipher with PBKDF2-HMAC-SHA512 key derivation (256,000 iterations). Keys are zeroized from memory after use.
-3. **Matrix HITL Approval**: Sensitive browser operations (form submissions with PII, navigation to financial sites) require human approval via Matrix. Pending requests timeout after 60 seconds.
+2. **SQLCipher Sessions**: Browser sessions are encrypted using SQLCipher with PBKDF2-HMAC-SHA512 key derivation (256,000 iterations). Keys are zeroized from memory after use. `encryptSession=true` by default in Tethered Mode config.
+3. **Matrix HITL Approval**: Sensitive browser operations (form submissions with PII, navigation to financial sites) require human approval via Matrix. Pending requests timeout after 60 seconds. Approval gating is active for PII input (`Input.insertText` with PII patterns) and navigation (`Page.navigate`).
 4. **Free-Ride Mode**: When Tethered Mode is disabled, CDP traffic passes through without scrubbing (for development/testing).
 
 ### Configuration
@@ -2209,6 +2209,10 @@ rpc:
 approval:
   bridgeURL: "http://127.0.0.1:8080"
   timeout: "60s"
+  enabled: true
+tethered:
+  encryptSession: true
+  piiScrub: true
 ```
 
 ### Ports
@@ -2335,9 +2339,11 @@ Routes all MCP `tools/call` requests through a security pipeline:
 
 1. **SkillGate validation** — PII interception and redaction
 2. **HITL consent workflow** — Human approval for PII operations
-3. **ToolSidecar provisioning** — Isolated execution (when v6 enabled)
+3. **ToolSidecar provisioning** — Isolated execution via Docker exec API (when v6 enabled)
 4. **Vault governance** — Ephemeral token issuance + zeroization (when v6 enabled)
 5. **Audit logging** — Compliance trail
+
+> **vaultClient wiring**: `vaultClient` is passed directly to `setupMCPRouter()` in `bridge/cmd/bridge/setup_mcp.go`, which forwards it to `mcp.New()` config. The previous gap where vaultClient was nil is now closed.
 
 ```go
 type MCPRouter struct {
@@ -2345,7 +2351,7 @@ type MCPRouter struct {
     consentMgr    *pii.HITLConsentManager
     auditor       *audit.AuditLog
     translator    *translator.RPCToMCPTranslator
-    vaultClient   VaultClient    // nil when v6_microkernel=false
+    vaultClient   VaultClient    // wired via setupMCPRouter, nil when v6_microkernel=false
     v6Microkernel bool           // false by default
 }
 ```
@@ -2365,7 +2371,7 @@ Generated gRPC client stubs from `governance.proto`. Provides four methods:
 
 #### ToolSidecar (`bridge/pkg/toolsidecar/`)
 
-> **Status: Implemented** — `Provisioner.SpawnToolSidecar()` creates hardened containers (NetworkMode: none, readonly, cap-drop ALL, 512MB memory). `StopToolSidecar()` tears them down. Currently gated behind v6 microkernel flag.
+> **Status: Implemented** — `Provisioner.SpawnToolSidecar()` creates hardened containers (NetworkMode: none, readonly, cap-drop ALL, 512MB memory). Tool execution uses Docker exec API for real command execution inside the container. `StopToolSidecar()` tears them down. Gated behind v6 microkernel flag (default: `V6Microkernel=false`).
 
 ```go
 type ToolSidecar struct {
@@ -2411,7 +2417,7 @@ The Rust Office Sidecar is a **high-performance data plane component** for heavy
 - **Data Transformation** - Heavy computational work
 - **Reliability Features** - Circuit breakers, rate limiting, retry logic
 
-> **Routing split**: PDF and DOCX documents route to this Rust sidecar. XLSX, PPTX, MSG, XLS, DOC, and PPT formats route to the Python MarkItDown sidecar (`sidecar-python/`). See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the full 3-layer routing architecture.
+> **Routing split**: PDF and DOCX documents route to this Rust sidecar. XLSX and PPTX extraction also handled in Rust (calamine-based XLSX, PPTX parsing). MSG, XLS, DOC, and PPT formats route to the Python MarkItDown sidecar (`sidecar-python/`). See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the full 3-layer routing architecture.
 
 ### Architecture
 
@@ -2442,22 +2448,18 @@ The Rust Office Sidecar is a **high-performance data plane component** for heavy
 
 ### Compilation Status
 
-**Library: ✅ Production Ready**
-- 0 compilation errors
-- 31/33 tests passing (94%)
-- Can be imported directly
-
-**Binary: ⚠️ Pending Fixes**
-- 74 compilation errors
-- Non-blocking: Use library directly
+**Binary + Library: ✅ Compiles Clean**
+- 0 compilation errors (warnings only: unused imports, dead code)
+- 252 lib tests pass, 0 failures, 8 ignored
+- All 8 gRPC RPCs functional
 
 ```bash
-# Build library (recommended)
+# Build library + binary
 cd sidecar
-cargo build --lib --release
-
-# Build binary (pending fixes)
 cargo build --release
+
+# Run tests
+cargo test --lib
 ```
 
 ### Features
@@ -2475,9 +2477,10 @@ cargo build --release
 | Format | Status | Features |
 |--------|--------|----------|
 | **PDF** | ✅ Working | Text extraction, metadata, merging |
-| **DOCX** | ✅ Working | Text extraction |
-| **XLSX** | ➡️ Python | Routed to Python MarkItDown sidecar |
-| **OCR** | ⚠️ Stub | Returns helpful error message |
+| **DOCX** | ✅ Working | Text extraction; convert to PDF via printpdf |
+| **XLSX** | ✅ Working | Calamine-based extraction (migrated from Python in v0.8.0); convert to CSV |
+| **PPTX** | ✅ Working | Extraction supported; conversion not yet supported |
+| **OCR** | ✅ Working | Tesseract primary + ONNX fallback chain, 16 languages |
 | **Diff** | ✅ Working | Myers algorithm, HTML diff |
 
 #### Security Features
@@ -2647,7 +2650,9 @@ cargo test --test document_integration_test
 - Security: 11 tests (token validation, signatures, expiration)
 - Reliability: 5 tests (circuit breakers, concurrent operations)
 - Rate Limiting: 15 tests (token bucket, replenishment, burst)
-- Total: 33 tests
+- Document Processing: 220+ tests (PDF, DOCX, XLSX, OCR, convert)
+- gRPC Server: integration coverage via `sidecar/tests/e2e_integration_test.rs` (22 tests)
+- Total: 252 lib tests, 0 failures, 8 ignored
 
 ### Security Constraints
 
@@ -2663,26 +2668,21 @@ All security constraints from the plan are met:
 
 | Limitation | Status | Workaround |
 |------------|--------|------------|
-| Binary compilation | 74 errors | Use library directly |
-| XLSX extraction | Routes to Python | `sidecar-python/` handles XLSX, PPTX, MSG, XLS, DOC, PPT |
-| OCR processing | Stub only | Return helpful error |
 | Azure Blob | Disabled (OpenSSL) | Use S3 or SharePoint |
-| gRPC proto | Not generated | Implement manually |
+| PPTX conversion | Not yet supported | Extraction works; PDF conversion pending |
+| Binary warnings | 31 warnings (unused imports, dead code) | Non-blocking, cosmetic |
 
 ### Integration with Go Bridge
 
-**Planned Integration:**
-- gRPC over Unix domain socket
-- Token-based authentication
-- Rate limiting and circuit breaking
-- Separate from Rust Vault (different purpose)
-
 **Current State:**
-- ✅ Library compiles and works
-- ✅ S3 connector functional
-- ✅ Security module functional
-- ⚠️ Binary not yet deployable
-- ⚠️ gRPC service not functional
+- ✅ gRPC over Unix domain socket, 8 RPCs functional
+- ✅ Proto files synced between Rust and Go (8 identical RPCs, including QueryDocuments)
+- ✅ HealthCheck returns real telemetry: uptime_seconds, active_requests, memory_used_bytes, version
+- ✅ ProcessDocument convert operations: DOCX→PDF (printpdf), XLSX→CSV (calamine)
+- ✅ Token-based authentication via SecurityInterceptor
+- ✅ Rate limiting and circuit breaking
+- ✅ Separate from Rust Vault (different purpose)
+- ✅ E2E integration tests: `sidecar/tests/e2e_integration_test.rs` (22 tests)
 
 ### Troubleshooting
 
@@ -2715,13 +2715,16 @@ cargo build --lib
 
 ### Summary
 
-The Rust Office Sidecar **library is production-ready** for:
+The Rust Office Sidecar **compiles clean and is production-ready** for:
 - ✅ S3 and SharePoint cloud storage operations
 - ✅ PDF and DOCX document processing
+- ✅ XLSX extraction (calamine) and PPTX extraction
+- ✅ DOCX→PDF and XLSX→CSV conversion
+- ✅ OCR with Tesseract + ONNX fallback
+- ✅ 8 gRPC RPCs functional (HealthCheck, UploadBlob, DownloadBlob, ListBlobs, DeleteBlob, ExtractText, ProcessDocument, QueryDocuments)
 - ✅ Secure token validation
 - ✅ Rate limiting and circuit breaking
-
-**Binary compilation issues are non-blocking** - the library can be imported and used directly in other Rust applications or via FFI bindings.
+- ✅ 252 lib tests passing
 
 > See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the Go gRPC client, YARA scanner, and document pipeline architecture.
 
