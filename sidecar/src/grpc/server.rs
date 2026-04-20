@@ -527,7 +527,7 @@ impl SidecarServiceTrait for SidecarServiceImpl {
                      "pdf" | "application/pdf") => {
                         convert_pptx_to_pdf(&req.input_content)
                             .map_err(sidecar_error_to_status)?;
-                        unreachable!()
+                        Err(Status::unimplemented("PPTX→PDF conversion"))
                     }
                     _ => Err(Status::invalid_argument(format!(
                         "Unsupported conversion: '{}' → '{}'. Supported: docx→pdf, xlsx→csv",
