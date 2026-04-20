@@ -355,7 +355,7 @@ androidApp/src/main/kotlin/com/armorclaw/app/
 │   │   ├── SecurityConfigScreen.kt
 │   │   ├── PasswordRotationScreen.kt
 │   │   ├── BiometricEnableScreen.kt
-│   │   └── KeyBackupSetupScreen.kt
+│   │   └── KeyBackupScreen.kt
 │   ├── verification/        # Verification screens
 │   │   └── BridgeVerificationScreen.kt
 │   └── components/          # Reusable workflow UI components
@@ -408,7 +408,7 @@ androidApp/src/main/kotlin/com/armorclaw/app/
 │   │   └── FilePreviewScreen.kt
 │   ├── onboarding/          # Onboarding flow (7 screens)
 │   │   ├── ExpressSetupCompleteScreen.kt
-│   │   ├── KeyBackupSetupScreen.kt
+│   │   ├── KeyBackupScreen.kt
 │   │   ├── MigrationScreen.kt
 │   │   ├── OnboardingConfigScreen.kt
 │   │   ├── OnboardingInviteScreen.kt
@@ -1058,7 +1058,7 @@ In addition to the legacy `AppNavigation` routes, ArmorChat uses a `Route` seale
 | `Bonding` | `BondingScreen` | ✅ Implemented |
 | `HardeningPassword` | `PasswordRotationScreen` | ✅ Implemented |
 | `HardeningDevice` | `BridgeVerificationScreen` | ✅ Implemented |
-| `KeyBackup` | `KeyBackupSetupScreen` | ✅ Implemented |
+| `KeyBackup` | `KeyBackupScreen` | ✅ Implemented |
 | `HardeningBiometrics` | `BiometricEnableScreen` | ✅ Implemented |
 | `SecurityConfig` | `SecurityConfigScreen` | ✅ Implemented |
 | `Home` | `HomeScreen` (dashboard) | ✅ Implemented |
@@ -4054,7 +4054,7 @@ Splash Screen
      │
      ├── hasLegacyBridgeSession? ──YES──▶ MigrationScreen (v2.5 → v3.0)
      │
-     ├── hasValidSession && !isBackupComplete? ──YES──▶ KeyBackupSetupScreen
+     ├── hasValidSession && !isBackupComplete? ──YES──▶ KeyBackupScreen
      │
      ├── hasValidSession && isLoggedIn? ──YES──▶ HomeScreen
      │
@@ -4084,7 +4084,7 @@ Splash Screen
                               CompletionScreen
                                     │
                                     ▼
-                              KeyBackupSetupScreen
+                              KeyBackupScreen
                                     │
                                     ▼
                               HomeScreen
@@ -5635,7 +5635,7 @@ Splash Screen
      │
      ├── hasLegacyBridgeSession? ──YES──▶ MigrationScreen (v2.5 → v3.0)
      │
-     ├── hasValidSession && !isBackupComplete? ──YES──▶ KeyBackupSetupScreen
+     ├── hasValidSession && !isBackupComplete? ──YES──▶ KeyBackupScreen
      │
      ├── hasValidSession && isLoggedIn? ──YES──▶ HomeScreen
      │
@@ -5651,7 +5651,7 @@ Splash Screen
                                    │  CompletionScreen
                                    │      │
                                    │      ▼
-                                   │  KeyBackupSetupScreen
+                                   │  KeyBackupScreen
                                    │      │
                                    │      ▼
                                    │  HomeScreen

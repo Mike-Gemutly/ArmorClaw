@@ -114,7 +114,7 @@ curl -fsSL https://install.armorclaw.com | bash
 | **Encrypted Keystore** | SQLCipher + XChaCha20-Poly1305 credential storage | [Config Guide](guides/configuration.md) | `bridge/pkg/keystore` |
 | **Docker Client** | Scoped container operations (create, exec, remove) | [Development Guide](guides/development.md) | `bridge/pkg/docker` |
 | **Matrix Adapter** | E2EE-capable Matrix bridge | [Matrix Deployment](guides/matrix-homeserver-deployment.md) | `bridge/internal/adapter` |
-| **JSON-RPC Server** | Unix socket API with 51+ methods | [RPC API Reference](reference/rpc-api.md) | `bridge/pkg/rpc` |
+| **JSON-RPC Server** | Unix socket API with 81 methods | [RPC API Reference](reference/rpc-api.md) | `bridge/pkg/rpc` |
 | **Configuration System** | TOML + environment variables | [Configuration Guide](guides/configuration.md) | `bridge/pkg/config` |
 | **Secret Injection** | Memory-only, never on disk | [Security Config](guides/security-configuration.md) | `bridge/pkg/secrets` |
 
@@ -640,7 +640,7 @@ read_only_on_grace = false
 | Document | Purpose |
 |----------|---------|
 | [Production Installer v4](operations/installer-v4.md) | Deterministic, hardened deployment |
-| [RPC API Reference](reference/rpc-api.md) | Complete JSON-RPC 2.0 API (51+ methods) |
+| [RPC API Reference](reference/rpc-api.md) | Complete JSON-RPC 2.0 API (81 methods) |
 | [Error Catalog](guides/error-catalog.md) | Every error with solutions |
 | [Security Configuration](guides/security-configuration.md) | Zero-trust, budget, PII |
 | [Troubleshooting Guide](guides/troubleshooting.md) | Systematic debugging |

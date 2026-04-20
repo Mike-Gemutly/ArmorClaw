@@ -198,8 +198,8 @@ Admins can generate time-limited, signed invite URLs to share server configurati
 │                                                                │
 │  📁 Files Created:        125+                                 │
 │  📝 Lines of Code:        19,000+                              │
-│  📱 Screens:              20                                   │
-│  🔀 Navigation Routes:    20+                                  │
+│  📱 Screens:              15                                   │
+│  🔀 Navigation Routes:    16                                   │
 │  ✅ Test Cases:           75                                   │
 │  🎨 UI Components:        15+                                  │
 │  ✨ Animations:           20+                                  │

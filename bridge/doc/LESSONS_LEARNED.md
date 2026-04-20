@@ -7,7 +7,7 @@ Five potential issues were flagged as deployment blockers. A source-code-level i
 
 ### Lesson 1: Verify Against Source Code Before Escalating
 **Issue:** RPC method count appeared wrong (docs said 114, clients expected different numbers).
-**Reality:** Actual count is **122 methods**. The discrepancy came from uncounted provisioning multi-case entries (7) and a newly added method. The `default` case handles unknown methods gracefully.
+**Reality:** Actual count is **81 methods** (registered handler map in `server.go` lines 834-916). The discrepancy came from counting `switch/case` branches in `handleRequest` rather than the authoritative handler map. The `default` case handles unknown methods gracefully.
 **Takeaway:** Always `grep` the actual `case` statements in `handleRequest` rather than relying on doc counts. Docs drift — code is truth.
 
 ### Lesson 2: Distinguish Type Labels from Resource References
