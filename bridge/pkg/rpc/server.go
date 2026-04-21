@@ -44,6 +44,7 @@ const (
 	MethodNotFound   = -32601
 	InvalidParams    = -32602
 	InternalError    = -32603
+	NotFoundError    = -32000
 	TooManyRequests  = -32001
 	RequestCancelled = -32002
 )
@@ -149,6 +150,7 @@ type Server struct {
 	eventBus        *eventbus.EventBus
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
+	deviceStore     *trust.DeviceStore
 	secretaryHandler secretaryRPCHandler
 	heartbeats      sync.Map
 	metrics         *Metrics
@@ -177,6 +179,7 @@ type Config struct {
 	SkillGate       interfaces.SkillGate
 	EventBus        *eventbus.EventBus
 	HardeningStore  trust.Store
+	DeviceStore     *trust.DeviceStore
 	Metrics         *Metrics
 	DockerClient    *docker.Client
 	Guard           *trust.TrustedProxyGuard
@@ -206,6 +209,7 @@ func New(cfg Config) (*Server, error) {
 		eventBus:        cfg.EventBus,
 		handlers:        make(map[string]HandlerFunc, 32),
 		hardeningStore:  cfg.HardeningStore,
+		deviceStore:     cfg.DeviceStore,
 		metrics:         cfg.Metrics,
 		shutdownCh:      make(chan struct{}),
 		rpcTransport:    cfg.RPCTransport,
@@ -913,6 +917,10 @@ func (s *Server) registerHandlers() {
 		"task.list":                 s.handleSecretaryMethod,
 		"task.cancel":               s.handleSecretaryMethod,
 		"task.get":                  s.handleSecretaryMethod,
+		"device.list":               s.handleDeviceList,
+		"device.get":                s.handleDeviceGet,
+		"device.approve":            s.handleDeviceApprove,
+		"device.reject":             s.handleDeviceReject,
 	}
 
 	s.handlers = h
