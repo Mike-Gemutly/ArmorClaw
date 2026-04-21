@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
+	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/trust"
 )
 
@@ -131,6 +133,10 @@ func (s *Server) handleDeviceApprove(ctx context.Context, req *Request) (interfa
 		}
 	}
 
+	s.auditGovernanceMutation(audit.EventDeviceApproved, params.ApprovedBy, map[string]interface{}{
+		"device_id": params.DeviceID,
+	})
+
 	return SuccessResponse{Success: true}, nil
 }
 
@@ -185,5 +191,23 @@ func (s *Server) handleDeviceReject(ctx context.Context, req *Request) (interfac
 		}
 	}
 
+	s.auditGovernanceMutation(audit.EventDeviceRejected, params.RejectedBy, map[string]interface{}{
+		"device_id": params.DeviceID,
+		"reason":    params.Reason,
+	})
+
 	return SuccessResponse{Success: true}, nil
+}
+
+func (s *Server) auditGovernanceMutation(eventType audit.EventType, userID string, details interface{}) {
+	if s.auditLog == nil {
+		return
+	}
+	if err := s.auditLog.LogEvent(eventType, "", "", userID, details); err != nil {
+		slog.Error("governance audit write failed",
+			slog.String("event_type", string(eventType)),
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()),
+		)
+	}
 }

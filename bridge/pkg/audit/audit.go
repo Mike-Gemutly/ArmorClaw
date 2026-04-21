@@ -57,6 +57,12 @@ const (
 	EventMemberAdded          EventType = "member_added"
 	EventMemberRemoved        EventType = "member_removed"
 	EventRoleAssigned         EventType = "role_assigned"
+
+	// Governance mutation events (device & invite)
+	EventDeviceApproved EventType = "device.approved"
+	EventDeviceRejected EventType = "device.rejected"
+	EventInviteCreated  EventType = "invite.created"
+	EventInviteRevoked  EventType = "invite.revoked"
 )
 
 type Entry struct {

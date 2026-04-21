@@ -33,6 +33,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/translator"
+	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/invite"
 	"github.com/armorclaw/bridge/pkg/trust"
 )
@@ -162,6 +163,7 @@ type Server struct {
 	listenAddr      string
 	dockerClient    *docker.Client
 	guard           *trust.TrustedProxyGuard
+	auditLog        *audit.AuditLog
 }
 
 type Config struct {
@@ -186,6 +188,7 @@ type Config struct {
 	Metrics         *Metrics
 	DockerClient    *docker.Client
 	Guard           *trust.TrustedProxyGuard
+	AuditLog        *audit.AuditLog
 	MCPRouter       *mcp.MCPRouter
 	Translator      *translator.RPCToMCPTranslator
 	SecretaryHandler secretaryRPCHandler
@@ -220,6 +223,7 @@ func New(cfg Config) (*Server, error) {
 		listenAddr:      cfg.ListenAddr,
 		dockerClient:    cfg.DockerClient,
 		guard:           cfg.Guard,
+		auditLog:        cfg.AuditLog,
 		mcpRouter:       cfg.MCPRouter,
 		translator:      cfg.Translator,
 		secretaryHandler: cfg.SecretaryHandler,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/audit"
 	"github.com/armorclaw/bridge/pkg/invite"
 )
 
@@ -102,6 +103,12 @@ func (s *Server) handleInviteCreate(ctx context.Context, req *Request) (interfac
 		}
 	}
 
+	s.auditGovernanceMutation(audit.EventInviteCreated, params.CreatedBy, map[string]interface{}{
+		"invite_id": record.ID,
+		"role":      string(record.Role),
+		"code":      record.Code,
+	})
+
 	return record, nil
 }
 
@@ -149,6 +156,10 @@ func (s *Server) handleInviteRevoke(ctx context.Context, req *Request) (interfac
 			Message: fmt.Sprintf("failed to revoke invite: %s", err),
 		}
 	}
+
+	s.auditGovernanceMutation(audit.EventInviteRevoked, params.RevokedBy, map[string]interface{}{
+		"invite_id": params.InviteID,
+	})
 
 	return SuccessResponse{Success: true}, nil
 }
