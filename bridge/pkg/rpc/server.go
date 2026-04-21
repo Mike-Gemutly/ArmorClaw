@@ -33,6 +33,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/translator"
+	"github.com/armorclaw/bridge/pkg/invite"
 	"github.com/armorclaw/bridge/pkg/trust"
 )
 
@@ -151,6 +152,7 @@ type Server struct {
 	handlers        map[string]HandlerFunc
 	hardeningStore  trust.Store
 	deviceStore     *trust.DeviceStore
+	inviteStore     *invite.InviteStore
 	secretaryHandler secretaryRPCHandler
 	heartbeats      sync.Map
 	metrics         *Metrics
@@ -180,6 +182,7 @@ type Config struct {
 	EventBus        *eventbus.EventBus
 	HardeningStore  trust.Store
 	DeviceStore     *trust.DeviceStore
+	InviteStore     *invite.InviteStore
 	Metrics         *Metrics
 	DockerClient    *docker.Client
 	Guard           *trust.TrustedProxyGuard
@@ -210,6 +213,7 @@ func New(cfg Config) (*Server, error) {
 		handlers:        make(map[string]HandlerFunc, 32),
 		hardeningStore:  cfg.HardeningStore,
 		deviceStore:     cfg.DeviceStore,
+		inviteStore:     cfg.InviteStore,
 		metrics:         cfg.Metrics,
 		shutdownCh:      make(chan struct{}),
 		rpcTransport:    cfg.RPCTransport,
@@ -920,7 +924,11 @@ func (s *Server) registerHandlers() {
 		"device.list":               s.handleDeviceList,
 		"device.get":                s.handleDeviceGet,
 		"device.approve":            s.handleDeviceApprove,
-		"device.reject":             s.handleDeviceReject,
+		"device.reject":            s.handleDeviceReject,
+		"invite.list":              s.handleInviteList,
+		"invite.create":            s.handleInviteCreate,
+		"invite.revoke":            s.handleInviteRevoke,
+		"invite.validate":          s.handleInviteValidate,
 	}
 
 	s.handlers = h
