@@ -164,6 +164,7 @@ type Server struct {
 	dockerClient    *docker.Client
 	guard           *trust.TrustedProxyGuard
 	auditLog        *audit.AuditLog
+	governanceRoomID string
 }
 
 type Config struct {
@@ -190,6 +191,7 @@ type Config struct {
 	Guard           *trust.TrustedProxyGuard
 	AuditLog        *audit.AuditLog
 	MCPRouter       *mcp.MCPRouter
+	GovernanceRoomID string
 	Translator      *translator.RPCToMCPTranslator
 	SecretaryHandler secretaryRPCHandler
 }
@@ -227,6 +229,7 @@ func New(cfg Config) (*Server, error) {
 		mcpRouter:       cfg.MCPRouter,
 		translator:      cfg.Translator,
 		secretaryHandler: cfg.SecretaryHandler,
+		governanceRoomID: cfg.GovernanceRoomID,
 	}
 
 	s.registerHandlers()

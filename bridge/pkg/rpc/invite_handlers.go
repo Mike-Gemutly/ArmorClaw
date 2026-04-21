@@ -109,6 +109,8 @@ func (s *Server) handleInviteCreate(ctx context.Context, req *Request) (interfac
 		"code":      record.Code,
 	})
 
+	s.emitInviteEvent(EventInviteCreated, record.ID, params.CreatedBy, record.Code)
+
 	return record, nil
 }
 
@@ -160,6 +162,8 @@ func (s *Server) handleInviteRevoke(ctx context.Context, req *Request) (interfac
 	s.auditGovernanceMutation(audit.EventInviteRevoked, params.RevokedBy, map[string]interface{}{
 		"invite_id": params.InviteID,
 	})
+
+	s.emitInviteEvent(EventInviteRevoked, params.InviteID, params.RevokedBy, existing.Code)
 
 	return SuccessResponse{Success: true}, nil
 }

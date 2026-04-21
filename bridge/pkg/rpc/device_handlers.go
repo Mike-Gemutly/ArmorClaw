@@ -137,6 +137,8 @@ func (s *Server) handleDeviceApprove(ctx context.Context, req *Request) (interfa
 		"device_id": params.DeviceID,
 	})
 
+	s.emitDeviceEvent(EventDeviceApproved, params.DeviceID, params.ApprovedBy)
+
 	return SuccessResponse{Success: true}, nil
 }
 
@@ -195,6 +197,8 @@ func (s *Server) handleDeviceReject(ctx context.Context, req *Request) (interfac
 		"device_id": params.DeviceID,
 		"reason":    params.Reason,
 	})
+
+	s.emitDeviceEvent(EventDeviceRejected, params.DeviceID, params.RejectedBy)
 
 	return SuccessResponse{Success: true}, nil
 }
