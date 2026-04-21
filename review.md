@@ -64,7 +64,7 @@ See `.sisyphus/plans/v070-master-plan.md` for the full v0.7.0 task breakdown (al
 - ~~`DeepLinkHandler.kt` missing — notification taps do not navigate to correct screen~~ ✅ Created in v0.7.0
 - ~~`SecurityConfigViewModel` defined but never wired to `SecurityConfigScreen` — permissions not persisted~~ ✅ Wired in v0.7.0
 - ~~`WorkflowStep` has no `Input` field — sequential step data propagation impossible~~ ✅ Added in v0.7.0 (`Input map[string]any`)
-- ~~Admin panel uses mock data instead of real Bridge API~~ ✅ Replaced with real RPC calls in v0.7.0
+- ~~Admin panel uses mock data instead of real Bridge API~~ ✅ Client-side typed RPC calls added in v0.7.0; server-side device/invite governance handlers implemented in v0.8.0
 - ~~`BridgeRepository` credentials are in-memory only — not persisted across app restarts~~ ✅ Persisted via encrypted SharedPreferences in v0.7.0
 - ~~All 12 ArmorChat integration tests are `assertTrue(true)` placeholders~~ ✅ Replaced with meaningful assertions in v0.7.0
 - **Browser automation from isolated containers** — Agents still cannot reach the browser service directly. Jetski sidecar routing via Bridge RPC is the current workaround. No timeline for direct CDP access from `NetworkMode: none` containers (this may be a permanent architectural constraint).
