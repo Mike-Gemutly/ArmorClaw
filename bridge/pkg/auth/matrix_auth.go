@@ -241,20 +241,27 @@ func (c *tokenCache) CleanupExpired() int {
 
 // ============================================================================
 
+// AdminTokenValidator validates provisioning admin tokens (aat_ prefix).
+type AdminTokenValidator interface {
+	ValidateAdminToken(token string) (userID string, role string, ok bool)
+}
+
 // RPCAuthMiddleware provides authentication middleware for RPC handlers
 type RPCAuthMiddleware struct {
-	provider       *MatrixAuthProvider
-	publicMethods  map[string]bool
-	adminMethods   map[string]bool
-	adminPowerLevel int
+	provider            *MatrixAuthProvider
+	adminTokenValidator AdminTokenValidator
+	publicMethods       map[string]bool
+	adminMethods        map[string]bool
+	adminPowerLevel     int
 }
 
 // RPCAuthMiddlewareConfig configures the RPC auth middleware
 type RPCAuthMiddlewareConfig struct {
-	Provider       *MatrixAuthProvider
-	PublicMethods  []string // Methods that don't require auth
-	AdminMethods   []string // Methods that require admin power level
-	AdminPowerLevel int     // Minimum power level for admin access (default: 50)
+	Provider            *MatrixAuthProvider
+	AdminTokenValidator AdminTokenValidator
+	PublicMethods       []string
+	AdminMethods        []string
+	AdminPowerLevel     int
 }
 
 // NewRPCAuthMiddleware creates a new RPC auth middleware
@@ -275,10 +282,11 @@ func NewRPCAuthMiddleware(cfg RPCAuthMiddlewareConfig) *RPCAuthMiddleware {
 	}
 
 	return &RPCAuthMiddleware{
-		provider:        cfg.Provider,
-		publicMethods:   publicMethods,
-		adminMethods:    adminMethods,
-		adminPowerLevel: adminPowerLevel,
+		provider:            cfg.Provider,
+		adminTokenValidator: cfg.AdminTokenValidator,
+		publicMethods:       publicMethods,
+		adminMethods:        adminMethods,
+		adminPowerLevel:     adminPowerLevel,
 	}
 }
 
@@ -288,20 +296,19 @@ type AuthResult struct {
 	UserInfo      *UserInfo
 	Error         error
 	IsAdmin       bool
+	AdminUserID   string
+	AdminRole     string
 }
 
-// Authenticate authenticates an RPC request
+// Authenticate authenticates an RPC request.
+// Supports two token types:
+//  1. aat_ prefix: validated via AdminTokenValidator (provisioning admin tokens)
+//  2. Matrix tokens: validated via MatrixAuthProvider homeserver whoami
 func (m *RPCAuthMiddleware) Authenticate(ctx context.Context, method string, authToken string, adminRoomID string) *AuthResult {
-	// Check if method is public
 	if m.publicMethods[method] {
-		return &AuthResult{
-			Authenticated: true,
-			UserInfo:      nil,
-			IsAdmin:       false,
-		}
+		return &AuthResult{Authenticated: true}
 	}
 
-	// Require token for non-public methods
 	if authToken == "" {
 		return &AuthResult{
 			Authenticated: false,
@@ -309,7 +316,53 @@ func (m *RPCAuthMiddleware) Authenticate(ctx context.Context, method string, aut
 		}
 	}
 
-	// Validate token
+	if len(authToken) >= 4 && authToken[:4] == "aat_" {
+		return m.authenticateAdminToken(method, authToken)
+	}
+
+	return m.authenticateMatrixToken(ctx, method, authToken, adminRoomID)
+}
+
+func (m *RPCAuthMiddleware) authenticateAdminToken(method string, authToken string) *AuthResult {
+	if m.adminTokenValidator == nil {
+		return &AuthResult{
+			Authenticated: false,
+			Error:         fmt.Errorf("admin token validation not configured"),
+		}
+	}
+
+	userID, role, ok := m.adminTokenValidator.ValidateAdminToken(authToken)
+	if !ok {
+		return &AuthResult{
+			Authenticated: false,
+			Error:         fmt.Errorf("invalid admin token"),
+		}
+	}
+
+	isAdmin := role == "ADMIN" || role == "OWNER"
+	if m.adminMethods[method] && !isAdmin {
+		return &AuthResult{
+			Authenticated: false,
+			Error:         fmt.Errorf("admin access required"),
+		}
+	}
+
+	return &AuthResult{
+		Authenticated: true,
+		IsAdmin:       isAdmin,
+		AdminUserID:   userID,
+		AdminRole:     role,
+	}
+}
+
+func (m *RPCAuthMiddleware) authenticateMatrixToken(ctx context.Context, method string, authToken string, adminRoomID string) *AuthResult {
+	if m.provider == nil {
+		return &AuthResult{
+			Authenticated: false,
+			Error:         fmt.Errorf("matrix auth not configured"),
+		}
+	}
+
 	userInfo, err := m.provider.ValidateToken(ctx, authToken)
 	if err != nil {
 		return &AuthResult{
@@ -318,7 +371,6 @@ func (m *RPCAuthMiddleware) Authenticate(ctx context.Context, method string, aut
 		}
 	}
 
-	// Check admin access if required
 	isAdmin := false
 	if m.adminMethods[method] {
 		if adminRoomID == "" {
@@ -386,6 +438,14 @@ var DefaultAdminMethods = []string{
 	"security.upgrade_tier",
 	"audit.export",
 	"config.update",
+	"device.list",
+	"device.get",
+	"device.approve",
+	"device.reject",
+	"invite.create",
+	"invite.list",
+	"invite.revoke",
+	"invite.validate",
 }
 
 // ============================================================================

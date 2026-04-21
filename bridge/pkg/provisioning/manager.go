@@ -85,6 +85,7 @@ type Manager struct {
 	mu            sync.RWMutex
 	tokens        map[string]*Token
 	roles         map[string]*RoleAssignment // user_id -> role
+	adminTokens   map[string]string          // aat_ token -> user_id (in-memory, ephemeral)
 	ownerClaimed  bool                       // true after first OWNER claim
 	signingSecret []byte
 	config        *ManagerConfig
@@ -140,6 +141,7 @@ func NewManager(config *ManagerConfig) (*Manager, error) {
 	mgr := &Manager{
 		tokens:        make(map[string]*Token),
 		roles:         make(map[string]*RoleAssignment),
+		adminTokens:   make(map[string]string),
 		signingSecret: []byte(config.SigningSecret),
 		config:        config,
 		rolesPath:     rolesPath,
@@ -477,6 +479,8 @@ func (m *Manager) ClaimTokenWithRole(ctx context.Context, tokenID string, device
 		ClaimedAt:  time.Now(),
 	}
 
+	m.adminTokens[adminToken] = userID
+
 	// Persist roles to disk (non-blocking, best-effort)
 	if m.rolesPath != "" {
 		go m.saveRoles()
@@ -648,4 +652,23 @@ func (m *Manager) loadRoles() {
 	if data.Roles != nil {
 		m.roles = data.Roles
 	}
+}
+
+// ValidateAdminToken checks if an aat_ token is valid.
+// Returns the user ID, role, and true if valid; empty strings and false otherwise.
+func (m *Manager) ValidateAdminToken(token string) (string, string, bool) {
+	if len(token) < 4 || token[:4] != "aat_" {
+		return "", "", false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	userID, exists := m.adminTokens[token]
+	if !exists {
+		return "", "", false
+	}
+	assignment, exists := m.roles[userID]
+	if !exists {
+		return "", "", false
+	}
+	return userID, string(assignment.Role), true
 }

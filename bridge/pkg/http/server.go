@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/armorclaw/bridge/pkg/auth"
 	"github.com/armorclaw/bridge/pkg/qr"
 	"github.com/armorclaw/bridge/pkg/rpc"
 	"github.com/armorclaw/bridge/pkg/securerandom"
@@ -55,13 +56,14 @@ type Server struct {
 	config                ServerConfig
 	rpcServer             *rpc.Server
 	httpServer            *http.Server
+	authMiddleware        *auth.RPCAuthMiddleware
 	certPEM               []byte
 	keyPEM                []byte
 	mu                    sync.RWMutex
 	clients               map[string]*WebSocketClient
 	qrManager             *qr.QRManager
-	ownerClaimed          bool // tracks whether an OWNER has been claimed (for is_new_server)
-	provisioningAvailable bool // tracks whether provisioning is configured on the bridge
+	ownerClaimed          bool
+	provisioningAvailable bool
 	pushGateway           string
 	apiPath               string
 	wsPath                string
@@ -80,6 +82,12 @@ func (s *Server) SetProvisioningAvailable(available bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.provisioningAvailable = available
+}
+
+func (s *Server) SetAuthMiddleware(middleware *auth.RPCAuthMiddleware) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authMiddleware = middleware
 }
 
 // toWSS converts an https:// URL to wss:// (or http:// to ws://)
@@ -384,6 +392,19 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		s.writeError(w, nil, -32700, "Invalid JSON")
 		return
+	}
+
+	s.mu.RLock()
+	middleware := s.authMiddleware
+	s.mu.RUnlock()
+
+	if middleware != nil {
+		bearerToken := auth.ExtractBearerToken(r.Header.Get("Authorization"))
+		result := middleware.Authenticate(r.Context(), req.Method, bearerToken, "")
+		if !result.Authenticated {
+			s.writeError(w, req.ID, -32001, "unauthorized")
+			return
+		}
 	}
 
 	response := s.rpcServer.Handle(r.Context(), &req)
