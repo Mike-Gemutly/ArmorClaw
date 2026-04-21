@@ -1268,19 +1268,274 @@ echo '{"jsonrpc":"2.0","id":1,"method":"list_configs"}' | \
 
 ---
 
-## Security Considerations
+## Authentication
 
-### Authentication
-- Unix socket file permissions: 0660 (owner + group read/write)
-- No authentication required (socket access control via filesystem)
+The Bridge supports two authentication modes depending on deployment configuration.
 
-### Authorization
-- All Docker operations scoped to create, exec, remove
-- Seccomp profiles applied to all containers
-- Read-only root filesystem enforced
+### Token Types
 
-### Rate Limiting
-- Not implemented (v1) - filesystem-based access control
+| Token | Prefix | Validated By | Use Case |
+|-------|--------|--------------|----------|
+| Admin token | `aat_` | AdminTokenValidator | Provisioning, setup scripts |
+| Matrix access token | (variable) | Matrix homeserver whoami | Mobile app, Element, runtime |
+
+### Admin Token Authentication
+
+Admin tokens (prefix `aat_`) are provisioned during initial setup. They grant elevated access to admin-gated methods. The token is validated locally without contacting the Matrix homeserver.
+
+```bash
+# Example: admin token in Authorization header
+curl -X POST http://localhost:8080/rpc \
+  -H "Authorization: Bearer aat_xxxxxxxxxxxxxxxx" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"device.list"}'
+```
+
+### Matrix Token Authentication
+
+Standard Matrix access tokens are validated against the homeserver's `/_matrix/client/v3/account/whoami` endpoint. Tokens are cached for 5 minutes to reduce homeserver load.
+
+For admin-gated methods, the Bridge checks the user's power level in the configured admin room. The default admin threshold is power level 50 (Matrix moderator).
+
+### Public Methods
+
+The following methods require no authentication:
+
+| Method | Description |
+|--------|-------------|
+| `system.health` | Server health status |
+| `system.config` | Public configuration for client init |
+| `system.info` | Server info and capabilities |
+| `system.time` | Server time for clock sync |
+| `device.validate` | Basic device ID validation |
+
+Public methods are rate-limited to 10 requests per minute per client.
+
+### Admin-Gated Methods
+
+The following methods require admin token or Matrix admin power level:
+
+| Method | Category |
+|--------|----------|
+| `device.list` | Device Governance |
+| `device.get` | Device Governance |
+| `device.approve` | Device Governance |
+| `device.reject` | Device Governance |
+| `invite.create` | Invite Governance |
+| `invite.list` | Invite Governance |
+| `invite.revoke` | Invite Governance |
+| `invite.validate` | Invite Governance |
+| `license.activate` | Licensing |
+| `license.deactivate` | Licensing |
+| `license.update` | Licensing |
+| `sso.configure` | SSO |
+| `sso.enable` | SSO |
+| `sso.disable` | SSO |
+| `admin.users` | Administration |
+| `admin.rooms` | Administration |
+| `admin.settings` | Administration |
+| `security.upgrade_tier` | Security |
+| `audit.export` | Audit |
+| `config.update` | Configuration |
+
+### Authentication Error
+
+When authentication fails, the Bridge returns a JSON-RPC error:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32001,
+    "message": "authentication required"
+  }
+}
+```
+
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | No token provided for protected method |
+| -32001 | `invalid admin token` | Admin token validation failed |
+| -32001 | `invalid token` | Matrix token validation failed |
+| -32001 | `admin access required` | Non-admin user called admin-gated method |
+
+### Socket-Level Security
+
+In Native mode, the Unix socket (`/run/armorclaw/bridge.sock`) uses filesystem permissions (0660) for access control. In Sentinel/Cloudflare modes, TLS and network-level controls apply in addition to token authentication.
+
+## Method Summary
+
+The following table lists all registered RPC methods. Methods marked **Admin** require admin token or Matrix admin power level. Methods marked **Public** require no authentication. All other methods require a valid Matrix token.
+
+### System & Health
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `health.check` | Any | Bridge health check |
+| `system.health` | Public | Public health status |
+| `system.config` | Public | Public configuration |
+| `system.info` | Public | Server info and capabilities |
+| `system.time` | Public | Server time for clock sync |
+| `mobile.heartbeat` | Any | Mobile device heartbeat |
+
+### AI & Chat
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `ai.chat` | Any | Send message to AI agent |
+
+### Browser Automation
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `browser.navigate` | Any | Navigate browser to URL |
+| `browser.fill` | Any | Fill form field |
+| `browser.click` | Any | Click element |
+| `browser.status` | Any | Get browser task status |
+| `browser.wait_for_element` | Any | Wait for element to appear |
+| `browser.wait_for_captcha` | Any | Wait for CAPTCHA resolution |
+| `browser.wait_for_2fa` | Any | Wait for 2FA code entry |
+| `browser.complete` | Any | Mark browser task complete |
+| `browser.fail` | Any | Mark browser task failed |
+| `browser.list` | Any | List browser tasks |
+| `browser.cancel` | Any | Cancel browser task |
+
+### Bridge Control
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `bridge.start` | Any | Start bridge connection |
+| `bridge.stop` | Any | Stop bridge connection |
+| `bridge.status` | Any | Get bridge status |
+| `bridge.channel` | Any | Bridge a Matrix channel |
+| `bridge.unchannel` | Any | Remove a bridged channel |
+| `bridge.list` | Any | List bridged channels |
+| `bridge.ghost_list` | Any | List ghost users |
+| `bridge.appservice_status` | Any | Application service status |
+
+### PII / Human-in-the-Loop
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `pii.request` | Any | Request PII access |
+| `pii.approve` | Any | Approve PII request |
+| `pii.deny` | Any | Deny PII request |
+| `pii.status` | Any | Check PII request status |
+| `pii.list_pending` | Any | List pending PII requests |
+| `pii.stats` | Any | PII system statistics |
+| `pii.cancel` | Any | Cancel PII request |
+| `pii.fulfill` | Any | Fulfill approved PII request |
+| `pii.wait_for_approval` | Any | Wait for PII approval |
+
+### Email Approval
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `approve_email` | Any | Approve email sending |
+| `deny_email` | Any | Deny email sending |
+| `email_approval_status` | Any | Check email approval status |
+| `email.list_pending` | Any | List pending email approvals |
+
+### Skills
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `skills.execute` | Any | Execute a skill |
+| `skills.list` | Any | List available skills |
+| `skills.get_schema` | Any | Get skill parameter schema |
+| `skills.allow` | Any | Allow a skill |
+| `skills.block` | Any | Block a skill |
+| `skills.allowlist_add` | Any | Add skill to allowlist |
+| `skills.allowlist_remove` | Any | Remove skill from allowlist |
+| `skills.allowlist_list` | Any | List allowlist entries |
+| `skills.web_search` | Any | Web search skill |
+| `skills.web_extract` | Any | Web content extraction |
+| `skills.email_send` | Any | Send email skill |
+| `skills.slack_message` | Any | Send Slack message skill |
+| `skills.file_read` | Any | Read file skill |
+| `skills.data_analyze` | Any | Data analysis skill |
+
+### Matrix
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `matrix.status` | Any | Matrix connection status |
+| `matrix.login` | Any | Login to Matrix |
+| `matrix.send` | Any | Send Matrix message |
+| `matrix.receive` | Any | Receive Matrix events |
+| `matrix.join_room` | Any | Join a Matrix room |
+
+### Events
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `events.replay` | Any | Replay events |
+| `events.stream` | Any | Stream events |
+
+### Studio
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `studio.deploy` | Any | Deploy agent via Studio |
+| `studio.stats` | Any | Studio statistics |
+
+### Containers
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `container.terminate` | Any | Terminate a container |
+| `container.list` | Any | List running containers |
+
+### Provisioning
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `provisioning.start` | Any | Start device provisioning |
+| `provisioning.claim` | Any | Claim provisioned device |
+
+### Hardening
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `hardening.status` | Any | Security hardening status |
+| `hardening.ack` | Any | Acknowledge hardening notice |
+| `hardening.rotate_password` | Any | Rotate admin password |
+
+### Secretary / Tasks
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `secretary.start_workflow` | Any | Start a workflow |
+| `secretary.get_workflow` | Any | Get workflow status |
+| `secretary.cancel_workflow` | Any | Cancel running workflow |
+| `secretary.advance_workflow` | Any | Advance workflow step |
+| `secretary.list_templates` | Any | List workflow templates |
+| `secretary.create_template` | Any | Create workflow template |
+| `secretary.get_template` | Any | Get workflow template |
+| `secretary.delete_template` | Any | Delete workflow template |
+| `secretary.update_template` | Any | Update workflow template |
+| `task.create` | Any | Create a task |
+| `task.list` | Any | List tasks |
+| `task.cancel` | Any | Cancel a task |
+| `task.get` | Any | Get task status |
+
+### Account
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `account.delete` | Any | Delete user account |
+
+### Keystore
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `store_key` | Any | Store API key in encrypted keystore |
+
+### Other
+
+| Method | Auth | Description |
+|--------|------|-------------|
+| `resolve_blocker` | Any | Resolve a task blocker |
 
 ---
 
@@ -3778,6 +4033,528 @@ The mobile device must sign `SHA256(nonce || timestamp || device_id)` where:
 - `nonce` is the raw 32-byte nonce from the challenge
 - `timestamp` is the Unix timestamp as a string
 - `device_id` is the device identifier string
+
+---
+
+## Device Governance
+
+Device governance methods manage registered devices and their trust states. All device governance methods require admin authentication (admin token or Matrix admin power level).
+
+### Trust States
+
+| State | Description |
+|-------|-------------|
+| `unverified` | Device connected but not verified |
+| `pending_approval` | Awaiting admin approval |
+| `awaiting_second_factor` | Waiting for existing device confirmation |
+| `verified` | Device is trusted |
+| `rejected` | Device was rejected by admin |
+| `expired` | Verification request expired |
+
+### Governance Events
+
+Device mutations emit Matrix custom events to the governance room. These are outbound only and never added to the sync filter.
+
+| Event Type | Trigger |
+|------------|---------|
+| `app.armorclaw.device.approved` | Device trust state set to `verified` |
+| `app.armorclaw.device.rejected` | Device trust state set to `rejected` |
+
+Event delivery is best effort. Failures are logged but do not fail the RPC handler.
+
+---
+
+### device.list
+
+List all registered devices.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "device.list"
+}
+```
+
+**Parameters:** None
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "id": "dev_abc123",
+      "name": "Pixel 8 Pro",
+      "type": "mobile",
+      "platform": "android",
+      "trust_state": "verified",
+      "last_seen": "2026-04-19T15:30:00Z",
+      "first_seen": "2026-03-10T09:00:00Z",
+      "ip_address": "192.168.1.42",
+      "user_agent": "ArmorChat/1.12.0",
+      "is_current": false,
+      "verified_at": "2026-03-10T09:05:00Z",
+      "created_at": "2026-03-10T09:00:00Z",
+      "updated_at": "2026-04-19T15:30:00Z"
+    }
+  ]
+}
+```
+
+Returns an empty array (`[]`) when no devices are registered.
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32603 | `device store not configured` | Device store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"device.list"}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### device.get
+
+Get a single device by ID.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "device.get",
+  "params": {
+    "device_id": "dev_abc123"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| device_id | string | Yes | Device ID to retrieve |
+
+**Response:** Single `DeviceRecord` object (same shape as items in `device.list`).
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32602 | `device_id is required` | Missing device_id parameter |
+| -32602 | `invalid parameters` | Malformed JSON params |
+| -32000 | `device not found` | No device with given ID |
+| -32603 | `device store not configured` | Device store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"device.get","params":{"device_id":"dev_abc123"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### device.approve
+
+Approve a device, setting its trust state to `verified`. Idempotent: approving an already verified device returns success.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "device.approve",
+  "params": {
+    "device_id": "dev_abc123",
+    "approved_by": "@admin:matrix.example.com"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| device_id | string | Yes | Device ID to approve |
+| approved_by | string | Yes | Matrix user ID or admin identifier performing the approval |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true
+  }
+}
+```
+
+**Side effects:**
+- Audit log entry (`device.approved`) written
+- Matrix event `app.armorclaw.device.approved` emitted to governance room
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32602 | `device_id is required` | Missing device_id parameter |
+| -32602 | `approved_by is required` | Missing approved_by parameter |
+| -32602 | `invalid parameters` | Malformed JSON params |
+| -32000 | `device not found` | No device with given ID |
+| -32603 | `device store not configured` | Device store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"device.approve","params":{"device_id":"dev_abc123","approved_by":"@admin:example.com"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### device.reject
+
+Reject a device, setting its trust state to `rejected`. Idempotent: rejecting an already rejected device returns success.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "device.reject",
+  "params": {
+    "device_id": "dev_abc123",
+    "rejected_by": "@admin:matrix.example.com",
+    "reason": "Unknown device"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| device_id | string | Yes | Device ID to reject |
+| rejected_by | string | Yes | Matrix user ID or admin identifier performing the rejection |
+| reason | string | No | Human-readable reason for rejection |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true
+  }
+}
+```
+
+**Side effects:**
+- Audit log entry (`device.rejected`) written with reason
+- Matrix event `app.armorclaw.device.rejected` emitted to governance room
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32602 | `device_id is required` | Missing device_id parameter |
+| -32602 | `invalid parameters` | Malformed JSON params |
+| -32000 | `device not found` | No device with given ID |
+| -32603 | `device store not configured` | Device store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"device.reject","params":{"device_id":"dev_abc123","rejected_by":"@admin:example.com","reason":"Unknown device"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+## Invite Governance
+
+Invite governance methods manage role-based invitations for onboarding new users. All invite governance methods require admin authentication.
+
+### Roles
+
+| Role | Matrix Power Level | Permissions |
+|------|-------------------|-------------|
+| `admin` | 100 | Full administrative access including security configuration |
+| `moderator` | 50 | Agent management, no security changes |
+| `user` | 0 | Standard user access to interact with agents |
+
+### Invite Statuses
+
+| Status | Description |
+|--------|-------------|
+| `active` | Invite is valid and can be used |
+| `used` | Invite has been redeemed |
+| `expired` | Invite passed its expiration time |
+| `revoked` | Invite was manually revoked by admin |
+| `exhausted` | Invite reached its max use count |
+
+### Expiration Values
+
+Invite creation accepts these human-friendly expiration strings:
+
+| Value | Meaning |
+|-------|---------|
+| `1h` | Expires in 1 hour |
+| `6h` | Expires in 6 hours |
+| `1d` | Expires in 24 hours |
+| `7d` | Expires in 7 days |
+| `30d` | Expires in 30 days |
+| `never` | No expiration |
+
+### Governance Events
+
+Invite mutations emit Matrix custom events to the governance room.
+
+| Event Type | Trigger |
+|------------|---------|
+| `app.armorclaw.invite.created` | New invite created |
+| `app.armorclaw.invite.revoked` | Invite revoked by admin |
+
+---
+
+### invite.create
+
+Create a new invite with a cryptographically random code.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "invite.create",
+  "params": {
+    "role": "user",
+    "expiration": "7d",
+    "max_uses": 5,
+    "welcome_message": "Welcome to the team!",
+    "created_by": "@admin:matrix.example.com"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| role | string | Yes | One of: `admin`, `moderator`, `user` |
+| expiration | string | Yes | Expiration duration: `1h`, `6h`, `1d`, `7d`, `30d`, `never` |
+| max_uses | integer | No | Maximum times invite can be used (0 = unlimited) |
+| welcome_message | string | No | Message shown to user on invite redemption |
+| created_by | string | Yes | Matrix user ID or admin identifier creating the invite |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "inv_abc123def456",
+    "code": "Xk9mP2qR",
+    "role": "user",
+    "created_by": "@admin:matrix.example.com",
+    "created_at": "2026-04-20T10:00:00Z",
+    "expires_at": "2026-04-27T10:00:00Z",
+    "max_uses": 5,
+    "use_count": 0,
+    "status": "active",
+    "welcome_message": "Welcome to the team!"
+  }
+}
+```
+
+**Side effects:**
+- Audit log entry (`invite.created`) written
+- Matrix event `app.armorclaw.invite.created` emitted to governance room
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32602 | `role is required` | Missing role parameter |
+| -32602 | `invalid role: <role>` | Role not one of admin/moderator/user |
+| -32602 | `expiration is required` | Missing expiration parameter |
+| -32602 | `invalid expiration: <val>` | Unsupported expiration string |
+| -32602 | `created_by is required` | Missing created_by parameter |
+| -32603 | `invite store not configured` | Invite store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"invite.create","params":{"role":"user","expiration":"7d","max_uses":3,"created_by":"@admin:example.com"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### invite.list
+
+List all invites ordered by creation date descending.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "invite.list"
+}
+```
+
+**Parameters:** None
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "id": "inv_abc123def456",
+      "code": "Xk9mP2qR",
+      "role": "user",
+      "created_by": "@admin:matrix.example.com",
+      "created_at": "2026-04-20T10:00:00Z",
+      "expires_at": "2026-04-27T10:00:00Z",
+      "max_uses": 5,
+      "use_count": 2,
+      "status": "active",
+      "welcome_message": "Welcome to the team!"
+    }
+  ]
+}
+```
+
+Returns an empty array (`[]`) when no invites exist.
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32603 | `invite store not configured` | Invite store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"invite.list"}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### invite.revoke
+
+Revoke an active invite. Idempotent: revoking an already revoked invite returns success.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "invite.revoke",
+  "params": {
+    "invite_id": "inv_abc123def456",
+    "revoked_by": "@admin:matrix.example.com"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| invite_id | string | Yes | Invite ID to revoke |
+| revoked_by | string | Yes | Matrix user ID or admin identifier performing the revocation |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true
+  }
+}
+```
+
+**Side effects:**
+- Audit log entry (`invite.revoked`) written
+- Matrix event `app.armorclaw.invite.revoked` emitted to governance room
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32602 | `invite_id is required` | Missing invite_id parameter |
+| -32602 | `invalid parameters` | Malformed JSON params |
+| -32000 | `invite not found` | No invite with given ID |
+| -32603 | `invite store not configured` | Invite store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"invite.revoke","params":{"invite_id":"inv_abc123","revoked_by":"@admin:example.com"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
+
+---
+
+### invite.validate
+
+Validate an invite code and return the full invite record. Checks that the invite is active, not expired, and not exhausted. This method is used during onboarding before accepting an invite.
+
+**Authentication:** Admin required
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "invite.validate",
+  "params": {
+    "code": "Xk9mP2qR"
+  }
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| code | string | Yes | Invite code to validate |
+
+**Response:** Full `InviteRecord` object (same shape as items in `invite.list`).
+
+**Error Codes:**
+| Code | Message | Cause |
+|------|---------|-------|
+| -32001 | `authentication required` | Missing or invalid admin credentials |
+| -32602 | `code is required` | Missing code parameter |
+| -32602 | `invalid parameters` | Malformed JSON params |
+| -32000 | `invite not found` | No invite with given code |
+| -32000 | `invite is revoked` | Invite has been revoked |
+| -32000 | `invite has expired` | Invite past its expiration time |
+| -32000 | `invite usage limit reached` | Invite use_count >= max_uses |
+| -32603 | `invite store not configured` | Invite store not initialized |
+
+**Example:**
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"invite.validate","params":{"code":"Xk9mP2qR"}}' | \
+  socat - UNIX-CONNECT:/run/armorclaw/bridge.sock
+```
 
 ---
 
