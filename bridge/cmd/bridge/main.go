@@ -44,6 +44,7 @@ import (
 	"github.com/armorclaw/bridge/pkg/setup"
 	"github.com/armorclaw/bridge/pkg/studio"
 	"github.com/armorclaw/bridge/pkg/trust"
+	"github.com/armorclaw/bridge/pkg/invite"
 	"github.com/armorclaw/bridge/pkg/turn"
 
 	"github.com/docker/docker/api/types"
@@ -2495,6 +2496,16 @@ func runBridgeServer(cliCfg cliConfig) {
 	hardeningStore := trust.NewKeystoreHardeningStore(ks.GetDB())
 	log.Println("Hardening store initialized")
 
+	// Initialize governance stores (shared keystore DB)
+	deviceStore, err := trust.NewDeviceStore(ks.GetDB())
+	if err != nil {
+		log.Fatalf("Failed to initialize device store: %v", err)
+	}
+	inviteStore, err := invite.NewInviteStore(ks.GetDB())
+	if err != nil {
+		log.Fatalf("Failed to initialize invite store: %v", err)
+	}
+
 	metrics := rpc.NewMetrics()
 	log.Println("Metrics initialized")
 
@@ -2514,6 +2525,8 @@ func runBridgeServer(cliCfg cliConfig) {
 		SkillManager:    skillMgr,
 		EventBus:        eventBus,
 		HardeningStore:  hardeningStore,
+		DeviceStore:     deviceStore,
+		InviteStore:     inviteStore,
 		Metrics:         metrics,
 		MCPRouter:       mcpRouter,
 		Translator:      mcpTranslator,
