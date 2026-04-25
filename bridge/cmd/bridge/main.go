@@ -2195,19 +2195,14 @@ func runBridgeServer(cliCfg cliConfig) {
 			MaxLogFileSize:    cfg.EventBus.MaxLogFileSize,
 		}
 
+		// Validate: WebSocket requires HTTP server (broadcaster lives in HTTPS server)
+		if cfg.EventBus.WebSocketEnabled && !cfg.HTTP.Enabled {
+			log.Fatalf("Configuration error: websocket_enabled=true requires [http] enabled=true (the HTTP server hosts the WebSocket endpoint)")
+		}
+
 		eventBus = eventbus.NewEventBus(eventBusConfig)
 
-		// Start event bus
-		if err := eventBus.Start(); err != nil {
-			log.Printf("Warning: Failed to start event bus: %v", err)
-			log.Println("Real-time event push will not be available")
-			eventBus = nil
-		} else {
-			log.Println("Event bus started for real-time Matrix event distribution")
-			if cfg.EventBus.WebSocketEnabled {
-				log.Printf("WebSocket endpoint: %s%s", cfg.EventBus.WebSocketAddr, cfg.EventBus.WebSocketPath)
-			}
-		}
+		// Event bus will be started after HTTPS server creation (needs broadcaster wire)
 	} else {
 		log.Println("Event bus disabled (Matrix not enabled)")
 	}
@@ -2668,6 +2663,17 @@ func runBridgeServer(cliCfg cliConfig) {
 			WSPath:           cfg.Discovery.WSPath,
 			Metrics:          metrics,
 		}, server)
+
+		if eventBus != nil && httpsServer != nil {
+			eventBus.SetBroadcaster(httpsServer)
+		}
+		if eventBus != nil {
+			if err := eventBus.Start(); err != nil {
+				log.Printf("Warning: Failed to start event bus: %v", err)
+			} else {
+				log.Println("Event bus started")
+			}
+		}
 
 		go func() {
 			if err := httpsServer.Start(); err != nil {
