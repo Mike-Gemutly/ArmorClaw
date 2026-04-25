@@ -52,6 +52,9 @@ socket_path = "$SOCKET_PATH"
 [error_system]
 enabled = false
 store_enabled = false
+
+[discovery]
+enabled = false
 EOF
 
 # ── Dependency check ──────────────────────────────────────────────────────────
