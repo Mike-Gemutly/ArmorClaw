@@ -1129,6 +1129,65 @@ precheck → rpc-unit-tests → rpc-integ-tests → docker-build → docker-smok
 
 All RPC tests must pass before Docker images are built and pushed to Docker Hub.
 
+### Full System Test Harness
+
+A comprehensive bash-based test harness covering **13 major ArmorClaw subsystems** with **4 cross-subsystem integration scenarios**, organized in two execution tiers (VPS-deployed vs code-only).
+
+**Shared Fixtures** (`tests/lib/`):
+
+| File | Purpose |
+|------|---------|
+| `load_env.sh` | Environment loader — sources `.env`, `tests/e2e/common.sh`, provides `ssh_vps()` |
+| `assert_json.sh` | 6 JSON assertion helpers for RPC response validation |
+| `restart_bridge.sh` | Bridge restart with `flock` serialization (prevents concurrent restarts) |
+| `event_subscriber_helper.sh` | WebSocket event subscription via `websocat` |
+| `common_output.sh` | Standardized PASS/FAIL/SKIP counters + `harness_summary()` |
+
+**Tier A (VPS-deployed, live integration tests)**:
+- `test-eventbus-streaming.sh` — EventBus + WebSocket events (7 scenarios)
+- `test-trust-layer.sh` — PII detection, approval flow, risk classification (8 scenarios)
+- `test-system-health-baseline.sh` — Bridge health, Matrix health, JSON summary (7 scenarios)
+- `test-secretary-workflow-core.sh` — Workflow state machine, blocker resolution, restart survival (7 scenarios)
+- `test-email-pipeline.sh` — Email approval RPC boundary (7 scenarios)
+
+**Tier B (code-only, graceful skip on VPS)**:
+- `test-secretary-workflow-deep.sh` — PII-gated halt, parallel steps, event validation
+- `test-sidecar-docs.sh` — 3-layer document pipeline routing
+- `test-voice-stack.sh` — Voice stack budget, STT/TTS/VAD
+- `test-jetski-sidecar.sh` — Browser sidecar session lifecycle
+- `test-license-enforcement.sh` — License RPC validation, grace period
+- `test-platform-adapters.sh` — Matrix adapter, Slack (skip)
+- `test-agent-runtime.sh` — Container and studio RPC shapes
+- `test-deployment-usb.sh` — USB device detection, permission gating
+
+**Cross-Subsystem Scenarios**:
+- `test-cross-workflow-email.sh` — Secretary → Email Approval
+- `test-cross-workflow-docs.sh` — Secretary → Document Sidecar
+- `test-cross-browser-trust.sh` — Jetski → Trust Layer
+- `test-cross-event-truth.sh` — EventBus → Multi-subsystem event stream
+
+Run the full harness:
+```bash
+# Syntax check all scripts
+for f in tests/test-*.sh tests/lib/*.sh; do bash -n "$f" && echo "OK: $f"; done
+
+# Run all Tier A (requires VPS with bridge running)
+for f in tests/test-eventbus-streaming.sh tests/test-trust-layer.sh \
+         tests/test-system-health-baseline.sh tests/test-secretary-workflow-core.sh \
+         tests/test-email-pipeline.sh; do bash "$f"; done
+
+# Run all Tier B (graceful skip if subsystems undeployed)
+for f in tests/test-secretary-workflow-deep.sh tests/test-sidecar-docs.sh \
+         tests/test-voice-stack.sh tests/test-jetski-sidecar.sh \
+         tests/test-license-enforcement.sh tests/test-platform-adapters.sh \
+         tests/test-agent-runtime.sh tests/test-deployment-usb.sh; do bash "$f"; done
+
+# Run cross-subsystem scenarios
+for f in tests/test-cross-*.sh; do bash "$f"; done
+```
+
+Evidence saved to `.sisyphus/evidence/full-system-{task-name}/`. Full harness runs in ≤ 10 minutes.
+
 ---
 
 ## Build from Source

@@ -309,7 +309,27 @@ armorclaw-omo/
 │   ├── cloudflare.yaml
 │   └── provision.yaml
 │
-└── tests/ssh/               # VPS testing suite (10 categories)
+└── tests/                    # Test suites
+    ├── ssh/                 # VPS testing suite (10 categories)
+    ├── e2e/                 # E2E test utilities (common.sh)
+    ├── integration/         # Installer integration tests
+    ├── adversarial/         # Security adversarial tests
+    ├── lib/                 # Shared test fixtures (load_env, assert_json, restart_bridge, etc.)
+    ├── fixtures/            # Shared test data
+    ├── test-eventbus-streaming.sh      # T1: EventBus + WebSocket (Tier A)
+    ├── test-trust-layer.sh             # T2: Security / Trust Layer (Tier A)
+    ├── test-system-health-baseline.sh  # T2.5: Health baseline (Tier A)
+    ├── test-secretary-workflow-core.sh # T3a: Workflow core (Tier A)
+    ├── test-email-pipeline.sh          # T4: Email approval (Tier A)
+    ├── test-secretary-workflow-deep.sh # T3b: Workflow deep (Tier B)
+    ├── test-sidecar-docs.sh            # T5: Document pipeline (Tier B)
+    ├── test-voice-stack.sh             # T6: Voice stack (Tier B)
+    ├── test-jetski-sidecar.sh          # T7: Browser sidecar (Tier B)
+    ├── test-license-enforcement.sh     # T8: License enforcement (Tier B)
+    ├── test-platform-adapters.sh       # T9: Platform adapters (Tier B)
+    ├── test-agent-runtime.sh           # T10: Agent runtime (Tier B)
+    ├── test-deployment-usb.sh          # T11: Deployment / USB (Tier B)
+    └── test-cross-*.sh                # X1-X4: Cross-subsystem integration
 ```
 
 ### Communication Patterns
@@ -3188,9 +3208,87 @@ CF_TUNNEL_DOMAIN=armorclaw.example.com
 
 ## Testing & Verification
 
-### Test Categories
+### Full System Test Harness
 
-The testing suite includes **11 comprehensive test categories** with **226+ individual tests**:
+A comprehensive bash-based test harness covering **13 major ArmorClaw subsystems** with **4 cross-subsystem integration scenarios**, organized in two execution tiers.
+
+**Shared Fixtures** (`tests/lib/`):
+
+| File | Purpose |
+|------|---------|
+| `load_env.sh` | Environment loader (`.env` + `tests/e2e/common.sh` sourcing, `ssh_vps()`, `check_bridge_running()`) |
+| `assert_json.sh` | 6 JSON assertion helpers (`assert_json_has_key`, `assert_json_equals`, `assert_rpc_success`, etc.) |
+| `restart_bridge.sh` | Bridge restart with `flock` serialization and readiness polling |
+| `event_subscriber_helper.sh` | WebSocket event subscription via `websocat` (graceful skip if unavailable) |
+| `common_output.sh` | Standardized PASS/FAIL/SKIP counters + `harness_summary()` |
+| `README.md` | Usage documentation per helper |
+
+**Tier A — VPS-Deployed (live integration tests)**:
+
+| Script | Subsystem | Scenarios |
+|--------|-----------|-----------|
+| `test-eventbus-streaming.sh` | EventBus + WebSocket | E0–E6: connection, subscription, fanout, filtering, reconnect |
+| `test-trust-layer.sh` | Security / Trust Layer | S0–S7: PII detection, approval flow, denial, risk classification, audit trail |
+| `test-system-health-baseline.sh` | System Health | H0–H6: bridge health, status, discovery, Matrix health, keystore, JSON summary |
+| `test-secretary-workflow-core.sh` | Secretary Workflow Core | W0–W6: template lifecycle, state transitions, blocker resolution, restart survival |
+| `test-email-pipeline.sh` | Email Approval Pipeline | M0–M6: approval status, list pending, deny, approve, restart persistence |
+
+**Tier B — Code-Only (API contract tests, graceful skip on VPS)**:
+
+| Script | Subsystem | Scenarios |
+|--------|-----------|-----------|
+| `test-secretary-workflow-deep.sh` | Secretary Workflow Deep | WD0–WD6: PII-gated halt, parallel steps, event validation, failover |
+| `test-sidecar-docs.sh` | Document Sidecar Pipeline | D0–D7: Rust health, Python health, 3-layer routing, PII interception |
+| `test-voice-stack.sh` | Voice Stack | V0–V5: budget enforcement, STT/TTS/VAD smoke, WebRTC sessions |
+| `test-jetski-sidecar.sh` | Jetski Browser Sidecar | J0–J5: health check, session lifecycle, CDP proxy, PII scanner |
+| `test-license-enforcement.sh` | License Enforcement | L0–L6: license status, features, compliance, platform limits, grace period |
+| `test-platform-adapters.sh` | Platform Adapters | P0–P6: Matrix adapter, send/receive, join room, AppService, Slack (skip) |
+| `test-agent-runtime.sh` | Agent Runtime | R0–R6: container list, studio agents, runtime health, isolation check |
+| `test-deployment-usb.sh` | Deployment / USB | U0–U5: device detection, permission gating, unsafe device refusal |
+
+**Cross-Subsystem Integration Scenarios**:
+
+| Script | Cross-Subsystem | Scenarios |
+|--------|----------------|-----------|
+| `test-cross-workflow-email.sh` | Secretary → Email Approval | Workflow with email-sending step triggers approval |
+| `test-cross-workflow-docs.sh` | Secretary → Document Sidecar | Workflow sends document task to sidecar pipeline |
+| `test-cross-browser-trust.sh` | Jetski → Trust Layer | Browser CDP action hits trust boundary |
+| `test-cross-event-truth.sh` | EventBus → Multi-subsystem | Live stream reflects state transitions in order |
+
+**Running the Full Harness**:
+
+```bash
+# Run all Tier A scripts (requires VPS with bridge running)
+for f in tests/test-eventbus-streaming.sh tests/test-trust-layer.sh \
+         tests/test-system-health-baseline.sh tests/test-secretary-workflow-core.sh \
+         tests/test-email-pipeline.sh; do
+  bash "$f"
+done
+
+# Run all Tier B scripts (structure check; graceful skip if subsystems undeployed)
+for f in tests/test-secretary-workflow-deep.sh tests/test-sidecar-docs.sh \
+         tests/test-voice-stack.sh tests/test-jetski-sidecar.sh \
+         tests/test-license-enforcement.sh tests/test-platform-adapters.sh \
+         tests/test-agent-runtime.sh tests/test-deployment-usb.sh; do
+  bash "$f"
+done
+
+# Run cross-subsystem scenarios
+for f in tests/test-cross-*.sh; do bash "$f"; done
+
+# Syntax check all scripts
+for f in tests/test-*.sh tests/lib/*.sh; do bash -n "$f" && echo "OK: $f"; done
+```
+
+**Evidence and Results**:
+
+- **Evidence path**: `.sisyphus/evidence/full-system-{task-name}/`
+- **Plan file**: `.sisyphus/plans/full-system-test-harness.md`
+- **Full harness wall-clock target**: ≤ 10 minutes
+
+### VPS SSH Test Suite
+
+The testing suite also includes **11 comprehensive SSH-based test categories** with **226+ individual tests**:
 
 | Category | Description | Test Count |
 |----------|-------------|------------|
@@ -3206,10 +3304,8 @@ The testing suite includes **11 comprehensive test categories** with **226+ indi
 | **Output Formatting** | JSON console output, error handling | 1 |
 | **Python Sidecar** | Worker unit tests, edge cases, token interceptor, E2E | 90 |
 
-### Running Tests
-
 ```bash
-# Run all tests
+# Run all SSH tests
 bash tests/ssh/run_all_tests.sh --all
 
 # Run specific category
@@ -3217,14 +3313,12 @@ bash tests/ssh/run_all_tests.sh --security
 
 # Run with verbose output
 bash tests/ssh/run_all_tests.sh --all --verbose
-
-# Run with JSON output
-bash tests/ssh/run_all_tests.sh --all --output json
 ```
 
 ### Test Results Location
 
-- **Evidence Directory**: `.sisyphus/evidence/`
+- **Full System Harness Evidence**: `.sisyphus/evidence/full-system-{task-name}/`
+- **SSH Evidence Directory**: `.sisyphus/evidence/`
 - **Summary File**: `.sisyphus/evidence/IMPLEMENTATION_SUMMARY.md`
 - **JSON Output**: `task-N-results.json`
 - **Console Output**: `task-N-success.txt`
