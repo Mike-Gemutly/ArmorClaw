@@ -28,6 +28,8 @@ BRIDGE_PORT="${BRIDGE_PORT:-8080}"
 BRIDGE_SERVICE="${BRIDGE_SERVICE:-armorclaw-bridge}"
 BRIDGE_SOCKET="${BRIDGE_SOCKET:-/run/armorclaw/bridge.sock}"
 
+command -v jq >/dev/null 2>&1 || { echo "FAIL: jq is required"; exit 1; }
+
 # ── Counters ──────────────────────────────────────────────────────────────────
 TOTAL=0 PASSED=0 FAILED=0
 P0_PASSED=0 P0_FAILED=0
@@ -49,16 +51,16 @@ ssh_vps() {
 
 # RPC via Unix socket (preferred)
 rpc_socket() {
-  local method="$1" params="${2:-\{\}}"
-  if [ "$params" = "\{\}" ]; then params='{}'; fi
+  local method="$1" params="${2:-}"
+  if [ -z "$params" ]; then params='{}'; fi
   local payload="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params},\"auth\":\"${ADMIN_TOKEN}\"}"
   ssh_vps "echo '${payload}' | socat - UNIX-CONNECT:${BRIDGE_SOCKET}"
 }
 
 # RPC via HTTP (fallback)
 rpc_http() {
-  local method="$1" params="${2:-\{\}}"
-  if [ "$params" = "\{\}" ]; then params='{}'; fi
+  local method="$1" params="${2:-}"
+  if [ -z "$params" ]; then params='{}'; fi
   local payload="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params}}"
   ssh_vps "curl -kfsS -X POST https://localhost:${BRIDGE_PORT}/api -H 'Content-Type: application/json' -H 'Authorization: Bearer ${ADMIN_TOKEN}' -d '${payload}'"
 }
@@ -157,11 +159,11 @@ echo "========================================="
 echo " P1: Create Invite (2 tests)"
 echo "========================================="
 
-CREATE_RESULT=$(rpc invite.create "{\"role\":\"admin\",\"expiration\":\"24h\",\"max_uses\":1,\"created_by\":\"persistence-test\",\"welcome_message\":\"test invite ${TEST_RUN_ID}\"}")
+CREATE_RESULT=$(rpc invite.create "{\"role\":\"admin\",\"expiration\":\"1d\",\"max_uses\":1,\"created_by\":\"persistence-test\",\"welcome_message\":\"test invite ${TEST_RUN_ID}\"}")
 run_phase_test P1 "invite.create returns code" '"code"' "$CREATE_RESULT"
 
-INVITE_ID=$(echo "$CREATE_RESULT" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-INVITE_CODE=$(echo "$CREATE_RESULT" | grep -o '"code":"[^"]*"' | head -1 | cut -d'"' -f4)
+INVITE_ID=$(echo "$CREATE_RESULT" | jq -r '.result.id // empty' 2>/dev/null || true)
+INVITE_CODE=$(echo "$CREATE_RESULT" | jq -r '.result.code // empty' 2>/dev/null || true)
 
 if [ -n "$INVITE_ID" ] && [ -n "$INVITE_CODE" ]; then
   run_phase_test P1 "Captured invite_id and code" "captured" "captured id=$INVITE_ID"

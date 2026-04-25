@@ -39,12 +39,11 @@ SOCKET_TESTS=0 HTTP_TESTS=0
 ssh_vps() { ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "${VPS_USER}@${VPS_IP}" "$@"; }
 
 rpc_vps() {
-  local method="$1" params="${2:-\{\}}"
-  # shellcheck disable=SC2086
-  if [ "$params" = "\{\}" ]; then
+  local method="$1" params="${2:-}"
+  if [ -z "$params" ]; then
     params='{}'
   fi
-  ssh_vps "curl -kfsS -H 'Authorization: Bearer ${ADMIN_TOKEN}' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params}}' http://localhost:${BRIDGE_PORT}/api"
+  ssh_vps "curl -kfsS -H 'Authorization: Bearer ${ADMIN_TOKEN}' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params}}' https://localhost:${BRIDGE_PORT}/api"
 }
 
 run_test() {
@@ -143,7 +142,7 @@ fi
 # A2: Health endpoint (HTTP-only)
 if $HAS_HTTP; then
   H_TOTAL=$((H_TOTAL + 1)); TOTAL=$((TOTAL + 1)); HTTP_TESTS=$((HTTP_TESTS + 1))
-  HEALTH=$(ssh_vps "curl -kfsS http://localhost:${BRIDGE_PORT}/health" 2>&1) && HEALTH_OK=true || HEALTH_OK=false
+  HEALTH=$(ssh_vps "curl -kfsS https://localhost:${BRIDGE_PORT}/health" 2>&1) && HEALTH_OK=true || HEALTH_OK=false
   if $HEALTH_OK && echo "$HEALTH" | jq -e '.status == "ok"' >/dev/null 2>&1; then
       PASSED=$((PASSED + 1)); H_PASS=$((H_PASS + 1))
       echo "  [PASS] Health endpoint returns ok (http)"
@@ -182,7 +181,7 @@ echo "========================================="
 if $HAS_HTTP; then
   # B1-HTTP: No auth → JSON-RPC error -32001 "unauthorized"
   A_TOTAL=$((A_TOTAL + 1)); TOTAL=$((TOTAL + 1)); HTTP_TESTS=$((HTTP_TESTS + 1))
-  NOAUTH_RESP=$(ssh_vps "curl -ks -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"device.list\"}' http://localhost:${BRIDGE_PORT}/api" 2>&1)
+  NOAUTH_RESP=$(ssh_vps "curl -ks -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"device.list\"}' https://localhost:${BRIDGE_PORT}/api" 2>&1)
   if echo "$NOAUTH_RESP" | jq -e '.error.code == -32001' >/dev/null 2>&1 && echo "$NOAUTH_RESP" | jq -e '.error.message == "unauthorized"' >/dev/null 2>&1; then
       PASSED=$((PASSED + 1)); A_PASS=$((A_PASS + 1))
       echo "  [PASS] No auth returns JSON-RPC -32001 unauthorized (http)"
@@ -208,7 +207,7 @@ if $HAS_HTTP; then
 
   # B3-HTTP: Invalid token → same JSON-RPC error
   A_TOTAL=$((A_TOTAL + 1)); TOTAL=$((TOTAL + 1)); HTTP_TESTS=$((HTTP_TESTS + 1))
-  BAD_RESP=$(ssh_vps "curl -ks -H 'Authorization: Bearer invalid-token-12345' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"device.list\"}' http://localhost:${BRIDGE_PORT}/api" 2>&1)
+  BAD_RESP=$(ssh_vps "curl -ks -H 'Authorization: Bearer invalid-token-12345' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"device.list\"}' https://localhost:${BRIDGE_PORT}/api" 2>&1)
   if echo "$BAD_RESP" | jq -e '.error.code == -32001' >/dev/null 2>&1; then
       PASSED=$((PASSED + 1)); A_PASS=$((A_PASS + 1))
       echo "  [PASS] Invalid token returns -32001 (http)"
@@ -423,7 +422,7 @@ echo "========================================="
 
 if $HAS_HTTP; then
   D_TOTAL=$((D_TOTAL + 1)); TOTAL=$((TOTAL + 1)); HTTP_TESTS=$((HTTP_TESTS + 1))
-  DISC=$(ssh_vps "curl -kfsS http://localhost:${BRIDGE_PORT}/api/discovery" 2>&1) && DISC_OK=true || DISC_OK=false
+  DISC=$(ssh_vps "curl -kfsS https://localhost:${BRIDGE_PORT}/api/discovery" 2>&1) && DISC_OK=true || DISC_OK=false
   if $DISC_OK && echo "$DISC" | jq -e '.version' >/dev/null 2>&1; then
       PASSED=$((PASSED + 1)); D_PASS=$((D_PASS + 1))
       echo "  [PASS] Discovery endpoint returns version (http)"

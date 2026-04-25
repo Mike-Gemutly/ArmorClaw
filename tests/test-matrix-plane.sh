@@ -94,32 +94,29 @@ echo "========================================="
 echo "Category A: Login & Sync"
 echo "========================================="
 
-# A1: Login
+# A1: Login via curl (matrix-commander requires interactive input)
 LS_TOTAL=$((LS_TOTAL + 1)); TOTAL=$((TOTAL + 1))
-echo "  [1/N] Logging in..."
-if mc --login --homeserver "$HOMESERVER" --user "$MATRIX_USER" --password "$MATRIX_PASSWORD" 2>&1; then
+echo "  [1/N] Logging in via Matrix API..."
+matrix_login
+if [[ -n "$MATRIX_TOKEN" ]]; then
     PASSED=$((PASSED + 1)); LS_PASS=$((LS_PASS + 1))
-    echo "  [PASS] Login succeeds"
+    echo "  [PASS] Login succeeds (user: $MATRIX_USER_ID)"
 else
-    # May already be logged in — check if store exists
-    if [[ -f "$MATRIX_STORE/credentials.json" ]] || [[ -d "$MATRIX_STORE" ]]; then
-        PASSED=$((PASSED + 1)); LS_PASS=$((LS_PASS + 1))
-        echo "  [PASS] Login (already authenticated)"
-    else
-        FAILED=$((FAILED + 1))
-        echo "  [FAIL] Login fails"
-    fi
+    FAILED=$((FAILED + 1))
+    echo "  [FAIL] Login fails"
 fi
 
-# A2: Sync
+# A2: Sync via curl
 LS_TOTAL=$((LS_TOTAL + 1)); TOTAL=$((TOTAL + 1))
 echo "  [2/N] Syncing..."
-if mc --sync off --timeout 30 2>&1; then
+SYNC_RESP=$(ssh_run "curl -s 'http://localhost:${MATRIX_PORT}/_matrix/client/v3/sync?timeout=0' -H 'Authorization: Bearer ${MATRIX_TOKEN}'" 2>&1)
+if echo "$SYNC_RESP" | jq -e '.rooms' >/dev/null 2>&1 || echo "$SYNC_RESP" | jq -e '.next_batch' >/dev/null 2>&1; then
     PASSED=$((PASSED + 1)); LS_PASS=$((LS_PASS + 1))
     echo "  [PASS] Sync succeeds"
 else
     FAILED=$((FAILED + 1))
     echo "  [FAIL] Sync fails"
+    echo "    Got: $(echo "$SYNC_RESP" | head -c 200)"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -198,19 +195,23 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 echo ""
 echo "========================================="
-echo "Category C: File Upload"
+echo "Category C: File Upload (Direct API)"
 echo "========================================="
 
 F_TOTAL=$((F_TOTAL + 1)); TOTAL=$((TOTAL + 1))
 TMPFILE=$(mktemp /tmp/armorclaw-smoke-XXXXXX.txt)
-echo "ArmorClaw smoke test file upload $(date)" > "$TMPFILE"
-echo "  [7/N] Uploading file..."
-if mc --room "$ROOM_ID" --file "$TMPFILE" 2>&1; then
+UPLOAD_CONTENT="ArmorClaw smoke test file upload $(date)"
+echo "$UPLOAD_CONTENT" > "$TMPFILE"
+echo "  [7/N] Uploading file via Matrix media API..."
+UPLOAD_RESP=$(ssh_run "curl -s -X POST 'http://localhost:${MATRIX_PORT}/_matrix/media/v3/upload' -H 'Authorization: Bearer ${MATRIX_TOKEN}' -H 'Content-Type: text/plain' -d '${UPLOAD_CONTENT}'" 2>&1)
+MXC_URI=$(echo "$UPLOAD_RESP" | jq -r '.content_uri // empty')
+if [[ -n "$MXC_URI" ]]; then
     PASSED=$((PASSED + 1)); F_PASS=$((F_PASS + 1))
-    echo "  [PASS] File upload succeeds"
+    echo "  [PASS] File upload succeeds (mxc: $MXC_URI)"
 else
     FAILED=$((FAILED + 1))
     echo "  [FAIL] File upload fails"
+    echo "    Got: $(echo "$UPLOAD_RESP" | head -c 200)"
 fi
 rm -f "$TMPFILE"
 
