@@ -1,8 +1,19 @@
 package security
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"strings"
+)
+
+var (
+	ErrSessionNotFound    = errors.New("session not found")
+	ErrEmptyPassphrase    = errors.New("passphrase must not be empty")
+	ErrDuplicateSession   = errors.New("session already exists")
+	ErrInvalidCredentials = errors.New("invalid credentials or corrupted database")
+
+	isEncrypted bool
 )
 
 type Session struct {
@@ -12,10 +23,26 @@ type Session struct {
 	ExpiresAt int64
 }
 
+type SessionStore interface {
+	CreateSession(session Session) error
+	GetSession(id string) (*Session, error)
+	CloseSession(id string) error
+	ListSessions() ([]Session, error)
+	Close() error
+}
+
+func NewSessionStore(dbPath, passphrase string) (SessionStore, error) {
+	store, err := newCipherSessionStore(dbPath, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
 func SaveSession(filePath string, session Session, passphrase string) error {
 	dbPath := strings.TrimSuffix(filePath, ".enc") + ".db"
 
-	store, err := NewSQLCipherSessionStore(dbPath, passphrase)
+	store, err := NewSessionStore(dbPath, passphrase)
 	if err != nil {
 		return err
 	}
@@ -31,7 +58,7 @@ func SaveSession(filePath string, session Session, passphrase string) error {
 func LoadSession(filePath string, passphrase string) (*Session, error) {
 	dbPath := strings.TrimSuffix(filePath, ".enc") + ".db"
 
-	store, err := NewSQLCipherSessionStore(dbPath, passphrase)
+	store, err := NewSessionStore(dbPath, passphrase)
 	if err != nil {
 		return nil, err
 	}
@@ -47,4 +74,10 @@ func LoadSession(filePath string, passphrase string) (*Session, error) {
 	}
 
 	return &sessions[0], nil
+}
+
+func init() {
+	if !isEncrypted {
+		log.Println("[security] WARNING: SQLCipher unavailable (CGO disabled). Sessions stored as plaintext SQLite. Do not use in production with sensitive data.")
+	}
 }

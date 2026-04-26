@@ -1,3 +1,5 @@
+//go:build cgo
+
 package security
 
 import (
@@ -5,7 +7,6 @@ import (
 	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,20 +25,6 @@ const (
 	derivedKeyLength   = 32
 	saltLength         = 32
 )
-
-var (
-	ErrSessionNotFound    = errors.New("session not found")
-	ErrEmptyPassphrase    = errors.New("passphrase must not be empty")
-	ErrDuplicateSession   = errors.New("session already exists")
-	ErrInvalidCredentials = errors.New("invalid credentials or corrupted database")
-)
-
-type SessionStore interface {
-	CreateSession(session Session) error
-	GetSession(id string) (*Session, error)
-	CloseSession(id string) error
-	ListSessions() ([]Session, error)
-}
 
 type SQLCipherSessionStore struct {
 	db *sql.DB
