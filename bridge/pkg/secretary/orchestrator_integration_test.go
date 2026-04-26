@@ -1306,7 +1306,7 @@ func TestInjectLearnedSkills_WithMatch(t *testing.T) {
 	executor := NewStepExecutor(StepExecutorConfig{SkillFinder: finder})
 
 	config := json.RawMessage(`{"timeout": 30}`)
-	result := executor.injectLearnedSkills(config, "search the web for restaurants")
+	result := executor.injectLearnedSkills(context.Background(), config, "search the web for restaurants")
 
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(result, &m))
@@ -1329,7 +1329,7 @@ func TestInjectLearnedSkills_NilStore(t *testing.T) {
 	executor := NewStepExecutor(StepExecutorConfig{})
 
 	original := json.RawMessage(`{"timeout": 30}`)
-	result := executor.injectLearnedSkills(original, "search the web for restaurants")
+	result := executor.injectLearnedSkills(context.Background(), original, "search the web for restaurants")
 
 	assert.Equal(t, original, result, "nil SkillFinder should return config unchanged")
 }
@@ -1342,7 +1342,7 @@ func TestInjectLearnedSkills_NoMatch(t *testing.T) {
 	executor := NewStepExecutor(StepExecutorConfig{SkillFinder: finder})
 
 	original := json.RawMessage(`{"timeout": 30}`)
-	result := executor.injectLearnedSkills(original, "search the web for restaurants")
+	result := executor.injectLearnedSkills(context.Background(), original, "search the web for restaurants")
 
 	assert.Equal(t, original, result, "no matching skills should return config unchanged")
 }

@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"regexp"
 	"sync"
 	"time"
 
 	"github.com/armorclaw/bridge/internal/events"
+	"github.com/armorclaw/bridge/pkg/browser"
 	"github.com/armorclaw/bridge/pkg/capability"
 	"github.com/armorclaw/bridge/pkg/interfaces"
 	"github.com/armorclaw/bridge/pkg/studio"
@@ -99,6 +101,12 @@ type SkillFinder interface {
 	FindForTask(taskDesc string, limit int) ([]LearnedSkillInfo, error)
 }
 
+// ChartFinder finds relevant navigation charts for a browser domain.
+// Mirrors SkillFinder but targets browser-execute steps.
+type ChartFinder interface {
+	FindForDomain(ctx context.Context, domain string, limit int) ([]browser.ChartRecord, error)
+}
+
 //=============================================================================
 // Step Execution Errors
 //=============================================================================
@@ -152,11 +160,13 @@ type StepExecutorConfig struct {
 	StepRetryDelay   time.Duration
 	StateDirBase     string
 	SkillFinder      SkillFinder
+	ChartFinder      ChartFinder
 	FailoverPolicy   FailoverPolicy
 	ParallelConfig   ParallelConfig
 
 	OnSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
 	OnSkillOutcome    func(skillID string, success bool) error
+	OnChartOutcome    func(chartID string, success bool) error
 }
 
 type FailoverAttempt struct {
@@ -206,11 +216,13 @@ type StepExecutor struct {
 	retryDelay       time.Duration
 	stateDirBase     string
 	skillFinder      SkillFinder
+	chartFinder      ChartFinder
 	failoverPolicy   FailoverPolicy
 	parallelExec     *ParallelExecutor
 
 	onSkillExtraction func(result *ExtendedStepResult, taskDesc, taskID, templateID string)
 	onSkillOutcome    func(skillID string, success bool) error
+	onChartOutcome    func(chartID string, success bool) error
 
 	mu           sync.RWMutex
 	runningSteps map[string]*runningStep
@@ -254,9 +266,11 @@ func NewStepExecutor(cfg StepExecutorConfig) *StepExecutor {
 		retryDelay:        cfg.StepRetryDelay,
 		stateDirBase:      cfg.StateDirBase,
 		skillFinder:       cfg.SkillFinder,
+		chartFinder:       cfg.ChartFinder,
 		failoverPolicy:    cfg.FailoverPolicy,
 		onSkillExtraction: cfg.OnSkillExtraction,
 		onSkillOutcome:    cfg.OnSkillOutcome,
+		onChartOutcome:    cfg.OnChartOutcome,
 		runningSteps:      make(map[string]*runningStep),
 	}
 }
@@ -818,9 +832,9 @@ func (e *StepExecutor) executeStepWithAgent(ctx context.Context, workflow *Workf
 		Config:          step.Config,
 	}
 
-	// Inject learned skills into step config before spawning the agent.
-	if os.Getenv("ARMORCLAW_LEARNED_SKILLS_INJECTION") != "false" && e.skillFinder != nil {
-		spawnReq.Config = e.injectLearnedSkills(spawnReq.Config, taskDesc)
+	// Inject learned skills and/or browser charts into step config before spawning the agent.
+	if e.skillFinder != nil || e.chartFinder != nil {
+		spawnReq.Config = e.injectLearnedSkills(ctx, spawnReq.Config, taskDesc)
 	}
 
 	spawnCtx, cancel := context.WithTimeout(ctx, e.defaultTimeout)
@@ -879,6 +893,8 @@ func (e *StepExecutor) executeStepWithAgent(ctx context.Context, workflow *Workf
 	stepSuccess := stepResult.Err == nil
 
 	e.recordSkillOutcomes(step.Config, stepSuccess)
+
+	e.recordChartOutcomes(step.Config, stepSuccess)
 
 	if stepSuccess && e.onSkillExtraction != nil && completionResult != nil && completionResult.ExtendedResult != nil {
 		e.onSkillExtraction(completionResult.ExtendedResult, taskDesc, workflow.ID, workflow.TemplateID)
@@ -1198,13 +1214,8 @@ func DeliverBlockerResponse(workflowID, stepID string, response BlockerResponse)
 	}
 }
 
-func (e *StepExecutor) injectLearnedSkills(config json.RawMessage, taskDesc string) json.RawMessage {
-	if e.skillFinder == nil {
-		return config
-	}
-
-	matched, err := e.skillFinder.FindForTask(taskDesc, 3)
-	if err != nil || len(matched) == 0 {
+func (e *StepExecutor) injectLearnedSkills(ctx context.Context, config json.RawMessage, taskDesc string) json.RawMessage {
+	if e.skillFinder == nil && e.chartFinder == nil {
 		return config
 	}
 
@@ -1217,23 +1228,66 @@ func (e *StepExecutor) injectLearnedSkills(config json.RawMessage, taskDesc stri
 		configMap = make(map[string]interface{})
 	}
 
-	var skillContexts []map[string]interface{}
-	for _, skill := range matched {
-		skillContexts = append(skillContexts, map[string]interface{}{
-			"name":       skill.Name,
-			"confidence": skill.Confidence,
-			"pattern":    skill.PatternType,
-			"source":     skill.SourceTaskID,
-		})
+	modified := false
+	skillsEnabled := os.Getenv("ARMORCLAW_LEARNED_SKILLS_INJECTION") != "false"
+
+	if skillsEnabled && e.skillFinder != nil {
+		matched, err := e.skillFinder.FindForTask(taskDesc, 3)
+		if err == nil && len(matched) > 0 {
+			var skillContexts []map[string]interface{}
+			for _, skill := range matched {
+				skillContexts = append(skillContexts, map[string]interface{}{
+					"name":       skill.Name,
+					"confidence": skill.Confidence,
+					"pattern":    skill.PatternType,
+					"source":     skill.SourceTaskID,
+				})
+			}
+			configMap["relevant_skills"] = skillContexts
+			modified = true
+		}
 	}
 
-	configMap["relevant_skills"] = skillContexts
+	if e.chartFinder != nil {
+		if rawURL, ok := configMap["url"].(string); ok && rawURL != "" {
+			if domain := extractDomainFromURL(rawURL); domain != "" {
+				charts, err := e.chartFinder.FindForDomain(ctx, domain, 3)
+				if err == nil && len(charts) > 0 {
+					var chartContexts []map[string]interface{}
+					for _, chart := range charts {
+						chartContexts = append(chartContexts, map[string]interface{}{
+							"chart_id":          chart.ChartID,
+							"domain":            chart.Domain,
+							"title":             chart.Title,
+							"confidence":        chart.Confidence,
+							"steps":             chart.Steps,
+							"requires_approval": chart.RequiresApproval,
+						})
+					}
+					configMap["relevant_charts"] = chartContexts
+					modified = true
+				}
+			}
+		}
+	}
+
+	if !modified {
+		return config
+	}
 
 	updated, err := json.Marshal(configMap)
 	if err != nil {
 		return config
 	}
 	return updated
+}
+
+func extractDomainFromURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // appendBlockerResponse adds the blocker response to the step config.
@@ -1282,6 +1336,34 @@ func (e *StepExecutor) recordSkillOutcomes(config json.RawMessage, success bool)
 			continue
 		}
 		_ = e.onSkillOutcome(source, success)
+	}
+}
+
+func (e *StepExecutor) recordChartOutcomes(config json.RawMessage, success bool) {
+	if e.onChartOutcome == nil {
+		return
+	}
+
+	var configMap map[string]interface{}
+	if err := json.Unmarshal(config, &configMap); err != nil {
+		return
+	}
+
+	charts, ok := configMap["relevant_charts"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, c := range charts {
+		chartMap, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		chartID, ok := chartMap["chart_id"].(string)
+		if !ok {
+			continue
+		}
+		_ = e.onChartOutcome(chartID, success)
 	}
 }
 
