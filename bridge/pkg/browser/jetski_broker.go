@@ -30,8 +30,21 @@ type JetskiBroker struct {
 	// wsConns maps JobID → active WebSocket connection to CDP proxy.
 	wsConns sync.Map
 
+	// jobContexts maps JobID → context.CancelFunc for cancelling running jobs.
+	jobContexts sync.Map
+
+	// jobMeta maps JobID → *jobMetadata for tracking job lifecycle info.
+	jobMeta sync.Map
+
 	// cdpMsgID is an atomic counter for CDP message IDs.
 	cdpMsgID atomic.Int64
+}
+
+// jobMetadata tracks per-job info for List and lifecycle reporting.
+type jobMetadata struct {
+	AgentID   string
+	CreatedAt time.Time
+	StartedAt time.Time
 }
 
 // NewJetskiBroker creates a new JetskiBroker.
@@ -69,21 +82,26 @@ type cdpError struct {
 func (b *JetskiBroker) StartJob(ctx context.Context, req StartJobRequest) (JobID, error) {
 	b.logger.Info("jetski: creating session", "agent_id", req.AgentID)
 
+	jobCtx, cancel := context.WithCancel(ctx)
+
 	url := b.rpcURL + "/rpc/session/create"
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	httpReq, err := http.NewRequestWithContext(jobCtx, http.MethodPost, url, nil)
 	if err != nil {
+		cancel()
 		return "", fmt.Errorf("jetski: build create-session request: %w", err)
 	}
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
+		cancel()
 		return "", fmt.Errorf("jetski: create-session rpc: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		cancel()
 		return "", fmt.Errorf("jetski: create-session returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -91,20 +109,32 @@ func (b *JetskiBroker) StartJob(ctx context.Context, req StartJobRequest) (JobID
 		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		cancel()
 		return "", fmt.Errorf("jetski: decode session response: %w", err)
 	}
 
 	if result.ID == "" {
+		cancel()
 		return "", fmt.Errorf("jetski: create-session returned empty session id")
 	}
 
 	jobID := JobID(result.ID)
 	b.sessionMap.Store(jobID, result.ID)
+	b.jobContexts.Store(jobID, cancel)
 
-	// Establish WebSocket connection to CDP proxy.
-	wsConn, _, err := websocket.DefaultDialer.DialContext(ctx, b.cdpURL, nil)
+	now := time.Now()
+	b.jobMeta.Store(jobID, &jobMetadata{
+		AgentID:   req.AgentID,
+		CreatedAt: now,
+		StartedAt: now,
+	})
+
+	wsConn, _, err := websocket.DefaultDialer.DialContext(jobCtx, b.cdpURL, nil)
 	if err != nil {
 		b.sessionMap.Delete(jobID)
+		b.jobContexts.Delete(jobID)
+		b.jobMeta.Delete(jobID)
+		cancel()
 		return "", fmt.Errorf("jetski: connect cdp websocket: %w", err)
 	}
 	b.wsConns.Store(jobID, wsConn)
@@ -189,12 +219,37 @@ func (b *JetskiBroker) Fail(ctx context.Context, id JobID, reason string) error 
 
 // List returns all active sessions for an agent.
 func (b *JetskiBroker) List(ctx context.Context, agentID string) ([]JobSummary, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	var jobs []JobSummary
+
+	b.jobMeta.Range(func(key, value any) bool {
+		id := key.(JobID)
+		meta := value.(*jobMetadata)
+
+		if agentID != "" && meta.AgentID != agentID {
+			return true
+		}
+
+		startedAt := meta.StartedAt
+		jobs = append(jobs, JobSummary{
+			ID:        id,
+			AgentID:   meta.AgentID,
+			Status:    JobStatusRunning,
+			CreatedAt: meta.CreatedAt,
+			StartedAt: &startedAt,
+		})
+		return true
+	})
+
+	return jobs, nil
 }
 
 // Cancel aborts a running session.
 func (b *JetskiBroker) Cancel(ctx context.Context, id JobID) error {
 	b.logger.Info("jetski: cancelling session", "job_id", id)
+
+	if cancelFn, ok := b.jobContexts.LoadAndDelete(id); ok {
+		cancelFn.(context.CancelFunc)()
+	}
 
 	if err := b.closeSession(ctx, id); err != nil {
 		b.logger.Error("jetski: close session on cancel", "job_id", id, "error", err)
@@ -1142,7 +1197,6 @@ func (b *JetskiBroker) closeSession(ctx context.Context, id JobID) error {
 		return nil // already cleaned up
 	}
 
-	// Close WebSocket connection.
 	if wsConn, ok := b.wsConns.LoadAndDelete(id); ok {
 		conn := wsConn.(*websocket.Conn)
 		_ = conn.WriteMessage(websocket.CloseMessage,
@@ -1150,7 +1204,6 @@ func (b *JetskiBroker) closeSession(ctx context.Context, id JobID) error {
 		_ = conn.Close()
 	}
 
-	// Call Jetski RPC to close the session.
 	url := b.rpcURL + "/rpc/session/close"
 	body := fmt.Sprintf(`{"id":"%s"}`, sessionID.(string))
 
@@ -1166,6 +1219,10 @@ func (b *JetskiBroker) closeSession(ctx context.Context, id JobID) error {
 		}
 	}
 
+	if cancelFn, loaded := b.jobContexts.LoadAndDelete(id); loaded {
+		cancelFn.(context.CancelFunc)()
+	}
+	b.jobMeta.Delete(id)
 	b.sessionMap.Delete(id)
 	b.logger.Info("jetski: session closed", "job_id", id)
 	return nil
