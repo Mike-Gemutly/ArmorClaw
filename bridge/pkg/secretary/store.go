@@ -271,7 +271,18 @@ func (s *SQLiteStore) initSchema() error {
 		"    CHECK (confidence >= 0.0 AND confidence <= 1.0)" + "\n" +
 		");" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_charts_domain ON learned_charts(domain);" + "\n" +
-		"CREATE INDEX IF NOT EXISTS idx_charts_confidence ON learned_charts(confidence DESC);"
+		"CREATE INDEX IF NOT EXISTS idx_charts_confidence ON learned_charts(confidence DESC);" + "\n" +
+
+		"-- Chart Audit Trail" + "\n" +
+		"CREATE TABLE IF NOT EXISTS chart_audit (" + "\n" +
+		"    event_id INTEGER PRIMARY KEY AUTOINCREMENT," + "\n" +
+		"    event_type TEXT NOT NULL," + "\n" +
+		"    chart_id TEXT NOT NULL," + "\n" +
+		"    details TEXT NOT NULL," + "\n" +
+		"    created_at INTEGER NOT NULL" + "\n" +
+		");" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_audit_chart ON chart_audit(chart_id);" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_audit_type ON chart_audit(event_type);"
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
