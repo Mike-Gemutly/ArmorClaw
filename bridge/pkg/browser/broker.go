@@ -25,4 +25,8 @@ type BrowserBroker interface {
 	WaitFor2FA(ctx context.Context, id JobID, timeoutMs int) (*BrokerResult, error)
 	Extract(ctx context.Context, id JobID, spec ExtractSpec) (*ExtractResult, error)
 	Screenshot(ctx context.Context, id JobID, fullPage bool) (*BrokerResult, error)
+
+	// ReplayChart replays all actions from a NavChart. Sensitive input actions
+	// (PII placeholders) are routed through the Bridge PII approval path.
+	ReplayChart(ctx context.Context, jobID JobID, chart NavChart, piiValues map[string]string) error
 }

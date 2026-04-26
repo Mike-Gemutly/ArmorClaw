@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1184,6 +1185,254 @@ func (b *JetskiBroker) Screenshot(ctx context.Context, id JobID, fullPage bool) 
 		Duration:    elapsedMs(start),
 		Screenshots: []string{base64.StdEncoding.EncodeToString(pngBytes)},
 	}, nil
+}
+
+//-----------------------------------------------------------------------------
+// Chart replay
+//-----------------------------------------------------------------------------
+
+// ReplayChart replays all actions from a NavChart, enforcing the PII approval
+// flow for any input action whose value is a PII placeholder ({{field_name}}).
+//
+// Every sensitive fill is routed through the same Bridge PII approval path as
+// Fill(Sensitive=true). If any approval is denied the replay is aborted
+// immediately and a detailed error is returned describing how far execution
+// progressed. Approvals are never cached between actions.
+func (b *JetskiBroker) ReplayChart(ctx context.Context, jobID JobID, chart NavChart, piiValues map[string]string) error {
+	b.logger.Info("jetski: replay chart start",
+		"job_id", jobID,
+		"target_domain", chart.TargetDomain,
+		"action_count", len(chart.ActionMap),
+	)
+
+	keys := make([]string, 0, len(chart.ActionMap))
+	for k := range chart.ActionMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for i, key := range keys {
+		action := chart.ActionMap[key]
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("replay: cancelled before action %q (step %d/%d): %w",
+				key, i+1, len(keys), ctx.Err())
+		default:
+		}
+
+		b.logger.Info("jetski: replay action",
+			"job_id", jobID,
+			"step", i+1,
+			"total", len(keys),
+			"action_key", key,
+			"action_type", string(action.ActionType),
+		)
+
+		switch action.ActionType {
+		case ActionNavigate:
+			if action.URL == "" {
+				return fmt.Errorf("replay: navigate action %q has empty URL at step %d",
+					key, i+1)
+			}
+			result, err := b.Navigate(ctx, jobID, action.URL)
+			if err != nil {
+				return fmt.Errorf("replay: navigate %q failed at step %d (completed %d/%d): %w",
+					key, i+1, i, len(keys), err)
+			}
+			if result != nil && !result.Success {
+				return fmt.Errorf("replay: navigate %q returned failure at step %d (completed %d/%d)",
+					key, i+1, i, len(keys))
+			}
+			b.logger.Info("jetski: replay navigate done",
+				"job_id", jobID, "action_key", key, "url", action.URL)
+
+		case ActionClick:
+			selector := primarySelector(action.Selector, key, i+1)
+			result, err := b.Click(ctx, jobID, selector)
+			if err != nil {
+				return fmt.Errorf("replay: click %q (%s) failed at step %d (completed %d/%d): %w",
+					key, selector, i+1, i, len(keys), err)
+			}
+			if result != nil && !result.Success {
+				return fmt.Errorf("replay: click %q (%s) returned failure at step %d (completed %d/%d)",
+					key, selector, i+1, i, len(keys))
+			}
+			b.logger.Info("jetski: replay click done",
+				"job_id", jobID, "action_key", key, "selector", selector)
+
+		case ActionInput:
+			selector := primarySelector(action.Selector, key, i+1)
+			value := action.Value
+
+			sensitive := false
+			valueRef := ""
+
+			if isPIIPlaceholder(value) {
+				placeholderKey := extractPlaceholderKey(value)
+				resolved, ok := piiValues[placeholderKey]
+				if !ok {
+					return fmt.Errorf(
+						"replay: unresolved PII placeholder {{%s}} in action %q at step %d",
+						placeholderKey, key, i+1)
+				}
+				sensitive = true
+				valueRef = resolved
+				b.logger.Info("jetski: replay input [PII — approval required]",
+					"job_id", jobID,
+					"action_key", key,
+					"selector", selector,
+					"placeholder", placeholderKey,
+				)
+			} else {
+				value = resolveInlinePlaceholders(value, piiValues)
+				b.logger.Info("jetski: replay input",
+					"job_id", jobID,
+					"action_key", key,
+					"selector", selector,
+				)
+			}
+
+			fields := []FillRequest{{
+				Selector:  selector,
+				Value:     value,
+				ValueRef:  valueRef,
+				Sensitive: sensitive,
+			}}
+			result, err := b.Fill(ctx, jobID, fields)
+			if err != nil {
+				if sensitive {
+					return fmt.Errorf(
+						"replay: PII approval denied for action %q at step %d (completed %d/%d): %w",
+						key, i+1, i, len(keys), err)
+				}
+				return fmt.Errorf("replay: fill action %q failed at step %d (completed %d/%d): %w",
+					key, i+1, i, len(keys), err)
+			}
+			if result != nil && !result.Success {
+				return fmt.Errorf("replay: fill action %q returned failure at step %d (completed %d/%d)",
+					key, i+1, i, len(keys))
+			}
+
+			approvalStatus := "not_needed"
+			if sensitive {
+				approvalStatus = "granted"
+			}
+			b.logger.Info("jetski: replay input done",
+				"job_id", jobID,
+				"action_key", key,
+				"selector", selector,
+				"approval", approvalStatus,
+			)
+
+		case ActionWait:
+			timeout := 5000
+			if action.PostActionWait != nil && action.PostActionWait.Timeout > 0 {
+				timeout = action.PostActionWait.Timeout
+			}
+
+			if action.PostActionWait != nil &&
+				action.PostActionWait.Selector != nil &&
+				action.PostActionWait.Selector.PrimaryCSS != "" {
+				selector := action.PostActionWait.Selector.PrimaryCSS
+				b.logger.Info("jetski: replay wait for element",
+					"job_id", jobID, "action_key", key, "selector", selector, "timeout_ms", timeout)
+				result, err := b.WaitForElement(ctx, jobID, selector, timeout)
+				if err != nil {
+					return fmt.Errorf(
+						"replay: wait for element %q failed at step %d (completed %d/%d): %w",
+						selector, i+1, i, len(keys), err)
+				}
+				if result != nil && !result.Success {
+					return fmt.Errorf(
+						"replay: wait for element %q timed out at step %d (completed %d/%d)",
+						selector, i+1, i, len(keys))
+				}
+			} else {
+				b.logger.Info("jetski: replay wait delay",
+					"job_id", jobID, "action_key", key, "timeout_ms", timeout)
+				select {
+				case <-time.After(time.Duration(timeout) * time.Millisecond):
+				case <-ctx.Done():
+					return fmt.Errorf(
+						"replay: wait action %q cancelled at step %d (completed %d/%d): %w",
+						key, i+1, i, len(keys), ctx.Err())
+				}
+			}
+
+		case ActionAssert:
+			b.logger.Info("jetski: replay assert (verification-only)",
+				"job_id", jobID,
+				"action_key", key,
+			)
+
+		default:
+			b.logger.Warn("jetski: replay unknown action type — skipping",
+				"job_id", jobID,
+				"action_key", key,
+				"action_type", string(action.ActionType),
+			)
+		}
+
+		if action.ActionType != ActionWait && action.PostActionWait != nil {
+			waitTimeout := 5000
+			if action.PostActionWait.Timeout > 0 {
+				waitTimeout = action.PostActionWait.Timeout
+			}
+			if action.PostActionWait.Selector != nil &&
+				action.PostActionWait.Selector.PrimaryCSS != "" {
+				waitSelector := action.PostActionWait.Selector.PrimaryCSS
+				b.logger.Info("jetski: replay post-action wait for element",
+					"job_id", jobID, "selector", waitSelector, "timeout_ms", waitTimeout)
+				_, _ = b.WaitForElement(ctx, jobID, waitSelector, waitTimeout)
+			} else {
+				b.logger.Info("jetski: replay post-action delay",
+					"job_id", jobID, "timeout_ms", waitTimeout)
+				select {
+				case <-time.After(time.Duration(waitTimeout) * time.Millisecond):
+				case <-ctx.Done():
+					return fmt.Errorf("replay: post-action wait cancelled after step %d: %w",
+						i+1, ctx.Err())
+				}
+			}
+		}
+	}
+
+	b.logger.Info("jetski: replay chart complete",
+		"job_id", jobID,
+		"actions_executed", len(keys),
+	)
+	return nil
+}
+
+// isPIIPlaceholder returns true if value is a full PII placeholder like
+// {{field_name}}.
+func isPIIPlaceholder(value string) bool {
+	return strings.HasPrefix(value, "{{") &&
+		strings.HasSuffix(value, "}}") &&
+		len(value) > 4
+}
+
+// extractPlaceholderKey returns the trimmed key inside {{…}}.
+func extractPlaceholderKey(value string) string {
+	return strings.TrimSpace(value[2 : len(value)-2])
+}
+
+// resolveInlinePlaceholders replaces all {{key}} occurrences with values from
+// the map. Unknown placeholders are left as-is.
+func resolveInlinePlaceholders(value string, values map[string]string) string {
+	result := value
+	for k, v := range values {
+		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
+	}
+	return result
+}
+
+func primarySelector(sel *ChartSelector, actionKey string, step int) string {
+	if sel != nil && sel.PrimaryCSS != "" {
+		return sel.PrimaryCSS
+	}
+	return ""
 }
 
 //-----------------------------------------------------------------------------
