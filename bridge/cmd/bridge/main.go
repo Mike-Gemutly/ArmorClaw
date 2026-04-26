@@ -2471,7 +2471,7 @@ func runBridgeServer(cliCfg cliConfig) {
 
 	approvalEngine, trustEngine := setupApprovalAndTrust(rolodexStore)
 
-	workflowOrchestrator, orchestratorIntegration := setupWorkflowEngine(rolodexStore, matrixBus, studioService)
+	workflowOrchestrator, orchestratorIntegration := setupWorkflowEngine(rolodexStore, matrixBus, studioService, cfg)
 
 	taskScheduler := setupSecretaryCommandHandler(
 		rolodexStore, workflowOrchestrator, orchestratorIntegration,

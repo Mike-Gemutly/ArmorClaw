@@ -9,6 +9,7 @@ import (
 	"github.com/armorclaw/bridge/internal/adapter"
 	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/pkg/browser"
+	"github.com/armorclaw/bridge/pkg/config"
 	"github.com/armorclaw/bridge/pkg/keystore"
 	"github.com/armorclaw/bridge/pkg/secretary"
 	"github.com/armorclaw/bridge/pkg/studio"
@@ -87,7 +88,7 @@ func setupApprovalAndTrust(rolodexStore secretary.Store) (*secretary.ApprovalEng
 	return approvalEngine, trustEngine
 }
 
-func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixEventBus, studioService *studio.StudioIntegration) (*secretary.WorkflowOrchestratorImpl, *secretary.OrchestratorIntegration) {
+func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixEventBus, studioService *studio.StudioIntegration, cfg *config.Config) (*secretary.WorkflowOrchestratorImpl, *secretary.OrchestratorIntegration) {
 	var workflowOrchestrator *secretary.WorkflowOrchestratorImpl
 	if rolodexStore != nil && matrixBus != nil {
 		workflowEmitter := secretary.NewWorkflowEventEmitter(matrixBus)
@@ -119,7 +120,7 @@ func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixE
 		bridgeLocalRegistry.Register("echo", func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
 			return config, nil
 		})
-		bridgeLocalRegistry.Register(browser.HandlerName, browser.Handler(browser.NewClient("http://localhost:3002")))
+		bridgeLocalRegistry.Register(browser.HandlerName, browser.Handler(browser.NewClient(cfg.GetLegacyURL())))
 		log.Printf("BridgeLocal registry initialized with %d handler(s)", len(bridgeLocalRegistry.List()))
 
 		var stepExecutor *secretary.StepExecutor

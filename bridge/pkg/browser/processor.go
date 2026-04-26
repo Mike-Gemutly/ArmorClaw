@@ -47,7 +47,7 @@ type ServiceProcessorConfig struct {
 // DefaultServiceProcessorConfig returns sensible defaults
 func DefaultServiceProcessorConfig() ServiceProcessorConfig {
     return ServiceProcessorConfig{
-        ServiceURL:     "http://localhost:3000",
+        ServiceURL:     "http://localhost:3002",
         DefaultTimeout: 5 * time.Minute,
         MaxRetries:     3,
     }

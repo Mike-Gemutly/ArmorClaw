@@ -408,8 +408,23 @@ type BrowserConfig struct {
 	// Enabled controls whether browser automation is available
 	Enabled bool `toml:"enabled" env:"ARMORCLAW_BROWSER_ENABLED"`
 
-	// ServiceURL is the URL of the browser-service HTTP API
+	// ServiceURL is the URL of the browser-service HTTP API (legacy, used as default for LegacyURL)
 	ServiceURL string `toml:"service_url" env:"ARMORCLAW_BROWSER_SERVICE_URL"`
+
+	// CDPUrl is the CDP WebSocket URL for browser execution (e.g., ws://localhost:9222)
+	CDPUrl string `toml:"cdp_url" env:"ARMORCLAW_BROWSER_CDP_URL"`
+
+	// RPCUrl is the JSON-RPC HTTP URL for browser management (e.g., http://localhost:9223)
+	RPCUrl string `toml:"rpc_url" env:"ARMORCLAW_BROWSER_RPC_URL"`
+
+	// LegacyURL is the legacy browser-service HTTP API URL (e.g., http://localhost:3002)
+	LegacyURL string `toml:"legacy_url" env:"ARMORCLAW_BROWSER_LEGACY_URL"`
+
+	// Backend selects the browser backend: "jetski" or "legacy"
+	Backend string `toml:"backend" env:"ARMORCLAW_BROWSER_BACKEND"`
+
+	// Fallback enables automatic fallback from jetski to legacy on failure
+	Fallback bool `toml:"fallback" env:"ARMORCLAW_BROWSER_FALLBACK"`
 
 	// Timeout is the default timeout for browser operations in seconds
 	Timeout int `toml:"timeout" env:"ARMORCLAW_BROWSER_TIMEOUT"`
@@ -919,8 +934,13 @@ func DefaultConfig() *Config {
 		},
 		Browser: BrowserConfig{
 			Enabled:    false,
-			ServiceURL: "http://localhost:3000",
-			Timeout:    120, // 2 minutes
+			ServiceURL: "http://localhost:3002",
+			CDPUrl:     "ws://localhost:9222",
+			RPCUrl:     "http://localhost:9223",
+			LegacyURL:  "http://localhost:3002",
+			Backend:    "jetski",
+			Fallback:   true,
+			Timeout:    120,
 			MaxRetries: 3,
 			RetryDelay: 5,
 			Stealth: BrowserStealthConfig{
@@ -1208,6 +1228,15 @@ func (c *Config) IsMatrixEnabled() bool {
 // GetSyncInterval returns the Matrix sync interval as a Duration
 func (c *Config) GetSyncInterval() time.Duration {
 	return time.Duration(c.Matrix.SyncInterval) * time.Second
+}
+
+// GetLegacyURL returns the effective legacy browser-service URL.
+// LegacyURL takes precedence; falls back to ServiceURL for backward compatibility.
+func (c *Config) GetLegacyURL() string {
+	if c.Browser.LegacyURL != "" {
+		return c.Browser.LegacyURL
+	}
+	return c.Browser.ServiceURL
 }
 
 // ToBudgetConfig converts the Config to budget.BudgetConfig
