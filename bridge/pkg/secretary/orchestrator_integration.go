@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -815,6 +816,11 @@ func (e *StepExecutor) executeStepWithAgent(ctx context.Context, workflow *Workf
 		UserID:          workflow.CreatedBy,
 		RoomID:          workflow.RoomID,
 		Config:          step.Config,
+	}
+
+	// Inject learned skills into step config before spawning the agent.
+	if os.Getenv("ARMORCLAW_LEARNED_SKILLS_INJECTION") != "false" && e.skillFinder != nil {
+		spawnReq.Config = e.injectLearnedSkills(spawnReq.Config, taskDesc)
 	}
 
 	spawnCtx, cancel := context.WithTimeout(ctx, e.defaultTimeout)
