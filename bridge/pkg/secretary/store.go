@@ -249,7 +249,29 @@ func (s *SQLiteStore) initSchema() error {
 		"    created_at INTEGER NOT NULL," + "\n" +
 		"    confidence REAL DEFAULT 0.5" + "\n" +
 		");" + "\n" +
-		"CREATE INDEX IF NOT EXISTS idx_learned_confidence ON learned_skills(confidence);"
+		"CREATE INDEX IF NOT EXISTS idx_learned_confidence ON learned_skills(confidence);" + "\n" +
+
+		"-- Learned Charts" + "\n" +
+		"CREATE TABLE IF NOT EXISTS learned_charts (" + "\n" +
+		"    chart_id TEXT PRIMARY KEY," + "\n" +
+		"    domain TEXT NOT NULL," + "\n" +
+		"    title TEXT NOT NULL," + "\n" +
+		"    version INTEGER DEFAULT 1," + "\n" +
+		"    steps TEXT NOT NULL," + "\n" +
+		"    selectors TEXT NOT NULL," + "\n" +
+		"    placeholders TEXT NOT NULL," + "\n" +
+		"    requires_approval INTEGER DEFAULT 0," + "\n" +
+		"    confidence REAL DEFAULT 0.5," + "\n" +
+		"    created_from_session TEXT," + "\n" +
+		"    created_at INTEGER NOT NULL," + "\n" +
+		"    last_used_at INTEGER," + "\n" +
+		"    success_count INTEGER DEFAULT 0," + "\n" +
+		"    failure_count INTEGER DEFAULT 0," + "\n" +
+		"    parent_chart_id TEXT," + "\n" +
+		"    CHECK (confidence >= 0.0 AND confidence <= 1.0)" + "\n" +
+		");" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_charts_domain ON learned_charts(domain);" + "\n" +
+		"CREATE INDEX IF NOT EXISTS idx_charts_confidence ON learned_charts(confidence DESC);"
 
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
