@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -186,6 +187,24 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.Security.EncryptSession = encryptSession == "true" || encryptSession == "1"
 	}
 
+	if approvalEnabled := os.Getenv("JETSKI_APPROVAL_ENABLED"); approvalEnabled != "" {
+		cfg.Approval.Enabled = approvalEnabled == "true" || approvalEnabled == "1"
+	}
+
+	if bridgeURL := os.Getenv("JETSKI_BRIDGE_URL"); bridgeURL != "" {
+		cfg.Approval.BridgeURL = bridgeURL
+	}
+
+	if roomID := os.Getenv("JETSKI_ROOM_ID"); roomID != "" {
+		cfg.Approval.RoomID = roomID
+	}
+
+	if approvalTimeout := os.Getenv("JETSKI_APPROVAL_TIMEOUT"); approvalTimeout != "" {
+		if seconds, err := strconv.Atoi(approvalTimeout); err == nil && seconds > 0 {
+			cfg.Approval.Timeout = time.Duration(seconds) * time.Second
+		}
+	}
+
 	return nil
 }
 
@@ -228,6 +247,15 @@ func (c *Config) Validate() error {
 
 	if !validFormats[strings.ToLower(c.Logging.Format)] {
 		return fmt.Errorf("invalid log format: %s", c.Logging.Format)
+	}
+
+	if c.Approval.Enabled {
+		if c.Approval.BridgeURL == "" {
+			return fmt.Errorf("approval bridge URL cannot be empty when approval is enabled")
+		}
+		if c.Approval.RoomID == "" {
+			return fmt.Errorf("approval room ID cannot be empty when approval is enabled")
+		}
 	}
 
 	return nil
