@@ -262,9 +262,224 @@ func (b *JetskiBroker) Navigate(ctx context.Context, id JobID, url string) (*Bro
 	}, nil
 }
 
-// Fill injects values into form fields (stub).
+// Fill injects values into form fields via CDP Input.insertText.
+//
+// When Sensitive=false the literal Value is inserted directly.
+// When Sensitive=true the Value is treated as a PII placeholder; the broker
+// sends an approval request through the Bridge PII flow, waits for the human
+// to approve, receives the actual value, and then inserts it — the real value
+// is never logged.
 func (b *JetskiBroker) Fill(ctx context.Context, id JobID, fields []FillRequest) (*BrokerResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	for i, field := range fields {
+		fillValue := field.Value
+
+		if field.Sensitive {
+			b.logger.Info("jetski: filling sensitive field [REDACTED]",
+				"job_id", id, "selector", field.Selector, "field_index", i)
+
+			approved, err := b.resolveSensitiveValue(ctx, id, field)
+			if err != nil {
+				return &BrokerResult{
+					JobID:   id,
+					Success: false,
+					Duration: elapsedMs(start),
+					Error: &BrokerError{
+						Code:     "PII_APPROVAL_FAILED",
+						Message:  fmt.Sprintf("sensitive field %q: %v", field.Selector, err),
+						Selector: field.Selector,
+					},
+				}, fmt.Errorf("jetski: sensitive fill approval for %q: %w", field.Selector, err)
+			}
+			fillValue = approved
+		} else {
+			b.logger.Info("jetski: filling field",
+				"job_id", id, "selector", field.Selector, "field_index", i)
+		}
+
+		if err := b.cdpFocus(conn, field.Selector); err != nil {
+			return &BrokerResult{
+				JobID:   id,
+				Success: false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:     "FOCUS_FAILED",
+					Message:  fmt.Sprintf("focus %q: %v", field.Selector, err),
+					Selector: field.Selector,
+				},
+			}, fmt.Errorf("jetski: focus %q: %w", field.Selector, err)
+		}
+
+		if err := b.cdpInsertText(conn, fillValue); err != nil {
+			return &BrokerResult{
+				JobID:   id,
+				Success: false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:     "INSERT_FAILED",
+					Message:  fmt.Sprintf("insert text into %q: %v", field.Selector, err),
+					Selector: field.Selector,
+				},
+			}, fmt.Errorf("jetski: insert text into %q: %w", field.Selector, err)
+		}
+	}
+
+	return &BrokerResult{
+		JobID:    id,
+		Success:  true,
+		Duration: elapsedMs(start),
+	}, nil
+}
+
+// resolveSensitiveValue routes a sensitive fill request through the Bridge PII
+// approval flow. It creates an approval request referencing the ValueRef
+// (keystore PII reference), waits for the human-in-the-loop to grant access,
+// and returns the actual value for injection. The returned value must never be
+// logged.
+func (b *JetskiBroker) resolveSensitiveValue(ctx context.Context, id JobID, field FillRequest) (string, error) {
+	reqBody := struct {
+		JobID     string `json:"job_id"`
+		Selector  string `json:"selector"`
+		ValueRef  string `json:"value_ref"`
+		Requester string `json:"requester"`
+	}{
+		JobID:     string(id),
+		Selector:  field.Selector,
+		ValueRef:  field.ValueRef,
+		Requester: "jetski-broker",
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal approval request: %w", err)
+	}
+
+	url := b.rpcURL + "/rpc/approval/request"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, stringReader(string(bodyBytes)))
+	if err != nil {
+		return "", fmt.Errorf("build approval request: %w", err)
+	}
+	httpReq.ContentLength = int64(len(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("approval request rpc: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("approval returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var approvalResp struct {
+		Approved bool   `json:"approved"`
+		Value    string `json:"value"`
+		Reason   string `json:"reason,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&approvalResp); err != nil {
+		return "", fmt.Errorf("decode approval response: %w", err)
+	}
+
+	if !approvalResp.Approved {
+		return "", fmt.Errorf("approval denied: %s", approvalResp.Reason)
+	}
+
+	return approvalResp.Value, nil
+}
+
+// cdpFocus sends a CDP command to focus the element matching the given selector.
+// It uses Runtime.evaluate to call document.querySelector().focus().
+func (b *JetskiBroker) cdpFocus(conn *websocket.Conn, selector string) error {
+	msgID := int(b.cdpMsgID.Add(1))
+
+	expr := fmt.Sprintf(`document.querySelector(%q).focus()`, selector)
+	params, _ := json.Marshal(map[string]interface{}{
+		"expression":            expr,
+		"includeCommandLineAPI": true,
+	})
+
+	msg := cdpMessage{
+		ID:     msgID,
+		Method: "Runtime.evaluate",
+		Params: params,
+	}
+
+	if err := conn.WriteJSON(msg); err != nil {
+		return fmt.Errorf("write cdp Runtime.evaluate focus: %w", err)
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		return fmt.Errorf("set read deadline: %w", err)
+	}
+
+	var resp cdpMessage
+	if err := conn.ReadJSON(&resp); err != nil {
+		return fmt.Errorf("read cdp focus response: %w", err)
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	if resp.Error != nil {
+		return fmt.Errorf("cdp focus error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	return nil
+}
+
+// cdpInsertText sends a CDP Input.insertText command with the given value.
+func (b *JetskiBroker) cdpInsertText(conn *websocket.Conn, value string) error {
+	msgID := int(b.cdpMsgID.Add(1))
+
+	params, _ := json.Marshal(map[string]string{
+		"text": value,
+	})
+
+	msg := cdpMessage{
+		ID:     msgID,
+		Method: "Input.insertText",
+		Params: params,
+	}
+
+	if err := conn.WriteJSON(msg); err != nil {
+		return fmt.Errorf("write cdp Input.insertText: %w", err)
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		return fmt.Errorf("set read deadline: %w", err)
+	}
+
+	var resp cdpMessage
+	if err := conn.ReadJSON(&resp); err != nil {
+		return fmt.Errorf("read cdp insertText response: %w", err)
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	if resp.Error != nil {
+		return fmt.Errorf("cdp insertText error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	return nil
+}
+
+// fillWithHumanLikeDelay sends text character-by-character with random delays
+// to simulate human typing, used when BrowserStealthConfig.HumanLikeTyping is true.
+//
+// TODO: Wire BrowserStealthConfig.HumanLikeTyping into the broker and call this
+// method instead of cdpInsertText when the flag is enabled. Expected behavior:
+// send each character via CDP Input.dispatchKeyEvent with type="char" and a
+// random inter-key delay of 30–150ms drawn from a uniform distribution.
+func (b *JetskiBroker) fillWithHumanLikeDelay(conn *websocket.Conn, value string) error {
+	return fmt.Errorf("fillWithHumanLikeDelay: not yet implemented (awaiting BrowserStealthConfig)")
+}
+
+func elapsedMs(start time.Time) int {
+	return int(time.Since(start).Milliseconds())
 }
 
 // Click clicks an element (stub).
