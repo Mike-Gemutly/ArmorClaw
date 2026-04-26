@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/armorclaw/jetski/internal/approval"
@@ -70,6 +71,7 @@ type Proxy struct {
 	tetheredMode    bool
 	approvalClient  ApprovalChecker
 	approvalTimeout time.Duration
+	sessionID       atomic.Value
 }
 
 func NewProxy(engineURL string, router *MethodRouter, piiScanner PIIScanner, tetheredMode bool) *Proxy {
@@ -95,6 +97,33 @@ func (p *Proxy) SetApprovalClient(client ApprovalChecker) {
 
 func (p *Proxy) SetApprovalTimeout(timeout time.Duration) {
 	p.approvalTimeout = timeout
+}
+
+func (p *Proxy) SetSessionID(id string) {
+	p.sessionID.Store(id)
+}
+
+func (p *Proxy) GetSessionID() string {
+	v := p.sessionID.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+func (p *Proxy) extractSessionID(data []byte) {
+	var msg struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(data, &msg) != nil || msg.Result == nil {
+		return
+	}
+	var result struct {
+		SessionID string `json:"sessionId"`
+	}
+	if json.Unmarshal(msg.Result, &result) == nil && result.SessionID != "" {
+		p.SetSessionID(result.SessionID)
+	}
 }
 
 func (p *Proxy) Start(clientConn *websocket.Conn) error {
@@ -318,6 +347,10 @@ func (p *Proxy) forwardToClient() {
 				if json.Unmarshal(data, &msg) == nil && msg.Method != "" {
 					p.recorder(msg.Method, msg.Params)
 				}
+			}
+
+			if messageType == websocket.TextMessage {
+				p.extractSessionID(data)
 			}
 
 			if err := p.writeMessage(p.clientConn, messageType, data); err != nil {

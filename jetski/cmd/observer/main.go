@@ -84,7 +84,7 @@ func main() {
 	engineURL := fmt.Sprintf("ws://127.0.0.1:%s", cfg.Browser.EnginePort)
 	cdpProxy := cdp.NewProxy(engineURL, router, piiScanner, cfg.Security.EncryptSession)
 	cdpProxy.SetRecorder(func(method string, params json.RawMessage) {
-		sonar.RecordFrame(sonarBuf, method, params, "")
+		sonar.RecordFrame(sonarBuf, method, params, cdpProxy.GetSessionID())
 	})
 
 	var approvalClient *approval.ApprovalClient
