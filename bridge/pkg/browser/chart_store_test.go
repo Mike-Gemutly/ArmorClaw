@@ -336,3 +336,171 @@ func TestFindForDomainOrderByConfidence(t *testing.T) {
 		t.Errorf("expected lowest confidence chart last, got %s", results[2].Title)
 	}
 }
+
+func TestSaveChartAutoVersions(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	v1ID, err := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	if err != nil {
+		t.Fatalf("SaveChart v1: %v", err)
+	}
+
+	v2ID, err := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	if err != nil {
+		t.Fatalf("SaveChart v2: %v", err)
+	}
+
+	v3ID, err := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	if err != nil {
+		t.Fatalf("SaveChart v3: %v", err)
+	}
+
+	v1, _ := store.GetChart(ctx, v1ID)
+	if v1.Version != 1 {
+		t.Errorf("expected v1 version=1, got %d", v1.Version)
+	}
+
+	v2, _ := store.GetChart(ctx, v2ID)
+	if v2.Version != 2 {
+		t.Errorf("expected v2 version=2, got %d", v2.Version)
+	}
+	if v2.ParentChartID != v1ID {
+		t.Errorf("expected v2 parent_chart_id=%s, got %s", v1ID, v2.ParentChartID)
+	}
+
+	v3, _ := store.GetChart(ctx, v3ID)
+	if v3.Version != 3 {
+		t.Errorf("expected v3 version=3, got %d", v3.Version)
+	}
+	if v3.ParentChartID != v2ID {
+		t.Errorf("expected v3 parent_chart_id=%s, got %s", v2ID, v3.ParentChartID)
+	}
+}
+
+func TestSaveChartNoAutoVersionForDifferentTitle(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	id1, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	id2, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Login"})
+
+	rec1, _ := store.GetChart(ctx, id1)
+	rec2, _ := store.GetChart(ctx, id2)
+
+	if rec1.ParentChartID != "" {
+		t.Errorf("expected no parent for different title, got %s", rec1.ParentChartID)
+	}
+	if rec2.ParentChartID != "" {
+		t.Errorf("expected no parent for different title, got %s", rec2.ParentChartID)
+	}
+	if rec2.Version != 1 {
+		t.Errorf("expected version=1 for new title, got %d", rec2.Version)
+	}
+}
+
+func TestListVersions(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	v2ID, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+
+	versions, err := store.ListVersions(ctx, v2ID)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+
+	if len(versions) != 3 {
+		t.Fatalf("expected 3 versions, got %d", len(versions))
+	}
+
+	if versions[0].Version != 3 {
+		t.Errorf("expected first version=3 (DESC), got %d", versions[0].Version)
+	}
+	if versions[1].Version != 2 {
+		t.Errorf("expected second version=2, got %d", versions[1].Version)
+	}
+	if versions[2].Version != 1 {
+		t.Errorf("expected third version=1, got %d", versions[2].Version)
+	}
+}
+
+func TestListVersionsOnlySameDomainTitle(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	searchID, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Login"})
+
+	versions, err := store.ListVersions(ctx, searchID)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("expected 2 versions for Search, got %d", len(versions))
+	}
+}
+
+func TestRevertToVersion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	v1ID, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+	v2ID, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+
+	store.RecordOutcome(ctx, v2ID, true)
+	store.RecordOutcome(ctx, v2ID, true)
+
+	err := store.RevertToVersion(ctx, v2ID, 1)
+	if err != nil {
+		t.Fatalf("RevertToVersion: %v", err)
+	}
+
+	v1, _ := store.GetChart(ctx, v1ID)
+	v2, _ := store.GetChart(ctx, v2ID)
+
+	if v1.Confidence <= v2.Confidence {
+		t.Errorf("expected reverted v1 confidence (%f) > v2 confidence (%f)", v1.Confidence, v2.Confidence)
+	}
+}
+
+func TestRevertToVersionNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	_, _ = store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+
+	err := store.RevertToVersion(ctx, "nonexistent", 1)
+	if err == nil {
+		t.Error("expected error for nonexistent chartID")
+	}
+}
+
+func TestRevertToVersionBadVersion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewSQLiteChartStore(db)
+	ctx := context.Background()
+
+	id, _ := store.SaveChart(ctx, sampleChart(), ChartMeta{Domain: "example.com", Title: "Search"})
+
+	err := store.RevertToVersion(ctx, id, 99)
+	if err == nil {
+		t.Error("expected error for nonexistent version")
+	}
+}

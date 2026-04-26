@@ -30,6 +30,12 @@ func (m *mockChartStore) GetChart(_ context.Context, _ string) (*ChartRecord, er
 	return nil, errors.New("not implemented")
 }
 func (m *mockChartStore) DeleteChart(_ context.Context, _ string) error { return nil }
+func (m *mockChartStore) ListVersions(_ context.Context, _ string) ([]ChartRecord, error) {
+	return nil, errors.New("not implemented")
+}
+func (m *mockChartStore) RevertToVersion(_ context.Context, _ string, _ int) error {
+	return nil
+}
 
 func cleanChart(chart *NavChart) *NavChart {
 	if chart == nil {

@@ -41,6 +41,8 @@ type ChartRecord struct {
 // ChartStore defines the persistence interface for learned navigation charts.
 type ChartStore interface {
 	// SaveChart serialises a NavChart and persists it. Returns the generated chart_id.
+	// When a chart with the same domain+title already exists, a new version is created
+	// with parent_chart_id pointing to the previous version and an incremented version number.
 	SaveChart(ctx context.Context, chart NavChart, meta ChartMeta) (string, error)
 	// FindForDomain returns charts matching a domain, ordered by confidence descending.
 	FindForDomain(ctx context.Context, domain string, limit int) ([]ChartRecord, error)
@@ -52,6 +54,12 @@ type ChartStore interface {
 	GetChart(ctx context.Context, chartID string) (*ChartRecord, error)
 	// DeleteChart removes a chart by ID.
 	DeleteChart(ctx context.Context, chartID string) error
+	// ListVersions returns the full version history for a chart, ordered by version descending.
+	// chartID can be any version in the chain; all related versions are returned.
+	ListVersions(ctx context.Context, chartID string) ([]ChartRecord, error)
+	// RevertToVersion restores a specific version by setting its confidence higher than
+	// the current active chart in the same domain+title group.
+	RevertToVersion(ctx context.Context, chartID string, version int) error
 }
 
 // SQLiteChartStore implements ChartStore using the secretary SQLite database.
@@ -65,10 +73,7 @@ func NewSQLiteChartStore(db *sql.DB) *SQLiteChartStore {
 	return &SQLiteChartStore{db: db}
 }
 
-// SaveChart serialises a NavChart into the learned_charts table.
 func (s *SQLiteChartStore) SaveChart(ctx context.Context, chart NavChart, meta ChartMeta) (string, error) {
-	chartID := uuid.New().String()
-
 	steps, err := json.Marshal(chart.ActionMap)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal steps: %w", err)
@@ -82,6 +87,33 @@ func (s *SQLiteChartStore) SaveChart(ctx context.Context, chart NavChart, meta C
 		requiresApproval = 1
 	}
 
+	var parentID string
+	var newVersion int
+
+	if meta.ParentChartID != "" {
+		parentID = meta.ParentChartID
+	} else {
+		var existingID string
+		var existingVersion int
+		err := s.db.QueryRowContext(ctx, `
+			SELECT chart_id, version FROM learned_charts
+			WHERE domain = ? AND title = ?
+			ORDER BY version DESC LIMIT 1`, meta.Domain, meta.Title,
+		).Scan(&existingID, &existingVersion)
+		if err == nil {
+			parentID = existingID
+			newVersion = existingVersion + 1
+		}
+	}
+
+	if newVersion == 0 {
+		newVersion = chart.Version
+		if newVersion == 0 {
+			newVersion = 1
+		}
+	}
+
+	chartID := uuid.New().String()
 	now := time.Now().UnixMilli()
 
 	_, err = s.db.ExecContext(ctx, `
@@ -90,10 +122,10 @@ func (s *SQLiteChartStore) SaveChart(ctx context.Context, chart NavChart, meta C
 			requires_approval, confidence, created_from_session, created_at,
 			last_used_at, success_count, failure_count, parent_chart_id
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		chartID, meta.Domain, meta.Title, chart.Version,
+		chartID, meta.Domain, meta.Title, newVersion,
 		string(steps), selectors, placeholders,
 		requiresApproval, 0.5, nullIfEmpty(meta.CreatedFromSession),
-		now, nil, 0, 0, nullIfEmpty(meta.ParentChartID),
+		now, nil, 0, 0, nullIfEmpty(parentID),
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to save chart: %w", err)
@@ -251,6 +283,83 @@ func (s *SQLiteChartStore) DeleteChart(ctx context.Context, chartID string) erro
 	if err != nil {
 		return fmt.Errorf("failed to delete chart %s: %w", chartID, err)
 	}
+	return nil
+}
+
+func (s *SQLiteChartStore) ListVersions(ctx context.Context, chartID string) ([]ChartRecord, error) {
+	var domain, title string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT domain, title FROM learned_charts WHERE chart_id = ?`, chartID,
+	).Scan(&domain, &title)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find chart %s: %w", chartID, err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT chart_id, domain, title, version, steps, selectors, placeholders,
+			requires_approval, confidence, created_from_session, created_at,
+			last_used_at, success_count, failure_count, parent_chart_id
+		FROM learned_charts
+		WHERE domain = ? AND title = ?
+		ORDER BY version DESC`, domain, title,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list versions for chart %s: %w", chartID, err)
+	}
+	defer rows.Close()
+
+	var records []ChartRecord
+	for rows.Next() {
+		rec, err := scanChartRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, *rec)
+	}
+
+	return records, rows.Err()
+}
+
+func (s *SQLiteChartStore) RevertToVersion(ctx context.Context, chartID string, version int) error {
+	var domain, title string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT domain, title FROM learned_charts WHERE chart_id = ?`, chartID,
+	).Scan(&domain, &title)
+	if err != nil {
+		return fmt.Errorf("failed to find chart %s: %w", chartID, err)
+	}
+
+	var targetID string
+	var maxConfidence float64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT chart_id, confidence FROM learned_charts
+		WHERE domain = ? AND title = ? AND version = ?`, domain, title, version,
+	).Scan(&targetID, &maxConfidence)
+	if err != nil {
+		return fmt.Errorf("version %d not found for chart %s: %w", version, chartID, err)
+	}
+
+	err = s.db.QueryRowContext(ctx, `
+		SELECT MAX(confidence) FROM learned_charts
+		WHERE domain = ? AND title = ?`, domain, title,
+	).Scan(&maxConfidence)
+	if err != nil {
+		return fmt.Errorf("failed to get max confidence: %w", err)
+	}
+
+	revertConfidence := maxConfidence + 0.1
+	if revertConfidence > 1.0 {
+		revertConfidence = 1.0
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE learned_charts SET confidence = ? WHERE chart_id = ?`,
+		revertConfidence, targetID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to revert to version %d: %w", version, err)
+	}
+
 	return nil
 }
 
