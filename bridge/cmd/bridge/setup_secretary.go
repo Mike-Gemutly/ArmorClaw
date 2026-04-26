@@ -88,6 +88,45 @@ func setupApprovalAndTrust(rolodexStore secretary.Store) (*secretary.ApprovalEng
 	return approvalEngine, trustEngine
 }
 
+func registerBrowserHandler(registry *secretary.BridgeLocalRegistry, cfg *config.Config) {
+	switch cfg.Browser.Backend {
+	case "jetski":
+		cdpURL := cfg.Browser.CDPUrl
+		rpcURL := cfg.Browser.RPCUrl
+		if cdpURL == "" {
+			cdpURL = "ws://localhost:9222"
+		}
+		if rpcURL == "" {
+			rpcURL = "http://localhost:9223"
+		}
+
+		broker := browser.NewJetskiBroker(cdpURL, rpcURL, nil)
+		jetskiHandler := browser.BrokerHandler(broker)
+
+		if cfg.Browser.Fallback {
+			legacyHandler := browser.Handler(browser.NewClient(cfg.GetLegacyURL()))
+			registry.Register(browser.HandlerName, browser.FallbackHandler(jetskiHandler, legacyHandler))
+			log.Printf("Browser handler registered with jetski backend + legacy fallback (cdp=%s, rpc=%s)", cdpURL, rpcURL)
+		} else {
+			registry.Register(browser.HandlerName, jetskiHandler)
+			log.Printf("Browser handler registered with jetski backend (cdp=%s, rpc=%s)", cdpURL, rpcURL)
+		}
+
+	case "legacy", "":
+		registry.Register(browser.HandlerName, browser.Handler(browser.NewClient(cfg.GetLegacyURL())))
+		log.Printf("Browser handler registered with legacy backend")
+
+	default:
+		if cfg.Browser.Fallback {
+			log.Printf("Warning: unknown browser backend %q, falling back to legacy", cfg.Browser.Backend)
+			registry.Register(browser.HandlerName, browser.Handler(browser.NewClient(cfg.GetLegacyURL())))
+		} else {
+			log.Printf("Error: unknown browser backend %q and fallback disabled", cfg.Browser.Backend)
+			registry.Register(browser.HandlerName, browser.Handler(browser.NewClient(cfg.GetLegacyURL())))
+		}
+	}
+}
+
 func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixEventBus, studioService *studio.StudioIntegration, cfg *config.Config) (*secretary.WorkflowOrchestratorImpl, *secretary.OrchestratorIntegration) {
 	var workflowOrchestrator *secretary.WorkflowOrchestratorImpl
 	if rolodexStore != nil && matrixBus != nil {
@@ -120,7 +159,7 @@ func setupWorkflowEngine(rolodexStore secretary.Store, matrixBus *events.MatrixE
 		bridgeLocalRegistry.Register("echo", func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
 			return config, nil
 		})
-		bridgeLocalRegistry.Register(browser.HandlerName, browser.Handler(browser.NewClient(cfg.GetLegacyURL())))
+		registerBrowserHandler(bridgeLocalRegistry, cfg)
 		log.Printf("BridgeLocal registry initialized with %d handler(s)", len(bridgeLocalRegistry.List()))
 
 		var stepExecutor *secretary.StepExecutor
