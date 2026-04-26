@@ -23,6 +23,7 @@ import (
 	"github.com/armorclaw/bridge/internal/events"
 	"github.com/armorclaw/bridge/internal/skills"
 	"github.com/armorclaw/bridge/pkg/appservice"
+	"github.com/armorclaw/bridge/pkg/browser"
 	"github.com/armorclaw/bridge/pkg/docker"
 	"github.com/armorclaw/bridge/pkg/eventbus"
 	"github.com/armorclaw/bridge/pkg/eventlog"
@@ -142,6 +143,7 @@ type Server struct {
 	aiMaxConcurrent int
 	bridgeMgr       BridgeManager
 	browserJobs     *BrowserJobManager
+	browserBroker   browser.BrowserBroker
 	studio          StudioService
 	appService      AppService
 	provisioningMgr ProvisioningManager
@@ -234,6 +236,13 @@ func New(cfg Config) (*Server, error) {
 
 	s.registerHandlers()
 	return s, nil
+}
+
+// SetBrowserBroker injects a BrowserBroker implementation. When set, all
+// browser.* RPC methods route through the broker instead of the legacy
+// BrowserSkill stub. Pass nil to restore fallback behaviour.
+func (s *Server) SetBrowserBroker(b browser.BrowserBroker) {
+	s.browserBroker = b
 }
 
 func (s *Server) Handle(ctx context.Context, req *Request) (resp *Response) {

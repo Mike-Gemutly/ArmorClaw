@@ -118,12 +118,11 @@ func generateID() string {
 }
 
 // handleBrowserNavigate handles browser.navigate RPC method
-// Starts a new browser navigation job and returns the job ID
 func (s *Server) handleBrowserNavigate(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		URL     string `json:"url"`
 		AgentID string `json:"agent_id"`
-		JobID   string `json:"job_id,omitempty"` // Optional, will be generated if not provided
+		JobID   string `json:"job_id,omitempty"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -144,22 +143,66 @@ func (s *Server) handleBrowserNavigate(ctx context.Context, req *Request) (inter
 		params.AgentID = "default"
 	}
 
-	// Generate or use provided job ID
+	// Broker path: delegate to broker when configured
+	if s.browserBroker != nil {
+		jobID := params.JobID
+		if jobID == "" {
+			jobID = "browser_" + generateID()
+		}
+
+		startReq := browser.StartJobRequest{
+			AgentID: params.AgentID,
+			URL:     params.URL,
+		}
+
+		id, err := s.browserBroker.StartJob(ctx, startReq)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker start job failed: " + err.Error(),
+			}
+		}
+
+		result, err := s.browserBroker.Navigate(ctx, id, params.URL)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker navigate failed: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":   string(id),
+			"status":   "running",
+			"url":      params.URL,
+			"agent_id": params.AgentID,
+			"message":  "Navigation started. Use browser.status to poll for completion.",
+		}
+		if result != nil {
+			resp["success"] = result.Success
+			if result.URL != "" {
+				resp["url"] = result.URL
+			}
+			if result.Title != "" {
+				resp["title"] = result.Title
+			}
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	jobID := params.JobID
 	if jobID == "" {
 		jobID = "browser_" + generateID()
 	}
 
-	// Create job
 	job := s.browserJobs.CreateJob(jobID, params.AgentID)
 	job.URL = params.URL
 	job.Status = "running"
 
-	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	job.cancelFunc = cancel
 
-	// Start navigation in background
 	go func() {
 		defer cancel()
 
@@ -187,7 +230,6 @@ func (s *Server) handleBrowserNavigate(ctx context.Context, req *Request) (inter
 }
 
 // handleBrowserFill handles browser.fill RPC method
-// Fills a form field in an active browser job
 func (s *Server) handleBrowserFill(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID    string `json:"job_id"`
@@ -216,7 +258,30 @@ func (s *Server) handleBrowserFill(ctx context.Context, req *Request) (interface
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		fields := []browser.FillRequest{
+			{Selector: params.Selector, Value: params.Value},
+		}
+		result, err := s.browserBroker.Fill(ctx, browser.JobID(params.JobID), fields)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker fill failed: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":   params.JobID,
+			"selector": params.Selector,
+			"success":  true,
+		}
+		if result != nil {
+			resp["success"] = result.Success
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -232,7 +297,6 @@ func (s *Server) handleBrowserFill(ctx context.Context, req *Request) (interface
 		}
 	}
 
-	// Fill form
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -253,7 +317,6 @@ func (s *Server) handleBrowserFill(ctx context.Context, req *Request) (interface
 }
 
 // handleBrowserClick handles browser.click RPC method
-// Clicks an element in an active browser job
 func (s *Server) handleBrowserClick(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID    string `json:"job_id"`
@@ -281,7 +344,27 @@ func (s *Server) handleBrowserClick(ctx context.Context, req *Request) (interfac
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		result, err := s.browserBroker.Click(ctx, browser.JobID(params.JobID), params.Selector)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker click failed: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":   params.JobID,
+			"selector": params.Selector,
+			"success":  true,
+		}
+		if result != nil {
+			resp["success"] = result.Success
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -297,7 +380,6 @@ func (s *Server) handleBrowserClick(ctx context.Context, req *Request) (interfac
 		}
 	}
 
-	// Click element
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -318,7 +400,6 @@ func (s *Server) handleBrowserClick(ctx context.Context, req *Request) (interfac
 }
 
 // handleBrowserStatus handles browser.status RPC method
-// Polls for job completion and returns current state
 func (s *Server) handleBrowserStatus(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
@@ -338,7 +419,35 @@ func (s *Server) handleBrowserStatus(ctx context.Context, req *Request) (interfa
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		summary, err := s.browserBroker.Status(ctx, browser.JobID(params.JobID))
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker status failed: " + err.Error(),
+			}
+		}
+
+		result := map[string]interface{}{
+			"job_id":   string(summary.ID),
+			"agent_id": summary.AgentID,
+			"status":   string(summary.Status),
+			"url":      summary.URL,
+		}
+		if !summary.CreatedAt.IsZero() {
+			result["created_at"] = summary.CreatedAt.Format(time.RFC3339)
+		}
+		if summary.CompletedAt != nil {
+			result["completed_at"] = summary.CompletedAt.Format(time.RFC3339)
+		}
+		if summary.Error != "" {
+			result["error"] = summary.Error
+		}
+		result["screenshot_available"] = false
+		return result, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -373,20 +482,17 @@ func (s *Server) handleBrowserStatus(ctx context.Context, req *Request) (interfa
 		}
 	}
 
-	// Include screenshot placeholder (would be base64 in real implementation)
-	// In a full implementation, this would capture actual screenshots
 	result["screenshot_available"] = false
 
 	return result, nil
 }
 
 // handleBrowserWaitForElement handles browser.wait_for_element RPC method
-// Waits for an element to appear on the page
 func (s *Server) handleBrowserWaitForElement(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID    string `json:"job_id"`
 		Selector string `json:"selector"`
-		Timeout  int    `json:"timeout"` // seconds
+		Timeout  int    `json:"timeout"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -414,7 +520,27 @@ func (s *Server) handleBrowserWaitForElement(ctx context.Context, req *Request) 
 		params.Timeout = 30
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		result, err := s.browserBroker.WaitForElement(ctx, browser.JobID(params.JobID), params.Selector, params.Timeout*1000)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "element not found: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":   params.JobID,
+			"selector": params.Selector,
+			"success":  true,
+		}
+		if result != nil {
+			resp["success"] = result.Success
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -423,7 +549,6 @@ func (s *Server) handleBrowserWaitForElement(ctx context.Context, req *Request) 
 		}
 	}
 
-	// Wait for element
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(params.Timeout)*time.Second)
 	defer cancel()
 
@@ -444,10 +569,10 @@ func (s *Server) handleBrowserWaitForElement(ctx context.Context, req *Request) 
 }
 
 // handleBrowserWaitForCaptcha handles browser.wait_for_captcha RPC method
-// Signals that the agent is waiting for captcha resolution
 func (s *Server) handleBrowserWaitForCaptcha(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
-		JobID string `json:"job_id"`
+		JobID   string `json:"job_id"`
+		Timeout int    `json:"timeout"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -464,7 +589,31 @@ func (s *Server) handleBrowserWaitForCaptcha(ctx context.Context, req *Request) 
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		timeoutMs := params.Timeout * 1000
+		if timeoutMs == 0 {
+			timeoutMs = 60000
+		}
+		result, err := s.browserBroker.WaitForCaptcha(ctx, browser.JobID(params.JobID), timeoutMs)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker wait_for_captcha failed: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":  params.JobID,
+			"status":  "awaiting_captcha",
+			"message": "Captcha detection started. Mobile app will be notified.",
+		}
+		if result != nil {
+			resp["success"] = result.Success
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -473,7 +622,6 @@ func (s *Server) handleBrowserWaitForCaptcha(ctx context.Context, req *Request) 
 		}
 	}
 
-	// Emit captcha status
 	_ = ctx
 	job.skill.WaitForCaptcha(ctx)
 
@@ -485,10 +633,10 @@ func (s *Server) handleBrowserWaitForCaptcha(ctx context.Context, req *Request) 
 }
 
 // handleBrowserWaitFor2FA handles browser.wait_for_2fa RPC method
-// Signals that the agent is waiting for 2FA code
 func (s *Server) handleBrowserWaitFor2FA(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
-		JobID string `json:"job_id"`
+		JobID   string `json:"job_id"`
+		Timeout int    `json:"timeout"`
 	}
 
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -505,7 +653,31 @@ func (s *Server) handleBrowserWaitFor2FA(ctx context.Context, req *Request) (int
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		timeoutMs := params.Timeout * 1000
+		if timeoutMs == 0 {
+			timeoutMs = 60000
+		}
+		result, err := s.browserBroker.WaitFor2FA(ctx, browser.JobID(params.JobID), timeoutMs)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker wait_for_2fa failed: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":  params.JobID,
+			"status":  "awaiting_2fa",
+			"message": "2FA detection started. Mobile app will be notified.",
+		}
+		if result != nil {
+			resp["success"] = result.Success
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -514,7 +686,6 @@ func (s *Server) handleBrowserWaitFor2FA(ctx context.Context, req *Request) (int
 		}
 	}
 
-	// Emit 2FA status
 	_ = ctx
 	job.skill.WaitFor2FA(ctx)
 
@@ -526,7 +697,6 @@ func (s *Server) handleBrowserWaitFor2FA(ctx context.Context, req *Request) (int
 }
 
 // handleBrowserComplete handles browser.complete RPC method
-// Marks a browser job as complete
 func (s *Server) handleBrowserComplete(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
@@ -546,7 +716,27 @@ func (s *Server) handleBrowserComplete(ctx context.Context, req *Request) (inter
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		result, err := s.browserBroker.Complete(ctx, browser.JobID(params.JobID))
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker complete failed: " + err.Error(),
+			}
+		}
+
+		resp := map[string]interface{}{
+			"job_id":  params.JobID,
+			"status":  "completed",
+			"success": true,
+		}
+		if result != nil {
+			resp["success"] = result.Success
+		}
+		return resp, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -555,7 +745,6 @@ func (s *Server) handleBrowserComplete(ctx context.Context, req *Request) (inter
 		}
 	}
 
-	// Mark complete
 	_ = ctx
 	job.skill.Complete(ctx)
 	job.Status = "completed"
@@ -572,7 +761,6 @@ func (s *Server) handleBrowserComplete(ctx context.Context, req *Request) (inter
 }
 
 // handleBrowserFail handles browser.fail RPC method
-// Marks a browser job as failed
 func (s *Server) handleBrowserFail(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID  string `json:"job_id"`
@@ -593,7 +781,24 @@ func (s *Server) handleBrowserFail(ctx context.Context, req *Request) (interface
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		err := s.browserBroker.Fail(ctx, browser.JobID(params.JobID), params.Reason)
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker fail failed: " + err.Error(),
+			}
+		}
+
+		return map[string]interface{}{
+			"job_id":  params.JobID,
+			"status":  "failed",
+			"error":   params.Reason,
+			"success": true,
+		}, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -602,7 +807,6 @@ func (s *Server) handleBrowserFail(ctx context.Context, req *Request) (interface
 		}
 	}
 
-	// Mark failed
 	_ = ctx
 	job.skill.Fail(ctx, fmt.Errorf("%s", params.Reason))
 	job.Status = "failed"
@@ -619,8 +823,43 @@ func (s *Server) handleBrowserFail(ctx context.Context, req *Request) (interface
 }
 
 // handleBrowserList handles browser.list RPC method
-// Lists all active browser jobs
 func (s *Server) handleBrowserList(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
+	if s.browserBroker != nil {
+		summaries, err := s.browserBroker.List(ctx, "")
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker list failed: " + err.Error(),
+			}
+		}
+
+		result := make([]map[string]interface{}, 0, len(summaries))
+		for _, sum := range summaries {
+			jobInfo := map[string]interface{}{
+				"job_id":   string(sum.ID),
+				"agent_id": sum.AgentID,
+				"url":      sum.URL,
+				"status":   string(sum.Status),
+			}
+			if !sum.CreatedAt.IsZero() {
+				jobInfo["created_at"] = sum.CreatedAt.Format(time.RFC3339)
+			}
+			if sum.CompletedAt != nil {
+				jobInfo["completed_at"] = sum.CompletedAt.Format(time.RFC3339)
+			}
+			if sum.Error != "" {
+				jobInfo["error"] = sum.Error
+			}
+			result = append(result, jobInfo)
+		}
+
+		return map[string]interface{}{
+			"jobs":  result,
+			"count": len(result),
+		}, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	jobs := s.browserJobs.ListJobs()
 
 	result := make([]map[string]interface{}, 0, len(jobs))
@@ -648,7 +887,6 @@ func (s *Server) handleBrowserList(ctx context.Context, req *Request) (interface
 }
 
 // handleBrowserCancel handles browser.cancel RPC method
-// Cancels an active browser job
 func (s *Server) handleBrowserCancel(ctx context.Context, req *Request) (interface{}, *ErrorObj) {
 	var params struct {
 		JobID string `json:"job_id"`
@@ -668,7 +906,23 @@ func (s *Server) handleBrowserCancel(ctx context.Context, req *Request) (interfa
 		}
 	}
 
-	// Get job
+	if s.browserBroker != nil {
+		err := s.browserBroker.Cancel(ctx, browser.JobID(params.JobID))
+		if err != nil {
+			return nil, &ErrorObj{
+				Code:    InternalError,
+				Message: "broker cancel failed: " + err.Error(),
+			}
+		}
+
+		return map[string]interface{}{
+			"job_id":  params.JobID,
+			"status":  "cancelled",
+			"success": true,
+		}, nil
+	}
+
+	// Fallback: legacy BrowserSkill path
 	job, exists := s.browserJobs.GetJob(params.JobID)
 	if !exists {
 		return nil, &ErrorObj{
@@ -677,7 +931,6 @@ func (s *Server) handleBrowserCancel(ctx context.Context, req *Request) (interfa
 		}
 	}
 
-	// Cancel job
 	if job.cancelFunc != nil {
 		job.cancelFunc()
 	}
