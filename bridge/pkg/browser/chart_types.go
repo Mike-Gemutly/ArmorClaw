@@ -10,6 +10,16 @@ const (
 	ActionAssert   ActionType = "assert"
 )
 
+// SelectorTier identifies which selector tier succeeded during replay.
+type SelectorTier string
+
+const (
+	TierPrimary   SelectorTier = "primary"
+	TierSecondary SelectorTier = "secondary"
+	TierFallback  SelectorTier = "fallback"
+	TierFailed    SelectorTier = "failed"
+)
+
 type NavChart struct {
 	Version      int                    `json:"version"`
 	TargetDomain string                 `json:"target_domain"`

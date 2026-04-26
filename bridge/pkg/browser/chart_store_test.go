@@ -32,6 +32,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 			success_count INTEGER DEFAULT 0,
 			failure_count INTEGER DEFAULT 0,
 			parent_chart_id TEXT,
+			primary_hits INTEGER DEFAULT 0,
+			secondary_hits INTEGER DEFAULT 0,
+			fallback_hits INTEGER DEFAULT 0,
 			CHECK (confidence >= 0.0 AND confidence <= 1.0)
 		);
 		CREATE INDEX IF NOT EXISTS idx_charts_domain ON learned_charts(domain);

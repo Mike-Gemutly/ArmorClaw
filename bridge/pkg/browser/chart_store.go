@@ -46,6 +46,8 @@ type ChartStore interface {
 	FindForDomain(ctx context.Context, domain string, limit int) ([]ChartRecord, error)
 	// RecordOutcome adjusts confidence counters based on execution outcome.
 	RecordOutcome(ctx context.Context, chartID string, success bool) error
+	// RecordOutcomeWithTier adjusts confidence and increments the appropriate tier counter.
+	RecordOutcomeWithTier(ctx context.Context, chartID string, tier SelectorTier) error
 	// GetChart retrieves a single chart by ID.
 	GetChart(ctx context.Context, chartID string) (*ChartRecord, error)
 	// DeleteChart removes a chart by ID.
@@ -163,6 +165,64 @@ func (s *SQLiteChartStore) RecordOutcome(ctx context.Context, chartID string, su
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update chart outcome: %w", err)
+	}
+
+	return nil
+}
+
+// RecordOutcomeWithTier adjusts confidence based on which selector tier succeeded
+// and increments the corresponding hit counter.
+func (s *SQLiteChartStore) RecordOutcomeWithTier(ctx context.Context, chartID string, tier SelectorTier) error {
+	var current float64
+	var successes, failures, primaryHits, secondaryHits, fallbackHits int
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT confidence, success_count, failure_count,
+			primary_hits, secondary_hits, fallback_hits
+		FROM learned_charts WHERE chart_id = ?`, chartID,
+	).Scan(&current, &successes, &failures, &primaryHits, &secondaryHits, &fallbackHits)
+	if err != nil {
+		return fmt.Errorf("failed to find chart %s: %w", chartID, err)
+	}
+
+	switch tier {
+	case TierPrimary:
+		successes++
+		primaryHits++
+		current += 0.05
+	case TierSecondary:
+		successes++
+		secondaryHits++
+		current += 0.02
+	case TierFallback:
+		successes++
+		fallbackHits++
+		current += 0.01
+	case TierFailed:
+		failures++
+		current -= 0.1
+	}
+
+	if current > 1.0 {
+		current = 1.0
+	}
+	if current < 0.0 {
+		current = 0.0
+	}
+
+	now := time.Now().UnixMilli()
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE learned_charts
+		SET confidence = ?, success_count = ?, failure_count = ?,
+			primary_hits = ?, secondary_hits = ?, fallback_hits = ?,
+			last_used_at = ?
+		WHERE chart_id = ?`,
+		current, successes, failures,
+		primaryHits, secondaryHits, fallbackHits,
+		now, chartID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update chart outcome with tier: %w", err)
 	}
 
 	return nil

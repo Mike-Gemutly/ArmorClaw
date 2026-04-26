@@ -23,6 +23,9 @@ func (m *mockChartStore) FindForDomain(_ context.Context, domain string, _ int) 
 }
 
 func (m *mockChartStore) RecordOutcome(_ context.Context, _ string, _ bool) error { return nil }
+func (m *mockChartStore) RecordOutcomeWithTier(_ context.Context, _ string, _ SelectorTier) error {
+	return nil
+}
 func (m *mockChartStore) GetChart(_ context.Context, _ string) (*ChartRecord, error) {
 	return nil, errors.New("not implemented")
 }

@@ -268,6 +268,9 @@ func (s *SQLiteStore) initSchema() error {
 		"    success_count INTEGER DEFAULT 0," + "\n" +
 		"    failure_count INTEGER DEFAULT 0," + "\n" +
 		"    parent_chart_id TEXT," + "\n" +
+		"    primary_hits INTEGER DEFAULT 0," + "\n" +
+		"    secondary_hits INTEGER DEFAULT 0," + "\n" +
+		"    fallback_hits INTEGER DEFAULT 0," + "\n" +
 		"    CHECK (confidence >= 0.0 AND confidence <= 1.0)" + "\n" +
 		");" + "\n" +
 		"CREATE INDEX IF NOT EXISTS idx_charts_domain ON learned_charts(domain);" + "\n" +

@@ -1248,21 +1248,13 @@ func (b *JetskiBroker) ReplayChart(ctx context.Context, jobID JobID, chart NavCh
 				"job_id", jobID, "action_key", key, "url", action.URL)
 
 		case ActionClick:
-			selector := primarySelector(action.Selector, key, i+1)
-			result, err := b.Click(ctx, jobID, selector)
-			if err != nil {
-				return fmt.Errorf("replay: click %q (%s) failed at step %d (completed %d/%d): %w",
-					key, selector, i+1, i, len(keys), err)
-			}
-			if result != nil && !result.Success {
-				return fmt.Errorf("replay: click %q (%s) returned failure at step %d (completed %d/%d)",
-					key, selector, i+1, i, len(keys))
-			}
+			tier := b.tryClickWithFallback(ctx, jobID, action.Selector)
 			b.logger.Info("jetski: replay click done",
-				"job_id", jobID, "action_key", key, "selector", selector)
+				"job_id", jobID, "action_key", key, "selector_tier", string(tier))
 
 		case ActionInput:
-			selector := primarySelector(action.Selector, key, i+1)
+			selector, tier := b.resolveSelectorWithFallback(action.Selector)
+
 			value := action.Value
 
 			sensitive := false
@@ -1323,6 +1315,7 @@ func (b *JetskiBroker) ReplayChart(ctx context.Context, jobID JobID, chart NavCh
 				"action_key", key,
 				"selector", selector,
 				"approval", approvalStatus,
+				"selector_tier", string(tier),
 			)
 
 		case ActionWait:
@@ -1426,6 +1419,60 @@ func resolveInlinePlaceholders(value string, values map[string]string) string {
 		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
 	}
 	return result
+}
+
+// tryClickWithFallback attempts click with primary_css, then secondary_xpath,
+// then fallback_js. Returns the tier that succeeded, or TierFailed if all failed.
+func (b *JetskiBroker) tryClickWithFallback(ctx context.Context, jobID JobID, sel *ChartSelector) SelectorTier {
+	if sel == nil {
+		return TierFailed
+	}
+
+	if sel.PrimaryCSS != "" {
+		result, err := b.Click(ctx, jobID, sel.PrimaryCSS)
+		if err == nil && (result == nil || result.Success) {
+			return TierPrimary
+		}
+	}
+
+	if sel.SecondaryXPath != "" {
+		b.logger.Warn("jetski: primary selector failed, trying secondary_xpath",
+			"job_id", jobID, "selector", sel.SecondaryXPath)
+		result, err := b.Click(ctx, jobID, sel.SecondaryXPath)
+		if err == nil && (result == nil || result.Success) {
+			return TierSecondary
+		}
+	}
+
+	if sel.FallbackJS != "" {
+		b.logger.Warn("jetski: secondary selector failed, trying fallback_js",
+			"job_id", jobID, "selector", sel.FallbackJS)
+		result, err := b.Click(ctx, jobID, sel.FallbackJS)
+		if err == nil && (result == nil || result.Success) {
+			return TierFallback
+		}
+	}
+
+	return TierFailed
+}
+
+// resolveSelectorWithFallback returns the first non-empty selector and its tier.
+// For input actions, the fill itself may still fail — but this resolves which
+// selector to try first.
+func (b *JetskiBroker) resolveSelectorWithFallback(sel *ChartSelector) (string, SelectorTier) {
+	if sel == nil {
+		return "", TierFailed
+	}
+	if sel.PrimaryCSS != "" {
+		return sel.PrimaryCSS, TierPrimary
+	}
+	if sel.SecondaryXPath != "" {
+		return sel.SecondaryXPath, TierSecondary
+	}
+	if sel.FallbackJS != "" {
+		return sel.FallbackJS, TierFallback
+	}
+	return "", TierFailed
 }
 
 func primarySelector(sel *ChartSelector, actionKey string, step int) string {
