@@ -42,6 +42,9 @@
 | Change PII masking rules | `bridge/pkg/pii/masker.go` |
 | Modify OAuth token storage | `bridge/pkg/keystore/oauth.go` |
 | Change bridge-local step execution | `bridge/pkg/secretary/bridge_local_registry.go` |
+| Modify browser broker or chart pipeline | `bridge/pkg/browser/broker.go`, `bridge/pkg/browser/jetski_broker.go`, `bridge/pkg/browser/chart_types.go` |
+| Add or modify NavChart validation | `bridge/pkg/browser/chart_validator.go` and `bridge/pkg/browser/normalizer.go` |
+| Change chart persistence | `bridge/pkg/browser/chart_store.go` and `bridge/pkg/secretary/store.go` |
 
 ---
 
@@ -67,7 +70,7 @@
  12. [Component Integration Patterns](#component-integration-patterns)
  13. [Agent Communication Model](#agent-communication-model)
  14. [Agent Studio](#agent-studio)
- 15. [Browser Service](#browser-service)
+ 15. [Browser Automation (BrowserBroker)](#browser-automation-browserbroker)
  16. [Jetski Browser Sidecar](#jetski-browser-sidecar)
  17. [v6 Microkernel Governance](#v6-microkernel-governance-feature-flagged)
  18. [Rust Office Sidecar](#rust-office-sidecar)
@@ -128,7 +131,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **Go Bridge** | Go | Central orchestrator, RPC server, container manager | `bridge/cmd/bridge/main.go` |
 | **SQLCipher Keystore** | Go | Encrypted credential storage with hardware binding | `bridge/pkg/keystore/keystore.go` |
 | **Matrix Conduit** | Rust | Matrix homeserver for E2EE messaging | Conduit binary |
-| **Browser Service** | TypeScript | Playwright-based browser automation | `browser-service/src/index.ts` |
+| **BrowserBroker** | Go | Browser automation abstraction layer over Jetski CDP proxy | `bridge/pkg/browser/broker.go` |
 | **OpenClaw Runtime** | TypeScript/Node | AI agent runtime in containers | `container/openclaw-src/openclaw.mjs` |
 | **License Server** | Go | Enterprise license validation | `license-server/main.go` |
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
@@ -245,6 +248,16 @@ armorclaw-omo/
 │   │   ├── eventbus/         # Event broadcasting
 │   │   ├── matrix/           # Matrix client
 │   │   ├── browser/          # Browser automation
+│   │   │   ├── broker.go       # BrowserBroker interface (15 methods)
+│   │   │   ├── broker_types.go # JobID, StartJobRequest, FillRequest, etc.
+│   │   │   ├── jetski_broker.go # JetskiBroker implementation + ReplayChart
+│   │   │   ├── broker_handler.go # BrokerHandler + FallbackHandler adapters
+│   │   │   ├── chart_types.go  # NavChart Go types matching chartmaker schema
+│   │   │   ├── chart_store.go  # ChartStore persistence (SQLite)
+│   │   │   ├── chart_validator.go # PII/policy validation
+│   │   │   ├── chart_audit.go  # Lifecycle audit trail
+│   │   │   ├── normalizer.go   # CDP-to-NavChart normalization pipeline
+│   │   │   └── pii_scanner.go  # Chart PII diagnostic scanner
 │   │   ├── provisioning/     # Mobile provisioning
 │   │   ├── trust/            # Zero-trust verification
 │   │   ├── audit/            # Audit logging
@@ -449,7 +462,7 @@ type Server struct {
 | Package | Purpose |
 |---------|---------|
 | `pkg/studio/` | Agent container lifecycle (Docker) |
-| `pkg/browser/` | Browser automation interface |
+| `pkg/browser/` | BrowserBroker interface, JetskiBroker implementation, NavChart pipeline (types, normalizer, store, validator, audit, scanner) |
 | `pkg/queue/` | Job queue for browser tasks |
 | `pkg/docker/` | Docker client wrapper with resource governance |
 | `internal/agent/` | Agent runtime state machine |
@@ -2083,30 +2096,66 @@ type StudioService interface {
 
 ---
 
-## Browser Service
+## Browser Automation (BrowserBroker)
 
 ### Purpose
 
-The Browser Service provides **Playwright-based browser automation** for web browsing, form filling, and data extraction.
+The BrowserBroker interface provides a **unified abstraction layer** for all browser automation operations in ArmorClaw. All browser ops, whether from the legacy browser-service or the Jetski sidecar, route through this interface.
+
+### BrowserBroker Interface
+
+**File**: `bridge/pkg/browser/broker.go`
+
+The `BrowserBroker` interface defines 15 methods:
+
+| Method | Description |
+|--------|-------------|
+| `Navigate` | Navigate browser to a URL |
+| `Fill` | Inject values into form fields (sensitive fields route through PII approval) |
+| `Click` | Click an element by selector |
+| `WaitForElement` | Wait for an element to appear (with timeout) |
+| `WaitForCaptcha` | Wait for CAPTCHA resolution (with timeout) |
+| `WaitFor2FA` | Wait for 2FA code entry (with timeout) |
+| `Extract` | Extract data from page via `ExtractSpec` |
+| `Screenshot` | Capture page screenshot (full-page option) |
+| `StartJob` | Start a new browser automation job |
+| `Status` | Get current job status |
+| `Complete` | Mark job as completed |
+| `Fail` | Mark job as failed with reason |
+| `List` | List all jobs for an agent |
+| `Cancel` | Cancel a running job |
+| `ReplayChart` | Replay all actions from a NavChart (PII actions route through approval) |
+
+### Implementations
+
+**JetskiBroker** (`bridge/pkg/browser/jetski_broker.go`): Primary implementation that routes all operations through the Jetski CDP proxy. Implements all 15 methods including `ReplayChart`.
+
+**FallbackHandler** (`bridge/pkg/browser/broker_handler.go`): Temporary adapter that falls back to the legacy browser-service when Jetski is unavailable. Planned removal in Phase 4.
+
+### Backend Feature Flag
+
+The browser backend is controlled by the `ARMORCLAW_BROWSER_BACKEND` environment variable:
+
+| Value | Backend | Description |
+|-------|---------|-------------|
+| `jetski` (default) | JetskiBroker | All ops route through Jetski CDP proxy |
+| `legacy` | FallbackHandler | Ops route through legacy browser-service |
 
 ### Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Bridge    │────▶│ Browser Job  │────▶│ Playwright  │
-│   RPC       │     │ Queue        │     │ Browser     │
-└─────────────┘     └──────────────┘     └─────────────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │ Job State    │
-                    │ Machine      │
-                    └──────────────┘
+┌─────────────┐     ┌──────────────────────┐     ┌─────────────┐
+│   Bridge    │────▶│   BrowserBroker      │────▶│  Jetski     │
+│   RPC       │     │   Interface           │     │  CDP Proxy  │
+└─────────────┘     │                      │     └─────────────┘
+                    │  JetskiBroker ────────│───▶  :9222
+                    │  FallbackHandler ─────│───▶  browser-service
+                    └──────────────────────┘     (legacy, Phase 4 removal)
 ```
 
 ### Browser Skills
 
-> Browser automation is handled by the Jetski sidecar, which runs as a separate container with network access. Agent containers themselves (always `NetworkMode: "none"`) never perform browser operations directly. The Bridge routes browser requests from the agent to Jetski over RPC.
+> All browser skills route through the BrowserBroker interface, regardless of backend. Agent containers (always `NetworkMode: "none"`) never perform browser operations directly.
 
 | Skill | Description |
 |-------|-------------|
@@ -2281,6 +2330,141 @@ tethered:
 | E2E Tethered Mode | `tests/e2e_tethered_test.go` | 5 | ✅ Pass |
 
 **Total**: 60 tests, all passing
+
+### NavChart Pipeline
+
+The NavChart pipeline converts raw CDP interactions into reusable, validated, and audited navigation charts that can be replayed for future browser tasks on the same domain.
+
+#### NavChart Go Types
+
+**File**: `bridge/pkg/browser/chart_types.go`
+
+Go types matching the chartmaker TypeScript schema:
+
+| Type | Purpose |
+|------|---------|
+| `NavChart` | Top-level chart with version, target domain, metadata, and action map |
+| `ChartAction` | Individual action (click, input, navigate, wait, assert) with selector and value |
+| `ChartSelector` | 3-tier selector: primary CSS, secondary XPath, fallback JS |
+| `ChartMetadata` | Generation source, timestamp, session ID |
+| `FrameRouting` | iframe targeting (selector, name, origin) |
+| `WaitCondition` | Post-action wait with type, selector, timeout |
+| `Assertion` | Post-action assertion with type and expected value |
+| `ActionType` | Enum: click, input, navigate, wait, assert |
+| `SelectorTier` | Enum: primary, secondary, fallback, failed |
+
+#### CDP-to-NavChart Normalization Pipeline
+
+**File**: `bridge/pkg/browser/normalizer.go`
+
+Raw CDP frames pass through a 6-stage pipeline:
+
+1. **Filter** — Remove non-essential CDP events (network, console, DOM mutations)
+2. **Group** — Correlate related CDP events into logical action boundaries
+3. **Detect PII** — Scan values for SSN, credit card, email, and password patterns
+4. **Replace** — Substitute detected PII with `{{VAULT:field:hash}}` placeholders
+5. **Extract Selectors** - Derive CSS, XPath, and JS selectors from CDP target info
+6. **Attach Metadata** — Add frame routing, wait conditions, and assertions
+
+#### Chart Persistence
+
+**File**: `bridge/pkg/browser/chart_store.go`
+
+Charts are stored in the `learned_charts` table in the secretary SQLite database (`rolodex.db`).
+
+**ChartStore interface**:
+
+| Method | Purpose |
+|--------|---------|
+| `Save` | Store a new NavChart (creates new version) |
+| `FindForDomain` | Find best-matching chart for a domain |
+| `RecordOutcome` | Record replay success/failure, adjust confidence |
+| `Get` | Retrieve a specific chart by ID |
+| `Delete` | Remove a chart and all versions |
+| `ListVersions` | List all versions of a chart |
+| `RevertToVersion` | Roll back to a previous chart version |
+
+#### Chart Validator
+
+**File**: `bridge/pkg/browser/chart_validator.go`
+
+Two validation modes:
+
+**`ValidateForStorage`**: Checks charts before saving. Rejects charts containing PII values (must use placeholders). Enforces minimum selector requirements (primary CSS required).
+
+**`ValidateForReplay`**: Checks charts before replay. Ensures all PII placeholders have resolved values. Validates domain policy (chart domain must match target domain).
+
+#### Replay-Through-Approval
+
+**`ReplayChart`** method on BrowserBroker replays all actions from a NavChart. Sensitive input actions (those with PII placeholders) are routed through the Bridge PII approval path. There are no shortcuts. If the user denies approval for any PII field, the entire replay aborts.
+
+This guarantees that replay follows the same approval gates as manual browser operations.
+
+#### Audit Trail
+
+**File**: `bridge/pkg/browser/chart_audit.go`
+
+The `chart_audit` table tracks 5 chart lifecycle events:
+
+| Event | When |
+|-------|------|
+| `created` | New chart saved |
+| `updated` | Chart version updated |
+| `replayed` | Chart replayed (success or failure) |
+| `rejected` | Validation rejected a chart |
+| `deleted` | Chart removed |
+
+Audit details never contain PII values. Only placeholder references, domain, and outcome are logged.
+
+#### Selector Fallback
+
+When replaying a chart action, selectors are tried in a 3-tier fallback order:
+
+| Tier | Type | Confidence Adjustment |
+|------|------|-----------------------|
+| Primary | CSS selector | +0.05 on success |
+| Secondary | XPath | +0.02 on success |
+| Fallback | JavaScript expression | +0.01 on success |
+| Failed | All tiers exhausted | -0.1 on failure |
+
+Confidence scores are persisted with the chart and used by `FindForDomain` to rank candidates.
+
+#### Chart Versioning
+
+Charts use linear versioning. Each `Save` creates a new version. `ListVersions` returns all versions for a chart ID. `RevertToVersion` restores a previous version as the current active version.
+
+#### PII Scanner
+
+**File**: `bridge/pkg/browser/pii_scanner.go`
+
+The `ScanChartsForPII` diagnostic tool scans all stored charts for PII values that should have been replaced with placeholders during normalization. Used for auditing and validation of the normalization pipeline.
+
+#### Chart Injection
+
+**File**: `bridge/pkg/secretary/orchestrator_integration.go`
+
+The `ChartFinder` interface integrates with the workflow executor. Before spawning a browser step, relevant charts for the target domain are injected into the step configuration alongside learned skills. This lets the agent reuse proven interaction patterns.
+
+#### NavChart Pipeline Test Coverage
+
+**Go Unit Tests** (`bridge/pkg/browser/`):
+
+| Test Suite | File | Tests | Status |
+|------------|------|-------|--------|
+| NavChart Types | `chart_types_test.go` | 4 | ✅ Pass |
+| Normalizer Pipeline | `normalizer_test.go` | 13 | ✅ Pass |
+| Chart Store | `chart_store_test.go` | 19 | ✅ Pass |
+| Chart Validator | `chart_validator_test.go` | 37 | ✅ Pass |
+| Chart Audit | `chart_audit_test.go` | 7 | ✅ Pass |
+| PII Scanner | `pii_scanner_test.go` | 14 | ✅ Pass |
+
+**Bash Harness Tests** (`tests/`):
+
+| Test Suite | File | Scenarios | Status |
+|------------|------|-----------|--------|
+| Browser Broker Harness | `test-browser-broker.sh` | 14 (BB0-BB13) | ✅ Pass |
+| NavChart Security | `test-navchart-security.sh` | 6 (NS0-NS5) | ✅ Pass |
+| NavChart Pipeline | `test-navchart-pipeline.sh` | 6 (NP0-NP5) | ✅ Pass |
 
 ### Relationship to browser-service
 

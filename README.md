@@ -1330,6 +1330,10 @@ Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents 
 - Lighthouse sub-project for Nav-Chart REST API
 - Chartmaker sub-project (TypeScript CLI) for recording browser interactions
 
+**NavChart Pipeline**: CDP frames captured during browser sessions are normalized into NavCharts through a 6-stage pipeline (filter, group, detect PII, replace, extract selectors, attach metadata). Charts are validated for PII-free storage, persisted in SQLite with confidence scoring, and injected into future browser steps for replay. Go types in `bridge/pkg/browser/chart_types.go` match the chartmaker TypeScript schema exactly.
+
+**Chartmaker Integration**: The TypeScript CLI records browser interactions as NavCharts. Go types (`NavChart`, `ChartAction`, `ChartSelector`, etc.) mirror the chartmaker schema for seamless recording and replay.
+
 ### Agent Studio (Observable Containers + Learned Skills)
 
 Mode A containers (NetworkMode "none", deterministic computation only) now produce structured execution events, stream progress to ArmorChat via Matrix, and persist learned skills:
@@ -1337,6 +1341,7 @@ Mode A containers (NetworkMode "none", deterministic computation only) now produ
 - **Event Emission**: Containers write `_events.jsonl` with 4 primary event types (STEP, PROGRESS, CHECKPOINT, ERROR) and PIPE_BUF (4096 byte) line enforcement
 - **Progress Streaming**: Bridge tails `_events.jsonl` during execution (500ms polling), emits progress to MatrixEventBus, forwards to Matrix rooms as `m.notice` messages
 - **Learned Skills**: Successful task patterns extracted automatically (step sequences, checkpoints) and stored in SQLite as suggestions for future tasks (confidence >= 0.4, never auto-executed)
+- **Chart-Based Learned Skills**: Browser task patterns are extracted as NavCharts and stored in the `learned_charts` table with confidence scoring. Relevant charts for a target domain are injected into future browser steps alongside learned skills, letting agents reuse proven interaction patterns.
 - **Timeline UI**: ArmorChat WorkflowTimeline composable with event icons, progress bar, and live/complete indicators
 - **Soft 10MB Cap**: Event log capped at 10MB -- stops tailing with warning, container finishes normally (no SIGKILL)
 - **State Cleanup**: `_events.jsonl` and state directory purged after task completion (parse -> cleanup -> notify ordering)
