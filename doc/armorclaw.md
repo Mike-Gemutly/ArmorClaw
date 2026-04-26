@@ -257,7 +257,12 @@ armorclaw-omo/
 │   │   │   ├── chart_validator.go # PII/policy validation
 │   │   │   ├── chart_audit.go  # Lifecycle audit trail
 │   │   │   ├── normalizer.go   # CDP-to-NavChart normalization pipeline
-│   │   │   └── pii_scanner.go  # Chart PII diagnostic scanner
+│   │   │   ├── pii_scanner.go  # Chart PII diagnostic scanner
+│   │   │   ├── processor.go    # Browser job processor (queue integration, agent state machine)
+│   │   │   ├── context_manager.go # Agent-to-browser-context mapping
+│   │   │   ├── handler.go      # Bridge-local browser_execute handler (BrowserIntent artifact)
+│   │   │   ├── client.go       # HTTP client for legacy browser-service communication
+│   │   │   └── browser.go      # Browser status tracking and event emission
 │   │   ├── provisioning/     # Mobile provisioning
 │   │   ├── trust/            # Zero-trust verification
 │   │   ├── audit/            # Audit logging
@@ -282,11 +287,15 @@ armorclaw-omo/
 │
 ├── jetski/                    # Go CDP proxy with Tethered Mode security
 │   ├── cmd/observer/main.go  # Primary entry point
-│   ├── internal/cdp/          # CDP proxy, router, PII scanner
+│   ├── internal/cdp/          # CDP proxy, router, translator, PII scanner
 │   ├── internal/rpc/          # RPC API (port 9223)
-│   ├── internal/security/     # SQLCipher sessions, PII scrubbing
+│   ├── internal/security/     # SQLCipher sessions, PII scanning, session management
 │   ├── internal/approval/     # Matrix HITL approval client
-│   ├── internal/sonar/        # Telemetry recorder
+│   ├── internal/sonar/        # Telemetry recorder, reporter, buffer
+│   ├── internal/subprocess/   # Process manager, watchdog, health checker, restarter
+│   ├── internal/network/      # Proxy manager, circuit breaker
+│   ├── pkg/config/            # Jetski configuration package
+│   ├── pkg/logger/            # Structured logging package
 │   ├── lighthouse/            # Nav-Chart REST API (Go sub-project)
 │   ├── jetski-chartmaker/     # Browser interaction recorder (TypeScript CLI)
 │   ├── configs/config.yaml    # Configuration
@@ -325,8 +334,14 @@ armorclaw-omo/
 └── tests/                    # Test suites
     ├── ssh/                 # VPS testing suite (10 categories)
     ├── e2e/                 # E2E test utilities (common.sh)
+    ├── unit/                # Unit tests
     ├── integration/         # Installer integration tests
     ├── adversarial/         # Security adversarial tests
+    ├── voice/               # Voice soak/load testing
+    ├── voice-services/      # Voice service configs
+    ├── config/              # Test configuration files
+    ├── e2ee/                # E2EE cross-client testing
+    ├── matrix-test-server/  # Matrix test server
     ├── lib/                 # Shared test fixtures (load_env, assert_json, restart_bridge, etc.)
     ├── fixtures/            # Shared test data
     ├── test-eventbus-streaming.sh      # T1: EventBus + WebSocket (Tier A)
@@ -416,7 +431,7 @@ type Server struct {
 | `pkg/eventbus/` | Event broadcasting to WebSocket clients (v0.7.0: wired to WebSocket for live push) |
 | `pkg/config/` | TOML configuration management |
 | `pkg/logger/` | Structured logging |
-| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator integration (v0.7.0: WorkflowStep.Input for inter-step data passing) |
+| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator (parallel + integration), event reader, audit, rolodex, blindfill, browser integration, calendar service, WebDAV service, notifications, studio integration, template engine, trusted workflows, bridge-local registry, doc query registration, RPC, store, cleanup, result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
 | `pkg/health/` | Health check and readiness monitoring |
 | `pkg/runtime/` | Bridge runtime configuration and lifecycle |
 
@@ -462,7 +477,7 @@ type Server struct {
 | Package | Purpose |
 |---------|---------|
 | `pkg/studio/` | Agent container lifecycle (Docker) |
-| `pkg/browser/` | BrowserBroker interface, JetskiBroker implementation, NavChart pipeline (types, normalizer, store, validator, audit, scanner) |
+| `pkg/browser/` | BrowserBroker interface, JetskiBroker implementation, NavChart pipeline (types, normalizer, store, validator, audit, scanner), job processor, context manager, bridge-local handler, legacy HTTP client, status tracking |
 | `pkg/queue/` | Job queue for browser tasks |
 | `pkg/docker/` | Docker client wrapper with resource governance |
 | `internal/agent/` | Agent runtime state machine |
@@ -2230,16 +2245,34 @@ jetski/
 │   ├── cdp/
 │   │   ├── proxy.go           # CDP WebSocket proxy with PII scrubbing
 │   │   ├── router.go          # Method router with Translator injection
-│   │   └── pii_scanner.go     # 4-pattern PII detection (SSN, CC, email, password)
+│   │   ├── translator.go      # CDP method translation
+│   │   └── fallback.go        # FallbackHandler for unsupported CDP methods
 │   ├── rpc/
 │   │   └── rpc.go             # JSON-RPC 2.0 server (port 9223)
 │   ├── security/
 │   │   ├── sqlcipher_session.go  # SQLCipher session store (PBKDF2, key zeroization)
-│   │   └── session.go         # Session management (rewritten from age to SQLCipher)
+│   │   ├── session.go            # Session management (rewritten from age to SQLCipher)
+│   │   ├── pii_scanner.go        # 4-pattern PII detection (SSN, CC, email, password)
+│   │   ├── store_cgo.go          # SQLCipher store (cgo build tag)
+│   │   └── store_nocgo.go        # SQLCipher store (nocgo stub)
 │   ├── approval/
 │   │   └── matrix_client.go   # Matrix HITL approval client (channel-based, 60s timeout)
-│   └── sonar/
-│       └── recorder.go        # Telemetry event recorder
+│   ├── sonar/
+│   │   ├── recorder.go        # Telemetry event recorder
+│   │   ├── reporter.go        # WreckageReport generation
+│   │   ├── telemetry.go       # Telemetry types
+│   │   └── buffer.go          # CDPFrame buffer for sonar capture
+│   ├── subprocess/
+│   │   ├── manager.go         # ProcessManager for engine lifecycle
+│   │   ├── watchdog.go        # Watchdog for health monitoring
+│   │   ├── health.go          # CDPHealthChecker interface
+│   │   └── restart.go         # Restarter for engine recovery
+│   └── network/
+│       ├── proxy.go           # ProxyManager for outbound proxy rotation
+│       └── circuit_breaker.go # CircuitBreaker for proxy failover
+├── pkg/
+│   ├── config/config.go       # Jetski configuration package
+│   └── logger/logger.go       # Structured logging package
 ├── lighthouse/                # Nav-Chart REST API (Go sub-project)
 ├── jetski-chartmaker/         # Browser interaction recorder (TypeScript CLI)
 ├── configs/config.yaml        # Configuration file
@@ -2271,18 +2304,77 @@ Tethered Mode is the security enforcement layer in Jetski. When enabled:
 **File**: `jetski/configs/config.yaml`
 
 ```yaml
-engine:
-  url: "http://localhost:9333"
-rpc:
-  port: 9223
+server:
+  host: "0.0.0.0"
+  port: "9222"
+  readTimeout: 30s
+  writeTimeout: 30s
+
+browser:
+  enginePath: "/usr/local/bin/lightpanda"
+  enginePort: "9333"
+  healthCheck: true
+  checkInterval: 5s
+  watchdog:
+    enabled: true
+    checkInterval: 5s
+    maxFailures: 3
+    autoRestart: true
+    restartDelay: 5s
+
+security:
+  passphrase: ""
+  sessionDir: "./sessions"
+  piiScanning: true
+  encryptSession: false
+
+network:
+  proxyList: []
+  proxyEnabled: false
+  proxyHealthCheckURL: "http://www.google.com"
+  proxyHealthInterval: 60s
+  circuitBreaker:
+    failureThreshold: 3
+    resetTimeout: 30s
+    halfOpenThreshold: 1
+
+logging:
+  level: "INFO"
+  format: "text"
+  output: "stdout"
+  structured: false
+
 approval:
+  enabled: false
   bridgeURL: "http://127.0.0.1:8080"
-  timeout: "60s"
-  enabled: true
-tethered:
-  encryptSession: true
-  piiScrub: true
+  roomID: ""
+  timeout: 60s
+  sensitiveOperations:
+    - "session_create"
+    - "navigation"
+    - "file_download"
 ```
+
+**Environment Variable Overrides**:
+
+| Variable | Field | Default |
+|----------|-------|---------|
+| `JETSKI_PORT` | `server.port` | `9222` |
+| `JETSKI_HOST` | `server.host` | `0.0.0.0` |
+| `JETSKI_ENGINE_PATH` | `browser.enginePath` | `/usr/local/bin/lightpanda` |
+| `JETSKI_ENGINE_PORT` | `browser.enginePort` | `9333` |
+| `JETSKI_PASSPHRASE` | `security.passphrase` | (empty) |
+| `JETSKI_SESSION_DIR` | `security.sessionDir` | `./sessions` |
+| `JETSKI_PII_SCANNING` | `security.piiScanning` | `true` |
+| `JETSKI_ENCRYPT_SESSION` | `security.encryptSession` | `false` |
+| `JETSKI_PROXY_LIST` | `network.proxyList` | (comma-separated) |
+| `JETSKI_LOG_LEVEL` | `logging.level` | `INFO` |
+| `JETSKI_LOG_FORMAT` | `logging.format` | `text` |
+| `JETSKI_LOG_OUTPUT` | `logging.output` | `stdout` |
+| `JETSKI_APPROVAL_ENABLED` | `approval.enabled` | `false` |
+| `JETSKI_BRIDGE_URL` | `approval.bridgeURL` | `http://127.0.0.1:8080` |
+| `JETSKI_ROOM_ID` | `approval.roomID` | (empty) |
+| `JETSKI_APPROVAL_TIMEOUT` | `approval.timeout` | `60` (seconds) |
 
 ### Ports
 
@@ -3343,7 +3435,58 @@ format = "json"
 [audit]
 enabled = true
 retention_days = 30
+
+[browser]
+enabled = true                           # Enable browser automation
+service_url = "http://localhost:3002"     # Legacy browser-service HTTP API URL
+cdp_url = "ws://localhost:9222"          # CDP WebSocket URL (Jetski)
+rpc_url = "http://localhost:9223"        # JSON-RPC management URL (Jetski)
+legacy_url = "http://localhost:3002"     # Legacy browser-service fallback URL
+backend = "jetski"                       # Browser backend: "jetski" or "legacy"
+fallback = false                         # Auto-fallback from jetski to legacy on failure
+timeout = 30                             # Default timeout for browser operations (seconds)
+max_retries = 3                          # Max retries for failed operations
+retry_delay = 1                          # Delay between retries (seconds)
+
+[browser.stealth]
+enabled = false                          # Enable stealth anti-detection mode
+fingerprint_seed = ""                    # Seed for deterministic fingerprint generation
+human_like_typing = false                # Enable human-like typing delays
+human_like_mouse = false                 # Enable human-like mouse movements
+webgl_noise = false                      # Enable WebGL fingerprint noise
+canvas_noise = false                     # Enable canvas fingerprint noise
+
+[browser.queue]
+max_workers = 4                          # Max concurrent browser workers
+max_queue_size = 100                     # Max pending jobs in queue
+job_timeout = 300                        # Max time a job can run (seconds)
+priority_levels = 3                      # Number of priority levels (1-10)
 ```
+
+**Browser Environment Variables**:
+
+| Variable | Field | Default |
+|----------|-------|---------|
+| `ARMORCLAW_BROWSER_ENABLED` | `browser.enabled` | `false` |
+| `ARMORCLAW_BROWSER_SERVICE_URL` | `browser.service_url` | (empty) |
+| `ARMORCLAW_BROWSER_CDP_URL` | `browser.cdp_url` | (empty) |
+| `ARMORCLAW_BROWSER_RPC_URL` | `browser.rpc_url` | (empty) |
+| `ARMORCLAW_BROWSER_LEGACY_URL` | `browser.legacy_url` | (empty) |
+| `ARMORCLAW_BROWSER_BACKEND` | `browser.backend` | `jetski` |
+| `ARMORCLAW_BROWSER_FALLBACK` | `browser.fallback` | `false` |
+| `ARMORCLAW_BROWSER_TIMEOUT` | `browser.timeout` | `30` |
+| `ARMORCLAW_BROWSER_MAX_RETRIES` | `browser.max_retries` | `3` |
+| `ARMORCLAW_BROWSER_RETRY_DELAY` | `browser.retry_delay` | `1` |
+| `ARMORCLAW_BROWSER_STEALTH_ENABLED` | `browser.stealth.enabled` | `false` |
+| `ARMORCLAW_BROWSER_FINGERPRINT_SEED` | `browser.stealth.fingerprint_seed` | (empty) |
+| `ARMORCLAW_BROWSER_HUMAN_TYPING` | `browser.stealth.human_like_typing` | `false` |
+| `ARMORCLAW_BROWSER_HUMAN_MOUSE` | `browser.stealth.human_like_mouse` | `false` |
+| `ARMORCLAW_BROWSER_WEBGL_NOISE` | `browser.stealth.webgl_noise` | `false` |
+| `ARMORCLAW_BROWSER_CANVAS_NOISE` | `browser.stealth.canvas_noise` | `false` |
+| `ARMORCLAW_BROWSER_MAX_WORKERS` | `browser.queue.max_workers` | `4` |
+| `ARMORCLAW_BROWSER_MAX_QUEUE_SIZE` | `browser.queue.max_queue_size` | `100` |
+| `ARMORCLAW_BROWSER_JOB_TIMEOUT` | `browser.queue.job_timeout` | `300` |
+| `ARMORCLAW_BROWSER_PRIORITY_LEVELS` | `browser.queue.priority_levels` | `3` |
 
 ---
 
@@ -3506,6 +3649,72 @@ bash tests/ssh/run_all_tests.sh --all --verbose
 - **Summary File**: `.sisyphus/evidence/IMPLEMENTATION_SUMMARY.md`
 - **JSON Output**: `task-N-results.json`
 - **Console Output**: `task-N-success.txt`
+
+### Supplementary Test Scripts
+
+Additional test scripts beyond the Tier A/B harness, organized by category.
+
+**Test Directories**:
+
+| Directory | Purpose |
+|-----------|---------|
+| `tests/unit/` | Unit tests |
+| `tests/voice/` | Voice soak/load testing |
+| `tests/voice-services/` | Voice service configs |
+| `tests/config/` | Test configuration files |
+| `tests/e2ee/` | E2EE cross-client testing |
+| `tests/matrix-test-server/` | Matrix test server |
+
+**Browser and NavChart Harness Tests**:
+
+| Script | Scenarios | Description |
+|--------|-----------|-------------|
+| `test-browser-broker.sh` | BB0-BB13 | BrowserBroker interface tests (also in Tier B table) |
+| `test-navchart-security.sh` | NS0-NS5 | NavChart PII validation and security checks |
+| `test-navchart-pipeline.sh` | NP0-NP5 | NavChart normalize-store-replay pipeline |
+
+**Integration and Smoke Tests**:
+
+| Script | Description |
+|--------|-------------|
+| `test-vps-smoke.sh` | VPS integration smoke test |
+| `test-persistence.sh` | Invite state survival across restarts |
+| `test-matrix-plane.sh` | Matrix messaging via Conduit API |
+| `test-rpc-methods.sh` | RPC method coverage |
+| `test-e2e.sh` | End-to-end test script |
+
+**Security and Exploit Tests**:
+
+| Script | Description |
+|--------|-------------|
+| `test-exploits.sh` | Exploit prevention tests |
+| `test-secrets.sh` | Secret passing mechanism |
+| `test-governance-rpc.sh` | Governance RPC tests |
+| `test-secret-passing.sh` | Keystore to bridge to container secret flow |
+| `test-p0crit3-socket-injection.sh` | Socket-based secret injection |
+| `test-yara-heap-profile.sh` | YARA heap profiling |
+| `test-xchacha-nonce-length.sh` | XChaCha nonce validation |
+
+**Transport and Voice Tests**:
+
+| Script | Description |
+|--------|-------------|
+| `test-transport-guard.sh` | Transport guard tests |
+| `test-eventbus-filtering.sh` | EventBus filtering |
+| `test-webrtc-voice-integration.sh` | WebRTC voice and Matrix integration |
+
+**Deployment and Config Tests**:
+
+| Script | Description |
+|--------|-------------|
+| `test-discovery.sh` | mDNS discovery |
+| `test-element-x-flow.sh` | Element X config flow E2E |
+| `test-container-setup.sh` | Container setup |
+| `test-attach-config.sh` | Config attachment |
+| `test-deployment-skills.sh` | Deployment skills |
+| `test-cloudflare-setup.sh` | Cloudflare setup |
+| `test-quickstart-entrypoint.sh` | Quickstart entrypoint |
+| `test-matrix-integration.sh` | Matrix integration |
 
 ---
 
