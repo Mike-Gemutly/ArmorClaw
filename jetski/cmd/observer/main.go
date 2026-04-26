@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/armorclaw/jetski/internal/approval"
 	"github.com/armorclaw/jetski/internal/cdp"
 	"github.com/armorclaw/jetski/internal/network"
 	"github.com/armorclaw/jetski/internal/rpc"
@@ -86,6 +87,14 @@ func main() {
 		sonar.RecordFrame(sonarBuf, method, params, "")
 	})
 
+	var approvalClient *approval.ApprovalClient
+	if cfg.Approval.Enabled {
+		approvalClient = approval.NewApprovalClient(cfg.Approval.BridgeURL, cfg.Approval.RoomID, cfg.Approval.Timeout)
+		cdpProxy.SetApprovalClient(approvalClient)
+		cdpProxy.SetApprovalTimeout(cfg.Approval.Timeout)
+		log.Info("Approval client wired", "bridge_url", cfg.Approval.BridgeURL, "room_id", cfg.Approval.RoomID, "timeout", cfg.Approval.Timeout)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -133,7 +142,7 @@ func main() {
 
 	rpcServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, "9223"),
-		Handler:      rpc.NewServer(nil).Handler(),
+		Handler:      rpc.NewServer(approvalClient).Handler(),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 	}

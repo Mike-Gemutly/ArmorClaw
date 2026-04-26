@@ -67,17 +67,23 @@ func (ac *ApprovalClient) RequestApproval(ctx context.Context, op OperationType,
 		ac.mu.Unlock()
 	}()
 
-	req := ApprovalRequest{
-		ID:          id,
-		Operation:   op,
-		Detail:      detail,
-		RoomID:      ac.roomID,
-		RequestedAt: time.Now().UTC(),
-		Status:      "pending",
+	rpcPayload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "pii.request",
+		"params": map[string]any{
+			"agent_id":   "jetski",
+			"skill_id":   string(op),
+			"profile_id": ac.roomID,
+			"request_id": id,
+			"operation":  string(op),
+			"detail":     detail,
+			"room_id":    ac.roomID,
+		},
 	}
 
-	body, _ := json.Marshal(req)
-	_, _ = http.Post(ac.baseURL+"/rpc/approval/request", "application/json", bytes.NewReader(body))
+	body, _ := json.Marshal(rpcPayload)
+	_, _ = http.Post(ac.baseURL, "application/json", bytes.NewReader(body))
 
 	timer := time.NewTimer(ac.timeout)
 	defer timer.Stop()
