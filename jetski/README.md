@@ -34,7 +34,7 @@ services:
     container_name: jetski_browser
     ports:
       - "9222:9222" # CDP Port for Agents
-      - "8080:8080" # RPC API
+      - "9223:9223" # RPC API
     environment:
       - JETSKI_PROXY_LIST=http://proxy1.com,http://proxy2.com
     volumes:

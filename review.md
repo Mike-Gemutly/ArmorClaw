@@ -30,6 +30,7 @@
 | Voice (WebRTC) | Production Ready | `bridge/pkg/webrtc/` |
 | ArmorTerminal | Production Ready | `applications/ArmorTerminal/` |
 | OpenClaw (Agent Runtime) | Production Ready | `container/openclaw/` |
+| BrowserBroker (Go) | Production Ready | `bridge/pkg/browser/` |
 
 ## Architectural Decisions
 
@@ -67,7 +68,8 @@ See `.sisyphus/plans/v070-master-plan.md` for the full v0.7.0 task breakdown (al
 - ~~Admin panel uses mock data instead of real Bridge API~~ ✅ Client-side typed RPC calls added in v0.7.0; server-side device/invite governance handlers implemented in v0.8.0
 - ~~`BridgeRepository` credentials are in-memory only — not persisted across app restarts~~ ✅ Persisted via encrypted SharedPreferences in v0.7.0
 - ~~All 12 ArmorChat integration tests are `assertTrue(true)` placeholders~~ ✅ Replaced with meaningful assertions in v0.7.0
-- **Browser automation from isolated containers** — Agents still cannot reach the browser service directly. Jetski sidecar routing via Bridge RPC is the current workaround. No timeline for direct CDP access from `NetworkMode: none` containers (this may be a permanent architectural constraint).
+- **BrowserBroker (implemented)** — All browser ops now route through the `BrowserBroker` interface (15 methods) via `JetskiBroker`. Legacy browser-service available as temporary fallback via `ARMORCLAW_BROWSER_BACKEND=legacy`. NavChart pipeline provides CDP-to-chart normalization, chart persistence, replay-through-approval, audit trail, and selector fallback. Direct CDP access from `NetworkMode: none` containers remains architecturally impossible.
+- **NavChart multi-tab replay (T27) and replay diagnostics (T30)** — Stretch goals from Browser Automation Strategy v2.3, not yet implemented. Charts currently support single-tab replay only.
 
 ## Active Plan
 
