@@ -482,24 +482,468 @@ func elapsedMs(start time.Time) int {
 	return int(time.Since(start).Milliseconds())
 }
 
-// Click clicks an element (stub).
+func joinSelectors(selectors []string) string {
+	result := selectors[0]
+	for _, s := range selectors[1:] {
+		result += "," + s
+	}
+	return result
+}
+
+// Click clicks an element via CDP Runtime.evaluate using document.querySelector().click().
 func (b *JetskiBroker) Click(ctx context.Context, id JobID, selector string) (*BrokerResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+	b.logger.Info("jetski: click", "job_id", id, "selector", selector)
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	msgID := int(b.cdpMsgID.Add(1))
+
+	expr := fmt.Sprintf(
+		`(function(){var el=document.querySelector(%q);if(!el)throw new Error("element not found: %s");el.click();return true})()`,
+		selector, selector,
+	)
+	params, _ := json.Marshal(map[string]interface{}{
+		"expression":            expr,
+		"includeCommandLineAPI": true,
+		"awaitPromise":          true,
+		"returnByValue":         true,
+		"userGesture":           true,
+	})
+
+	msg := cdpMessage{
+		ID:     msgID,
+		Method: "Runtime.evaluate",
+		Params: params,
+	}
+
+	if err := conn.WriteJSON(msg); err != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:     "CLICK_WRITE_FAILED",
+				Message:  fmt.Sprintf("write cdp click: %v", err),
+				Selector: selector,
+			},
+		}, fmt.Errorf("jetski: write cdp click: %w", err)
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		return nil, fmt.Errorf("jetski: set read deadline: %w", err)
+	}
+
+	var resp cdpMessage
+	if err := conn.ReadJSON(&resp); err != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:     "CLICK_READ_FAILED",
+				Message:  fmt.Sprintf("read cdp click response: %v", err),
+				Selector: selector,
+			},
+		}, fmt.Errorf("jetski: read cdp click response: %w", err)
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	if resp.Error != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:     fmt.Sprintf("CDP_%d", resp.Error.Code),
+				Message:  resp.Error.Message,
+				Selector: selector,
+			},
+		}, fmt.Errorf("jetski: cdp click error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	return &BrokerResult{
+		JobID:    id,
+		Success:  true,
+		Duration: elapsedMs(start),
+	}, nil
 }
 
-// WaitForElement waits for an element to appear (stub).
+// WaitForElement polls the DOM for an element matching selector until found or timeout.
 func (b *JetskiBroker) WaitForElement(ctx context.Context, id JobID, selector string, timeoutMs int) (*BrokerResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+	b.logger.Info("jetski: wait for element", "job_id", id, "selector", selector, "timeout_ms", timeoutMs)
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	pollInterval := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:     "WAIT_CANCELLED",
+					Message:  ctx.Err().Error(),
+					Selector: selector,
+				},
+			}, ctx.Err()
+		default:
+		}
+
+		msgID := int(b.cdpMsgID.Add(1))
+
+		expr := fmt.Sprintf(`document.querySelector(%q)!==null`, selector)
+		params, _ := json.Marshal(map[string]interface{}{
+			"expression":    expr,
+			"returnByValue": true,
+		})
+
+		msg := cdpMessage{
+			ID:     msgID,
+			Method: "Runtime.evaluate",
+			Params: params,
+		}
+
+		if err := conn.WriteJSON(msg); err != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:     "WAIT_WRITE_FAILED",
+					Message:  fmt.Sprintf("write cdp query: %v", err),
+					Selector: selector,
+				},
+			}, fmt.Errorf("jetski: write cdp wait query: %w", err)
+		}
+
+		if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			return nil, fmt.Errorf("jetski: set read deadline: %w", err)
+		}
+
+		var resp cdpMessage
+		if err := conn.ReadJSON(&resp); err != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:     "WAIT_READ_FAILED",
+					Message:  fmt.Sprintf("read cdp query response: %v", err),
+					Selector: selector,
+				},
+			}, fmt.Errorf("jetski: read cdp wait response: %w", err)
+		}
+		_ = conn.SetReadDeadline(time.Time{})
+
+		if resp.Error != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:     fmt.Sprintf("CDP_%d", resp.Error.Code),
+					Message:  resp.Error.Message,
+					Selector: selector,
+				},
+			}, fmt.Errorf("jetski: cdp wait query error %d: %s", resp.Error.Code, resp.Error.Message)
+		}
+
+		var result struct {
+			Value string `json:"value"`
+		}
+		if resp.Result != nil {
+			_ = json.Unmarshal(resp.Result, &result)
+		}
+
+		if result.Value == "true" {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  true,
+				Duration: elapsedMs(start),
+			}, nil
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return &BrokerResult{
+		JobID:    id,
+		Success:  false,
+		Duration: elapsedMs(start),
+		Error: &BrokerError{
+			Code:     "WAIT_TIMEOUT",
+			Message:  fmt.Sprintf("element %q not found within %dms", selector, timeoutMs),
+			Selector: selector,
+		},
+	}, fmt.Errorf("jetski: wait for element %q timed out after %dms", selector, timeoutMs)
 }
 
-// WaitForCaptcha waits for CAPTCHA resolution (stub).
+// WaitForCaptcha waits for CAPTCHA resolution by monitoring common captcha selectors for disappearance.
 func (b *JetskiBroker) WaitForCaptcha(ctx context.Context, id JobID, timeoutMs int) (*BrokerResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+	b.logger.Info("jetski: wait for captcha resolution", "job_id", id, "timeout_ms", timeoutMs)
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	captchaSelectors := []string{
+		`iframe[src*="captcha"]`,
+		`.g-recaptcha`,
+		`#captcha`,
+		`iframe[title*="recaptcha"]`,
+		`.h-captcha`,
+		`iframe[src*="hcaptcha"]`,
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	pollInterval := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    "WAIT_CAPTCHA_CANCELLED",
+					Message: ctx.Err().Error(),
+				},
+			}, ctx.Err()
+		default:
+		}
+
+		msgID := int(b.cdpMsgID.Add(1))
+
+		expr := fmt.Sprintf(
+			`(function(){var s=%q;var sel=s.split(',');for(var i=0;i<sel.length;i++){if(document.querySelector(sel[i]))return false}return true})()`,
+			joinSelectors(captchaSelectors),
+		)
+		params, _ := json.Marshal(map[string]interface{}{
+			"expression":    expr,
+			"returnByValue": true,
+		})
+
+		msg := cdpMessage{
+			ID:     msgID,
+			Method: "Runtime.evaluate",
+			Params: params,
+		}
+
+		if err := conn.WriteJSON(msg); err != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    "WAIT_CAPTCHA_WRITE_FAILED",
+					Message: fmt.Sprintf("write cdp captcha query: %v", err),
+				},
+			}, fmt.Errorf("jetski: write cdp captcha query: %w", err)
+		}
+
+		if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			return nil, fmt.Errorf("jetski: set read deadline: %w", err)
+		}
+
+		var resp cdpMessage
+		if err := conn.ReadJSON(&resp); err != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    "WAIT_CAPTCHA_READ_FAILED",
+					Message: fmt.Sprintf("read cdp captcha response: %v", err),
+				},
+			}, fmt.Errorf("jetski: read cdp captcha response: %w", err)
+		}
+		_ = conn.SetReadDeadline(time.Time{})
+
+		if resp.Error != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    fmt.Sprintf("CDP_%d", resp.Error.Code),
+					Message: resp.Error.Message,
+				},
+			}, fmt.Errorf("jetski: cdp captcha query error %d: %s", resp.Error.Code, resp.Error.Message)
+		}
+
+		var result struct {
+			Value string `json:"value"`
+		}
+		if resp.Result != nil {
+			_ = json.Unmarshal(resp.Result, &result)
+		}
+
+		if result.Value == "true" {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  true,
+				Duration: elapsedMs(start),
+			}, nil
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return &BrokerResult{
+		JobID:    id,
+		Success:  false,
+		Duration: elapsedMs(start),
+		Error: &BrokerError{
+			Code:    "WAIT_CAPTCHA_TIMEOUT",
+			Message: fmt.Sprintf("captcha not resolved within %dms", timeoutMs),
+		},
+	}, fmt.Errorf("jetski: captcha not resolved within %dms", timeoutMs)
 }
 
-// WaitFor2FA waits for 2FA input (stub).
+// WaitFor2FA waits for 2FA input fields to appear in the DOM.
 func (b *JetskiBroker) WaitFor2FA(ctx context.Context, id JobID, timeoutMs int) (*BrokerResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+	b.logger.Info("jetski: wait for 2fa input", "job_id", id, "timeout_ms", timeoutMs)
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	twoFASelectors := []string{
+		`input[type="tel"]`,
+		`input[name*="otp"]`,
+		`input[name*="code"]`,
+		`input[name*="token"]`,
+		`input[autocomplete="one-time-code"]`,
+		`input[inputmode="numeric"]`,
+		`input[placeholder*="verification"]`,
+		`input[placeholder*="code"]`,
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	pollInterval := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    "WAIT_2FA_CANCELLED",
+					Message: ctx.Err().Error(),
+				},
+			}, ctx.Err()
+		default:
+		}
+
+		msgID := int(b.cdpMsgID.Add(1))
+
+		expr := fmt.Sprintf(
+			`(function(){var s=%q;var sel=s.split(',');for(var i=0;i<sel.length;i++){if(document.querySelector(sel[i]))return true}return false})()`,
+			joinSelectors(twoFASelectors),
+		)
+		params, _ := json.Marshal(map[string]interface{}{
+			"expression":    expr,
+			"returnByValue": true,
+		})
+
+		msg := cdpMessage{
+			ID:     msgID,
+			Method: "Runtime.evaluate",
+			Params: params,
+		}
+
+		if err := conn.WriteJSON(msg); err != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    "WAIT_2FA_WRITE_FAILED",
+					Message: fmt.Sprintf("write cdp 2fa query: %v", err),
+				},
+			}, fmt.Errorf("jetski: write cdp 2fa query: %w", err)
+		}
+
+		if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			return nil, fmt.Errorf("jetski: set read deadline: %w", err)
+		}
+
+		var resp cdpMessage
+		if err := conn.ReadJSON(&resp); err != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    "WAIT_2FA_READ_FAILED",
+					Message: fmt.Sprintf("read cdp 2fa response: %v", err),
+				},
+			}, fmt.Errorf("jetski: read cdp 2fa response: %w", err)
+		}
+		_ = conn.SetReadDeadline(time.Time{})
+
+		if resp.Error != nil {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  false,
+				Duration: elapsedMs(start),
+				Error: &BrokerError{
+					Code:    fmt.Sprintf("CDP_%d", resp.Error.Code),
+					Message: resp.Error.Message,
+				},
+			}, fmt.Errorf("jetski: cdp 2fa query error %d: %s", resp.Error.Code, resp.Error.Message)
+		}
+
+		var result struct {
+			Value string `json:"value"`
+		}
+		if resp.Result != nil {
+			_ = json.Unmarshal(resp.Result, &result)
+		}
+
+		if result.Value == "true" {
+			return &BrokerResult{
+				JobID:    id,
+				Success:  true,
+				Duration: elapsedMs(start),
+			}, nil
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return &BrokerResult{
+		JobID:    id,
+		Success:  false,
+		Duration: elapsedMs(start),
+		Error: &BrokerError{
+			Code:    "WAIT_2FA_TIMEOUT",
+			Message: fmt.Sprintf("2fa input not found within %dms", timeoutMs),
+		},
+	}, fmt.Errorf("jetski: 2fa input not found within %dms", timeoutMs)
 }
 
 // Extract extracts data from the page (stub).
