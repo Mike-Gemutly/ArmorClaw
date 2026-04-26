@@ -2,11 +2,13 @@ package browser
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -946,14 +948,187 @@ func (b *JetskiBroker) WaitFor2FA(ctx context.Context, id JobID, timeoutMs int) 
 	}, fmt.Errorf("jetski: 2fa input not found within %dms", timeoutMs)
 }
 
-// Extract extracts data from the page (stub).
+// Extract queries the page DOM for each field in spec and returns a map of
+// field name → extracted value. It builds a single JS expression that
+// evaluates all selectors at once via Runtime.evaluate and parses the JSON
+// result.
 func (b *JetskiBroker) Extract(ctx context.Context, id JobID, spec ExtractSpec) (*ExtractResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+	b.logger.Info("jetski: extract", "job_id", id, "fields", len(spec.Fields))
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	var jsParts []string
+	for _, f := range spec.Fields {
+		attr := f.Attribute
+		if attr == "" {
+			attr = "textContent"
+		}
+		jsParts = append(jsParts, fmt.Sprintf(
+			`%q: document.querySelector(%q)?.%s?.trim() ?? ""`,
+			f.Name, f.Selector, attr,
+		))
+	}
+	expr := fmt.Sprintf(`(function(){return JSON.stringify({%s})})()`, strings.Join(jsParts, ","))
+
+	msgID := int(b.cdpMsgID.Add(1))
+	params, _ := json.Marshal(map[string]interface{}{
+		"expression":    expr,
+		"returnByValue": true,
+	})
+
+	msg := cdpMessage{
+		ID:     msgID,
+		Method: "Runtime.evaluate",
+		Params: params,
+	}
+
+	if err := conn.WriteJSON(msg); err != nil {
+		return nil, fmt.Errorf("jetski: write cdp extract: %w", err)
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		return nil, fmt.Errorf("jetski: set read deadline: %w", err)
+	}
+
+	var resp cdpMessage
+	if err := conn.ReadJSON(&resp); err != nil {
+		return nil, fmt.Errorf("jetski: read cdp extract response: %w", err)
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("jetski: cdp extract error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	var cdpResult struct {
+		Value string `json:"value"`
+	}
+	if resp.Result != nil {
+		_ = json.Unmarshal(resp.Result, &cdpResult)
+	}
+
+	fields := make(map[string]string)
+	if err := json.Unmarshal([]byte(cdpResult.Value), &fields); err != nil {
+		return nil, fmt.Errorf("jetski: parse extract result: %w (raw: %q)", err, cdpResult.Value)
+	}
+
+	b.logger.Info("jetski: extract complete", "job_id", id, "fields_extracted", len(fields), "duration_ms", elapsedMs(start))
+
+	return &ExtractResult{
+		Fields: fields,
+	}, nil
 }
 
-// Screenshot captures a page screenshot (stub).
+// Screenshot captures a viewport PNG screenshot via CDP Page.captureScreenshot
+// and returns the decoded PNG bytes in BrokerResult.Screenshots.
 func (b *JetskiBroker) Screenshot(ctx context.Context, id JobID, fullPage bool) (*BrokerResult, error) {
-	return nil, fmt.Errorf("not yet implemented")
+	start := time.Now()
+	b.logger.Info("jetski: screenshot", "job_id", id, "fullPage", fullPage)
+
+	wsConn, ok := b.wsConns.Load(id)
+	if !ok {
+		return nil, fmt.Errorf("jetski: no cdp connection for job %s", id)
+	}
+	conn := wsConn.(*websocket.Conn)
+
+	msgID := int(b.cdpMsgID.Add(1))
+	params, _ := json.Marshal(map[string]interface{}{
+		"format": "png",
+	})
+
+	msg := cdpMessage{
+		ID:     msgID,
+		Method: "Page.captureScreenshot",
+		Params: params,
+	}
+
+	if err := conn.WriteJSON(msg); err != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:    "SCREENSHOT_WRITE_FAILED",
+				Message: fmt.Sprintf("write cdp screenshot: %v", err),
+			},
+		}, fmt.Errorf("jetski: write cdp screenshot: %w", err)
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, fmt.Errorf("jetski: set read deadline: %w", err)
+	}
+
+	var resp cdpMessage
+	if err := conn.ReadJSON(&resp); err != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:    "SCREENSHOT_READ_FAILED",
+				Message: fmt.Sprintf("read cdp screenshot response: %v", err),
+			},
+		}, fmt.Errorf("jetski: read cdp screenshot response: %w", err)
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	if resp.Error != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:    fmt.Sprintf("CDP_%d", resp.Error.Code),
+				Message: resp.Error.Message,
+			},
+		}, fmt.Errorf("jetski: cdp screenshot error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	var cdpResult struct {
+		Data string `json:"data"`
+	}
+	if resp.Result != nil {
+		_ = json.Unmarshal(resp.Result, &cdpResult)
+	}
+
+	if cdpResult.Data == "" {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:    "SCREENSHOT_EMPTY",
+				Message: "cdp returned empty screenshot data",
+			},
+		}, fmt.Errorf("jetski: cdp screenshot returned empty data")
+	}
+
+	pngBytes, err := base64.StdEncoding.DecodeString(cdpResult.Data)
+	if err != nil {
+		return &BrokerResult{
+			JobID:    id,
+			Success:  false,
+			Duration: elapsedMs(start),
+			Error: &BrokerError{
+				Code:    "SCREENSHOT_DECODE_FAILED",
+				Message: fmt.Sprintf("base64 decode: %v", err),
+			},
+		}, fmt.Errorf("jetski: decode screenshot base64: %w", err)
+	}
+
+	b.logger.Info("jetski: screenshot complete", "job_id", id, "size_bytes", len(pngBytes), "duration_ms", elapsedMs(start))
+
+	return &BrokerResult{
+		JobID:       id,
+		Success:     true,
+		Duration:    elapsedMs(start),
+		Screenshots: []string{base64.StdEncoding.EncodeToString(pngBytes)},
+	}, nil
 }
 
 //-----------------------------------------------------------------------------
