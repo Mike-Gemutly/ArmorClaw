@@ -37,10 +37,10 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- gRPC - Netty shaded (includes netty-core, NO okhttp) -->
+        <!-- gRPC - Netty transport (NOT shaded — need native Netty for Unix socket support) -->
         <dependency>
             <groupId>io.grpc</groupId>
-            <artifactId>grpc-netty-shaded</artifactId>
+            <artifactId>grpc-netty</artifactId>
             <version>${grpc.version}</version>
         </dependency>
 
