@@ -2,11 +2,13 @@
 
 > **Purpose**: LLM-readable comprehensive documentation for ArmorClaw architecture, components, APIs, and security.
 >
-> **Version**: 0.7.0
+> **Version**: 0.8.0
 >
-> **Last Updated**: 2026-04-18
+> **Last Updated**: 2026-04-27
 
 > ⚠️ **Architecture Note (v0.4.1)**: Agent containers always run with `NetworkMode: "none"` (no network access). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation runs through the Jetski sidecar, a separate container with its own network stack; agent containers never perform browser operations directly.
+>
+> **v0.8.0 Changes**: Java Apache POI sidecar for legacy DOC/PPT extraction, Java routing in Go Bridge (`RouteExtractText` 4-param signature), 105 sidecar tests (21 Go routing + 8 Java JUnit 5 + 4 Go E2E + 72 Python).
 >
 > **v0.7.0 Changes**: WorkflowStep.Input field for inter-step data passing, warm dispatch dead code purged, WebSocket EventBus wiring, Android DeepLinkHandler, SecurityConfigViewModel wired, BridgeRepository persistence, admin panel real API, ArmorChat integration test cleanup.
 >
@@ -137,7 +139,8 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **ArmorChat** | Kotlin | Android mobile client | `applications/ArmorChat/` |
 | **Jetski Sidecar** | Go | CDP proxy with Tethered Mode security | `jetski/cmd/observer/main.go` |
 | **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill service | `rust-vault/src/main.rs` |
-| **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (MSG, XLS, DOC, PPT). XLSX/PPTX migrated to Rust. | `sidecar-python/worker.py` |
+| **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (MSG, XLS). DOC/PPT migrated to Java. XLSX/PPTX migrated to Rust. | `sidecar-python/worker.py` |
+| **Java Apache POI Sidecar** | Java | Legacy DOC/PPT text extraction via Apache POI (HWPFDocument, HSLFSlideShow) | `sidecar-java/src/main/java/com/armorclaw/sidecar/` |
 | **Email Approval** | Go (Bridge) | Email-based HITL approval for sensitive operations | `bridge/pkg/approval/email.go` |
 </component>
 
@@ -324,6 +327,12 @@ armorclaw-omo/
 │   ├── test_edge_cases.py   # 16 edge case tests
 │   ├── test_interceptor.py  # 12 interceptor tests
 │   └── proto/               # Generated gRPC stubs from sidecar.proto
+│
+├── sidecar-java/             # Java Apache POI sidecar (legacy DOC/PPT extraction)
+│   ├── pom.xml              # Maven build with POI 5.3.0, gRPC-Java, JUnit 5, Mockito
+│   ├── src/main/java/com/armorclaw/sidecar/  # ServerMain, ExtractorServiceImpl, interceptors
+│   ├── src/test/java/com/armorclaw/sidecar/  # 8 JUnit 5 tests + TestFixtures (base64 DOC/PPT)
+│   └── proto/               # Shared sidecar.proto
 │
 ├── .skills/                  # AI CLI deployment skills
 │   ├── deploy.yaml
@@ -938,7 +947,7 @@ The Rust Vault and Jetski both touch CDP interception, but at different abstract
 | **PII handling** | Placeholder format validation | Active net.Conn-level PII scrubbing |
 | **Runtime state** | Compiles, 96 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
 
-**In practice**: Jetski is the **active CDP security layer**. The Rust Vault's CDP interceptor represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level.
+**In practice**: Jetski is the **sole active CDP security layer**. The Rust Vault's CDP interceptor module (`blindfill`) is **vestigial with zero production callers** — it represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level. The `blindfill` module is retained solely for test coverage.
 
 ### Architecture
 
@@ -2713,7 +2722,7 @@ The Rust Office Sidecar is a **high-performance data plane component** for heavy
 - **Data Transformation** - Heavy computational work
 - **Reliability Features** - Circuit breakers, rate limiting, retry logic
 
-> **Routing split**: PDF and DOCX documents route to this Rust sidecar. XLSX and PPTX extraction also handled in Rust (calamine-based XLSX, PPTX parsing). MSG, XLS, DOC, and PPT formats route to the Python MarkItDown sidecar (`sidecar-python/`). See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the full 3-layer routing architecture.
+> **Routing split**: PDF and DOCX documents route to this Rust sidecar. XLSX and PPTX extraction also handled in Rust (calamine-based XLSX, PPTX parsing). DOC and PPT formats route to the Java Apache POI sidecar (`sidecar-java/`) with Python fallback. MSG and XLS formats route to the Python MarkItDown sidecar (`sidecar-python/`). See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the full 3-layer routing architecture.
 
 ### Architecture
 
@@ -3629,7 +3638,8 @@ The testing suite also includes **11 comprehensive SSH-based test categories** w
 | **SSL/TLS** | Certificate presence, expiry, chain | 6 |
 | **Performance** | SSH speed, API times, container resources | 6 |
 | **Output Formatting** | JSON console output, error handling | 1 |
-| **Python Sidecar** | Worker unit tests, edge cases, token interceptor, E2E | 90 |
+| **Python Sidecar** | Worker unit tests, edge cases, token interceptor, E2E | 72 |
+| **Java Sidecar** | JUnit 5 extraction tests, Go routing, Go E2E, bash harness | 33 |
 
 ```bash
 # Run all SSH tests
@@ -3727,10 +3737,11 @@ Additional test scripts beyond the Tier A/B harness, organized by category.
 - **CLAUDE.md** - Claude Code development standards
 
 ### Sidecar Documentation
-- **doc/sidecar-pipeline.md** - Document processing pipeline (Rust + Python sidecars, Go routing, YARA)
+- **doc/sidecar-pipeline.md** - Document processing pipeline (Rust + Python + Java sidecars, Go routing, YARA)
 - **sidecar/README.md** - Rust sidecar internals (connectors, encryption, provenance)
-- **sidecar-python/worker.py** - Python MarkItDown sidecar (XLSX, PPTX, MSG, XLS, DOC, PPT conversion)
-- **bridge/pkg/sidecar/office_client.go** - 3-layer routing logic (native bypass, compound validation, strict drop)
+- **sidecar-python/worker.py** - Python MarkItDown sidecar (MSG, XLS conversion; DOC/PPT migrated to Java)
+- **sidecar-java/** - Java Apache POI sidecar (DOC, PPT extraction via HWPFDocument/HSLFSlideShow)
+- **bridge/pkg/sidecar/office_client.go** - 3-layer routing logic with Java DOC/PPT path (native bypass, compound validation, strict drop)
 
 ### Review Documentation
 - `applications/ArmorChat-review.md` - Android client review
@@ -3824,9 +3835,13 @@ go test ./...
 cd sidecar-python
 python -m pytest test_worker.py test_edge_cases.py test_interceptor.py -v
 
-# Run Go→Python E2E integration tests
+# Run Java Apache POI sidecar tests (requires Java 21)
+cd sidecar-java
+JAVA_HOME="$(asdf where java temurin-21.0.11+10.0.LTS)" mvn test
+
+# Run Go routing + E2E tests (includes Java DOC/PPT routing paths)
 cd bridge
-go test -v -run "TestRouteExtractText|TestE2E" ./pkg/sidecar/...
+go test -v -run "TestRouteExtractText|TestE2E|TestJavaSidecarE2E" ./pkg/sidecar/...
 ```
 
 ### Environment Variables for Development
@@ -3853,6 +3868,7 @@ LOG_LEVEL=debug
 | 9223 | JetSki RPC API | HTTP/JSON-RPC |
 | 9333 | Lightpanda Engine | CDP over WebSocket |
 | Unix socket | Python MarkItDown Sidecar | gRPC (`/run/armorclaw/sidecar-office.sock`) |
+| Unix socket | Java Apache POI Sidecar | gRPC (`/run/armorclaw/sidecar-java.sock`) |
 
 ---
 

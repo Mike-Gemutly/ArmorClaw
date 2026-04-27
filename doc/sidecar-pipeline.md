@@ -4,7 +4,7 @@
 
 ## Overview
 
-The document processing pipeline handles file ingestion, text extraction, encryption, and split-storage for RAG across multiple codebases: a Rust sidecar (data plane), a Python MarkItDown sidecar (legacy Office format support), a Go gRPC client with 3-layer routing (control plane bridge), and a YARA content scanner. Together they form the secure document path from cloud storage to chunked, encrypted storage with provenance tracking.
+The document processing pipeline handles file ingestion, text extraction, encryption, and split-storage for RAG across multiple codebases: a Rust sidecar (data plane), a Java gRPC sidecar (Apache POI — legacy DOC/PPT extraction), a Python MarkItDown sidecar (MSG/XLS legacy Office formats), a Go gRPC client with 3-layer routing (control plane bridge), and a YARA content scanner. Together they form the secure document path from cloud storage to chunked, encrypted storage with provenance tracking.
 
 **Not to be confused with `rust-vault/`.** The vault handles secrets and credential storage. The sidecar handles documents: extracting text, encrypting chunks, scanning for malware, and maintaining a provenance chain. They share no code.
 
@@ -331,7 +331,7 @@ Jetski (`jetski/`) is a separate component that handles browser automation via C
 
 ### Python MarkItDown Sidecar (`sidecar-python/`)
 
-The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust sidecar does not support natively: `.msg`, `.doc`, `.xls`, and `.ppt`. PPTX was migrated to the Rust sidecar in v0.6.0. XLSX was migrated to the Rust sidecar in v0.8.0 (calamine-based extraction with ShadowMap PII redaction).
+The Python sidecar extends the document pipeline with Microsoft Office legacy format support via the MarkItDown library. It handles formats that the Rust and Java sidecars do not support natively: `.msg` (Outlook email) and `.xls` (legacy Excel). DOC and PPT were migrated to the Java Apache POI sidecar in v0.8.0. PPTX was migrated to the Rust sidecar in v0.6.0. XLSX was migrated to the Rust sidecar in v0.8.0 (calamine-based extraction with ShadowMap PII redaction).
 
 #### Architecture
 
@@ -346,16 +346,18 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
                         │  │ Layer 2: strict drop on mismatch │  │
                         │  └──────────┬───────────────────────┘  │
                         │             │                           │
-                         │     ┌───────┴────────┐                  │
-                         │     ▼                ▼                  │
-                         │  ┌────────┐   ┌──────────────┐         │
-                          │  │ Rust   │   │ Python       │         │
-                          │  │ Sidecar│   │ MarkItDown   │         │
-                          │  │ (PDF,  │   │ Sidecar      │         │
-                          │  │ DOCX,  │   │ (MSG, DOC,   │         │
-                          │  │ XLSX,  │   │  XLS, PPT)   │         │
-                          │  │ PPTX)  │   │              │         │
-                          │  └────────┘   └──────────────┘         │
+                         │     ┌──────┴──────────┐                │
+                         │     ▼        ▼        ▼                │
+                         │  ┌──────┐ ┌──────┐ ┌──────────┐       │
+                          │  │ Rust │ │ Java │ │ Python   │       │
+                          │  │ Side │ │ POI  │ │ MarkIt-  │       │
+                          │  │ car  │ │ Side │ │ Down     │       │
+                          │  │      │ │ car  │ │ Sidecar  │       │
+                          │  │ PDF, │ │ DOC, │ │ (MSG,    │       │
+                          │  │ DOCX,│ │ PPT  │ │  XLS)    │       │
+                          │  │ XLSX,│ │      │ │          │       │
+                          │  │ PPTX │ │      │ │          │       │
+                          │  └──────┘ └──────┘ └──────────┘       │
                          └────────────────────────────────────────┘
 ```
 
@@ -364,7 +366,7 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
 | Layer | Condition | Action |
 |-------|-----------|--------|
 | **Layer 0** | `text/plain`, `text/csv`, `application/json`, `text/markdown` | Decode natively in Go — no sidecar call |
-| **Layer 1** | ZIP magic + xlsx/docx/pptx/pdf → Rust; OLE magic + xls/msg/doc/ppt format → Python | Route to appropriate sidecar based on compound magic byte + MIME type validation |
+| **Layer 1** | ZIP magic + xlsx/docx/pptx/pdf → Rust; OLE magic + doc/ppt → Java (fallback Python); OLE magic + xls/msg → Python | Route to appropriate sidecar based on compound magic byte + MIME type validation |
 | **Layer 2** | Magic bytes don't match declared format (e.g., ZIP magic + msg format) | **Strict drop** — return `InvalidArgument` immediately |
 
 #### Key Design Decisions
@@ -397,12 +399,12 @@ HMAC-SHA256 token validation using a sync `grpc.ServerInterceptor`. Tokens carry
 |--------|-----------|-------------|-----------|-----------|
 | Excel (modern) | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | ZIP (PK) | `.xlsx` | Rust calamine extractor (xlsx.rs) — migrated from Python in v0.8.0 |
 | PowerPoint (modern) | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | ZIP (PK) | `.pptx` | Rust PPTX Extractor (pptx.rs) |
-| Outlook Email | `application/vnd.ms-outlook` | OLE (D0CF) | `.msg` | MarkItDown `OutlookMsgConverter` |
-| Word (legacy) | `application/msword` | OLE (D0CF) | `.doc` | Error — XlsConverter intercepts |
-| Excel (legacy) | `application/vnd.ms-excel` | OLE (D0CF) | `.xls` | MarkItDown `XlsConverter` |
-| PowerPoint (legacy) | `application/vnd.ms-powerpoint` | OLE (D0CF) | `.ppt` | Error — XlsConverter intercepts |
+| Word (legacy) | `application/msword` | OLE (D0CF) | `.doc` | Java Apache POI sidecar (`HWPFDocument`) — migrated from Python in v0.8.0 |
+| PowerPoint (legacy) | `application/vnd.ms-powerpoint` | OLE (D0CF) | `.ppt` | Java Apache POI sidecar (`HSLFSlideShow`) — migrated from Python in v0.8.0 |
+| Outlook Email | `application/vnd.ms-outlook` | OLE (D0CF) | `.msg` | Python MarkItDown `OutlookMsgConverter` |
+| Excel (legacy) | `application/vnd.ms-excel` | OLE (D0CF) | `.xls` | Python MarkItDown `XlsConverter` |
 
-> **Limitation**: Legacy `.doc` and `.ppt` files produce conversion errors because MarkItDown's `XlsConverter` claims OLE files before the Word/PowerPoint converters. This is a known MarkItDown library limitation.
+> **DOC/PPT resolved**: Legacy `.doc` and `.ppt` files previously produced conversion errors because MarkItDown's `XlsConverter` claimed OLE files before the Word/PowerPoint converters. This was resolved in v0.8.0 by routing DOC/PPT to the Java Apache POI sidecar (`sidecar-java/`), which uses `HWPFDocument` and `HSLFSlideShow` respectively for reliable OLE2 extraction.
 
 #### PPTX Migration to Rust (v0.6.0)
 
@@ -413,6 +415,107 @@ PPTX text extraction has been migrated from Python MarkItDown to the Rust sideca
 - **Format support**: Multi-slide presentations, speaker notes, embedded media metadata
 - **Security**: Malformed archive protection, XML bomb mitigation, size limits
 - The 3-layer routing architecture is preserved — only the PPTX destination changed from Python to Rust
+
+### Java Apache POI Sidecar (`sidecar-java/`)
+
+The Java sidecar handles legacy `.doc` and `.ppt` extraction using Apache POI, formats that previously produced errors in the Python MarkItDown sidecar. It was introduced in v0.8.0.
+
+#### Architecture
+
+```
+                        Go Bridge (Control Plane)
+                        ┌────────────────────────────────────────┐
+                        │  bridge/pkg/sidecar/                   │
+                        │  ┌──────────────────────────────────┐  │
+                        │  │ RouteExtractText()               │  │
+                        │  │ OLE + doc/ppt → javaClient       │  │
+                        │  │ Fallback → officeClient (Python) │  │
+                        │  └──────────┬───────────────────────┘  │
+                        └────────────┼───────────────────────────┘
+                                     │ gRPC over Unix Socket
+                                     │ (0600 permissions)
+                        ┌────────────▼───────────────────────────┐
+                        │  Java Sidecar (sidecar-java/)          │
+                        │                                        │
+                        │  ┌──────────────────────────────────┐  │
+                        │  │ ExtractorServiceImpl              │  │
+                        │  │  - DOC: HWPFDocument extract      │  │
+                        │  │  - PPT: HSLFSlideShow extract     │  │
+                        │  │  - Unsupported → INVALID_ARGUMENT │  │
+                        │  └──────────────────────────────────┘  │
+                        │                                        │
+                        │  ┌──────────────────────────────────┐  │
+                        │  │ ServerMain                        │  │
+                        │  │  - gRPC ServerBuilder             │  │
+                        │  │  - Unix socket from SOCKET_PATH   │  │
+                        │  │  - TokenInterceptor               │  │
+                        │  │  - VersionInterceptor             │  │
+                        │  └──────────────────────────────────┘  │
+                        └────────────────────────────────────────┘
+```
+
+#### Routing Logic
+
+The Go Bridge routes DOC/PPT to the Java sidecar via `RouteExtractText()`:
+
+1. **Primary path**: OLE magic bytes + `application/msword` or `application/vnd.ms-powerpoint` MIME type → `javaClient.ExtractText()` (4th parameter)
+2. **Fallback path**: If `javaClient` is nil (Java sidecar not deployed) → falls back to `officeClient` (Python MarkItDown sidecar)
+3. **XLS exclusion**: `.xls` always routes to Python regardless of Java sidecar availability
+
+#### Supported Formats
+
+| Format | MIME Type | Magic Bytes | Extension | POI Component |
+|--------|-----------|-------------|-----------|---------------|
+| Word (legacy) | `application/msword` | OLE (D0CF) | `.doc` | `org.apache.poi.hwpf.HWPFDocument` |
+| PowerPoint (legacy) | `application/vnd.ms-powerpoint` | OLE (D0CF) | `.ppt` | `org.apache.poi.hslf.usermodel.HSLFSlideShow` |
+
+#### Key Design Decisions
+
+- **Apache POI**: Chosen over MarkItDown for DOC/PPT because POI natively understands OLE2 compound document format, whereas MarkItDown's `XlsConverter` incorrectly claims all OLE files before Word/PowerPoint converters can process them
+- **Fallback to Python**: If Java sidecar is unavailable, DOC/PPT fall back to the Python sidecar (which will produce the XlsConverter error, but maintains pipeline availability)
+- **gRPC over Unix socket**: Same communication pattern as Rust and Python sidecars — `SOCKET_PATH` env var, 0600 permissions
+- **Token + Version interceptors**: gRPC server interceptors for HMAC-SHA256 token validation and version reporting, matching Python sidecar security model
+- **No network access**: Container runs with same hardening as Python sidecar (`NetworkMode: none`, `cap_drop: ALL`, read-only root)
+- **Java 21 runtime**: Requires JDK 21+ (tested with Eclipse Temurin 21.0.11)
+
+#### Test Coverage
+
+| Test File | Tests | Description |
+|-----------|-------|-------------|
+| `sidecar-java/src/test/java/.../ExtractorServiceTest.java` | 8 | DOC/PPT extraction, empty input, unsupported format, null body |
+| `bridge/pkg/sidecar/office_client_test.go` | 21 | Go routing: DOC/PPT → Java, fallback to Python, XLS stays Python |
+| `bridge/pkg/sidecar/java_sidecar_e2e_test.go` | 4 | Full E2E: health, DOC extraction, PPT extraction, unsupported (skip without Java 21) |
+| `tests/test-sidecar-docs.sh` | 3 | Bash harness: D2.5 Java health, D5.5 DOC, D5.6 PPT |
+
+#### Running Tests
+
+```bash
+# Java unit tests (requires Java 21)
+cd sidecar-java && JAVA_HOME="$(asdf where java temurin-21.0.11+10.0.LTS)" mvn test
+
+# Go routing tests (21 tests including Java paths)
+cd bridge && go test -v -run "TestRouteExtractText" ./pkg/sidecar/...
+
+# Go E2E tests (skip gracefully without Java 21/JAR)
+cd bridge && go test -v -run "TestJavaSidecarE2E" ./pkg/sidecar/...
+
+# Bash harness
+bash tests/test-sidecar-docs.sh
+```
+
+#### Docker Deployment (`deploy/docker-compose.sidecar-java.yml`)
+
+```yaml
+# Container hardening (matches Python sidecar)
+network_mode: none
+cap_drop: [ALL]
+read_only: true
+security_opt: [no-new-privileges:true]
+mem_limit: 512MB
+environment:
+  - SOCKET_PATH=/run/armorclaw/sidecar-java.sock
+  - TOKEN_SECRET=${SIDECAR_TOKEN_SECRET}
+```
 
 #### Docker Deployment (`deploy/docker-compose.sidecar-py.yml`)
 
@@ -435,9 +538,11 @@ tmpfs:
 | `sidecar-python/test_edge_cases.py` | 16 | All pass |
 | `sidecar-python/test_interceptor.py` | 12 | All pass |
 | `sidecar-python/test_docker_integration.py` | 10 | Skip when no Docker |
+| `sidecar-java/src/test/java/.../ExtractorServiceTest.java` | 8 | All pass |
+| `bridge/pkg/sidecar/office_client_test.go` | 21 | All pass |
 | `bridge/pkg/sidecar/office_client_e2e_test.go` | 7 | All pass |
-| `bridge/pkg/sidecar/office_client_test.go` | 18 | All pass |
-| **Total** | **90** | **0 regressions** |
+| `bridge/pkg/sidecar/java_sidecar_e2e_test.go` | 4 | Skip without Java 21 |
+| **Total** | **105** | **0 regressions** |
 
 #### Running Tests
 
@@ -445,11 +550,15 @@ tmpfs:
 # Python unit + integration tests
 cd sidecar-python && python -m pytest test_worker.py test_edge_cases.py test_interceptor.py -v
 
-# Go routing + E2E tests
-cd bridge && go test -v -run "TestRouteExtractText|TestE2E" ./pkg/sidecar/
+# Java unit tests (requires Java 21)
+cd sidecar-java && JAVA_HOME="$(asdf where java temurin-21.0.11+10.0.LTS)" mvn test
 
-# Full regression (Python + Go)
+# Go routing + E2E tests (includes Java routing paths)
+cd bridge && go test -v -run "TestRouteExtractText|TestE2E|TestJavaSidecarE2E" ./pkg/sidecar/
+
+# Full regression (Python + Java + Go)
 cd sidecar-python && python -m pytest -v
+cd sidecar-java && JAVA_HOME="$(asdf where java temurin-21.0.11+10.0.LTS)" mvn test
 cd bridge && go test ./pkg/sidecar/...
 ```
 
@@ -458,7 +567,7 @@ cd bridge && go test ./pkg/sidecar/...
 The `RouteExtractText()` function implements the 3-layer routing:
 
 1. **Native text bypass**: Detects `text/*` MIME types and returns decoded content immediately without any gRPC call.
-2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based xlsx/docx/pptx to Rust sidecar.
+2. **Compound validation**: Reads first 8 bytes for magic bytes, cross-references with `document_format` MIME type. Routes ZIP-based xlsx/docx/pptx to Rust sidecar. Routes OLE-based doc/ppt to Java sidecar (with Python fallback). Routes OLE-based xls/msg to Python sidecar.
 3. **Strict drop**: If magic bytes contradict the declared format (e.g., OLE magic with xlsx MIME), returns `codes.InvalidArgument` without calling any sidecar.
 
 ## References
@@ -469,3 +578,4 @@ The `RouteExtractText()` function implements the 3-layer routing:
 - `.sisyphus/plans/rust-office-sidecar.md` - Rust sidecar implementation plan
 - `.sisyphus/plans/markitdown-sidecar.md` - Python MarkItDown sidecar implementation plan
 - `.sisyphus/plans/markitdown-sidecar-testing.md` - Python sidecar testing plan
+- `.sisyphus/plans/java-sidecar-legacy-office.md` - Java Apache POI sidecar implementation plan (DOC/PPT)
