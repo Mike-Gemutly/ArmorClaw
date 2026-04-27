@@ -27,15 +27,17 @@ type IngestServer struct {
 	listener     net.Listener
 	officeClient *sidecar.Client
 	rustClient   *sidecar.Client
+	javaClient   *sidecar.Client
 }
 
 type IngestServerConfig struct {
-	Storage            EmailStorage
-	Bus                *eventbus.EventBus
-	Socket             string
-	Log                *logger.Logger
+	Storage             EmailStorage
+	Bus                 *eventbus.EventBus
+	Socket              string
+	Log                 *logger.Logger
 	SidecarOfficeClient *sidecar.Client
 	SidecarRustClient   *sidecar.Client
+	SidecarJavaClient   *sidecar.Client
 }
 
 func NewIngestServer(cfg IngestServerConfig) *IngestServer {
@@ -47,6 +49,7 @@ func NewIngestServer(cfg IngestServerConfig) *IngestServer {
 		log:          cfg.Log,
 		officeClient: cfg.SidecarOfficeClient,
 		rustClient:   cfg.SidecarRustClient,
+		javaClient:   cfg.SidecarJavaClient,
 	}
 	s.yaraScan = s.defaultYARAScan
 	if s.socket == "" {
@@ -238,7 +241,7 @@ func (s *IngestServer) extractAttachments(emailID string, attachments []ParsedAt
 			DocumentContent: att.Content,
 		}
 
-		resp, err := sidecar.RouteExtractText(ctx, req, s.officeClient, s.rustClient)
+		resp, err := sidecar.RouteExtractText(ctx, req, s.officeClient, s.rustClient, s.javaClient)
 		if err != nil {
 			s.log.Warn("attachment_extraction_failed",
 				"email_id", emailID,

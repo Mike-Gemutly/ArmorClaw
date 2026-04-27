@@ -208,7 +208,7 @@ func TestE2E_NativeText_NoSidecar(t *testing.T) {
 		DocumentFormat:  "text/plain",
 		DocumentContent: []byte("hello world"),
 	}
-	resp, err := RouteExtractText(context.Background(), req, nil, nil)
+	resp, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestE2E_StrictDrop_ZIPMsgMismatch(t *testing.T) {
 		DocumentFormat:  "application/vnd.ms-outlook",
 		DocumentContent: content,
 	}
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for ZIP+msg mismatch")
 	}
@@ -248,7 +248,7 @@ func TestE2E_StrictDrop_OLEXLSXMismatch(t *testing.T) {
 		DocumentFormat:  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		DocumentContent: content,
 	}
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for OLE+xlsx mismatch")
 	}
@@ -339,7 +339,7 @@ func TestE2E_Docx_DoesNotCallPython(t *testing.T) {
 		DialTimeout: 1 * time.Second,
 	})
 
-	_, err := RouteExtractText(context.Background(), req, officeClient, rustClient)
+	_, err := RouteExtractText(context.Background(), req, officeClient, rustClient, nil)
 	if err == nil {
 		t.Error("expected error — no Rust sidecar available")
 	}

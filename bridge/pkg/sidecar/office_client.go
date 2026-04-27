@@ -40,6 +40,7 @@ func RouteExtractText(
 	req *ExtractTextRequest,
 	officeClient *Client,
 	rustClient *Client,
+	javaClient *Client,
 ) (*ExtractTextResponse, error) {
 	if req == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "nil request")
@@ -94,12 +95,18 @@ func RouteExtractText(
 		return officeClient.ExtractText(ctx, req)
 	}
 	if isOLE && isDoc {
+		if javaClient != nil {
+			return javaClient.ExtractText(ctx, req)
+		}
 		return officeClient.ExtractText(ctx, req)
 	}
 	if isOLE && isXls {
 		return officeClient.ExtractText(ctx, req)
 	}
 	if isOLE && isPpt {
+		if javaClient != nil {
+			return javaClient.ExtractText(ctx, req)
+		}
 		return officeClient.ExtractText(ctx, req)
 	}
 

@@ -122,6 +122,9 @@ type Config struct {
 
 	// HTTP server configuration
 	HTTP HTTPConfig `toml:"http"`
+
+	// Java sidecar configuration (legacy .doc/.ppt extraction)
+	SidecarJava SidecarJavaConfig `toml:"sidecar_java"`
 }
 
 // ServerConfig holds server-specific configuration
@@ -777,6 +780,16 @@ type ProvisioningConfig struct {
 
 	// DataDir is the directory for persisting roles (empty = in-memory only)
 	DataDir string `toml:"data_dir" env:"ARMORCLAW_PROVISIONING_DATA_DIR"`
+}
+
+// SidecarJavaConfig holds configuration for the Java sidecar (legacy .doc/.ppt extraction)
+type SidecarJavaConfig struct {
+	// Enabled controls whether the Java sidecar is used for .doc/.ppt extraction.
+	// When false, OLE .doc/.ppt files continue routing to the Python sidecar (current behavior).
+	Enabled bool `toml:"enabled" env:"ARMORCLAW_SIDECAR_JAVA_ENABLED" envDefault:"false"`
+
+	// SocketPath is the path to the Java sidecar Unix domain socket
+	SocketPath string `toml:"socket_path" env:"ARMORCLAW_SIDECAR_JAVA_SOCKET_PATH" envDefault:"/run/armorclaw/sidecar-java/sidecar-java.sock"`
 }
 
 // VaultConfig holds configuration for the Rust Vault governance integration

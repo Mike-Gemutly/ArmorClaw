@@ -23,7 +23,7 @@ func TestRouteExtractText_NativeTextTXT(t *testing.T) {
 		DocumentFormat:  "text/plain",
 		DocumentContent: []byte("hello world"),
 	}
-	resp, err := RouteExtractText(context.Background(), req, nil, nil)
+	resp, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestRouteExtractText_NativeTextCSV(t *testing.T) {
 		DocumentFormat:  "text/csv",
 		DocumentContent: []byte("a,b,c"),
 	}
-	resp, err := RouteExtractText(context.Background(), req, nil, nil)
+	resp, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRouteExtractText_NativeTextJSON(t *testing.T) {
 		DocumentFormat:  "application/json",
 		DocumentContent: []byte(`{"key":"val"}`),
 	}
-	resp, err := RouteExtractText(context.Background(), req, nil, nil)
+	resp, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRouteExtractText_NativeTextMD(t *testing.T) {
 		DocumentFormat:  "text/markdown",
 		DocumentContent: []byte("# Hello"),
 	}
-	resp, err := RouteExtractText(context.Background(), req, nil, nil)
+	resp, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRouteExtractText_XLSX_RoutesToRust(t *testing.T) {
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", zipMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestRouteExtractText_PPTX_RoutesToRust(t *testing.T) {
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.openxmlformats-officedocument.presentationml.presentation", zipMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestRouteExtractText_MSG_RoutesToPython(t *testing.T) {
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/vnd.ms-outlook", oleMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestRouteExtractText_DOC_RoutesToPython(t *testing.T) {
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/msword", oleMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestRouteExtractText_XLS_RoutesToPython(t *testing.T) {
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/vnd.ms-excel", oleMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRouteExtractText_PPT_RoutesToPython(t *testing.T) {
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/vnd.ms-powerpoint", oleMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestRouteExtractText_DOCX_RoutesToRust(t *testing.T) {
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.openxmlformats-officedocument.wordprocessingml.document", zipMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestRouteExtractText_PDF_RoutesToRust(t *testing.T) {
 	pdfMagic := []byte{0x25, 0x50, 0x44, 0x46, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/pdf", pdfMagic)
 
-	_, err := RouteExtractText(context.Background(), req, office, rust)
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRouteExtractText_MismatchZIPMsg_StrictDrop(t *testing.T) {
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.ms-outlook", zipMagic)
 
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for ZIP+msg mismatch")
 	}
@@ -236,7 +236,7 @@ func TestRouteExtractText_MismatchOLEXLSX_StrictDrop(t *testing.T) {
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", oleMagic)
 
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for OLE+xlsx mismatch")
 	}
@@ -250,7 +250,7 @@ func TestRouteExtractText_MismatchPDFMsg_StrictDrop(t *testing.T) {
 	pdfMagic := []byte{0x25, 0x50, 0x44, 0x46, 0x00, 0x00, 0x00, 0x00}
 	req := makeRoutingReq("application/vnd.ms-outlook", pdfMagic)
 
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for PDF+msg mismatch")
 	}
@@ -263,7 +263,7 @@ func TestRouteExtractText_MismatchPDFMsg_StrictDrop(t *testing.T) {
 func TestRouteExtractText_UnknownFormat_StrictDrop(t *testing.T) {
 	req := makeRoutingReq("application/unknown", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown format")
 	}
@@ -279,7 +279,7 @@ func TestRouteExtractText_ShortBuffer(t *testing.T) {
 		DocumentContent: []byte{0x50},
 	}
 
-	_, err := RouteExtractText(context.Background(), req, nil, nil)
+	_, err := RouteExtractText(context.Background(), req, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for short buffer")
 	}
