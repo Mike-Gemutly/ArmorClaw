@@ -103,6 +103,42 @@ func setupRoutingClients(t *testing.T) (*Client, *mockServer, *Client, *mockServ
 	return officeClient, officeMock, rustClient, rustMock
 }
 
+func setupRoutingClientsWithJava(t *testing.T) (*Client, *mockServer, *Client, *mockServer, *Client, *mockServer) {
+	t.Helper()
+
+	officeSrv, officeMock, officeSock := setupTestServer(t)
+	t.Cleanup(func() { officeSrv.Stop() })
+
+	rustSrv, rustMock, rustSock := setupTestServer(t)
+	t.Cleanup(func() { rustSrv.Stop() })
+
+	javaSrv, javaMock, javaSock := setupTestServer(t)
+	t.Cleanup(func() { javaSrv.Stop() })
+
+	officeClient := NewClient(&Config{
+		SocketPath:  officeSock,
+		Timeout:     5 * time.Second,
+		MaxRetries:  1,
+		DialTimeout: 5 * time.Second,
+	})
+
+	rustClient := NewClient(&Config{
+		SocketPath:  rustSock,
+		Timeout:     5 * time.Second,
+		MaxRetries:  1,
+		DialTimeout: 5 * time.Second,
+	})
+
+	javaClient := NewClient(&Config{
+		SocketPath:  javaSock,
+		Timeout:     5 * time.Second,
+		MaxRetries:  1,
+		DialTimeout: 5 * time.Second,
+	})
+
+	return officeClient, officeMock, rustClient, rustMock, javaClient, javaMock
+}
+
 func TestRouteExtractText_XLSX_RoutesToRust(t *testing.T) {
 	office, officeMock, rust, _ := setupRoutingClients(t)
 	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00}
@@ -146,13 +182,16 @@ func TestRouteExtractText_MSG_RoutesToPython(t *testing.T) {
 }
 
 func TestRouteExtractText_DOC_RoutesToPython(t *testing.T) {
-	office, _, rust, rustMock := setupRoutingClients(t)
+	office, officeMock, rust, rustMock := setupRoutingClients(t)
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/msword", oleMagic)
 
 	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !officeMock.extractCalled {
+		t.Error("office client should have been called for .doc (Python fallback)")
 	}
 	if rustMock.extractCalled {
 		t.Error("rust client should NOT have been called for .doc")
@@ -174,13 +213,16 @@ func TestRouteExtractText_XLS_RoutesToPython(t *testing.T) {
 }
 
 func TestRouteExtractText_PPT_RoutesToPython(t *testing.T) {
-	office, _, rust, rustMock := setupRoutingClients(t)
+	office, officeMock, rust, rustMock := setupRoutingClients(t)
 	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 	req := makeRoutingReq("application/vnd.ms-powerpoint", oleMagic)
 
 	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !officeMock.extractCalled {
+		t.Error("office client should have been called for .ppt (Python fallback)")
 	}
 	if rustMock.extractCalled {
 		t.Error("rust client should NOT have been called for .ppt")
@@ -286,6 +328,74 @@ func TestRouteExtractText_ShortBuffer(t *testing.T) {
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
+	}
+}
+
+func TestRouteExtractText_DOC_RoutesToJava(t *testing.T) {
+	office, officeMock, _, _, java, javaMock := setupRoutingClientsWithJava(t)
+	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+	req := makeRoutingReq("application/msword", oleMagic)
+
+	_, err := RouteExtractText(context.Background(), req, office, nil, java)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !javaMock.extractCalled {
+		t.Error("java client should have been called for .doc")
+	}
+	if officeMock.extractCalled {
+		t.Error("office client should NOT have been called for .doc when javaClient is present")
+	}
+}
+
+func TestRouteExtractText_PPT_RoutesToJava(t *testing.T) {
+	office, officeMock, _, _, java, javaMock := setupRoutingClientsWithJava(t)
+	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+	req := makeRoutingReq("application/vnd.ms-powerpoint", oleMagic)
+
+	_, err := RouteExtractText(context.Background(), req, office, nil, java)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !javaMock.extractCalled {
+		t.Error("java client should have been called for .ppt")
+	}
+	if officeMock.extractCalled {
+		t.Error("office client should NOT have been called for .ppt when javaClient is present")
+	}
+}
+
+func TestRouteExtractText_DOC_FallbackToPython(t *testing.T) {
+	office, officeMock, rust, rustMock := setupRoutingClients(t)
+	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+	req := makeRoutingReq("application/msword", oleMagic)
+
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !officeMock.extractCalled {
+		t.Error("office client should have been called for .doc fallback (no javaClient)")
+	}
+	if rustMock.extractCalled {
+		t.Error("rust client should NOT have been called for .doc fallback")
+	}
+}
+
+func TestRouteExtractText_PPT_FallbackToPython(t *testing.T) {
+	office, officeMock, rust, rustMock := setupRoutingClients(t)
+	oleMagic := []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+	req := makeRoutingReq("application/vnd.ms-powerpoint", oleMagic)
+
+	_, err := RouteExtractText(context.Background(), req, office, rust, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !officeMock.extractCalled {
+		t.Error("office client should have been called for .ppt fallback (no javaClient)")
+	}
+	if rustMock.extractCalled {
+		t.Error("rust client should NOT have been called for .ppt fallback")
 	}
 }
 

@@ -36,6 +36,7 @@ mkdir -p "$EVIDENCE_DIR"
 # ── Sidecar socket paths (matching production deployment) ──────────────────────
 RUST_SOCK="/run/armorclaw/sidecar.sock"
 PYTHON_SOCK="/run/armorclaw/office-sidecar/sidecar-office.sock"
+JAVA_SOCK="/run/armorclaw/sidecar-java/sidecar-java.sock"
 
 # ── gRPC helpers ───────────────────────────────────────────────────────────────
 
@@ -56,6 +57,16 @@ grpcurl_python() {
     ssh_vps "grpcurl -plaintext -unix '$PYTHON_SOCK' -d '$payload' armorclaw.sidecar.v1.SidecarService/$service_method" 2>/dev/null
   else
     ssh_vps "grpcurl -plaintext -unix '$PYTHON_SOCK' armorclaw.sidecar.v1.SidecarService/$service_method" 2>/dev/null
+  fi
+}
+
+# grpcurl_java — call gRPC on the Java sidecar socket via SSH
+grpcurl_java() {
+  local service_method="$1" payload="${2:-}"
+  if [[ -n "$payload" ]]; then
+    ssh_vps "grpcurl -plaintext -unix '$JAVA_SOCK' -d '$payload' armorclaw.sidecar.v1.SidecarService/$service_method" 2>/dev/null
+  else
+    ssh_vps "grpcurl -plaintext -unix '$JAVA_SOCK' armorclaw.sidecar.v1.SidecarService/$service_method" 2>/dev/null
   fi
 }
 
@@ -104,6 +115,7 @@ fi
 # Check sidecar socket existence on VPS
 RUST_SOCK_EXISTS=false
 PYTHON_SOCK_EXISTS=false
+JAVA_SOCK_EXISTS=false
 
 if ssh_vps "test -S '$RUST_SOCK'" 2>/dev/null; then
   RUST_SOCK_EXISTS=true
@@ -119,9 +131,16 @@ else
   log_info "Python sidecar socket not found: $PYTHON_SOCK"
 fi
 
-# If NEITHER socket exists, skip entire script
-if [[ "$RUST_SOCK_EXISTS" == "false" && "$PYTHON_SOCK_EXISTS" == "false" ]]; then
-  log_skip "Neither sidecar socket present — sidecars not deployed on VPS"
+if ssh_vps "test -S '$JAVA_SOCK'" 2>/dev/null; then
+  JAVA_SOCK_EXISTS=true
+  log_pass "Java sidecar socket exists: $JAVA_SOCK"
+else
+  log_info "Java sidecar socket not found: $JAVA_SOCK"
+fi
+
+# If NO sidecar socket exists, skip entire script
+if [[ "$RUST_SOCK_EXISTS" == "false" && "$PYTHON_SOCK_EXISTS" == "false" && "$JAVA_SOCK_EXISTS" == "false" ]]; then
+  log_skip "No sidecar socket present — sidecars not deployed on VPS"
   log_skip "All remaining scenarios (D1-D7) skipped (Tier B: requires sidecars)"
   harness_summary
   exit 0
@@ -188,6 +207,37 @@ if [[ "$PYTHON_SOCK_EXISTS" == "true" ]]; then
   fi
 else
   log_skip "D2: Python sidecar socket not present"
+fi
+
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D2.5: Java sidecar health check
+# ══════════════════════════════════════════════════════════════════════════════
+log_info "── D2.5: Java sidecar health ─────────────────────"
+
+if [[ "$JAVA_SOCK_EXISTS" == "true" ]]; then
+  if [[ -n "$GRPCURL_CHECK" ]]; then
+    D25_RESP=$(grpcurl_java "HealthCheck" "{}" 2>/dev/null || true)
+    echo "$D25_RESP" | jq . > "$EVIDENCE_DIR/d25-java-health.json" 2>/dev/null || true
+
+    if echo "$D25_RESP" | jq -e '.status' >/dev/null 2>&1; then
+      D25_STATUS=$(echo "$D25_RESP" | jq -r '.status')
+      if [[ "$D25_STATUS" == "SERVING" || "$D25_STATUS" == "OK" || "$D25_STATUS" == "serving" ]]; then
+        log_pass "D2.5: Java sidecar health = $D25_STATUS"
+      else
+        log_pass "D2.5: Java sidecar responded (status=$D25_STATUS)"
+      fi
+      D25_VER=$(echo "$D25_RESP" | jq -r '.version // "unknown"' 2>/dev/null)
+      log_info "D2.5: Java sidecar version: $D25_VER"
+    else
+      log_fail "D2.5: Java sidecar HealthCheck returned unexpected response: ${D25_RESP:0:200}"
+    fi
+  else
+    log_skip "D2.5: Java health check skipped (grpcurl not available)"
+  fi
+else
+  log_skip "D2.5: Java sidecar socket not present"
 fi
 
 echo ""
@@ -318,6 +368,92 @@ if [[ "$PYTHON_SOCK_EXISTS" == "true" ]]; then
   fi
 else
   log_skip "D5: Office → Python skipped (Python sidecar socket not present)"
+fi
+
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D5.5: DOC → Java / Layer 1 — DOC extraction via Java sidecar
+# ══════════════════════════════════════════════════════════════════════════════
+log_info "── D5.5: DOC → Java (Layer 1) ────────────────────"
+
+if [[ "$JAVA_SOCK_EXISTS" == "true" ]]; then
+  if [[ -f "$SCRIPT_DIR/fixtures/sample.doc" ]]; then
+    D55_DOC_B64=$(base64 -w0 "$SCRIPT_DIR/fixtures/sample.doc" 2>/dev/null || echo "")
+
+    if [[ -n "$D55_DOC_B64" ]]; then
+      D55_RESP=$(rpc_doc "sidecar.extract_text" "{
+        \"document_format\": \"application/msword\",
+        \"document_content\": \"$D55_DOC_B64\",
+        \"options\": {}
+      }" 2>/dev/null || true)
+      echo "$D55_RESP" | jq . > "$EVIDENCE_DIR/d55-doc-java.json" 2>/dev/null || true
+
+      if echo "$D55_RESP" | jq -e '.result' >/dev/null 2>&1; then
+        D55_TEXT=$(echo "$D55_RESP" | jq -r '.result.text // .result.Text // ""' 2>/dev/null)
+        if [[ -n "$D55_TEXT" && "$D55_TEXT" != "null" ]]; then
+          log_pass "D5.5: DOC text extracted via Java sidecar (Layer 1)"
+          log_info "D5.5: Extracted text length: ${#D55_TEXT} chars"
+        else
+          log_fail "D5.5: DOC processed via Java sidecar but extracted text is empty"
+        fi
+      elif echo "$D55_RESP" | jq -e '.error' >/dev/null 2>&1; then
+        D55_ERR=$(echo "$D55_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
+        log_skip "D5.5: DOC extraction error: $D55_ERR"
+      else
+        log_skip "D5.5: No response from bridge for DOC extraction"
+      fi
+    else
+      log_skip "D5.5: Could not base64-encode sample.doc fixture"
+    fi
+  else
+    log_skip "D5.5: tests/fixtures/sample.doc not found"
+  fi
+else
+  log_skip "D5.5: DOC → Java skipped (Java sidecar socket not present)"
+fi
+
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D5.6: PPT → Java / Layer 1 — PPT extraction via Java sidecar
+# ══════════════════════════════════════════════════════════════════════════════
+log_info "── D5.6: PPT → Java (Layer 1) ────────────────────"
+
+if [[ "$JAVA_SOCK_EXISTS" == "true" ]]; then
+  if [[ -f "$SCRIPT_DIR/fixtures/sample.ppt" ]]; then
+    D56_PPT_B64=$(base64 -w0 "$SCRIPT_DIR/fixtures/sample.ppt" 2>/dev/null || echo "")
+
+    if [[ -n "$D56_PPT_B64" ]]; then
+      D56_RESP=$(rpc_doc "sidecar.extract_text" "{
+        \"document_format\": \"application/vnd.ms-powerpoint\",
+        \"document_content\": \"$D56_PPT_B64\",
+        \"options\": {}
+      }" 2>/dev/null || true)
+      echo "$D56_RESP" | jq . > "$EVIDENCE_DIR/d56-ppt-java.json" 2>/dev/null || true
+
+      if echo "$D56_RESP" | jq -e '.result' >/dev/null 2>&1; then
+        D56_TEXT=$(echo "$D56_RESP" | jq -r '.result.text // .result.Text // ""' 2>/dev/null)
+        if [[ -n "$D56_TEXT" && "$D56_TEXT" != "null" ]]; then
+          log_pass "D5.6: PPT text extracted via Java sidecar (Layer 1)"
+          log_info "D5.6: Extracted text length: ${#D56_TEXT} chars"
+        else
+          log_fail "D5.6: PPT processed via Java sidecar but extracted text is empty"
+        fi
+      elif echo "$D56_RESP" | jq -e '.error' >/dev/null 2>&1; then
+        D56_ERR=$(echo "$D56_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
+        log_skip "D5.6: PPT extraction error: $D56_ERR"
+      else
+        log_skip "D5.6: No response from bridge for PPT extraction"
+      fi
+    else
+      log_skip "D5.6: Could not base64-encode sample.ppt fixture"
+    fi
+  else
+    log_skip "D5.6: tests/fixtures/sample.ppt not found"
+  fi
+else
+  log_skip "D5.6: PPT → Java skipped (Java sidecar socket not present)"
 fi
 
 echo ""
