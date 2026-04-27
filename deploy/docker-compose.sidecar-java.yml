@@ -1,0 +1,48 @@
+# Docker Compose: ArmorClaw Java Office Sidecar
+# Apache POI sidecar for .doc, .ppt (legacy Office formats)
+#
+# Symmetrical containment with Python sidecar:
+#   - network_mode: none (zero network)
+#   - UID 10001 (non-root, same as Python)
+#   - cap_drop: ALL
+#   - read_only filesystem
+#   - tmpfs for temp spill
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.sidecar-java.yml up -d
+#
+# Socket: /run/armorclaw/sidecar-java/sidecar-java.sock (host)
+# Container sees: /run/armorclaw/sidecar-java.sock
+
+services:
+  sidecar-java:
+    build:
+      context: ../sidecar-java
+      dockerfile: Dockerfile
+    image: armorclaw/sidecar-java:latest
+    container_name: armorclaw-sidecar-java
+    user: "10001:10001"
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - /run/armorclaw/sidecar-java:/run/armorclaw
+      - /run/armorclaw/secrets/java-hmac:/run/secrets/shared_secret:ro
+    tmpfs:
+      - /tmp:size=128M
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - JAVA_OPTS=-Xmx384m -XX:+UseG1GC
+      - SIDECAR_JAVA_SOCKET_PATH=/run/armorclaw/sidecar-java.sock
+      - SIDECAR_SHARED_SECRET_PATH=/run/secrets/shared_secret
+      - SIDECAR_JAVA_MAX_REQUESTS=50
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
