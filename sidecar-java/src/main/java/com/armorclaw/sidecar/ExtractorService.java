@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.poi.EncryptedDocumentException;
 import org.apache.poi.hslf.extractor.QuickButCruddyTextExtractor;
 import org.apache.poi.hwpf.HWPFDocument;
@@ -23,9 +24,15 @@ public class ExtractorService extends SidecarServiceGrpc.SidecarServiceImplBase 
 
     private static final String VERSION = "1.0.0";
     private final long startTimeMillis;
+    private final AtomicInteger requestCounter;
+    private final int maxRequests;
+    private final Runnable onDrainTrigger;
 
-    public ExtractorService() {
+    public ExtractorService(AtomicInteger requestCounter, int maxRequests, Runnable onDrainTrigger) {
         this.startTimeMillis = System.currentTimeMillis();
+        this.requestCounter = requestCounter;
+        this.maxRequests = maxRequests;
+        this.onDrainTrigger = onDrainTrigger;
     }
 
     @Override
@@ -89,6 +96,14 @@ public class ExtractorService extends SidecarServiceGrpc.SidecarServiceImplBase 
     public void extractText(
             Sidecar.ExtractTextRequest request,
             StreamObserver<Sidecar.ExtractTextResponse> responseObserver) {
+
+        int count = requestCounter.incrementAndGet();
+        System.out.println("Request #" + count + " of " + maxRequests);
+
+        if (count >= maxRequests) {
+            System.out.println("TTL reached (" + maxRequests + " requests). Triggering drain...");
+            onDrainTrigger.run();
+        }
 
         String format = request.getDocumentFormat().toLowerCase();
 
