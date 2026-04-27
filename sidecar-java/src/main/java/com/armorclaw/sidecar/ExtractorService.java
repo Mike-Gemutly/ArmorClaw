@@ -3,8 +3,14 @@ package com.armorclaw.sidecar;
 import armorclaw.sidecar.v1.Sidecar;
 import armorclaw.sidecar.v1.SidecarServiceGrpc;
 import io.grpc.stub.StreamObserver;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
+import java.util.Collections;
+import org.apache.poi.EncryptedDocumentException;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 
 /**
  * gRPC service implementation for the ArmorClaw Java Sidecar.
@@ -82,9 +88,60 @@ public class ExtractorService extends SidecarServiceGrpc.SidecarServiceImplBase 
     public void extractText(
             Sidecar.ExtractTextRequest request,
             StreamObserver<Sidecar.ExtractTextResponse> responseObserver) {
-        responseObserver.onError(io.grpc.Status.UNIMPLEMENTED
-                .withDescription("ExtractText not yet implemented")
-                .asRuntimeException());
+
+        String format = request.getDocumentFormat().toLowerCase();
+
+        if (format.contains("msword")) {
+            extractDocText(request, responseObserver);
+        } else if (format.contains("ms-powerpoint")) {
+            // T5: PowerPoint extraction — placeholder for future implementation
+            responseObserver.onError(io.grpc.Status.UNIMPLEMENTED
+                    .withDescription("PowerPoint extraction not yet implemented")
+                    .asRuntimeException());
+        } else {
+            responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
+                    .withDescription("unsupported format: " + request.getDocumentFormat())
+                    .asRuntimeException());
+        }
+    }
+
+    private void extractDocText(
+            Sidecar.ExtractTextRequest request,
+            StreamObserver<Sidecar.ExtractTextResponse> responseObserver) {
+
+        byte[] content = request.getDocumentContent().toByteArray();
+
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(content);
+             HWPFDocument doc = new HWPFDocument(bais);
+             WordExtractor extractor = new WordExtractor(doc)) {
+
+            String text = extractor.getText();
+            if (text == null) {
+                text = "";
+            }
+
+            Sidecar.ExtractTextResponse response = Sidecar.ExtractTextResponse.newBuilder()
+                    .setText(text)
+                    .setPageCount(0)
+                    .putAllMetadata(Collections.emptyMap())
+                    .build();
+
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+
+        } catch (EncryptedDocumentException e) {
+            responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
+                    .withDescription("password-protected document")
+                    .asRuntimeException());
+        } catch (ArrayIndexOutOfBoundsException e) {
+            responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
+                    .withDescription("corrupt or invalid document")
+                    .asRuntimeException());
+        } catch (IOException e) {
+            responseObserver.onError(io.grpc.Status.INTERNAL
+                    .withDescription("extraction failed: " + e.getMessage())
+                    .asRuntimeException());
+        }
     }
 
     @Override
