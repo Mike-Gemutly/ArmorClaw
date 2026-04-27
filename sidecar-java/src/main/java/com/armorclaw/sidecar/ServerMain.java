@@ -40,6 +40,8 @@ public class ServerMain {
                 .bossEventLoopGroup(bossGroup)
                 .workerEventLoopGroup(workerGroup)
                 .channelType(io.netty.channel.epoll.EpollServerDomainSocketChannel.class)
+                .intercept(new TokenInterceptor())
+                .intercept(new VersionInterceptor())
                 .addService(new ExtractorService())
                 .build();
 
