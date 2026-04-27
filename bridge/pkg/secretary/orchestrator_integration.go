@@ -1290,8 +1290,10 @@ func extractDomainFromURL(rawURL string) string {
 	return u.Hostname()
 }
 
-// appendBlockerResponse adds the blocker response to the step config.
-// PII SAFETY: The response.Input field is never logged or written to disk.
+// appendBlockerResponse adds the blocker response metadata to the step config.
+// PII SAFETY: The response.Input field is NEVER serialized into the config map.
+// Only a presence indicator (has_input) is stored. The raw Input value remains
+// available in-memory via the blocker response channel for the current step execution.
 func appendBlockerResponse(config json.RawMessage, response BlockerResponse) json.RawMessage {
 	var configMap map[string]interface{}
 	if config != nil {
@@ -1302,7 +1304,15 @@ func appendBlockerResponse(config json.RawMessage, response BlockerResponse) jso
 		configMap = make(map[string]interface{})
 	}
 
-	configMap["_blocker_response"] = response
+	// SECURITY: Never serialize raw PII into the config map.
+	// Store only a presence indicator; raw Input is available in-memory
+	// via the blocker response channel for the current step execution.
+	configMap["_blocker_response"] = map[string]interface{}{
+		"has_input":   response.Input != "",
+		"note":        response.Note,
+		"user_id":     response.UserID,
+		"provided_at": response.ProvidedAt,
+	}
 
 	updated, err := json.Marshal(configMap)
 	if err != nil {

@@ -1160,19 +1160,43 @@ func TestBlockerLoop_PII_NotLogged(t *testing.T) {
 	assert.NotContains(t, string(fileContents), piiValue,
 		"PII must never appear in result.json on disk")
 
-	// Also verify the appendBlockerResponse helper works correctly
-	var testConfig map[string]interface{}
-	require.NoError(t, json.Unmarshal(step.Config, &testConfig))
+	// Verify appendBlockerResponse never serializes raw PII into the config map
 	updatedConfig := appendBlockerResponse(step.Config, BlockerResponse{
 		Input:      piiValue,
 		UserID:     "@test:example.com",
 		ProvidedAt: time.Now().Unix(),
 	})
+	assert.NotContains(t, string(updatedConfig), piiValue,
+		"Raw PII must never appear in serialized config JSON")
+
 	var updated map[string]interface{}
 	require.NoError(t, json.Unmarshal(updatedConfig, &updated))
 	require.NotNil(t, updated["_blocker_response"])
 	blockerResp := updated["_blocker_response"].(map[string]interface{})
-	assert.Equal(t, piiValue, blockerResp["input"], "PII should be in memory config")
+	assert.Equal(t, true, blockerResp["has_input"], "has_input should be true when Input is present")
+	assert.Equal(t, "@test:example.com", blockerResp["user_id"])
+}
+
+func TestAppendBlockerResponse_NoRawPII(t *testing.T) {
+	config := json.RawMessage(`{"url":"https://example.com"}`)
+	resp := BlockerResponse{
+		Input:      "SSSSUPER-SECRET-PII-DATA",
+		UserID:     "@test:example.com",
+		ProvidedAt: time.Now().Unix(),
+	}
+	result := appendBlockerResponse(config, resp)
+
+	assert.NotContains(t, string(result), "SSSSUPER-SECRET-PII-DATA",
+		"Raw PII must never be serialized into config JSON")
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(result, &m))
+	br := m["_blocker_response"].(map[string]interface{})
+	assert.Equal(t, true, br["has_input"])
+	assert.Equal(t, "@test:example.com", br["user_id"])
+
+	_, hasInput := br["input"]
+	assert.False(t, hasInput, "input field must not exist in serialized config")
 }
 
 func TestBlockerLoop_EventLogExceeded(t *testing.T) {
@@ -1244,9 +1268,12 @@ func TestAppendBlockerResponse(t *testing.T) {
 			UserID:     "@test:example.com",
 			ProvidedAt: 1234567890,
 		})
+		assert.NotContains(t, string(result), "test-input")
 		var m map[string]interface{}
 		require.NoError(t, json.Unmarshal(result, &m))
 		assert.NotNil(t, m["_blocker_response"])
+		resp := m["_blocker_response"].(map[string]interface{})
+		assert.Equal(t, true, resp["has_input"])
 	})
 
 	t.Run("existing config", func(t *testing.T) {
@@ -1256,26 +1283,30 @@ func TestAppendBlockerResponse(t *testing.T) {
 			UserID:     "@test:example.com",
 			ProvidedAt: 1234567890,
 		})
+		assert.NotContains(t, string(result), "secret-value")
 		var m map[string]interface{}
 		require.NoError(t, json.Unmarshal(result, &m))
 		assert.Equal(t, "https://example.com", m["url"])
 		assert.Equal(t, float64(30), m["timeout"])
 		assert.NotNil(t, m["_blocker_response"])
 		resp := m["_blocker_response"].(map[string]interface{})
-		assert.Equal(t, "secret-value", resp["input"])
+		assert.Equal(t, true, resp["has_input"])
 		assert.Equal(t, "@test:example.com", resp["user_id"])
 	})
 
 	t.Run("invalid json config", func(t *testing.T) {
 		original := json.RawMessage(`{invalid json}`)
 		result := appendBlockerResponse(original, BlockerResponse{
-			Input:      "test",
+			Input:      "PII-SENSITIVE-INPUT-XYZ",
 			UserID:     "@test:example.com",
 			ProvidedAt: 1234567890,
 		})
+		assert.NotContains(t, string(result), "PII-SENSITIVE-INPUT-XYZ")
 		var m map[string]interface{}
 		require.NoError(t, json.Unmarshal(result, &m))
 		assert.NotNil(t, m["_blocker_response"])
+		resp := m["_blocker_response"].(map[string]interface{})
+		assert.Equal(t, true, resp["has_input"])
 	})
 }
 
