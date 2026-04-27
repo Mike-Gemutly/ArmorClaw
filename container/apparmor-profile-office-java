@@ -1,0 +1,73 @@
+# AppArmor profile for ArmorClaw Java Office Sidecar
+# Restricts Java sidecar to minimum required filesystem and runtime access
+#
+# Install:
+#   sudo apparmor_parser -r container/apparmor-profile-office-java
+#
+# Verify:
+#   sudo aa-status | grep armorclaw-office-java
+
+#include <tunables/global>
+
+profile armorclaw-office-java flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Java runtime
+  /usr/bin/java rix,
+  /usr/lib/jvm/** r,
+
+  # Socket directory (isolated mount — container sees only /run/armorclaw/)
+  /run/armorclaw/** rw,
+
+  # Temporary files (JVM needs /tmp for hsperfdata, classloader temp dirs)
+  /tmp/** rw,
+  /tmp/ rw,
+
+  # JVM introspection (self only — thread management, memory MXBean)
+  /proc/self/** r,
+  /proc/self/attr/** rw,
+  owner /proc/*/status r,
+
+  # Locale and timezone data
+  /usr/share/zoneinfo/** r,
+  /usr/share/locale/** r,
+
+  # Deny network (container runs with network_mode: none, defense in depth)
+  deny network,
+
+  # Deny shells (defense in depth)
+  deny /bin/sh x,
+  deny /bin/bash x,
+  deny /bin/dash x,
+  deny /usr/bin/zsh x,
+
+  # Deny network tools
+  deny /usr/bin/curl x,
+  deny /usr/bin/wget x,
+  deny /usr/bin/nc x,
+  deny /usr/bin/telnet x,
+
+  # Deny host filesystem access
+  deny /home/** rw,
+  deny /root/** rw,
+  deny /etc/** rw,
+  deny /etc/shadow r,
+  deny /etc/passwd w,
+
+  # Deny sensitive /proc paths (except self)
+  deny /proc/[0-9]*/** rw,
+
+  # Deny /sys access
+  deny /sys/** rw,
+
+  # Deny process inspection
+  deny ptrace read,
+
+  # Deny mount and module operations
+  deny mount,
+  deny umount,
+  deny init_module,
+  deny finit_module,
+  deny delete_module,
+}
