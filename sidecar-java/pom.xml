@@ -162,7 +162,7 @@
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.armorclaw.sidecar.Main</mainClass>
+                                    <mainClass>com.armorclaw.sidecar.ServerMain</mainClass>
                                 </transformer>
                                 <!-- Prevent META-INF/services collisions -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
