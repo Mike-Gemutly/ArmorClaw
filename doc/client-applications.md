@@ -133,7 +133,7 @@ Same pattern as the admin panel: JSON-RPC 2.0 over HTTP, proxied to the Bridge's
 | | |
 |---|---|
 | **Location** | `container/openclaw-src/ui/` |
-| **Tech stack** | Lit (Web Components), TypeScript, Vite, Vitest, Playwright (browser tests) |
+| **Tech stack** | Canvas-host HTTP server (serves a local web interface), TypeScript, Vite, Vitest, Playwright (browser tests) |
 | **Status** | In development |
 
 ### Purpose

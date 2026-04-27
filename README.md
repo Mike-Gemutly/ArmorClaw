@@ -1106,7 +1106,7 @@ The document processing pipeline has comprehensive test coverage across both Rus
 
 | Test File | Tests | Description |
 |-----------|-------|-------------|
-| `office_client_test.go` | 18 | 3-layer routing: native text bypass, compound validation, strict drop |
+| `office_client_test.go` | 21 | 3-layer routing: native text bypass, compound validation, strict drop |
 | `office_client_e2e_test.go` | 7 | Full Go→Python E2E: XLSX conversion, MSG handling, docx non-routing |
 
 **Run all sidecar tests:**
@@ -1306,7 +1306,7 @@ The Python sidecar extends document processing with legacy Microsoft Office form
 - **Performance**: Threshold streaming — in-memory for <10 MB, temp file for ≥10 MB
 - **Reliability**: TTL recycling — server exits after 50 requests for container restart cycling
 - **Communication**: gRPC over Unix Domain Socket (`/run/armorclaw/sidecar-office.sock`)
-- **Test Coverage**: 90 tests (27 worker + 16 edge cases + 12 interceptor + 7 E2E + 18 routing + 10 Docker)
+- **Test Coverage**: 65 tests (27 worker + 16 edge cases + 12 interceptor + 10 Docker)
 
 **3-Layer Routing** (Go Bridge `RouteExtractText()`):
 

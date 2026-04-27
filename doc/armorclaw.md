@@ -8,7 +8,7 @@
 
 > ⚠️ **Architecture Note (v0.4.1)**: Agent containers always run with `NetworkMode: "none"` (no network access). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation runs through the Jetski sidecar, a separate container with its own network stack; agent containers never perform browser operations directly.
 >
-> **v0.8.0 Changes**: Java Apache POI sidecar for legacy DOC/PPT extraction, Java routing in Go Bridge (`RouteExtractText` 4-param signature), 105 sidecar tests (21 Go routing + 8 Java JUnit 5 + 4 Go E2E + 72 Python).
+> **v0.8.0 Changes**: Java Apache POI sidecar for legacy DOC/PPT extraction, Java routing in Go Bridge (`RouteExtractText` 4-param signature), 98 sidecar tests (21 Go routing + 8 Java JUnit 5 + 4 Go E2E + 65 Python).
 >
 > **v0.7.0 Changes**: WorkflowStep.Input field for inter-step data passing, warm dispatch dead code purged, WebSocket EventBus wiring, Android DeepLinkHandler, SecurityConfigViewModel wired, BridgeRepository persistence, admin panel real API, ArmorChat integration test cleanup.
 >
@@ -3638,7 +3638,7 @@ The testing suite also includes **11 comprehensive SSH-based test categories** w
 | **SSL/TLS** | Certificate presence, expiry, chain | 6 |
 | **Performance** | SSH speed, API times, container resources | 6 |
 | **Output Formatting** | JSON console output, error handling | 1 |
-| **Python Sidecar** | Worker unit tests, edge cases, token interceptor, E2E | 72 |
+| **Python Sidecar** | Worker unit tests, edge cases, token interceptor, Docker integration | 65 |
 | **Java Sidecar** | JUnit 5 extraction tests, Go routing, Go E2E, bash harness | 33 |
 
 ```bash
