@@ -9,6 +9,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.util.Collections;
 import org.apache.poi.EncryptedDocumentException;
+import org.apache.poi.hslf.extractor.QuickButCruddyTextExtractor;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 
@@ -94,10 +95,7 @@ public class ExtractorService extends SidecarServiceGrpc.SidecarServiceImplBase 
         if (format.contains("msword")) {
             extractDocText(request, responseObserver);
         } else if (format.contains("ms-powerpoint")) {
-            // T5: PowerPoint extraction — placeholder for future implementation
-            responseObserver.onError(io.grpc.Status.UNIMPLEMENTED
-                    .withDescription("PowerPoint extraction not yet implemented")
-                    .asRuntimeException());
+            extractPptText(request, responseObserver);
         } else {
             responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
                     .withDescription("unsupported format: " + request.getDocumentFormat())
@@ -116,6 +114,44 @@ public class ExtractorService extends SidecarServiceGrpc.SidecarServiceImplBase 
              WordExtractor extractor = new WordExtractor(doc)) {
 
             String text = extractor.getText();
+            if (text == null) {
+                text = "";
+            }
+
+            Sidecar.ExtractTextResponse response = Sidecar.ExtractTextResponse.newBuilder()
+                    .setText(text)
+                    .setPageCount(0)
+                    .putAllMetadata(Collections.emptyMap())
+                    .build();
+
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+
+        } catch (EncryptedDocumentException e) {
+            responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
+                    .withDescription("password-protected document")
+                    .asRuntimeException());
+        } catch (ArrayIndexOutOfBoundsException e) {
+            responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
+                    .withDescription("corrupt or invalid document")
+                    .asRuntimeException());
+        } catch (IOException e) {
+            responseObserver.onError(io.grpc.Status.INTERNAL
+                    .withDescription("extraction failed: " + e.getMessage())
+                    .asRuntimeException());
+        }
+    }
+
+    private void extractPptText(
+            Sidecar.ExtractTextRequest request,
+            StreamObserver<Sidecar.ExtractTextResponse> responseObserver) {
+
+        byte[] content = request.getDocumentContent().toByteArray();
+
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(content)) {
+            QuickButCruddyTextExtractor extractor = new QuickButCruddyTextExtractor(bais);
+
+            String text = extractor.getTextAsString();
             if (text == null) {
                 text = "";
             }

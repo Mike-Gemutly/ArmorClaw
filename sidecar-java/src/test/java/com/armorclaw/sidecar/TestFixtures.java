@@ -6,6 +6,9 @@ import java.io.IOException;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.usermodel.Range;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
+import org.apache.poi.hslf.usermodel.HSLFSlideShow;
+import org.apache.poi.hslf.usermodel.HSLFSlide;
+import org.apache.poi.hslf.usermodel.HSLFTextBox;
 
 public final class TestFixtures {
 
@@ -45,5 +48,25 @@ public final class TestFixtures {
 
     public static byte[] createCorruptDoc() {
         return "this is not a valid doc file".getBytes();
+    }
+
+    public static byte[] createMinimalPpt() throws IOException {
+        try (HSLFSlideShow ppt = new HSLFSlideShow();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            HSLFSlide slide = ppt.createSlide();
+            HSLFTextBox textBox = slide.addTitle();
+            textBox.setText("Test slide content");
+            ppt.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    public static byte[] createEmptyPpt() throws IOException {
+        try (HSLFSlideShow ppt = new HSLFSlideShow();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            ppt.createSlide();
+            ppt.write(out);
+            return out.toByteArray();
+        }
     }
 }
