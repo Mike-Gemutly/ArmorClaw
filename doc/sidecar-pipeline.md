@@ -483,7 +483,7 @@ The Go Bridge routes DOC/PPT to the Java sidecar via `RouteExtractText()`:
 | Test File | Tests | Description |
 |-----------|-------|-------------|
 | `sidecar-java/src/test/java/.../ExtractorServiceTest.java` | 8 | DOC/PPT extraction, empty input, unsupported format, null body |
-| `bridge/pkg/sidecar/office_client_test.go` | 21 | Go routing: DOC/PPT → Java, fallback to Python, XLS stays Python |
+| `bridge/pkg/sidecar/office_client_test.go` | 22 | Go routing: DOC/PPT → Java, fallback to Python, XLS stays Python |
 | `bridge/pkg/sidecar/java_sidecar_e2e_test.go` | 4 | Full E2E: health, DOC extraction, PPT extraction, unsupported (skip without Java 21) |
 | `tests/test-sidecar-docs.sh` | 3 | Bash harness: D2.5 Java health, D5.5 DOC, D5.6 PPT |
 
@@ -493,7 +493,7 @@ The Go Bridge routes DOC/PPT to the Java sidecar via `RouteExtractText()`:
 # Java unit tests (requires Java 21)
 cd sidecar-java && JAVA_HOME="$(asdf where java temurin-21.0.11+10.0.LTS)" mvn test
 
-# Go routing tests (21 tests including Java paths)
+# Go routing tests (22 tests including Java paths)
 cd bridge && go test -v -run "TestRouteExtractText" ./pkg/sidecar/...
 
 # Go E2E tests (skip gracefully without Java 21/JAR)
@@ -539,10 +539,10 @@ tmpfs:
 | `sidecar-python/test_interceptor.py` | 12 | All pass |
 | `sidecar-python/test_docker_integration.py` | 10 | Skip when no Docker |
 | `sidecar-java/src/test/java/.../ExtractorServiceTest.java` | 8 | All pass |
-| `bridge/pkg/sidecar/office_client_test.go` | 21 | All pass |
+| `bridge/pkg/sidecar/office_client_test.go` | 22 | All pass |
 | `bridge/pkg/sidecar/office_client_e2e_test.go` | 7 | All pass |
 | `bridge/pkg/sidecar/java_sidecar_e2e_test.go` | 4 | Skip without Java 21 |
-| **Total** | **105** | **0 regressions** |
+| **Total** | **106** | **0 regressions** |
 
 #### Running Tests
 

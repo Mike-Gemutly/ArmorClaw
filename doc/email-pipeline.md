@@ -41,7 +41,7 @@ External Email → Postfix (Port 25/STARTTLS)
 | `bridge/pkg/secretary/bridge_local_registry.go` | Bridge-local execution handler registry |
 | `bridge/pkg/rpc/email_approval.go` | RPC handlers for approve_email and deny_email |
 | `bridge/cmd/mta-recv/` | Postfix pipe handler binary |
-| `deploy/postfix/` | Postfix config, install script, verify script |
+| `deploy/postfix/` | Postfix config, install script, verify script *(planned — not yet implemented)* |
 
 ## Configuration
 
@@ -54,7 +54,7 @@ External Email → Postfix (Port 25/STARTTLS)
 
 ### Postfix Config
 
-See `deploy/postfix/main.cf` for full configuration. Key settings:
+See `deploy/postfix/main.cf` *(planned — not yet implemented)* for full configuration. Key settings:
 - `inet_interfaces = all` — accept external connections
 - `smtpd_tls_security_level = may` — STARTTLS enabled
 - `transport_maps = hash:/etc/postfix/transport` — route to armorclaw pipe
@@ -70,7 +70,7 @@ cd bridge && go test ./pkg/email/... -v
 cd bridge && go test ./pkg/pii/... -v
 
 # Verify Postfix setup (requires Postfix installed)
-bash deploy/postfix/verify-setup.sh
+bash deploy/postfix/verify-setup.sh  # planned — not yet implemented
 ```
 
 ## File Paths

@@ -8,7 +8,7 @@
 
 > ⚠️ **Architecture Note (v0.4.1)**: Agent containers always run with `NetworkMode: "none"` (no network access). Structured results are passed via `result.json` in the bind-mounted state dir (backward channel). Browser automation runs through the Jetski sidecar, a separate container with its own network stack; agent containers never perform browser operations directly.
 >
-> **v0.8.0 Changes**: Java Apache POI sidecar for legacy DOC/PPT extraction, Java routing in Go Bridge (`RouteExtractText` 4-param signature), 98 sidecar tests (21 Go routing + 8 Java JUnit 5 + 4 Go E2E + 65 Python).
+> **v0.8.0 Changes**: Java Apache POI sidecar for legacy DOC/PPT extraction, Java routing in Go Bridge (`RouteExtractText` 4-param signature), 106 sidecar tests (22 Go routing + 8 Java JUnit 5 + 7 Go Python E2E + 4 Go Java E2E + 65 Python).
 >
 > **v0.7.0 Changes**: WorkflowStep.Input field for inter-step data passing, warm dispatch dead code purged, WebSocket EventBus wiring, Android DeepLinkHandler, SecurityConfigViewModel wired, BridgeRepository persistence, admin panel real API, ArmorChat integration test cleanup.
 >
@@ -141,7 +141,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **Rust Vault** | Rust | Security enclave, governance gRPC, BlindFill service | `rust-vault/src/main.rs` |
 | **Python MarkItDown Sidecar** | Python | Legacy Office format conversion (MSG, XLS). DOC/PPT migrated to Java. XLSX/PPTX migrated to Rust. | `sidecar-python/worker.py` |
 | **Java Apache POI Sidecar** | Java | Legacy DOC/PPT text extraction via Apache POI (HWPFDocument, HSLFSlideShow) | `sidecar-java/src/main/java/com/armorclaw/sidecar/` |
-| **Email Approval** | Go (Bridge) | Email-based HITL approval for sensitive operations | `bridge/pkg/approval/email.go` |
+| **Email Approval** | Go (Bridge) | Email-based HITL approval for sensitive operations | `bridge/pkg/rpc/email_approval.go`, `bridge/pkg/email/` |
 </component>
 
 ---
@@ -242,9 +242,9 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 ```
 armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (60 packages)
-│   ├── cmd/bridge/main.go    # Primary entry point (3,389 lines)
+│   ├── cmd/bridge/main.go    # Primary entry point (3,503 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (81 methods)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (89 registered methods + 5 public handlers)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -286,7 +286,7 @@ armorclaw-omo/
 │   │   ├── governance/       # gRPC governance service (ephemeral tokens)
 │   │   └── grpc/             # gRPC server with mTLS auth
 │   ├── proto/governance.proto
-│   └── tests/                # 96 tests (config, vault, placeholder, CDP, mTLS)
+│   └── tests/                # 58 tests (config, vault, placeholder, CDP, mTLS)
 │
 ├── jetski/                    # Go CDP proxy with Tethered Mode security
 │   ├── cmd/observer/main.go  # Primary entry point
@@ -308,7 +308,7 @@ armorclaw-omo/
 ├── go.work                    # Multi-module Go workspace
 │
 ├── container/openclaw-src/   # OpenClaw agent runtime
-│   ├── extensions/           # 39 platform adapters
+│   ├── extensions/           # 37 platform adapters
 │   └── skills/               # Browser skills
 │
 ├── applications/             # Client applications
@@ -338,7 +338,9 @@ armorclaw-omo/
 │   ├── deploy.yaml
 │   ├── status.yaml
 │   ├── cloudflare.yaml
-│   └── provision.yaml
+│   ├── provision.yaml
+│   ├── ops.yaml
+│   └── TEMPLATE.yaml
 │
 └── tests/                    # Test suites
     ├── ssh/                 # VPS testing suite (10 categories)
@@ -392,7 +394,7 @@ armorclaw-omo/
 
 The Go Bridge is the **central orchestrator** that coordinates between the host system and isolated AI agent containers. It provides:
 - Secure credential management via SQLCipher
-- JSON-RPC 2.0 API (81 methods across 12 domains)
+- JSON-RPC 2.0 API (89 registered methods + 5 public handlers across 12 domains)
 - Matrix integration for encrypted messaging
 - Browser automation job queue
 - Skill execution with allowlist control
@@ -405,7 +407,7 @@ The Go Bridge is the **central orchestrator** that coordinates between the host 
 ```go
 type Server struct {
     // Core communication
-    handlers map[string]HandlerFunc  // 47 registered methods
+    handlers map[string]HandlerFunc  // 89 registered methods
     socketPath string
     listener net.Listener
     
@@ -726,7 +728,9 @@ type BridgeManager interface {
     Stop() error
     RegisterAdapter(platform, adapter) error
     BridgeChannel(roomID, platform, channelID) error
+    UnbridgeChannel(roomID string) error
     GetBridgedChannels() []*BridgedChannel
+    GetStats() *BridgeStats
 }
 
 // PII interception
@@ -945,7 +949,7 @@ The Rust Vault and Jetski both touch CDP interception, but at different abstract
 | **What it does** | Generates `Fetch.enable` params, resolves `{{VAULT:field:hash}}` placeholders | Full WebSocket proxy between agent and Lightpanda engine |
 | **Port usage** | None (library, no listener) | Listens on 9222 (CDP), 9223 (RPC) |
 | **PII handling** | Placeholder format validation | Active net.Conn-level PII scrubbing |
-| **Runtime state** | Compiles, 96 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
+| **Runtime state** | Compiles, 58 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
 
 **In practice**: Jetski is the **sole active CDP security layer**. The Rust Vault's CDP interceptor module (`blindfill`) is **vestigial with zero production callers** — it represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level. The `blindfill` module is retained solely for test coverage.
 
@@ -1119,20 +1123,7 @@ service Keystore {
 
 ### Testing
 
-**Test Coverage: 96 tests across 10 test files**
-
-- **Config Tests** (5) - Configuration validation
-- **Error Tests** (15) - Error handling
-- **DB Pool Tests** (5) - SQLCipher connection pooling
-- **Vault Tests** (7) - Secret storage and zeroization
-- **Matrix State Tests** (5) - Ephemeral state management
-- **Placeholder Tests** (34) - Placeholder parsing and resolution
-- **CDP Interceptor Tests** (6) - Network-layer filtering
-- **BlindFill Integration Tests** (4) - End-to-end secret injection
-- **gRPC Server Tests** (4) - Unix socket and permissions
-- **mTLS Auth Tests** (10) - Certificate validation
-- **Integration Tests** (1) - Project compilation
-- **Doc Tests** (1) - Documentation examples
+**Test Coverage: 58 tests (cargo test --lib)**
 
 **Run Tests:**
 
@@ -2430,7 +2421,7 @@ approval:
 | Matrix HITL Approval | `internal/approval/matrix_client_test.go` | 12 | ✅ Pass |
 | E2E Tethered Mode | `tests/e2e_tethered_test.go` | 5 | ✅ Pass |
 
-**Total**: 60 tests, all passing
+**Total**: 195 Go tests, all passing
 
 ### NavChart Pipeline
 
@@ -2755,7 +2746,7 @@ The Rust Office Sidecar is a **high-performance data plane component** for heavy
 
 **Binary + Library: ✅ Compiles Clean**
 - 0 compilation errors (warnings only: unused imports, dead code)
-- 252 lib tests pass, 0 failures, 8 ignored
+- 260 lib tests pass, 0 failures, 8 ignored
 - All 8 gRPC RPCs functional
 
 ```bash
@@ -2957,7 +2948,7 @@ cargo test --test document_integration_test
 - Rate Limiting: 15 tests (token bucket, replenishment, burst)
 - Document Processing: 220+ tests (PDF, DOCX, XLSX, OCR, convert)
 - gRPC Server: integration coverage via `sidecar/tests/e2e_integration_test.rs` (22 tests)
-- Total: 252 lib tests, 0 failures, 8 ignored
+- Total: 260 lib tests, 0 failures, 8 ignored
 
 ### Security Constraints
 
@@ -3029,7 +3020,7 @@ The Rust Office Sidecar **compiles clean and is production-ready** for:
 - ✅ 8 gRPC RPCs functional (HealthCheck, UploadBlob, DownloadBlob, ListBlobs, DeleteBlob, ExtractText, ProcessDocument, QueryDocuments)
 - ✅ Secure token validation
 - ✅ Rate limiting and circuit breaking
-- ✅ 252 lib tests passing
+- ✅ 260 lib tests passing
 
 > See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the Go gRPC client, YARA scanner, and document pipeline architecture.
 

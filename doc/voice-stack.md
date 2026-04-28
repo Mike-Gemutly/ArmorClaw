@@ -65,8 +65,11 @@ Call budget tracking and speech service wrappers. Prevents runaway token costs, 
 |------|---------|
 | `budget.go` | `BudgetTracker` manages per-session limits, `VoiceSessionTracker` tracks token usage (input + output) and duration, `TokenUsage` counters, `Config` with default/duration limits and warning thresholds, background `EnforceLimits` loop (30 s interval), security logging for budget events |
 | `stt_service.go` | `STTService` wraps `Transcriber` interface for speech-to-text, `NewSTTService(client Transcriber)` creates service, `Transcribe(ctx, audioData []byte)` returns `*TranscriptionResult`, uses `slog.Logger` for structured logging |
-| `tts_service.go` | `TTSService` wraps `Synthesizer` interface for text-to-speech synthesis, `NewTTSService(client Synthesizer)` creates service, `Synthesize(ctx, text string)` returns `*SynthesisResult` |
+| `tts_service.go` | `TTSService` wraps `Synthesizer` interface for text-to-speech synthesis, `NewTTTService(client Synthesizer)` creates service, `Synthesize(ctx, text string)` returns `*SynthesisResult` |
 | `vad_service.go` | `VADService` wraps `SpeechDetector` interface for voice activity detection, `NewVADService(client SpeechDetector)` creates service, `DetectSpeech(ctx, audioData []byte)` returns `*VADResult` |
+| `manager.go` | Session management |
+| `matrix.go` | Matrix integration for voice |
+| `security.go` | Security logging |
 
 Key defaults:
 - Token limit: 100,000 per call
@@ -84,6 +87,8 @@ WebRTC peer connection management and session lifecycle. This is where Matrix ro
 |------|---------|
 | `engine.go` | `Engine` creates and manages `PeerConnectionWrapper` instances, registers Opus codec, handles SDP offer/answer exchange, writes audio to local tracks, reads RTP from remote tracks, integrates with `turn.Manager` for ephemeral credentials |
 | `session.go` | `SessionManager` handles the full lifecycle of `Session` objects (pending, active, ended, failed, expired), TTL enforcement with 1-minute cleanup interval, binds session to container ID, Matrix room ID, TURN credentials, and budget session |
+| `signaling.go` | WebRTC signaling |
+| `token.go` | Token management |
 
 Session states: `pending` (created, not connected) → `active` (media flowing) → `ended` (normal close), `failed` (error), or `expired` (TTL hit).
 
