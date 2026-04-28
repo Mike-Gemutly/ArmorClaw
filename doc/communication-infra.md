@@ -144,6 +144,26 @@ Each error code is registered in `ErrorRegistry` with a description and resoluti
 
 **Key types:** `EventBus`, `Subscriber`, `EventFilter`, `MatrixEventWrapper`, `EventError`, `ErrorCode`, `ErrorDomain`.
 
+#### Dual-Bus Architecture
+
+The Bridge runs two separate event buses with different delivery semantics. They do not share code, state, or configuration. Each one exists because its consumers need fundamentally different guarantees.
+
+**Push Bus** (`pkg/eventbus`): fire-and-forget delivery. Events are pushed to subscriber channels and WebSocket clients as they arrive. If a subscriber is slow, the event is dropped. There are no sequence numbers, no cursors, and no replay. This works well for vault events and email events, where missing one update is acceptable and consumers care about the latest state, not a gap-free history. `RegisterBridgeHandler` is the main registration point for in-process consumers.
+
+**Stream Bus** (`internal/events`): ring buffer with cursor-based polling. Every published event gets a monotonically increasing sequence number. Consumers call `WaitForEvents(ctx, cursor)` to tail the buffer from their last seen position, reading batches of up to 128 events. Slow consumers can replay missed events by re-requesting from an earlier cursor. This is the bus that Matrix sync events, workflow progress, agent status updates, and RPC long-poll (ArmorChat streaming) flow through. The ordering guarantee matters because these consumers need a consistent view of what happened and when.
+
+| Aspect | Push Bus (`pkg/eventbus`) | Stream Bus (`internal/events`) |
+|--------|---------------------------|-------------------------------|
+| Delivery model | Fire-and-forget to channels | Cursor-based polling from ring buffer |
+| Consumers | WebSocket clients, in-process handlers | Long-poll RPC (ArmorChat), Matrix sync, workflow, agent status |
+| Ordering | None | Monotonic sequence numbers |
+| Replay | No | Yes, via cursor re-read |
+| Backpressure | Drop on slow consumer, log a warning | Skip slow channel subscribers, buffer remains readable |
+| Primary registration | `RegisterBridgeHandler(eventType, handler)` | `Subscribe()` returns channel, `GetEventsAfter(cursor)` for batched reads |
+| Use cases | Vault events, email events | Matrix sync, workflow progress, agent status, RPC streaming |
+
+> See package-level doc comments in `bridge/pkg/eventbus/eventbus.go` and `bridge/internal/events/matrix_event_bus.go` for the authoritative source-level descriptions.
+
 ### Workflow Events (`pkg/secretary/`)
 
 The orchestrator events system (`orchestrator_events.go`) defines workflow lifecycle events that flow through the `MatrixEventBus`. These events are emitted by `WorkflowEventEmitter` during container execution and consumed by the Matrix adapter's `processEvents()` method, which routes them to Matrix rooms.

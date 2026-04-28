@@ -56,6 +56,7 @@ All notable changes to ArmorClaw are documented here with commit references.
 ### Removed
 
 - **Warm dispatch dead code** — `warmDispatch()`, `GetRunningInstance()`, `EventTypeTaskDispatch`, `BuildTaskDispatchPayload()`, and `task_dispatch.go` removed from `bridge/pkg/secretary/`. All dispatch is cold-only.
+- **Vestigial Rust `blindfill/` module removed** — Superseded by Jetski CDP proxy, zero production callers.
 
 ## [0.6.0] - 2026-04-17 - Operational Transparency, Governance Hardening, Advanced Automation, Mobile Polish
 
@@ -65,7 +66,7 @@ All notable changes to ArmorClaw are documented here with commit references.
 
 ### Phase 1 — Operational Transparency
 
-- **Bridge-side agent state inference** — 11 agent states derived from CDP and workflow signals (Idle, Browsing, WaitingForApproval, Executing, Blocked, Compacting, etc.) with `ForceTransition` for manual override
+- **Bridge-side agent state inference** — 11 agent states derived from CDP and workflow signals (IDLE, BROWSING, FORM_FILLING, AWAITING_APPROVAL, PROCESSING_PAYMENT, ERROR, COMPLETE, etc.) with `ForceTransition` for manual override
 - **BroadcastStatus via Matrix events** — Agent state changes published as `com.armorclaw.agent.status` Matrix events, enabling real-time status in ArmorChat
 - **Blocker metadata pipeline fix** — Fixed 7 bugs in the container-to-Bridge-to-Matrix blocker flow: added `case "blocker"` event routing, wired `EmitBlockerWarning()`, captured blocker name as human-readable message, propagated all 5 metadata fields (blocker_type, suggestion, field, message, step_id) end to end
 
