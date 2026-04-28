@@ -56,7 +56,9 @@ import (
 	// TODO: Voice package needs refactoring - uncomment when fixed
 	// "github.com/armorclaw/bridge/pkg/voice"
 	"github.com/armorclaw/bridge/pkg/appservice"
+	"github.com/armorclaw/bridge/pkg/email"
 	"github.com/armorclaw/bridge/pkg/webrtc"
+	"github.com/armorclaw/bridge/pkg/yara"
 
 	bridgeHTTP "github.com/armorclaw/bridge/pkg/http"
 
@@ -2207,6 +2209,12 @@ func runBridgeServer(cliCfg cliConfig) {
 		log.Println("Event bus disabled (Matrix not enabled)")
 	}
 
+	// Initialize YARA scanner (required by email ingest for attachment scanning)
+	yaraRulesPath := filepath.Join("configs", "yara_rules.yar")
+	if err := yara.InitYARA(yaraRulesPath); err != nil {
+		log.Printf("Warning: YARA initialization failed (email attachments will bypass malware scan): %v", err)
+	}
+
 	// Initialize WebRTC signaling server
 	var signalingSvr *webrtc.SignalingServer
 	if cfg.WebRTC.SignalingEnabled {
@@ -2368,6 +2376,12 @@ func runBridgeServer(cliCfg cliConfig) {
 		}
 	}
 
+	// --- EMAIL INGEST SERVER ---
+	var ingestServer *email.IngestServer
+	if cfg.Matrix.Enabled {
+		ingestServer = setupEmailIngest(eventBus, filepath.Dir(cfg.Keystore.DBPath))
+	}
+
 	// Initialize RPC server
 	log.Printf("Starting JSON-RPC server on %s", cfg.Server.SocketPath)
 	// Compute data dir for provisioning role persistence
@@ -2481,6 +2495,11 @@ func runBridgeServer(cliCfg cliConfig) {
 	)
 	if taskScheduler != nil {
 		defer taskScheduler.Stop()
+	}
+
+	// --- EMAIL DISPATCHER ---
+	if ingestServer != nil && taskScheduler != nil {
+		_ = setupEmailDispatcher(eventBus, taskScheduler, rolodexStore)
 	}
 
 	// Log RPC dependency status
@@ -2756,6 +2775,11 @@ func runBridgeServer(cliCfg cliConfig) {
 		// TODO: Voice package needs refactoring - uncomment when fixed
 		// voiceMgr.Stop()
 		webrtcEngine.Stop()
+
+		if ingestServer != nil {
+			log.Println("Stopping email ingest server...")
+			ingestServer.Stop()
+		}
 
 		cancel()
 	}()
