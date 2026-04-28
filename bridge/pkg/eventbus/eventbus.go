@@ -25,6 +25,10 @@ type EventBus struct {
 	websocketServer *websocket.Server
 	securityLog     *logger.SecurityLogger
 	log             *eventlog.Log
+
+	// In-process handlers for BridgeEvents (separate from Matrix subscriber path)
+	bridgeHandlers  map[string][]func(BridgeEvent)
+	bridgeHandlerMu sync.RWMutex
 }
 
 // Subscriber represents a client subscribed to receive events
@@ -95,10 +99,11 @@ func NewEventBus(config Config) *EventBus {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bus := &EventBus{
-		subscribers: make(map[string]*Subscriber),
-		ctx:         ctx,
-		cancel:      cancel,
-		securityLog: logger.NewSecurityLogger(logger.Global().WithComponent("eventbus")),
+		subscribers:    make(map[string]*Subscriber),
+		bridgeHandlers: make(map[string][]func(BridgeEvent)),
+		ctx:            ctx,
+		cancel:         cancel,
+		securityLog:    logger.NewSecurityLogger(logger.Global().WithComponent("eventbus")),
 	}
 
 	// Initialize durable log if enabled
@@ -519,6 +524,13 @@ func (b *EventBus) GetLog() *eventlog.Log {
 	return b.log
 }
 
+// RegisterBridgeHandler registers an in-process handler for a specific BridgeEvent type.
+func (b *EventBus) RegisterBridgeHandler(eventType string, handler func(BridgeEvent)) {
+	b.bridgeHandlerMu.Lock()
+	defer b.bridgeHandlerMu.Unlock()
+	b.bridgeHandlers[eventType] = append(b.bridgeHandlers[eventType], handler)
+}
+
 // PublishBridgeEvent publishes a BridgeEvent to WebSocket clients
 // This is used for agent, workflow, HITL, and other non-Matrix events
 func (b *EventBus) PublishBridgeEvent(event BridgeEvent) error {
@@ -572,6 +584,25 @@ func (b *EventBus) PublishBridgeEvent(event BridgeEvent) error {
 	b.securityLog.LogSecurityEvent("bridge_event_published",
 		slog.String("event_type", eventType),
 		slog.Bool("websocket_enabled", b.websocketServer != nil))
+
+	// Dispatch to in-process handlers registered via RegisterBridgeHandler
+	b.bridgeHandlerMu.RLock()
+	handlersSlice := make([]func(BridgeEvent), len(b.bridgeHandlers[eventType]))
+	copy(handlersSlice, b.bridgeHandlers[eventType])
+	b.bridgeHandlerMu.RUnlock()
+
+	for _, h := range handlersSlice {
+		go func(handler func(BridgeEvent)) {
+			defer func() {
+				if r := recover(); r != nil {
+					b.securityLog.LogSecurityEvent("bridge_handler_panic",
+						slog.String("event_type", eventType),
+						slog.Any("panic", r))
+				}
+			}()
+			handler(event)
+		}(h)
+	}
 
 	// Append to durable log if enabled
 	if b.log != nil {
