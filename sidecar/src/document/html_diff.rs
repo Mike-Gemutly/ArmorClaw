@@ -1,5 +1,5 @@
 use crate::error::SidecarError;
-use crate::document::diff::{DiffResult, DiffOp, DiffEngine};
+use crate::document::diff::{DiffOp, DiffEngine};
 
 pub struct HtmlDiffGenerator;
 

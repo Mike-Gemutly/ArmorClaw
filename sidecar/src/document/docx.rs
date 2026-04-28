@@ -1,4 +1,4 @@
-use crate::document::{validate_file_size, MAX_FILE_SIZE};
+use crate::document::validate_file_size;
 use crate::error::{Result, SidecarError};
 use crate::security::shadowmap::ShadowMap;
 use docx_rs::{read_docx, DocumentChild, Docx, ParagraphChild, RunChild};
@@ -53,7 +53,7 @@ impl DocxExtractor {
 }
 
 pub fn extract_text_from_docx(docx_bytes: &[u8]) -> Result<DocxTextExtractionResult> {
-    use crate::document::{validate_file_size, MAX_FILE_SIZE};
+    use crate::document::validate_file_size;
 
     validate_file_size(docx_bytes.len())?;
 

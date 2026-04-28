@@ -670,7 +670,7 @@ pub async fn run_server(config: SidecarConfig) -> Result<()> {
 
     let impl_service = SidecarServiceImpl::new(s3_connector, qdrant_client, embedding_api_key);
 
-    let addr = format!("unix://{}", socket_path.display());
+    let _addr = format!("unix://{}", socket_path.display());
 
     let listener = UnixListener::bind(socket_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AddrInUse {
@@ -739,7 +739,7 @@ pub async fn run_server(config: SidecarConfig) -> Result<()> {
     info!("Server shutdown complete");
 
     if Path::new(socket_path).exists() {
-        std::fs::remove_file(socket_path)
+        let _ = std::fs::remove_file(socket_path)
             .map_err(|e| error!("Failed to remove socket file: {}", e));
     }
 

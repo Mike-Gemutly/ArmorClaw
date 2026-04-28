@@ -255,7 +255,7 @@ impl SecurityInterceptor {
 
 /// Implements the tonic Interceptor trait to intercept all gRPC requests.
 impl TonicInterceptor for SecurityInterceptor {
-    fn call(&mut self, mut req: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+    fn call(&mut self, req: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
         let start_time = Instant::now();
         let metadata = req.metadata();
         let method = "unknown";

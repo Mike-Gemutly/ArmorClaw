@@ -17,10 +17,9 @@
 use prometheus::{IntCounter, Registry};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tonic::{
     service::Interceptor as TonicInterceptor,
-    Status, Code,
+    Status,
 };
 use tracing::{debug, warn};
 

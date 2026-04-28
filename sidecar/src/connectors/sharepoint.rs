@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::error::SidecarError;
 use reqwest::Client;
 use serde::Deserialize;
@@ -67,7 +69,7 @@ impl SharePointConnector {
         Ok(())
     }
 
-    async fn get_drive_item(&self, item_id: &str) -> Result<DriveItem, SidecarError> {
+    async fn get_drive_item(&self, _item_id: &str) -> Result<DriveItem, SidecarError> {
         if self.access_token.lock().await.is_none() {
             self.authenticate().await?;
         }
@@ -102,7 +104,7 @@ impl SharePointConnector {
         );
 
         let token = self.access_token.lock().await.clone().unwrap();
-        let response = self.client
+        let _response = self.client
             .put(upload_url)
             .bearer_auth(&token)
             .body(data.to_vec())

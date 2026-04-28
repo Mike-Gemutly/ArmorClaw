@@ -1,7 +1,4 @@
-use crate::error::SidecarError;
-use std::collections::HashMap;
 
-use crate::document::validate_file_size;
 
 pub struct DiffEngine;
 

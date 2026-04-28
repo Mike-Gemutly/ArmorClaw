@@ -4,7 +4,7 @@ use crate::security::shadowmap::ShadowMap;
 use lopdf::Document;
 use lopdf::Object;
 use std::collections::{BTreeMap, HashMap};
-use tracing::{debug, warn};
+use tracing::debug;
 
 pub struct PdfExtractor;
 

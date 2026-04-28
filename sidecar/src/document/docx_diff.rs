@@ -1,5 +1,5 @@
 use crate::error::{Result, SidecarError};
-use crate::document::diff::{DiffResult, DiffOp, DiffEngine};
+use crate::document::diff::DiffEngine;
 
 pub struct DocxDiffGenerator;
 

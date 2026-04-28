@@ -1,8 +1,6 @@
-use crate::error::{Result, SidecarError};
-use crate::document::validate_file_size;
+use crate::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 #[async_trait]
 pub trait CloudConnector: Send + Sync {

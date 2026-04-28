@@ -290,7 +290,7 @@ pub fn detect_language_from_text(text: &str) -> String {
         .count();
     let cjk = text
         .chars()
-        .filter(|c| (*c >= '\u{4E00}' && *c <= '\u{9FFF}'))
+        .filter(|c| *c >= '\u{4E00}' && *c <= '\u{9FFF}' )
         .count();
     let latin = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
 

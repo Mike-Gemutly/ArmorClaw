@@ -2,7 +2,6 @@ use crate::error::{Result, SidecarError};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
-use std::collections::HashMap;
 
 #[async_trait]
 pub trait Embedder: Send + Sync {
