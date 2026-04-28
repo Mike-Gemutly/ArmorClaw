@@ -1329,7 +1329,7 @@ The Python sidecar extends document processing with legacy Microsoft Office form
 - **Performance**: Threshold streaming — in-memory for <10 MB, temp file for ≥10 MB
 - **Reliability**: TTL recycling — server exits after 50 requests for container restart cycling
 - **Communication**: gRPC over Unix Domain Socket (`/run/armorclaw/sidecar-office.sock`)
-- **Test Coverage**: 65 tests (27 worker + 16 edge cases + 12 interceptor + 10 Docker)
+- **Test Coverage**: 61 tests (23 worker + 16 edge cases + 12 interceptor + 10 Docker)
 
 **3-Layer Routing** (Go Bridge `RouteExtractText()`):
 

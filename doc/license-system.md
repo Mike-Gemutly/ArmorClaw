@@ -196,6 +196,27 @@ The enforcement layer sits between the Bridge's business logic and the license c
 | `GracePeriodDays` | `3` | Grace window |
 | `StrictMode` | `false` | Block all features on invalid license |
 
+### Team-Aware Enforcement
+
+The license system integrates with the team subsystem (`bridge/pkg/team/`) to enforce per-team governance and audit compliance:
+
+**Team Governance** (`bridge/pkg/team/governance.go`):
+- `GovernanceConfig` defines team size limits (`MaxMembersPerTeam`, `MaxTeamsPerInstance`) and allowed roles
+- `GovernanceEnforcer` validates team creation, member additions, and role assignments against governance limits
+- Per-team policy overrides allow individual teams to deviate from default risk-class handling (`overrides map[teamID][riskClass] → ALLOW or DEFER`)
+
+**Team Audit Events** (`bridge/pkg/team/audit.go`):
+- 7 event types: `team_created`, `team_dissolved`, `member_added`, `member_removed`, `role_assigned`, `delegation_sent`, `handoff_complete`
+- Each governance mutation emits a `TeamAuditEntry` with event ID, team ID, agent ID, role, and timestamp
+
+**Team Metrics** (`bridge/pkg/team/metrics.go`):
+- Per-team tracking: token usage, cost, latency, handoff success rate, secret access count, approval rates
+- `TeamMetricsSnapshot` provides read-only metric views per team
+
+**Team Roles** (`bridge/pkg/team/roles.go`):
+- Built-in role registry with capability sets (browser, form filling, document processing, etc.)
+- Roles gated by license tier — Pro and Enterprise tiers unlock additional capabilities
+
 ## Integration Points
 
 ### Bridge Startup Sequence

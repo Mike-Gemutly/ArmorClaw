@@ -256,7 +256,7 @@ The central adapter. `MatrixAdapter` is a full Matrix client that syncs with the
 
 The `processEvents()` method is called after each successful `/sync`. It iterates through joined room timelines and routes events by type:
 
-1. **`m.room.message` events** go through the full trust/PII pipeline. Before queuing, the adapter checks for studio commands via `StudioCommandHandler.HandleMatrixMessage()`. If a studio handler consumes the event, it skips the queue. Otherwise, the event is pushed to `eventQueue` and published to the `MatrixEventBus` and `EventPublisher` (if configured).
+1. **`m.room.message` events** go through the full trust/PII pipeline. Before queuing, the adapter checks for studio commands via `StudioCommandHandler.HandleMatrixMessage()`. If a studio handler consumes the event, it skips the queue. Otherwise, the event is pushed to `eventQueue` and published to the `MatrixEventBus`.
 
 2. **Custom ArmorClaw event types** are routed by prefix:
    - `workflow.*` (progress, step_progress, step_error, blocker_warning, blocked, timeline) are forwarded to `publishCustomEvent()`
@@ -264,7 +264,7 @@ The `processEvents()` method is called after each successful `/sync`. It iterate
    - `blocker.*` (required, etc.) are forwarded the same way
    - Other dotted types not starting with `m.` are logged at debug level
 
-`publishCustomEvent()` publishes to both the `MatrixEventBus` (high-throughput ring buffer) and the `EventPublisher` (legacy event bus adapter). The publisher call runs in a goroutine to avoid blocking sync.
+`publishCustomEvent()` publishes to the `MatrixEventBus` (high-throughput ring buffer). The publisher call runs in a goroutine to avoid blocking sync.
 
 **MatrixEventBus integration:**
 

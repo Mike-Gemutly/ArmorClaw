@@ -40,7 +40,7 @@ The Mobile Secretary feature enables ArmorClaw to act as an autonomous personal 
 |-----------|----------|--------|
 | **Browser Automation** | `container/openclaw-src/browser/` | ✅ Full Playwright integration |
 | **Browser Skills** | `container/openclaw-src/skills/` | ✅ 50+ skills, route system |
-| **BlindFill Engine** | `container/openclaw-src/blindfill/` | ✅ Complete with sensitivity levels |
+| **BlindFill Engine** | `bridge/pkg/pii/` (Go-side; Rust vault blindfill removed v0.9.0) | ✅ Complete with sensitivity levels |
 | **PII Request System** | `bridge/pkg/rpc/` | ✅ `pii.request_access`, `approve`, `reject` |
 | **Encrypted Keystore** | `bridge/pkg/keystore/` | ✅ SQLCipher, hardware-derived keys |
 | **Agent Framework** | `container/openclaw/agent.py` | ✅ Basic agent with Matrix |
@@ -761,7 +761,7 @@ func (s *BrowserSkill) Navigate(url string) (*NavigateResult, error) {
 **Connect existing BlindFill to status events:**
 
 ```go
-// In bridge/pkg/blindfill/engine.go
+// In bridge/pkg/pii/engine.go (Rust vault blindfill removed v0.9.0)
 
 func (e *BlindFillEngine) FillForm(fields []PIIField) error {
     // Emit status: AWAITING_APPROVAL
@@ -844,7 +844,7 @@ bridge/pkg/rpc/server.go              # Add status + unseal RPC methods
 shared/.../matrix/events.go           # Add agent status event type
 container/openclaw/agent.py           # Integrate state machine
 bridge/pkg/skills/browser.go          # Add status emissions
-bridge/pkg/blindfill/engine.go        # Add status emissions
+bridge/pkg/pii/engine.go              # Add status emissions (blindfill path removed v0.9.0)
 androidApp/.../screens/chat/ChatScreen.kt  # Add status banner
 ```
 

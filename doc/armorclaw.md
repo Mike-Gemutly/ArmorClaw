@@ -22,7 +22,7 @@
 
 | Task | Required Reading |
 |------|-----------------|
-| Modify PII injection / BlindFill | `bridge/pkg/pii/` and `rust-vault/src/blindfill/placeholder.rs` |
+| Modify PII injection / BlindFill | `bridge/pkg/pii/` and Jetski CDP proxy (`jetski/`) |
 | Add or change RPC methods | `bridge/pkg/rpc/server.go` and `docs/reference/rpc-api.md` |
 | Change agent state transitions | `bridge/pkg/agent/state.go` and `bridge/pkg/agent/state_machine.go` |
 | Modify Matrix event handling | `bridge/internal/adapter/` and `bridge/pkg/matrix/` |
@@ -241,8 +241,8 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 
 ```
 armorclaw-omo/
-├── bridge/                    # Go Bridge orchestrator (60 packages)
-│   ├── cmd/bridge/main.go    # Primary entry point (3,503 lines)
+├── bridge/                    # Go Bridge orchestrator (67 packages)
+│   ├── cmd/bridge/main.go    # Primary entry point (3,527 lines)
 │   ├── pkg/                  # Public packages
 │   │   ├── rpc/              # JSON-RPC 2.0 server (89 registered methods)
 │   │   ├── keystore/         # SQLCipher encrypted storage
@@ -273,7 +273,7 @@ armorclaw-omo/
 │   │   ├── vault/proto/      # Governance gRPC client (v6 microkernel)
 │   │   ├── toolsidecar/      # Tool sidecar provisioning (v6-gated)
 │   │   └── ... (50 more)
-│   └── internal/             # Internal implementation (19 packages)
+│   └── internal/             # Internal implementation (17 packages)
 │       ├── adapter/          # Matrix/Slack adapters
 │       ├── ai/               # AI service
 │       ├── skills/           # Built-in skills
@@ -281,12 +281,11 @@ armorclaw-omo/
 │
 ├── rust-vault/               # Rust security enclave (library crate, not a deployed service)
 │   ├── src/
-│   │   ├── blindfill/        # BlindFill placeholder parser + CDP interceptor (library)
 │   │   ├── db/               # SQLCipher vault + matrix state databases
 │   │   ├── governance/       # gRPC governance service (ephemeral tokens)
 │   │   └── grpc/             # gRPC server with mTLS auth
 │   ├── proto/governance.proto
-│   └── tests/                # 58 tests (config, vault, placeholder, CDP, mTLS)
+│   └── tests/                # 33 tests (config, vault, mTLS — blindfill tests removed v0.9.0)
 │
 ├── jetski/                    # Go CDP proxy with Tethered Mode security
 │   ├── cmd/observer/main.go  # Primary entry point
@@ -442,7 +441,7 @@ type Server struct {
 | `pkg/eventbus/` | Event broadcasting to WebSocket clients (v0.7.0: wired to WebSocket for live push) |
 | `pkg/config/` | TOML configuration management |
 | `pkg/logger/` | Structured logging |
-| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator (parallel + integration), event reader, audit, rolodex, blindfill, browser integration, calendar service, WebDAV service, notifications, studio integration, template engine, trusted workflows, bridge-local registry, doc query registration, RPC, store, cleanup, result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
+| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator (parallel + integration), event reader, audit, rolodex, browser integration, calendar service, WebDAV service, notifications, studio integration, template engine, trusted workflows, bridge-local registry, doc query registration, RPC, store, cleanup, result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
 | `pkg/health/` | Health check and readiness monitoring |
 | `pkg/runtime/` | Bridge runtime configuration and lifecycle |
 
@@ -936,22 +935,22 @@ The Rust Vault is a **security-hardened cryptographic enclave** that provides he
 This means:
 - The Rust Vault **runs as a standalone process** alongside the Bridge in production
 - There is **no runtime port conflict** with Jetski (see below) — communication is Unix socket only
-- The `CdpInterceptor` in `rust-vault/src/blindfill/cdp_interceptor.rs` provides placeholder parsing and resolution logic
+- The `blindfill` module was **removed in v0.9.0** (commit 1563260) — superseded by Jetski CDP proxy
 - The governance gRPC service (`rust-vault/src/governance/`) is activated when the v6 microkernel flag is enabled
 
 ### Relationship to Jetski Browser Sidecar
 
-The Rust Vault and Jetski both touch CDP interception, but at different abstraction levels:
+The Rust Vault's blindfill module (Phase 1 CDP interception) was removed in v0.9.0. Jetski is now the sole CDP security layer.
 
-| Aspect | Rust Vault CdpInterceptor | Jetski CDP Proxy |
+| Aspect | Rust Vault (historical) | Jetski CDP Proxy |
 |--------|--------------------------|-----------------|
-| **Type** | Rust library function | Standalone Go binary (Docker container) |
-| **What it does** | Generates `Fetch.enable` params, resolves `{{VAULT:field:hash}}` placeholders | Full WebSocket proxy between agent and Lightpanda engine |
+| **Type** | Library (removed v0.9.0) | Standalone Go binary (Docker container) |
+| **What it did** | Generated `Fetch.enable` params, resolved `{{VAULT:field:hash}}` placeholders | Full WebSocket proxy between agent and Lightpanda engine |
 | **Port usage** | None (library, no listener) | Listens on 9222 (CDP), 9223 (RPC) |
 | **PII handling** | Placeholder format validation | Active CDP message-level PII scrubbing |
-| **Runtime state** | Compiles, 58 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
+| **Runtime state** | Removed in commit 1563260 | Deployed via `docker-compose.jetski.yml` |
 
-**In practice**: Jetski is the **sole active CDP security layer**. The Rust Vault's CDP interceptor module (`blindfill`) is **vestigial with zero production callers** — it represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level. The `blindfill` module is retained solely for test coverage.
+> **Note**: The Go-side BlindFill engine (`bridge/pkg/pii/`) remains active and handles placeholder resolution at the Bridge level. The `{{VAULT:field:hash}}` format is still used for PII injection workflows.
 
 ### Architecture
 
@@ -1075,9 +1074,6 @@ pub struct VaultConfig {
     
     // Concurrency
     pub max_concurrent: usize,     // Default: 10
-    
-    // BlindFill
-    pub cdp_enabled: bool,         // Default: true
 }
 ```
 
@@ -1123,13 +1119,13 @@ service Keystore {
 
 ### Testing
 
-**Test Coverage: 58 tests (cargo test --lib)**
+**Test Coverage: 33 tests (cargo test --lib)**
 
 **Run Tests:**
 
 ```bash
 cd rust-vault
-cargo test --all
+cargo test --lib
 cargo clippy -- -D warnings
 ```
 
@@ -1202,17 +1198,12 @@ The Rust Vault enforces **strict placeholder masking** to prevent agents from ev
 
 #### Implementation Details
 
-**Placeholder Parser** (`rust-vault/src/blindfill/placeholder.rs`):
+**Go BlindFill Engine** (`bridge/pkg/pii/`):
 - Validates strict `{{VAULT:field:hash}}` format
 - Rejects malformed placeholders with clear error messages
 - Prevents injection attacks via field/hash manipulation
-- Test coverage: 16 unit tests covering all validation cases
-
-**CDP Interceptor** (`rust-vault/src/blindfill/cdp_interceptor.rs`):
-- Intercepts XHR and Fetch requests only
-- Resolves placeholders to real values from keystore
-- Injects values at network layer
-- Zeroizes secrets after request completion
+- Resolves placeholders to real values from SQLCipher keystore
+- Values injected at browser form level via Jetski CDP proxy
 
 #### Use Cases
 
@@ -1251,7 +1242,6 @@ The Rust Vault enforces **strict placeholder masking** to prevent agents from ev
 - **Key Derivation**: 256,000 iterations (compatible with Go Bridge)
 - **Zeroization**: Immediate on drop, no caching
 - **Socket**: Unix domain socket (0600 permissions)
-- **Placeholder Resolution**: <1ms per placeholder lookup
 
 ### Troubleshooting
 
@@ -2040,6 +2030,8 @@ The EventBus (`bridge/pkg/eventbus/eventbus.go`) initializes a WebSocket connect
 
 **Crash-only design**: EventBus wiring uses `log.Fatalf` when WebSocket initialization fails. The Bridge must crash rather than run in a degraded state where events are silently lost. Do not add graceful fallback or retry logic to this path without CTO approval.
 
+**Handler registration**: Bridge-side event handlers are registered via `RegisterBridgeHandler()` (see `doc/communication-infra.md` for full details). This mechanism provides type-safe handler registration with panic recovery — if a handler panics, the EventBus captures a snapshot of registered handlers and continues, preventing cascading failures.
+
 **Event Types:**
 - **Matrix**: `matrix.message`, `matrix.receipt`, `matrix.typing`, `matrix.presence`
 - **Agent**: `agent.started`, `agent.stopped`, `agent.status_changed`, `agent.command`, `agent.error`
@@ -2251,7 +2243,7 @@ PENDING → RUNNING → COMPLETED
 
 Jetski is a **Go-based CDP (Chrome DevTools Protocol) proxy** that provides secure browser automation for ArmorClaw agents. It sits between AI agents and the browser engine, implementing **Tethered Mode** security with PII scrubbing, encrypted sessions, and human-in-the-loop approval.
 
-> **Architectural role**: Jetski is the **active CDP security layer** in the deployed system. It supersedes the Rust Vault's Phase 1 CDP interception design by operating as a full WebSocket proxy with richer security (PII scrubbing at the CDP message level, SQLCipher-encrypted sessions, and Matrix HITL approval). The Rust Vault's `CdpInterceptor` remains as a library providing placeholder resolution logic, but does not run as a separate process.
+> **Architectural role**: Jetski is the **active CDP security layer** in the deployed system. It supersedes the Rust Vault's Phase 1 CDP interception design (removed v0.9.0) by operating as a full WebSocket proxy with richer security (PII scrubbing at the CDP message level, SQLCipher-encrypted sessions, and Matrix HITL approval). The Go-side BlindFill engine (`bridge/pkg/pii/`) handles placeholder resolution at the Bridge level.
 
 ### Key Features
 

@@ -534,7 +534,7 @@ tmpfs:
 
 | Test File | Tests | Status |
 |-----------|-------|--------|
-| `sidecar-python/test_worker.py` | 27 | All pass |
+| `sidecar-python/test_worker.py` | 23 | All pass |
 | `sidecar-python/test_edge_cases.py` | 16 | All pass |
 | `sidecar-python/test_interceptor.py` | 12 | All pass |
 | `sidecar-python/test_docker_integration.py` | 10 | Skip when no Docker |
@@ -542,7 +542,7 @@ tmpfs:
 | `bridge/pkg/sidecar/office_client_test.go` | 22 | All pass |
 | `bridge/pkg/sidecar/office_client_e2e_test.go` | 7 | All pass |
 | `bridge/pkg/sidecar/java_sidecar_e2e_test.go` | 4 | Skip without Java 21 |
-| **Total** | **106** | **0 regressions** |
+| **Total** | **102** | **0 regressions** |
 
 #### Running Tests
 
