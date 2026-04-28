@@ -244,7 +244,7 @@ armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (60 packages)
 │   ├── cmd/bridge/main.go    # Primary entry point (3,503 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (83 registered methods + 5 public handlers)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (89 registered methods)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -394,7 +394,7 @@ armorclaw-omo/
 
 The Go Bridge is the **central orchestrator** that coordinates between the host system and isolated AI agent containers. It provides:
 - Secure credential management via SQLCipher
-- JSON-RPC 2.0 API (83 registered methods + 5 public handlers across 12 domains)
+- JSON-RPC 2.0 API (89 registered methods across 18 domains)
 - Matrix integration for encrypted messaging
 - Browser automation job queue
 - Skill execution with allowlist control
@@ -407,7 +407,7 @@ The Go Bridge is the **central orchestrator** that coordinates between the host 
 ```go
 type Server struct {
     // Core communication
-    handlers map[string]HandlerFunc  // 83 registered methods
+    handlers map[string]HandlerFunc  // 89 registered methods
     socketPath string
     listener net.Listener
     
@@ -2746,7 +2746,7 @@ The Rust Office Sidecar is a **high-performance data plane component** for heavy
 
 **Binary + Library: ✅ Compiles Clean**
 - 0 compilation errors (warnings only: unused imports, dead code)
-- 260 lib tests pass, 0 failures, 8 ignored
+- 252 lib tests pass, 0 failures, 8 ignored (260 total)
 - All 8 gRPC RPCs functional
 
 ```bash
@@ -2948,7 +2948,7 @@ cargo test --test document_integration_test
 - Rate Limiting: 15 tests (token bucket, replenishment, burst)
 - Document Processing: 220+ tests (PDF, DOCX, XLSX, OCR, convert)
 - gRPC Server: integration coverage via `sidecar/tests/e2e_integration_test.rs` (22 tests)
-- Total: 260 lib tests, 0 failures, 8 ignored
+- Total: 252 lib tests pass, 0 failures, 8 ignored (260 total)
 
 ### Security Constraints
 
@@ -3020,7 +3020,7 @@ The Rust Office Sidecar **compiles clean and is production-ready** for:
 - ✅ 8 gRPC RPCs functional (HealthCheck, UploadBlob, DownloadBlob, ListBlobs, DeleteBlob, ExtractText, ProcessDocument, QueryDocuments)
 - ✅ Secure token validation
 - ✅ Rate limiting and circuit breaking
-- ✅ 260 lib tests passing
+- ✅ 252 lib tests passing, 8 ignored (260 total)
 
 > See [doc/sidecar-pipeline.md](sidecar-pipeline.md) for the Go gRPC client, YARA scanner, and document pipeline architecture.
 
@@ -3204,7 +3204,7 @@ In addition to the reactive container-side compaction above, the Bridge now perf
 
 ## RPC API Reference
 
-### Health & System (7 methods)
+### Health & System (2 active + 5 planned)
 
 | Method | Parameters | Returns | Description |
 |--------|------------|---------|-------------|
@@ -3215,6 +3215,8 @@ In addition to the reactive container-side compaction above, the Bridge now perf
 | `system.info` | - | `{server, protocol, capabilities}` | System info |
 | `system.time` | - | `{server_time, server_time_utc}` | System time |
 | `device.validate` | `{device_id}` | `{valid, trust_level}` | Device validation |
+
+> † `system.health`, `system.config`, `system.info`, `system.time`, `device.validate` are defined in `public_handlers.go` but not yet wired into the RPC handler map.
 
 ### AI (1 method)
 
