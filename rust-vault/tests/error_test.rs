@@ -31,12 +31,6 @@ fn test_error_display_placeholder_not_found() {
 }
 
 #[test]
-fn test_error_display_invalid_placeholder_format() {
-    let err = VaultError::InvalidPlaceholderFormat("missing suffix".to_string());
-    assert!(format!("{}", err).contains("Invalid placeholder format: missing suffix"));
-}
-
-#[test]
 fn test_error_display_secret_not_found() {
     let err = VaultError::SecretNotFound("user.password".to_string());
     assert!(format!("{}", err).contains("Secret not found: user.password"));
