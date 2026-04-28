@@ -1,0 +1,44 @@
+name: Sidecar CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['sidecar/**']
+  pull_request:
+    branches: [main, develop]
+    paths: ['sidecar/**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.82.0
+          components: clippy
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sidecar/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('sidecar/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Install build deps
+        run: sudo apt-get install -y cmake clang nasm
+      - name: Build (dev)
+        run: cd sidecar && cargo build --bin armorclaw-sidecar
+      - name: Build (release)
+        run: cd sidecar && CC=clang CXX=clang++ cargo build --release --bin armorclaw-sidecar
+      - name: Test
+        run: cd sidecar && cargo test --lib
+      - name: Clippy
+        run: cd sidecar && cargo clippy -- -D warnings
+      - name: Upload release binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorclaw-sidecar-${{ runner.os }}
+          path: sidecar/target/release/armorclaw-sidecar
