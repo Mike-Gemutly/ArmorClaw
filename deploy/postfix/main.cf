@@ -1,0 +1,68 @@
+# ArmorClaw Postfix Configuration
+# Part of the ArmorClaw email ingestion pipeline
+# See: bridge/cmd/mta-recv/ for the pipe handler binary
+
+# =============================================================================
+# Host Identity
+# =============================================================================
+# These use shell variable placeholders — set ARMORCLAW_HOSTNAME and
+# ARMORCLAW_DOMAIN in the environment before starting Postfix.
+myhostname = $ARMORCLAW_HOSTNAME
+mydomain = $ARMORCLAW_DOMAIN
+myorigin = $mydomain
+
+# =============================================================================
+# Network
+# =============================================================================
+inet_interfaces = all
+inet_protocols = ipv4
+
+# =============================================================================
+# Mailbox and Message Size Limits
+# =============================================================================
+# 25 MB — must match mta-recv maxEmailSize (26 MB) minus envelope overhead.
+mailbox_size_limit = 26214400
+message_size_limit = 26214400
+
+# =============================================================================
+# Transport Routing
+# =============================================================================
+# Route messages through the armorclaw pipe transport defined in master.cf.
+transport_maps = hash:/etc/postfix/transport_maps
+
+# =============================================================================
+# Anti-Spam / Hardening
+# =============================================================================
+smtpd_helo_required = yes
+disable_vrfy_command = yes
+smtpd_delay_reject = yes
+
+# =============================================================================
+# Relay Control
+# =============================================================================
+# Never act as an open relay — only permit mynetworks.
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+mynetworks_style = host
+
+# =============================================================================
+# TLS
+# =============================================================================
+smtpd_tls_security_level = may
+smtpd_tls_cert_file = /etc/armorclaw/certs/server.crt
+smtpd_tls_key_file = /etc/armorclaw/certs/server.key
+smtpd_tls_loglevel = 1
+smtpd_tls_received_header = yes
+smtpd_tls_session_cache_timeout = 3600s
+
+# Opportunistic TLS for outbound (not primary use case, but safe default)
+smtp_tls_security_level = may
+
+# =============================================================================
+# Aliases
+# =============================================================================
+alias_maps = hash:/etc/aliases
+
+# =============================================================================
+# Logging / Debug
+# =============================================================================
+maillog_file = /var/log/mail.log

@@ -1,0 +1,22 @@
+# ArmorClaw Postfix Configuration
+# Part of the ArmorClaw email ingestion pipeline
+# See: bridge/cmd/mta-recv/ for the pipe handler binary
+
+# =============================================================================
+# Transport Maps — route email domains to the armorclaw pipe transport
+# =============================================================================
+# After editing this file, rebuild the hash database:
+#   postmap /etc/postfix/transport_maps
+#
+# This maps recipient domains to Postfix transports defined in master.cf.
+# The "armorclaw:" transport hands the message to armorclaw-mta-recv via
+# the pipe daemon, which then forwards it to the IngestServer over
+# /run/armorclaw/email-ingest.sock.
+
+# Domain-specific routing (uncomment and modify as needed):
+# armorclaw.local    armorclaw:
+# yourdomain.com     armorclaw:
+
+# Catch-all — route everything to the armorclaw pipe transport.
+# Remove this line if you only want specific domains routed.
+*    armorclaw:

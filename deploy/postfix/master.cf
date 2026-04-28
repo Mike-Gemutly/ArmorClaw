@@ -1,0 +1,67 @@
+# ArmorClaw Postfix Configuration
+# Part of the ArmorClaw email ingestion pipeline
+# See: bridge/cmd/mta-recv/ for the pipe handler binary
+
+# =============================================================================
+# Postfix master process configuration
+# =============================================================================
+# Format:
+#   service  type  private  unpriv  chroot  wakeup  maxproc  command + args
+#
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# SMTP / submission
+# ---------------------------------------------------------------------------
+smtp      inet  n       -       y       -       -       smtpd
+submission inet n       -       y       -       -       smtpd
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+smtps     inet  n       -       y       -       -       smtpd
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+
+# ---------------------------------------------------------------------------
+# Local delivery agents
+# ---------------------------------------------------------------------------
+pickup    unix  n       -       y       60      1       pickup
+cleanup   unix  n       -       y       -       0       cleanup
+qmgr      unix  n       -       n       300     1       qmgr
+tlsmgr    unix  -       -       y       1000?   1       tlsmgr
+rewrite   unix  -       -       y       -       -       trivial-rewrite
+bounce    unix  -       -       y       -       0       bounce
+defer     unix  -       -       y       -       0       bounce
+trace     unix  -       -       y       -       0       bounce
+verify    unix  -       -       y       -       1       verify
+flush     unix  n       -       y       1000?   0       flush
+proxymap  unix  -       -       n       -       -       proxymap
+proxywrite unix -       -       n       -       1       proxymap
+showq     unix  n       -       y       -       -       showq
+error     unix  -       -       y       -       -       error
+retry     unix  -       -       y       -       -       error
+discard   unix  -       -       y       -       -       discard
+local     unix  -       n       n       -       -       local
+virtual   unix  -       n       n       -       -       virtual
+lmtp      unix  -       -       y       -       -       lmtp
+anvil     unix  -       -       y       -       1       anvil
+scache    unix  -       -       y       -       1       scache
+
+# ---------------------------------------------------------------------------
+# ArmorClaw pipe transport — routes email to mta-recv → IngestServer
+# ---------------------------------------------------------------------------
+# mta-recv positional args: <sender> <recipient> [queue_id]
+# It reads raw email from stdin and forwards to the IngestServer over
+# /run/armorclaw/email-ingest.sock (Unix domain socket).
+#
+# Exit codes:
+#   0  — accepted, IngestServer processed successfully
+#  65  — permanent failure (EX_DATAERR), Postfix bounces immediately
+#  75  — temporary failure (EX_TEMPFAIL), Postfix retries later
+#
+armorclaw  unix  -       n       n       -       10  pipe
+  flags=R user=armorclaw argv=/usr/local/bin/armorclaw-mta-recv ${sender} ${recipient} ${queue_id}
