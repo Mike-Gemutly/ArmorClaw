@@ -25,11 +25,6 @@ import (
 // matrixTracker tracks component events for the Matrix adapter
 var matrixTracker = errsys.GetComponentTracker("matrix")
 
-// EventPublisher interface for publishing events to external systems
-type EventPublisher interface {
-	Publish(event *MatrixEvent) error
-}
-
 // MatrixAdapter implements Matrix client protocol
 type MatrixAdapter struct {
 	homeserverURL    string
@@ -50,7 +45,6 @@ type MatrixAdapter struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	piiScrubber      *pii.Scrubber
-	eventPublisher   EventPublisher          // Event bus for real-time event publishing
 	lastExpiryCheck  time.Time               // P1-HIGH-1: Track last token expiry check
 	commandHandler   *CommandHandler         // Command handler for admin operations
 	studioCmdHandler StudioCommandHandler    // Studio command handler for Agent Factory
@@ -732,7 +726,6 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 				// Publish to high-throughput event bus if configured
 				m.mu.RLock()
 				bus := m.eventBus
-				publisher := m.eventPublisher
 				m.mu.RUnlock()
 
 				if bus != nil {
@@ -743,21 +736,6 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 						Type:    event.Type,
 						Content: event.Content,
 					})
-				}
-
-				if publisher != nil {
-					// Publish event asynchronously to avoid blocking sync
-					go func(e *MatrixEvent) {
-						if err := publisher.Publish(e); err != nil {
-							// Log but don't block on publish failures
-							logger.Global().Warn("Failed to publish event to event bus",
-								"error", err,
-								"event_id", e.EventID,
-								"room_id", e.RoomID,
-								"sender", e.Sender,
-							)
-						}
-					}(&event)
 				}
 			}
 
@@ -803,7 +781,6 @@ func (m *MatrixAdapter) processEvents(syncResp *SyncResponse) int {
 func (m *MatrixAdapter) publishCustomEvent(event *MatrixEvent, roomID string) {
 	m.mu.RLock()
 	bus := m.eventBus
-	publisher := m.eventPublisher
 	m.mu.RUnlock()
 
 	if bus != nil {
@@ -814,19 +791,6 @@ func (m *MatrixAdapter) publishCustomEvent(event *MatrixEvent, roomID string) {
 			Type:    event.Type,
 			Content: event.Content,
 		})
-	}
-
-	if publisher != nil {
-		go func(e *MatrixEvent) {
-			if err := publisher.Publish(e); err != nil {
-				logger.Global().Warn("Failed to publish custom event to event bus",
-					"error", err,
-					"event_id", e.EventID,
-					"room_id", e.RoomID,
-					"type", e.Type,
-				)
-			}
-		}(event)
 	}
 }
 
@@ -1036,14 +1000,6 @@ func (m *MatrixAdapter) GetTrustedRooms() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]string{}, m.trustedRooms...)
-}
-
-// SetEventPublisher sets the event publisher for real-time event distribution
-// This allows the Matrix adapter to publish events to an event bus
-func (m *MatrixAdapter) SetEventPublisher(publisher EventPublisher) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.eventPublisher = publisher
 }
 
 // GetRoomMembers retrieves the list of members in a Matrix room
