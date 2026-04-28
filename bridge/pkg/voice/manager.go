@@ -14,6 +14,7 @@ import (
 	"log/slog"
 )
 
+// NOTE: Voice manager initialization is commented out in main.go. voiceMgr remains nil at runtime.
 // Manager integrates all voice call components
 type Manager struct {
 	// Core components

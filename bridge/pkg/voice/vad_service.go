@@ -7,6 +7,7 @@ import (
 	"log/slog"
 )
 
+// INTERFACE-ONLY: No concrete provider implementations exist. See doc/voice-stack.md.
 // SpeechDetector is the interface for voice activity detection
 type SpeechDetector interface {
 	DetectSpeech(ctx context.Context, audioData []byte) (*interfaces.VADResult, error)

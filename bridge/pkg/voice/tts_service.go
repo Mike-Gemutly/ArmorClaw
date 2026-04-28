@@ -7,6 +7,7 @@ import (
 	"log/slog"
 )
 
+// INTERFACE-ONLY: No concrete provider implementations exist. See doc/voice-stack.md.
 // Synthesizer is the interface for text-to-speech synthesis
 type Synthesizer interface {
 	Synthesize(ctx context.Context, text string) (*interfaces.SynthesisResult, error)

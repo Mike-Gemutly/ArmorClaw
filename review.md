@@ -27,7 +27,7 @@
 | browser-service (TS/Playwright) | Production Ready | `browser-service/` |
 | Secretary / Workflow Engine | Production Ready | `bridge/pkg/secretary/` |
 | Email HITL | Production Ready | `bridge/pkg/email/` |
-| Voice (WebRTC) | Production Ready | `bridge/pkg/webrtc/` |
+| Voice (WebRTC) | Partial — No STT/TTS/VAD Providers | `bridge/pkg/webrtc/` |
 | ArmorTerminal | Production Ready | `applications/ArmorTerminal/` |
 | OpenClaw (Agent Runtime) | Production Ready | `container/openclaw/` |
 | BrowserBroker (Go) | Production Ready | `bridge/pkg/browser/` |

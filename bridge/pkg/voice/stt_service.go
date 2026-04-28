@@ -7,6 +7,7 @@ import (
 	"log/slog"
 )
 
+// INTERFACE-ONLY: No concrete provider implementations exist. See doc/voice-stack.md.
 type Transcriber interface {
 	Transcribe(ctx context.Context, audioData []byte) (*interfaces.TranscriptionResult, error)
 }
