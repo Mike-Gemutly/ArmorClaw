@@ -429,3 +429,88 @@ The OpenClaw runtime provides two plugin hooks for triggering session compaction
 2. **`before_prompt_build` hook** (safety net): Fires at each LLM call before the prompt is assembled. Checks token estimate against threshold. Catches long single-task sessions that never cross a task boundary. More disruptive than `agent_end` since it fires mid-task.
 
 These hooks are OpenClaw-side (TypeScript) and do not require Bridge changes. The `agent_end` hook is the recommended primary trigger. See [Context Management Architecture in armorclaw.md](armorclaw.md#context-management-architecture) for the full three-tier approach.
+
+## Agent State Visibility
+
+### The 11 AgentStatus States
+
+`bridge/pkg/agent/state.go` defines 11 states for the agent lifecycle state machine. These represent the full set of phases an agent can occupy during a task, from idle startup through browsing, form interaction, human-in-the-loop waits, payment, and termination.
+
+| State | Constant | Description |
+|-------|----------|-------------|
+| `IDLE` | `StatusIdle` | No active task. Entry point and reset state. |
+| `INITIALIZING` | `StatusInitializing` | Agent starting up. New JS context created. |
+| `BROWSING` | `StatusBrowsing` | Navigating to or loading a URL. |
+| `FORM_FILLING` | `StatusFormFilling` | Filling form fields (input, textarea, select). |
+| `AWAITING_CAPTCHA` | `StatusAwaitingCaptcha` | Blocked on CAPTCHA. Needs human intervention. |
+| `AWAITING_2FA` | `StatusAwaiting2FA` | Blocked on 2FA code. Needs human input. |
+| `AWAITING_APPROVAL` | `StatusAwaitingApproval` | Blocked on BlindFill PII approval via `RequestPIIAccess` RPC. |
+| `PROCESSING_PAYMENT` | `StatusProcessingPayment` | Submitting a payment. |
+| `ERROR` | `StatusError` | Recoverable error. Can transition back to `IDLE` or `INITIALIZING`. |
+| `COMPLETE` | `StatusComplete` | Task finished successfully. Returns to `IDLE`. |
+| `OFFLINE` | `StatusOffline` | Agent not reachable. Terminal state, can only go to `INITIALIZING`. |
+
+Valid transitions are defined in the `ValidTransitions` map. Terminal states (`AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`, `OFFLINE`) require external action to leave. Active states (`BROWSING`, `FORM_FILLING`, `INITIALIZING`, `PROCESSING_PAYMENT`) indicate the agent is working. User-action states (`AWAITING_CAPTCHA`, `AWAITING_2FA`, `AWAITING_APPROVAL`) need human input from ArmorChat.
+
+### State Inference Engine (Not Wired in Production)
+
+The Bridge contains a state inference engine in `bridge/pkg/agent/state_inference.go` that maps CDP events and workflow engine status to `AgentStatus` values. The function `InferAgentState()` applies a 4-priority resolution:
+
+| Priority | Source | Maps to | Notes |
+|----------|--------|---------|-------|
+| 1 (highest) | Workflow side-channel | `AWAITING_CAPTCHA`, `AWAITING_2FA`, `PROCESSING_PAYMENT`, `OFFLINE` | Intentional blocking states invisible to CDP. |
+| 2 | Exit-driven states | `COMPLETE` (exit 0), `ERROR` (exit non-zero) | Workflow engine reports `exit_0` or `exit_nonzero`. |
+| 3 | Approval pinning | `AWAITING_APPROVAL` stays sticky | CDP events do not transition away from approval. Managed by `RequestPIIAccess` RPC. |
+| 4 (lowest) | CDP events | `BROWSING`, `FORM_FILLING`, `INITIALIZING` | `Page.frameNavigated`, `DOM.focus` on inputs, `Runtime.executionContextCreated`. Unknown events maintain current state. |
+
+The inference engine uses `ForceTransition` on the `StateMachine` because inferred transitions may not follow the normal valid-transitions graph. `ApplyInferredState()` is the convenience wrapper that combines inference with the actual state machine update.
+
+**Current status**: The inference engine is implemented and tested but not wired into the production path. Jetski's CDP proxy records frames but does not feed them into `InferAgentState()`. The `BroadcastStatus()` method relays transitions to clients via Matrix events, but since the inference engine is disconnected, production state transitions are limited to programmatic calls from `Integration` methods.
+
+### The Visibility Gap: Containers Cannot Report State
+
+Agent containers run with `NetworkMode: "none"` and have zero network access. They cannot call back to the Bridge to report which `AgentStatus` they are in. The Bridge observes only three coarse states via Docker: `running` (container exists), `completed` (exit 0), and `failed` (exit non-zero), plus structured `StepEvent` entries from `_events.jsonl`.
+
+From `bridge/pkg/agent/integration.go`:
+
+> "Container agents cannot report their state. BroadcastStatus() is not yet implemented."
+
+This means the 11-state state machine is a Bridge-side library. States advance based on Bridge-observed container lifecycle events (spawn, poll exit code) and programmatic API calls, not agent-reported phase transitions. The inference engine is the intended mechanism to bridge this gap by inferring fine-grained states from CDP events and workflow signals, but until it is wired in, only about 8 of the 11 states are reachable via the current programmatic path. The three unreachable states via inference alone are `AWAITING_CAPTCHA`, `AWAITING_2FA`, and `PROCESSING_PAYMENT` (these require the workflow side-channel, which is not connected). The `AWAITING_APPROVAL` state is reachable via the `RequestPIIAccess` RPC path.
+
+### 8 Parallel State Enums
+
+The codebase defines 8 distinct state enums across different packages. Each tracks a different lifecycle concern, and none are consolidated.
+
+| # | Enum Type | Package | Values | Domain |
+|---|-----------|---------|--------|--------|
+| 1 | `AgentStatus` | `bridge/pkg/agent/` | 11 states (`IDLE` through `OFFLINE`) | Agent operational phase |
+| 2 | `TaskStatus` | `bridge/internal/agent/` | 5 states: `pending`, `running`, `completed`, `failed`, `cancelled` | Runtime task lifecycle |
+| 3 | `BrowserStatus` | `bridge/pkg/browser/` | 5 states: `idle`, `navigating`, `loading`, `ready`, `error` | Browser session state |
+| 4 | `ServiceState` | `bridge/pkg/browser/` | 6 states: `IDLE`, `LOADING`, `FILLING`, `WAITING`, `PROCESSING`, `ERROR` | Browser-service HTTP client state |
+| 5 | `BrowserState` | `bridge/pkg/studio/` | 6 states: `LOADING`, `FILLING`, `WAITING`, `PROCESSING`, `IDLE`, `ERROR` | Browser skill event protocol state |
+| 6 | `JobStatus` (broker) | `bridge/pkg/browser/` | 7 states: `pending`, `running`, `paused`, `completed`, `failed`, `cancelled`, `awaiting_pii` | Jetski browser job queue |
+| 7 | `JobStatus` (queue) | `bridge/pkg/queue/` | 7 states: `pending`, `running`, `paused`, `completed`, `failed`, `cancelled`, `awaiting_pii` | Browser job queue (separate package) |
+| 8 | `InstanceStatus` | `bridge/pkg/studio/` | 6 states: `pending`, `running`, `paused`, `completed`, `failed`, `cancelled` | Agent instance (Docker container) lifecycle |
+| 9 | `WorkflowStatus` | `bridge/pkg/secretary/` | 6 states: `pending`, `running`, `blocked`, `completed`, `failed`, `cancelled` | Secretary workflow execution |
+
+**Note**: The task spec identified 8 enums, but source analysis reveals 9. `ServiceState` and `BrowserState` are separate enums in separate packages (`browser/` vs `studio/`) despite similar values. The two `JobStatus` types are also separate, defined independently in `browser/broker_types.go` and `queue/browser_queue.go`.
+
+### Reachability Summary
+
+Of the 11 `AgentStatus` states, not all are reachable through current production code paths:
+
+| State | Reachable via | Path |
+|-------|---------------|------|
+| `IDLE` | Programmatic | Default start state, reset after completion/error |
+| `INITIALIZING` | Programmatic + Inference (P4) | `Runtime.executionContextCreated` CDP event |
+| `BROWSING` | Programmatic + Inference (P4) | `Integration.StartBrowsing()`, `Page.frameNavigated` CDP |
+| `FORM_FILLING` | Programmatic + Inference (P4) | `Integration.UpdateProgress()`, `DOM.focus` on inputs |
+| `AWAITING_CAPTCHA` | Programmatic + Inference (P1) | `Integration.WaitForCaptcha()`, workflow "captcha" side-channel (not wired) |
+| `AWAITING_2FA` | Programmatic + Inference (P1) | `Integration.WaitFor2FA()`, workflow "twofa" side-channel (not wired) |
+| `AWAITING_APPROVAL` | Programmatic | `Integration.RequestPIIAccess()`, inference P3 keeps it sticky |
+| `PROCESSING_PAYMENT` | Programmatic + Inference (P1) | `Integration.StartPayment()`, workflow "payment" side-channel (not wired) |
+| `ERROR` | Programmatic + Inference (P2) | `Integration.FailTask()`, exit non-zero |
+| `COMPLETE` | Programmatic + Inference (P2) | `Integration.CompleteTask()`, exit zero |
+| `OFFLINE` | Programmatic + Inference (P1) | Default when no state machine events, workflow "offline" side-channel |
+
+The inference engine exists in `state_inference.go` but the Jetski CDP proxy does not feed frames into it. Until the inference path is connected, states like `AWAITING_CAPTCHA`, `AWAITING_2FA`, and `PROCESSING_PAYMENT` rely solely on explicit programmatic calls from `Integration` methods.

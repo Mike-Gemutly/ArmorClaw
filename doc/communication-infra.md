@@ -125,7 +125,9 @@ The event bus is the in-process pub/sub backbone for real-time Matrix event dist
 
 **Bridge events:**
 
-`PublishBridgeEvent` handles non-Matrix events (agent, workflow, HITL, budget, platform). These events implement the `BridgeEvent` interface (`EventType()`, `Timestamp()`, `ToJSON()`). They are wrapped, serialized, and broadcast to WebSocket clients via the `EventBroadcaster` adapter when the server is enabled. Broadcast failures are logged but don't fail the publish operation.
+`PublishBridgeEvent` handles non-Matrix events (agent, workflow, HITL, budget, platform, email). These events implement the `BridgeEvent` interface (`EventType()`, `Timestamp()`, `ToJSON()`). They are wrapped, serialized, and broadcast to WebSocket clients via the `EventBroadcaster` adapter when the server is enabled. Broadcast failures are logged but don't fail the publish operation.
+
+**In-process handlers**: `RegisterBridgeHandler(eventType, handler)` registers a callback for a specific event type. Handlers are dispatched in goroutines with panic recovery (panics are logged via securityLog). This is the mechanism used by EmailDispatcher to receive `email.received` events.
 
 **Error handling:**
 

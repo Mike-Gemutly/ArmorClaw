@@ -1,3 +1,9 @@
+// Package events implements the "Stream Bus" — a high-throughput ring buffer with cursor-based polling.
+//
+// Role: Durable event streaming with sequence numbers and cursor-based WaitForEvents.
+// Used by: Matrix sync events, workflow events, agent status, RPC long-poll (ArmorChat streaming).
+// NOT used for: Vault/email events (→ pkg/eventbus).
+// Key difference from pkg/eventbus: Cursor-replayable delivery with ordering guarantees.
 package events
 
 import (

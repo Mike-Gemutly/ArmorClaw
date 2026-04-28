@@ -1,5 +1,9 @@
-// Package eventbus provides event push mechanisms for real-time Matrix events
-// This enables containers to receive Matrix events in real-time without polling
+// Package eventbus implements the "Push Bus" — a fire-and-forget event delivery system.
+//
+// Role: Pushes typed BridgeEvent structs to WebSocket clients and in-process handlers.
+// Used by: Vault events, Email events (via RegisterBridgeHandler).
+// NOT used for: Matrix sync events, workflow events, agent status (→ internal/events).
+// Key difference from internal/events: No cursor/sequence semantics, at-most-once delivery.
 package eventbus
 
 import (
