@@ -66,6 +66,7 @@ ArmorClaw v4.7.0 introduces **automatic deployment mode detection** for zero-con
 | **Sentinel** ⚡ | Production VPS, public access | TCP + HTTPS | Let's Encrypt | ~5 min |
 | **Cloudflare Tunnel** | VPS behind NAT/firewall, no public IP | cloudflared tunnel | Cloudflare | ~3 min |
 | **Cloudflare Proxy** | Existing Cloudflare proxy, CDN | HTTP(S) | Cloudflare | ~5 min |
+| **Self-Hosted** | Home server, LAN-only | mDNS + self-signed TLS | Self-signed | ~5 min |
 
 ### Native Mode (Default)
 - **Communication:** Unix domain socket (`/run/armorclaw/bridge.sock`)
@@ -120,6 +121,27 @@ export CF_ZONE_ID=your-zone-id
 # Run installer
 curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/install.sh | bash
 ```
+
+### Self-Hosted Mode (LAN Appliance)
+- **Communication:** TCP + HTTPS via Caddy reverse proxy
+- **Access:** Local network only (mDNS discovery)
+- **TLS:** Self-signed certificates (auto-generated)
+- **Best for:** Home server, single VPS, no public domain needed
+
+**Activating Self-Hosted Mode:**
+```bash
+# Clone and run the self-hosted setup
+git clone https://github.com/Gemutly/ArmorClaw.git
+cd ArmorClaw
+sudo bash deploy/deploy-selfhosted.sh --auto
+```
+
+**Features:**
+- Zero-config mDNS discovery (`armorclaw.local`)
+- Self-signed TLS with automatic cert generation
+- Single-command setup and teardown
+- Works without public IP or domain name
+- Optional email pipeline (Postfix bare-metal)
 
 ### Environment Variables
 
@@ -576,6 +598,7 @@ curl -fsSL https://raw.githubusercontent.com/Gemutly/ArmorClaw/main/deploy/insta
 | **Cloudflare Proxy** | `CF_API_TOKEN=xxx CF_MODE=proxy CF_ZONE_ID=xxx bash install.sh` | Existing Cloudflare setup |
 | **Bridge-only** | `bash install.sh --bridge-only` | Testing, external Matrix |
 | **External Matrix** | `ARMORCLAW_EXTERNAL_MATRIX=true` | Use existing Matrix server |
+| **Self-Hosted** | `bash deploy/deploy-selfhosted.sh --auto` | Home server, LAN-only |
 
 ### Non-Interactive (CI/CD)
 

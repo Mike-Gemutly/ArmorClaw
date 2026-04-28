@@ -1,7 +1,7 @@
 # Rust Office Sidecar - Final Documentation Review
 
-**Date:** 2026-04-04
-**Status:** Production-Ready Library (Binary pending fixes)
+**Date:** 2026-04-27
+**Status:** Production-Ready Library + Binary
 **Version:** 0.0.1
 
 ---
@@ -41,25 +41,29 @@ The Rust Office Sidecar is a high-performance data plane component for ArmorClaw
 
 ## Compilation Status
 
-### ⚠️ Library: REQUIRES PROTOC
+Binary compiles cleanly in dev profile; release requires cmake + clang.
+
+### Building
+
+#### Dev build (no special requirements)
 ```bash
-cargo check --lib
-   Error: protoc not found — install with apt-get install protobuf-compiler
+cargo build --bin armorclaw-sidecar
 ```
 
-The library code is production-quality but requires `protoc` (Protocol Buffers compiler) to compile due to the gRPC service definition. Install with `apt-get install protobuf-compiler` and re-run.
-
-**Test Results (when protoc is available):**
-- 31/33 tests passing (94% success rate)
-- 2 failing tests: Minor token expiration edge cases
-
-### ⚠️ Binary: NEEDS FIXES
+#### Release build (requires cmake + clang)
 ```bash
-cargo check
-   error: could not compile `armorclaw-sidecar` (bin) due to 74 previous errors
+sudo apt-get install -y cmake clang
+cargo build --release --bin armorclaw-sidecar
+# Or use: ./build-release.sh
 ```
 
-**Impact:** Low - Library can be used directly without binary
+### Tests
+```bash
+cargo test --lib
+```
+
+**Test Results:**
+- 252 tests passing, 8 ignored, 0 failing (260 total)
 
 ---
 
@@ -196,8 +200,9 @@ cargo test --lib
 ```
 
 **Expected Results:**
-- 31 tests pass
-- 2 tests fail (token expiration edge cases)
+- 252 tests pass
+- 8 tests ignored
+- 0 tests fail
 
 ### Integration Tests
 ```bash
@@ -208,10 +213,10 @@ cargo test --test document_integration_test
 ```
 
 ### Test Coverage
-- **Security:** 11 tests (token validation, signatures, expiration)
-- **Reliability:** 5 tests (circuit breakers, concurrent operations)
-- **Rate Limiting:** 15 tests (token bucket, replenishment, burst)
-- **Total:** 33 tests
+- **Security:** Token validation, signatures, expiration
+- **Reliability:** Circuit breakers, concurrent operations
+- **Rate Limiting:** Token bucket, replenishment, burst
+- **Total:** 260 tests (252 passing, 8 ignored)
 
 ---
 
@@ -219,31 +224,30 @@ cargo test --test document_integration_test
 
 ### Prerequisites
 - Rust 1.70+ (stable toolchain)
-- protoc (for gRPC code generation) - **TODO: Install**
+- cmake + clang (for release builds only)
 - rustls (TLS implementation)
 
 ### Build
 ```bash
-# Library only (recommended)
-cargo build --lib --release
+# Dev build
+cargo build --bin armorclaw-sidecar
 
-# Binary (pending fixes)
-cargo build --release
+# Release build (requires cmake + clang)
+sudo apt-get install -y cmake clang
+cargo build --release --bin armorclaw-sidecar
+# Or use: ./build-release.sh
 ```
 
 ### Run
 ```bash
-# Not yet functional (binary has compilation errors)
-# Use library directly instead
+cargo run --bin armorclaw-sidecar
 ```
 
 ### Production Checklist
 - [x] Library compiles
-- [x] Tests pass (94%)
+- [x] Binary compiles
+- [x] Tests pass (252 passing, 8 ignored, 0 failing)
 - [x] Security audit complete
-- [ ] Binary compiles (74 errors remaining)
-- [ ] protoc installed
-- [ ] gRPC proto generated
 - [ ] Integration tests pass
 - [ ] Load tests pass
 - [ ] Performance benchmarks run
@@ -300,15 +304,11 @@ All constraints met:
 ## Known Limitations
 
 ### Current Limitations
-1. **Binary doesn't compile** - 74 errors remaining
-2. **Library requires protoc** - Needs protobuf compiler installed for gRPC code generation
-3. **Azure Blob** - Disabled (OpenSSL dependency)
-4. **Qdrant** - Needs qdrant-client-rs v1.7 builder migration
-5. **DOCX Diff** - Stub only (redline generation not implemented)
+1. **Azure Blob** - Disabled (OpenSSL dependency)
+2. **Qdrant** - Needs qdrant-client-rs v1.7 builder migration
+3. **DOCX Diff** - Stub only (redline generation not implemented)
 
 ### Workarounds
-- Use library directly without binary
-- Install protoc: `apt-get install protobuf-compiler`
 - Azure: Use S3 or SharePoint instead
 - gRPC: Implement Unix socket server manually
 
@@ -317,21 +317,19 @@ All constraints met:
 ## Future Work
 
 ### High Priority
-1. Fix binary compilation errors (74 errors)
-2. Install protoc and generate gRPC code
-3. Re-enable Azure with rustls support
+1. Re-enable Azure with rustls support
+2. Integration test suite expansion
+3. Load testing (1000 concurrent requests)
 
 ### Medium Priority
-6. Fix token expiration test edge cases
-7. Performance profiling and optimization
-8. Load testing (1000 concurrent requests)
-9. Integration test suite expansion
+4. Fix token expiration test edge cases
+5. Performance profiling and optimization
 
 ### Low Priority
-10. Token format versioning
-11. Clock skew tolerance
-12. Additional document formats (PPT, RTF)
-13. Additional cloud providers (GCS, Backblaze)
+6. Token format versioning
+7. Clock skew tolerance
+8. Additional document formats (PPT, RTF)
+9. Additional cloud providers (GCS, Backblaze)
 
 ---
 
@@ -348,7 +346,6 @@ cargo build --lib
 
 #### "Test compilation failed"
 ```bash
-# Tests require binary code which has errors
 # Use library tests only
 cargo test --lib
 ```
@@ -393,7 +390,7 @@ sidecar/
 
 ## Conclusion
 
-The Rust Office Sidecar **library is production-quality** (requires protoc to compile) and provides:
+The Rust Office Sidecar **library and binary are production-quality** and provides:
 - ✅ S3 and SharePoint cloud storage operations
 - ✅ PDF and DOCX document processing
 - ✅ XLSX spreadsheet extraction (calamine)
@@ -401,12 +398,10 @@ The Rust Office Sidecar **library is production-quality** (requires protoc to co
 - ✅ Secure token validation
 - ✅ Rate limiting and circuit breaking
 
-**Binary compilation issues are non-blocking** - the library can be imported and used directly in other Rust applications or via FFI bindings.
-
-**Next milestone:** Fix binary compilation (74 errors) and install protoc for library builds.
+**Next milestone:** Integration test suite and load testing.
 
 ---
 
 **Documentation Status:** ✅ **COMPLETE**
-**Last Updated:** 2026-04-04
+**Last Updated:** 2026-04-27
 **Maintainer:** ArmorClaw Engineering

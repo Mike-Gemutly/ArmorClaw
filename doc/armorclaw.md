@@ -1366,6 +1366,57 @@ Phase 2 added a **secure document processing pipeline** to ArmorClaw, providing 
 
 ---
 
+## Sovereign Email Pipeline
+
+### Purpose
+
+The sovereign email pipeline lets ArmorClaw receive and process inbound email without relying on third-party services. Postfix handles SMTP delivery, and a Go binary (`mta-recv`) pipes messages into the Bridge.
+
+### Data Flow
+
+```
+Postfix (port 25) -> pipe transport -> mta-recv -> email-ingest.sock -> IngestServer -> YARA -> PII scan -> EmailDispatcher -> Secretary workflow
+```
+
+### Components
+
+| Component | Language | File | Purpose |
+|-----------|----------|------|---------|
+| **Postfix** | Config | `deploy/postfix/main.cf`, `deploy/postfix/master.cf` | SMTP listener, pipe transport to armorclaw |
+| **mta-recv** | Go | `bridge/cmd/mta-recv/` | Reads stdin from Postfix pipe, writes to Unix socket |
+| **IngestServer** | Go | `bridge/pkg/email/` | Reads from `email-ingest.sock`, runs YARA + PII scan |
+| **EmailDispatcher** | Go | `bridge/pkg/email/` | Routes sanitized email to Secretary workflow |
+| **Bridge wiring** | Go | `bridge/cmd/bridge/main.go` | Starts IngestServer + EmailDispatcher at startup |
+
+### Setup
+
+```bash
+# Install Postfix with ArmorClaw pipe transport
+sudo bash deploy/postfix/install.sh
+
+# Verify configuration
+sudo bash deploy/postfix/verify-setup.sh
+```
+
+The installer is idempotent and safe to re-run. It configures Postfix `master.cf` with the `armorclaw` pipe transport and sets up `transport_maps` for email routing.
+
+### RPC Methods
+
+Email approval is exposed through 4 RPC methods (see [Email Approval](#email-approval-4-methods) in the RPC API Reference):
+
+| Method | Purpose |
+|--------|---------|
+| `approve_email` | Approve a pending email |
+| `deny_email` | Deny a pending email |
+| `email_approval_status` | Check approval status |
+| `email.list_pending` | List pending approvals |
+
+### Testing
+
+The email pipeline is covered by `tests/test-email-pipeline.sh` (Tier A, 7 scenarios: M0-M6) and `tests/test-cross-workflow-email.sh` (Secretary to Email Approval cross-subsystem).
+
+---
+
 ## Matrix Conduit Control Plane
 
 ### Purpose
@@ -3565,14 +3616,14 @@ priority_levels = 3                      # Number of priority levels (1-10)
 
 ### Mode Comparison
 
-| Feature | Native | Sentinel | Cloudflare Tunnel | Cloudflare Proxy |
-|---------|--------|----------|-------------------|------------------|
-| **Use Case** | Development | Production VPS | NAT/firewall | Existing CF |
-| **Communication** | Unix socket | TCP + TLS | cloudflared tunnel | HTTP(S) proxy |
-| **Access** | Local-only | Public | Public | Public |
-| **TLS** | None | Let's Encrypt | Cloudflare SSL | Cloudflare SSL |
-| **Public IP Required** | No | Yes | No | Yes |
-| **Setup Time** | ~2 min | ~5 min | ~3 min | ~5 min |
+| Feature | Native | Sentinel | Cloudflare Tunnel | Cloudflare Proxy | Self-Hosted |
+|---------|--------|----------|-------------------|------------------|-------------|
+| **Use Case** | Development | Production VPS | NAT/firewall | Existing CF | Home server, LAN |
+| **Communication** | Unix socket | TCP + TLS | cloudflared tunnel | HTTP(S) proxy | TCP + HTTPS (Caddy) |
+| **Access** | Local-only | Public | Public | Public | mDNS (LAN only) |
+| **TLS** | None | Let's Encrypt | Cloudflare SSL | Cloudflare SSL | Self-signed |
+| **Public IP Required** | No | Yes | No | Yes | No |
+| **Setup Time** | ~2 min | ~5 min | ~3 min | ~5 min | ~5 min |
 
 ### Native Mode
 
@@ -3601,6 +3652,25 @@ ARMORCLAW_EMAIL=admin@your-domain.com
 CF_API_TOKEN=your-token
 CF_TUNNEL_DOMAIN=armorclaw.example.com
 ```
+
+### Self-Hosted Mode (LAN Appliance)
+
+**Configuration:**
+```bash
+# Single-command setup
+sudo bash deploy/deploy-selfhosted.sh --auto
+
+# Custom hostname
+ARMORCLAW_HOSTNAME=myserver.local sudo bash deploy/deploy-selfhosted.sh --auto
+```
+
+**Key files:**
+- `docker-compose.selfhosted.yml` -- Docker Compose stack
+- `configs/Caddyfile.selfhosted` -- Reverse proxy with self-signed TLS
+- `deploy/scripts/generate-certs.sh` -- Self-signed cert generation and rotation
+- `.env.selfhosted` -- Environment template
+
+**mDNS service types:** `_armorclaw._tcp` and `_openclaw-gw._tcp` (both advertised for discovery).
 
 ---
 
