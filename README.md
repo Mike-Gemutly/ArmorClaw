@@ -1338,7 +1338,7 @@ Jetski is a Go CDP (Chrome DevTools Protocol) proxy that sits between AI agents 
 
 Mode A containers (NetworkMode "none", deterministic computation only) now produce structured execution events, stream progress to ArmorChat via Matrix, and persist learned skills:
 
-- **Event Emission**: Containers write `_events.jsonl` with 4 primary event types (STEP, PROGRESS, CHECKPOINT, ERROR) and PIPE_BUF (4096 byte) line enforcement
+- **Event Emission**: Containers write `_events.jsonl` with 11 event types (STEP, FILE_READ, FILE_WRITE, FILE_DELETE, COMMAND_RUN, OBSERVATION, BLOCKER, ERROR, ARTIFACT, PROGRESS, CHECKPOINT) and PIPE_BUF (4096 byte) line enforcement
 - **Progress Streaming**: Bridge tails `_events.jsonl` during execution (500ms polling), emits progress to MatrixEventBus, forwards to Matrix rooms as `m.notice` messages
 - **Learned Skills**: Successful task patterns extracted automatically (step sequences, checkpoints) and stored in SQLite as suggestions for future tasks (confidence >= 0.4, never auto-executed)
 - **Chart-Based Learned Skills**: Browser task patterns are extracted as NavCharts and stored in the `learned_charts` table with confidence scoring. Relevant charts for a target domain are injected into future browser steps alongside learned skills, letting agents reuse proven interaction patterns.

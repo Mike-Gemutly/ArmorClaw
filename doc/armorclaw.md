@@ -244,7 +244,7 @@ armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (60 packages)
 │   ├── cmd/bridge/main.go    # Primary entry point (3,503 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (89 registered methods + 5 public handlers)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (83 registered methods + 5 public handlers)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -394,7 +394,7 @@ armorclaw-omo/
 
 The Go Bridge is the **central orchestrator** that coordinates between the host system and isolated AI agent containers. It provides:
 - Secure credential management via SQLCipher
-- JSON-RPC 2.0 API (89 registered methods + 5 public handlers across 12 domains)
+- JSON-RPC 2.0 API (83 registered methods + 5 public handlers across 12 domains)
 - Matrix integration for encrypted messaging
 - Browser automation job queue
 - Skill execution with allowlist control
@@ -407,7 +407,7 @@ The Go Bridge is the **central orchestrator** that coordinates between the host 
 ```go
 type Server struct {
     // Core communication
-    handlers map[string]HandlerFunc  // 89 registered methods
+    handlers map[string]HandlerFunc  // 83 registered methods
     socketPath string
     listener net.Listener
     
@@ -948,7 +948,7 @@ The Rust Vault and Jetski both touch CDP interception, but at different abstract
 | **Type** | Rust library function | Standalone Go binary (Docker container) |
 | **What it does** | Generates `Fetch.enable` params, resolves `{{VAULT:field:hash}}` placeholders | Full WebSocket proxy between agent and Lightpanda engine |
 | **Port usage** | None (library, no listener) | Listens on 9222 (CDP), 9223 (RPC) |
-| **PII handling** | Placeholder format validation | Active net.Conn-level PII scrubbing |
+| **PII handling** | Placeholder format validation | Active CDP message-level PII scrubbing |
 | **Runtime state** | Compiles, 58 tests pass, not deployed as service | Deployed via `docker-compose.jetski.yml` |
 
 **In practice**: Jetski is the **sole active CDP security layer**. The Rust Vault's CDP interceptor module (`blindfill`) is **vestigial with zero production callers** — it represents the original Phase 1 design for network-layer BlindFill. Jetski superseded this design in Phase 2 by providing a richer security model (PII scrubbing, SQLCipher sessions, Matrix HITL approval) at the proxy level rather than the placeholder level. The `blindfill` module is retained solely for test coverage.
@@ -1709,7 +1709,7 @@ func (h *Handlers) handleTerminateContainer(req jsonrpc.Request) jsonrpc.Respons
 
 1. **Authentication**: Requires valid `user_id` parameter
 2. **Container Ownership**: Verifies container has ArmorClaw labels
-3. **Docker API**: Calls `ContainerKill()` with SIGTERM
+3. **Docker API**: Calls `ContainerKill()` with SIGKILL for immediate termination
 
 #### Usage
 
@@ -2061,7 +2061,7 @@ Browser automation does not run inside agent containers. Instead, the Jetski sid
 - **Jetski sidecar**: Separate container with network access, runs the CDP proxy and Lightpanda browser engine
 - **Communication path**: Agent → Bridge (Unix socket RPC) → Jetski (`:9222` CDP proxy) → Lightpanda (`:9333`)
 - **Outbound proxy rotation**: Jetski's `ProxyManager` rotates outbound proxies for anti-WAF purposes (not for giving agent containers network access)
-- **Security**: PII scrubbing at the net.Conn level, SQLCipher session encryption, Matrix HITL approval for sensitive operations
+- **Security**: PII scrubbing at the CDP message level, SQLCipher session encryption, Matrix HITL approval for sensitive operations
 
 > ⚠️ **CRITICAL**: Agent containers cannot browse the web directly. All browser automation goes through the Jetski sidecar. The Bridge brokers communication between the isolated agent container and the networked Jetski sidecar. Structured results are available in step mode via `result.json`.
 
@@ -2200,7 +2200,7 @@ PENDING → RUNNING → COMPLETED
 
 Jetski is a **Go-based CDP (Chrome DevTools Protocol) proxy** that provides secure browser automation for ArmorClaw agents. It sits between AI agents and the browser engine, implementing **Tethered Mode** security with PII scrubbing, encrypted sessions, and human-in-the-loop approval.
 
-> **Architectural role**: Jetski is the **active CDP security layer** in the deployed system. It supersedes the Rust Vault's Phase 1 CDP interception design by operating as a full WebSocket proxy with richer security (PII scrubbing at the `net.Conn` level, SQLCipher-encrypted sessions, and Matrix HITL approval). The Rust Vault's `CdpInterceptor` remains as a library providing placeholder resolution logic, but does not run as a separate process.
+> **Architectural role**: Jetski is the **active CDP security layer** in the deployed system. It supersedes the Rust Vault's Phase 1 CDP interception design by operating as a full WebSocket proxy with richer security (PII scrubbing at the CDP message level, SQLCipher-encrypted sessions, and Matrix HITL approval). The Rust Vault's `CdpInterceptor` remains as a library providing placeholder resolution logic, but does not run as a separate process.
 
 ### Key Features
 
@@ -2326,7 +2326,7 @@ security:
   passphrase: ""
   sessionDir: "./sessions"
   piiScanning: true
-  encryptSession: false
+  encryptSession: true
 
 network:
   proxyList: []
@@ -2345,7 +2345,7 @@ logging:
   structured: false
 
 approval:
-  enabled: false
+  enabled: true
   bridgeURL: "http://127.0.0.1:8080"
   roomID: ""
   timeout: 60s
@@ -2366,7 +2366,7 @@ approval:
 | `JETSKI_PASSPHRASE` | `security.passphrase` | (empty) |
 | `JETSKI_SESSION_DIR` | `security.sessionDir` | `./sessions` |
 | `JETSKI_PII_SCANNING` | `security.piiScanning` | `true` |
-| `JETSKI_ENCRYPT_SESSION` | `security.encryptSession` | `false` |
+| `JETSKI_ENCRYPT_SESSION` | `security.encryptSession` | `true` |
 | `JETSKI_PROXY_LIST` | `network.proxyList` | (comma-separated) |
 | `JETSKI_LOG_LEVEL` | `logging.level` | `INFO` |
 | `JETSKI_LOG_FORMAT` | `logging.format` | `text` |
@@ -2421,7 +2421,7 @@ approval:
 | Matrix HITL Approval | `internal/approval/matrix_client_test.go` | 12 | ✅ Pass |
 | E2E Tethered Mode | `tests/e2e_tethered_test.go` | 5 | ✅ Pass |
 
-**Total**: 195 Go tests, all passing
+**Total**: 183 Go tests, all passing
 
 ### NavChart Pipeline
 
@@ -2566,7 +2566,7 @@ Jetski **complements** (does not replace) the existing `browser-service/`:
 |--------|----------------|--------|
 | **Level** | Playwright automation API | CDP protocol proxy |
 | **Purpose** | High-level browser tasks | Low-level browser control |
-| **Security** | Job queue + PII approval | net.Conn level PII scrubbing |
+| **Security** | Job queue + PII approval | CDP message-level PII scrubbing |
 | **Language** | TypeScript | Go |
 | **Engine** | Playwright (Chromium) | Lightpanda |
 
@@ -3323,6 +3323,75 @@ In addition to the reactive container-side compaction above, the Bridge now perf
 | `hardening.status` | - | `HardeningState` | Hardening status |
 | `hardening.ack` | `{step}` | `HardeningState` | Acknowledge step |
 | `hardening.rotate_password` | `{new_password}` | `{success}` | Rotate password |
+
+### Secretary / Workflow (9 methods)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `secretary.start_workflow` | `{template_id, variables}` | `{workflow_id, status, steps[]}` | Start a new workflow from template |
+| `secretary.get_workflow` | `{workflow_id}` | `{workflow_id, status, state, steps[], current_step}` | Get workflow status and state |
+| `secretary.cancel_workflow` | `{workflow_id}` | `{workflow_id, status, cancelled_at}` | Cancel a running workflow |
+| `secretary.advance_workflow` | `{workflow_id, step_id, input}` | `{workflow_id, status, advanced_to}` | Manually advance a workflow step |
+| `secretary.list_templates` | - | `{templates[], count}` | List available workflow templates |
+| `secretary.create_template` | `{name, description, steps[]}` | `{template_id, status}` | Create a new workflow template |
+| `secretary.get_template` | `{template_id}` | `{template_id, name, steps[]}` | Get template definition |
+| `secretary.delete_template` | `{template_id}` | `{template_id, status}` | Delete a workflow template |
+| `secretary.update_template` | `{template_id, name?, description?, steps[]?}` | `{template_id, status}` | Update template definition |
+
+### Task Management (4 methods)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `task.create` | `{title, description, priority, due_date}` | `{task_id, status, created_at}` | Create a new task |
+| `task.list` | `{status?, limit?, offset?}` | `{tasks[], count, total}` | List tasks |
+| `task.get` | `{task_id}` | `{task_id, title, status, steps[], created_at}` | Get task details |
+| `task.cancel` | `{task_id}` | `{task_id, status, cancelled_at}` | Cancel a task |
+
+### Device Management (4 methods)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `device.list` | - | `{devices[], count}` | List registered devices |
+| `device.get` | `{device_id}` | `{device_id, name, status, trust_level, last_seen}` | Get device details |
+| `device.approve` | `{device_id}` | `{device_id, status, approved_at}` | Approve a pending device |
+| `device.reject` | `{device_id, reason?}` | `{device_id, status, rejected_at}` | Reject a pending device |
+
+### Invite Management (4 methods)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `invite.create` | `{max_uses?, expires_in?}` | `{code, expires_at, max_uses}` | Create an invite code |
+| `invite.list` | - | `{invites[], count}` | List active invites |
+| `invite.revoke` | `{code}` | `{code, status, revoked_at}` | Revoke an invite |
+| `invite.validate` | `{code}` | `{valid, expires_at, uses_remaining}` | Validate an invite code |
+
+### Email Approval (4 methods)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `approve_email` | `{approval_id, user_id}` | `{approval_id, status, approved_at}` | Approve a pending email |
+| `deny_email` | `{approval_id, user_id, reason?}` | `{approval_id, status, denied_at}` | Deny a pending email |
+| `email_approval_status` | `{approval_id}` | `{approval_id, status, email, created_at}` | Check email approval status |
+| `email.list_pending` | - | `{approvals[], count}` | List pending email approvals |
+
+### Container Management (2 methods)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `container.terminate` | `{container_id}` | `{container_id, status, terminated_at}` | Terminate a running container (SIGKILL) |
+| `container.list` | - | `{containers[], count}` | List running containers |
+
+### Account (1 method)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `account.delete` | `{user_id, confirmation}` | `{status, deleted_at}` | Delete user account |
+
+### Standalone Methods (1 method)
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `resolve_blocker` | `{workflow_id, blocker_id, resolution}` | `{workflow_id, blocker_id, status, resolved_at}` | Resolve a workflow blocker |
 
 ---
 
