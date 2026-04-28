@@ -1,0 +1,42 @@
+# ArmorClaw Self-Hosted Caddyfile
+# Internal-only TLS with self-signed certificates
+# No ACME, no Let's Encrypt, no public domain required
+#
+# Cert generation: deploy/scripts/generate-certs.sh
+# Cert rotation:  deploy/scripts/generate-certs.sh --rotate
+
+{$SELFHOSTED_HOSTNAME:armorclaw.local} {
+    tls /etc/armorclaw/certs/server.crt /etc/armorclaw/certs/server.key
+
+    # Bridge API routes
+    handle /api* {
+        reverse_proxy bridge:8080
+    }
+    handle /health {
+        respond "OK" 200
+    }
+    handle /discover {
+        reverse_proxy bridge:8080
+    }
+
+    # Matrix routes
+    handle /_matrix/* {
+        reverse_proxy matrix:6167
+    }
+
+    handle /.well-known/matrix/client {
+        header Content-Type application/json
+        header Access-Control-Allow-Origin *
+        respond `{"m.homeserver":{"base_url":"https://{$SELFHOSTED_HOSTNAME:armorclaw.local}"}}` 200
+    }
+
+    handle /.well-known/matrix/server {
+        header Content-Type application/json
+        header Access-Control-Allow-Origin *
+        respond `{"m.server":"{$SELFHOSTED_HOSTNAME:armorclaw.local}:443"}` 200
+    }
+
+    handle {
+        reverse_proxy matrix:6167
+    }
+}
