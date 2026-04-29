@@ -9,6 +9,7 @@ set -uo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${_SCRIPT_DIR}/lib/contract.sh"
+source "${_SCRIPT_DIR}/lib/tls.sh"
 
 log_info "========================================="
 log_info " Phase A2: Provisioning and Admin Bootstrap"
@@ -56,6 +57,35 @@ else
   log_info "A2.3: Bridge status not available"
 fi
 
+# ── A2.3b: Extract TLS metadata from bridge.status ──────────────────────────
+TLS_MODE="unknown"
+TLS_FP=""
+TLS_EXPIRES=0
+TLS_TRUST=""
+TLS_HEALTH="unknown"
+
+if [[ -n "$CONFIG_RESULT" ]] && echo "$CONFIG_RESULT" | jq -e '.result.tls' >/dev/null 2>&1; then
+  TLS_MODE=$(echo "$CONFIG_RESULT" | jq -r '.result.tls.mode')
+  TLS_FP=$(echo "$CONFIG_RESULT" | jq -r '.result.tls.fingerprint_sha256')
+  TLS_EXPIRES=$(echo "$CONFIG_RESULT" | jq -r '.result.tls.expires_at')
+  TLS_TRUST=$(echo "$CONFIG_RESULT" | jq -r '.result.tls.trust_type')
+  TLS_HEALTH=$(echo "$CONFIG_RESULT" | jq -r '.result.tls.health')
+  log_pass "A2.3b: TLS metadata — mode=$TLS_MODE, health=$TLS_HEALTH, fp=${TLS_FP:0:16}..."
+else
+  log_info "A2.3b: No TLS metadata in bridge.status"
+fi
+
+# Cross-check fingerprint endpoint
+FP_ENDPOINT=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "")
+if [[ -n "$FP_ENDPOINT" ]] && echo "$FP_ENDPOINT" | jq -e '.sha256' >/dev/null 2>&1; then
+  FP_EP_VALUE=$(echo "$FP_ENDPOINT" | jq -r '.sha256')
+  if [[ "$TLS_FP" == "$FP_EP_VALUE" ]]; then
+    log_pass "A2.3b: Fingerprint cross-check PASS"
+  else
+    log_info "A2.3b: Fingerprint mismatch — bridge.status=$TLS_FP endpoint=$FP_EP_VALUE"
+  fi
+fi
+
 # ── A2.4: Verify bridge health/status ────────────────────────────────────────
 log_info "A2.4: Verifying bridge health..."
 HEALTH_RESULT=$(_contract_bridge_rpc "$HEALTH_METHOD" '{}' 2 2>/dev/null || echo "")
@@ -91,7 +121,11 @@ if [[ -n "$WELL_KNOWN" ]] && echo "$WELL_KNOWN" | jq -e '.["m.homeserver"].base_
   log_pass "A2.6: Matrix client discovery: $HOMESERVER_URL"
 else
   HOMESERVER_URL="http://${VPS_IP}:${MATRIX_PORT}"
-  log_info "A2.6: Using default homeserver URL: $HOMESERVER_URL"
+  if [[ "$TLS_MODE" == "private" ]]; then
+    log_info "A2.6: /.well-known unavailable in private mode (self-signed cert) — using default"
+  else
+    log_info "A2.6: Using default homeserver URL: $HOMESERVER_URL"
+  fi
 fi
 
 # ── A2.7: Create test Matrix user ────────────────────────────────────────────
@@ -180,6 +214,11 @@ PROV_OUTPUTS=$(jq -nc \
   --arg room_id "$ROOM_ID" \
   --arg user_id "${USER_ID:-}" \
   --arg claim_status "$CLAIM_STATUS" \
+  --arg tls_mode "$TLS_MODE" \
+  --arg tls_fp "$TLS_FP" \
+  --argjson tls_expires "${TLS_EXPIRES:-0}" \
+  --arg tls_trust "$TLS_TRUST" \
+  --arg tls_health "$TLS_HEALTH" \
   '{
     homeserver_url: $homeserver_url,
     bridge_url: ("http://" + $vps_ip + ":" + $bridge_port),
@@ -190,12 +229,34 @@ PROV_OUTPUTS=$(jq -nc \
     test_room_id: $room_id,
     test_user_id: $user_id,
     provisioning_claim_status: $claim_status,
+    tls_mode: $tls_mode,
+    tls_fingerprint_sha256: $tls_fp,
+    cert_expires_at: $tls_expires,
+    tls_trust_hint: $tls_trust,
+    tls_health: $tls_health,
     timestamp: (now | todate)
   }')
 
 _contract_save "a2_provisioning_outputs.json" "$PROV_OUTPUTS"
 
 _contract_update_manifest_merge '.provisioning = $PROV' --argjson PROV "$PROV_OUTPUTS"
+
+# ── A2.9b: Write TLS checkpoint files ────────────────────────────────────────
+CHECKPOINT_DIR="${_REPO_ROOT}/.sisyphus/checkpoints/tls"
+mkdir -p "$CHECKPOINT_DIR"
+
+if [[ "$CLAIM_STATUS" == "success" || "$CLAIM_STATUS" == "already_claimed" ]]; then
+  [[ -n "$QR_CONFIG" ]] && echo "$QR_CONFIG" > "$CHECKPOINT_DIR/last_good_qr_config.json" && chmod 600 "$CHECKPOINT_DIR/last_good_qr_config.json"
+  [[ -n "$CONFIG_RESULT" ]] && echo "$CONFIG_RESULT" | jq '.result' > "$CHECKPOINT_DIR/last_good_bridge_status.json" && chmod 600 "$CHECKPOINT_DIR/last_good_bridge_status.json"
+  echo "$PROV_OUTPUTS" > "$CHECKPOINT_DIR/last_good_provisioning_outputs.json" && chmod 600 "$CHECKPOINT_DIR/last_good_provisioning_outputs.json"
+  log_pass "A2.9b: Checkpoint files written"
+fi
+
+# ── A2.9c: Clean checkpoints on full success ─────────────────────────────────
+if [[ "$MATRIX_SESSION_STATUS" == "SUCCESS" || "$MATRIX_SESSION_STATUS" == "BLOCKED" ]] && [[ "$CLAIM_STATUS" == "success" || "$CLAIM_STATUS" == "already_claimed" ]]; then
+  rm -f "$CHECKPOINT_DIR"/last_good_*.json 2>/dev/null
+  log_info "A2.9c: Checkpoints cleaned (full provisioning success)"
+fi
 
 _contract_save "a2_summary.json" "$(jq -nc \
   --arg phase "A2" --arg matrix "$MATRIX_SESSION_STATUS" --arg claim "$CLAIM_STATUS" \
