@@ -249,6 +249,31 @@ _contract_save "a0_matrix_status.json" "$(jq -nc \
   --argjson endpoints "$MATRIX_ENDPOINTS_JSON" \
   '{versions_response: $versions, well_known: $well_known, endpoints: $endpoints, note: "Full event discovery requires Matrix session from A2"}')"
 
+# ── A0.6b: Discover TLS metadata ──────────────────────────────────────────────
+log_info "A0.6b: Probing TLS metadata from bridge.status..."
+TLS_STATUS=""
+TLS_STATUS=$(_contract_bridge_rpc "bridge.status" "{}" 1 2>/dev/null || echo "")
+
+TLS_INFO_JSON='{"mode":"unknown","health":"unknown"}'
+if [[ -n "$TLS_STATUS" ]] && echo "$TLS_STATUS" | jq -e '.result.tls' >/dev/null 2>&1; then
+  TLS_INFO_JSON=$(echo "$TLS_STATUS" | jq '.result.tls')
+  log_pass "A0.6b: TLS metadata retrieved — mode=$(echo "$TLS_INFO_JSON" | jq -r '.mode'), health=$(echo "$TLS_INFO_JSON" | jq -r '.health')"
+else
+  log_info "A0.6b: bridge.status.tls not available (older bridge version or not running)"
+fi
+
+_contract_update_manifest_merge '.live_discovered.tls = $TLS' --argjson TLS "$TLS_INFO_JSON"
+_contract_save "a0_tls_status.json" "$TLS_INFO_JSON"
+
+# Also probe /fingerprint endpoint for cross-check
+FINGERPRINT_EP=""
+FINGERPRINT_EP=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "")
+if [[ -n "$FINGERPRINT_EP" ]] && echo "$FINGERPRINT_EP" | jq -e . >/dev/null 2>&1; then
+  _contract_update_manifest_merge '.live_discovered.tls.fingerprint_endpoint = $FP' --argjson FP "$FINGERPRINT_EP"
+fi
+
+_contract_update_manifest_merge '.live_discovered.tls.external_scheme = "https"'
+
 # ── A0.7: Document env var names ─────────────────────────────────────────────
 log_info "A0.7: Documenting env var names..."
 ENV_VARS_JSON=$(jq -nc '[

@@ -9,6 +9,7 @@ set -uo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${_SCRIPT_DIR}/lib/contract.sh"
+source "${_SCRIPT_DIR}/lib/tls.sh"
 
 log_info "========================================="
 log_info " Phase A1: Topology-Aware Deployment"
@@ -239,6 +240,28 @@ else
     log_info "A1.12: /.well-known not found (non-fatal for native mode)"
   fi
 fi
+
+# ── A1.12b: Generate TLS certs if sentinel mode ──────────────────────────────
+log_info "A1.12b: Checking TLS cert requirements..."
+CERTS_ON_VPS=$(ssh_vps "test -f /etc/armorclaw/certs/server.crt && echo EXISTS || echo MISSING" 2>/dev/null || echo "UNKNOWN")
+if [[ "$CERTS_ON_VPS" == "MISSING" ]]; then
+  log_info "A1.12b: Generating self-signed certs with public IP ${VPS_IP}..."
+  if ssh_vps "bash deploy/scripts/generate-certs.sh --public-ip ${VPS_IP} --output /etc/armorclaw/certs" 2>/dev/null; then
+    log_pass "A1.12b: Self-signed certs generated with public IP SAN"
+  else
+    log_info "A1.12b: Cert generation failed or script not available on VPS (non-fatal)"
+  fi
+else
+  log_pass "A1.12b: Certs already exist on VPS"
+fi
+
+TLS_METADATA=$(ssh_vps "cat /etc/armorclaw/certs/server.crt 2>/dev/null" 2>/dev/null | \
+  openssl x509 -noout -fingerprint -sha256 -enddate -subject -issuer 2>/dev/null || echo "")
+_contract_save "a1_tls_metadata.json" "$(echo "$TLS_METADATA" | jq -R -s '{
+  cert_details: .,
+  public_ip: $IP,
+  external_scheme: "https"
+}' --arg IP "$VPS_IP")"
 
 # ── A1.13: Collect deployment evidence ───────────────────────────────────────
 log_info "A1.13: Collecting deployment evidence..."
