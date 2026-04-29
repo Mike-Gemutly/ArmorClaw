@@ -1,8 +1,11 @@
 package setup
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -266,5 +269,107 @@ func TestGenerateAndWriteCert(t *testing.T) {
 	}
 	if _, err := os.Stat(result.KeyPath); os.IsNotExist(err) {
 		t.Error("key file was not created")
+	}
+}
+
+// TestFingerprintSHA256 verifies the SHA-256 DER fingerprint format and length
+func TestFingerprintSHA256(t *testing.T) {
+	cfg := SSLConfig{
+		ServerName:   "fingerprint-test.example.com",
+		Organization: "Test Org",
+		Expiry:       24 * time.Hour,
+	}
+
+	result, err := GenerateSelfSignedCert(cfg)
+	if err != nil {
+		t.Fatalf("failed to generate certificate: %v", err)
+	}
+
+	block, _ := pem.Decode(result.CertPEM)
+	if block == nil {
+		t.Fatal("failed to decode certificate PEM")
+	}
+
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256(block.Bytes))
+
+	if len(fingerprint) != 64 {
+		t.Errorf("expected 64-char fingerprint, got %d chars: %s", len(fingerprint), fingerprint)
+	}
+	for _, c := range fingerprint {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("fingerprint contains non-lowercase-hex char: %c in %s", c, fingerprint)
+			break
+		}
+	}
+}
+
+// TestPublicIPInSAN verifies that PublicIP is included in certificate SANs
+func TestPublicIPInSAN(t *testing.T) {
+	cfg := SSLConfig{
+		ServerName:   "san-test.example.com",
+		Organization: "Test Org",
+		Expiry:       24 * time.Hour,
+		PublicIP:     "203.0.113.10",
+	}
+
+	result, err := GenerateSelfSignedCert(cfg)
+	if err != nil {
+		t.Fatalf("failed to generate certificate: %v", err)
+	}
+
+	block, _ := pem.Decode(result.CertPEM)
+	if block == nil {
+		t.Fatal("failed to decode certificate PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("failed to parse certificate: %v", err)
+	}
+
+	found := false
+	for _, ip := range cert.IPAddresses {
+		if ip.Equal(net.ParseIP("203.0.113.10")) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected public IP 203.0.113.10 in certificate SANs")
+	}
+}
+
+// TestCertGenerationWithoutPublicIP verifies cert generation succeeds without PublicIP
+func TestCertGenerationWithoutPublicIP(t *testing.T) {
+	cfg := SSLConfig{
+		ServerName:   "no-ip.example.com",
+		Organization: "Test Org",
+		Expiry:       24 * time.Hour,
+	}
+
+	result, err := GenerateSelfSignedCert(cfg)
+	if err != nil {
+		t.Fatalf("failed to generate certificate without PublicIP: %v", err)
+	}
+
+	block, _ := pem.Decode(result.CertPEM)
+	if block == nil {
+		t.Fatal("failed to decode certificate PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("failed to parse certificate: %v", err)
+	}
+
+	foundLocal := false
+	for _, ip := range cert.IPAddresses {
+		if ip.IsLoopback() {
+			foundLocal = true
+			break
+		}
+	}
+	if !foundLocal {
+		t.Error("expected localhost IP in SANs even without PublicIP")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -114,7 +115,7 @@ func NewServer(config ServerConfig, rpcServer *rpc.Server) *Server {
 		config.Port = 8443
 	}
 	if config.CertDir == "" {
-		config.CertDir = "/var/lib/armorclaw/certs"
+		config.CertDir = "/etc/armorclaw/certs"
 	}
 	if config.Hostname == "" {
 		config.Hostname = "armorclaw.local"
@@ -247,20 +248,15 @@ func (s *Server) GetCertificatePEM() []byte {
 	return s.certPEM
 }
 
-// GetCertificateFingerprint returns the SHA-256 fingerprint of the certificate
+// GetCertificateFingerprint returns the standard SHA-256 fingerprint of the certificate (DER-encoded)
 func (s *Server) GetCertificateFingerprint() (string, error) {
 	block, _ := pem.Decode(s.certPEM)
 	if block == nil {
 		return "", fmt.Errorf("failed to decode certificate PEM")
 	}
 
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse certificate: %w", err)
-	}
-
-	fingerprint := fmt.Sprintf("%x", cert.Signature)
-	return fingerprint[:64], nil
+	hash := sha256.Sum256(block.Bytes)
+	return fmt.Sprintf("%x", hash), nil
 }
 
 func (s *Server) loadOrGenerateCerts() error {
@@ -268,10 +264,10 @@ func (s *Server) loadOrGenerateCerts() error {
 	keyFile := s.config.KeyFile
 
 	if certFile == "" {
-		certFile = filepath.Join(s.config.CertDir, "bridge.crt")
+		certFile = filepath.Join(s.config.CertDir, "server.crt")
 	}
 	if keyFile == "" {
-		keyFile = filepath.Join(s.config.CertDir, "bridge.key")
+		keyFile = filepath.Join(s.config.CertDir, "server.key")
 	}
 
 	if _, err := os.Stat(certFile); err == nil {
@@ -328,6 +324,10 @@ func (s *Server) generateSelfSignedCert() ([]byte, []byte, error) {
 	ips, err := getLocalIPs()
 	if err != nil {
 		ips = []net.IP{net.ParseIP("127.0.0.1")}
+	}
+
+	if extIP := getConfiguredExternalIP(s.config.Hostname); extIP != nil {
+		ips = append(ips, extIP)
 	}
 
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -1174,6 +1174,18 @@ func getLocalIPs() ([]net.IP, error) {
 	}
 
 	return ips, nil
+}
+
+func getConfiguredExternalIP(hostname string) net.IP {
+	if envIP := os.Getenv("ARMORCLAW_PUBLIC_IP"); envIP != "" {
+		if ip := net.ParseIP(envIP); ip != nil {
+			return ip
+		}
+	}
+	if ip := net.ParseIP(hostname); ip != nil {
+		return ip
+	}
+	return nil
 }
 
 func generateClientID() string {

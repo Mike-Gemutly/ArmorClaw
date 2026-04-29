@@ -975,7 +975,7 @@ func DefaultConfig() *Config {
 			Enabled:  false,
 			Hostname: "",
 			Port:     8443,
-			CertDir:  "/var/lib/armorclaw/certs",
+			CertDir:  "/etc/armorclaw/certs",
 		},
 		EventBus: EventBusConfig{
 			WebSocketEnabled:  false,

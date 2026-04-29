@@ -43,6 +43,9 @@ type SSLConfig struct {
 
 	// AdditionalSANs are additional Subject Alternative Names
 	AdditionalSANs []string
+
+	// PublicIP is an external/public IP to include in certificate SANs
+	PublicIP string
 }
 
 // SSLResult contains the generated certificate paths
@@ -114,6 +117,12 @@ func GenerateSelfSignedCert(cfg SSLConfig) (*SSLResult, error) {
 	// Allow localhost and IP addresses for development
 	template.DNSNames = append(template.DNSNames, "localhost")
 	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+
+	if cfg.PublicIP != "" {
+		if ip := net.ParseIP(cfg.PublicIP); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		}
+	}
 
 	// Generate certificate
 	certDER, err := x509.CreateCertificate(cryptorand.Reader, template, template, &privateKey.PublicKey, privateKey)
