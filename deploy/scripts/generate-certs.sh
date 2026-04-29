@@ -25,6 +25,7 @@ NC='\033[0m'
 OUTPUT_DIR="/etc/armorclaw/certs"
 HOSTNAME="armorclaw.local"
 LAN_IP=""
+PUBLIC_IP=""
 ROTATE=false
 
 #=============================================================================
@@ -76,6 +77,10 @@ parse_args() {
                 LAN_IP="$2"
                 shift 2
                 ;;
+            --public-ip)
+                PUBLIC_IP="$2"
+                shift 2
+                ;;
             --rotate)
                 ROTATE=true
                 shift
@@ -87,6 +92,7 @@ parse_args() {
                 echo "  --output DIR      Output directory (default: /etc/armorclaw/certs)"
                 echo "  --hostname NAME   Hostname for CN/SAN (default: armorclaw.local)"
                 echo "  --lan-ip IP       LAN IP to include in SANs (auto-detect if omitted)"
+                echo "  --public-ip IP    Public/external IP to include in SANs"
                 echo "  --rotate          Regenerate server cert only (keep existing CA)"
                 echo "  -h, --help        Show this help message"
                 exit 0
@@ -162,6 +168,11 @@ generate_server_cert() {
     if [[ -n "$LAN_IP" ]]; then
         san_list+=",IP:${LAN_IP}"
     fi
+
+    if [[ -n "$PUBLIC_IP" ]]; then
+        san_list+=",IP:${PUBLIC_IP}"
+    fi
+
     san_ext+=$'\n'"subjectAltName=${san_list}"
 
     # Generate server private key
