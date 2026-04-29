@@ -701,6 +701,7 @@ func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 			"api_endpoint": bridgeURL + "/api",
 			"ws_endpoint":  toWSS(bridgeURL) + "/ws",
 			"push_gateway": bridgeURL + "/_matrix/push/v1/notify",
+			"tls_mode":     s.GetTLSInfo().Mode,
 		},
 	}
 
