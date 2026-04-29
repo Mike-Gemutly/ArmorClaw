@@ -14,6 +14,7 @@ import (
 	"image"
 	"image/png"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -82,10 +83,15 @@ type QRManager struct {
 	signingKey []byte
 	config     QRConfig
 
-	// Server info for URL generation
 	serverURL  string
 	bridgeURL  string
 	serverName string
+	wsURL      string
+
+	tlsMode          string
+	tlsFingerprint   string
+	tlsTrustHint     string
+	tlsCertExpiresAt int64
 }
 
 // QRConfig configures QR code behavior
@@ -120,6 +126,21 @@ func NewQRManager(signingKey []byte, config QRConfig, serverURL, bridgeURL, serv
 		bridgeURL:  bridgeURL,
 		serverName: serverName,
 	}
+}
+
+func (m *QRManager) SetTLSInfo(mode, fingerprint, trustHint string, certExpiresAt int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tlsMode = mode
+	m.tlsFingerprint = fingerprint
+	m.tlsTrustHint = trustHint
+	m.tlsCertExpiresAt = certExpiresAt
+}
+
+func (m *QRManager) SetWsURL(wsURL string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wsURL = wsURL
 }
 
 // GenerateSetupQR generates a QR code for initial setup
@@ -262,15 +283,19 @@ func (m *QRManager) GenerateVerificationQR(deviceID string) (*QRResult, error) {
 
 // ConfigPayload contains server configuration for client apps
 type ConfigPayload struct {
-	Version          int    `json:"version"`           // Config format version
-	MatrixHomeserver string `json:"matrix_homeserver"` // Matrix homeserver URL
-	RpcURL           string `json:"rpc_url"`           // Bridge RPC endpoint
-	WsURL            string `json:"ws_url"`            // WebSocket endpoint
-	PushGateway      string `json:"push_gateway"`      // Push gateway URL
-	ServerName       string `json:"server_name"`       // Human-readable server name
-	Region           string `json:"region,omitempty"`  // Server region
-	ExpiresAt        int64  `json:"expires_at"`        // Unix timestamp
-	Signature        string `json:"signature"`         // HMAC signature
+	Version               int    `json:"version"`
+	MatrixHomeserver      string `json:"matrix_homeserver"`
+	RpcURL                string `json:"rpc_url"`
+	WsURL                 string `json:"ws_url,omitempty"`
+	PushGateway           string `json:"push_gateway"`
+	ServerName            string `json:"server_name"`
+	Region                string `json:"region,omitempty"`
+	TLSMode               string `json:"tls_mode,omitempty"`
+	TLSFingerprintSHA256  string `json:"tls_fingerprint_sha256,omitempty"`
+	TLSTrustHint          string `json:"tls_trust_hint,omitempty"`
+	CertExpiresAt         int64  `json:"cert_expires_at,omitempty"`
+	ExpiresAt             int64  `json:"expires_at"`
+	Signature             string `json:"signature"`
 }
 
 // GenerateConfigQR generates a QR code with server configuration for ArmorTerminal/ArmorChat
@@ -285,10 +310,21 @@ func (m *QRManager) GenerateConfigQR(expiration time.Duration) (*ConfigQRResult,
 		Version:          1,
 		MatrixHomeserver: m.serverURL,
 		RpcURL:           m.bridgeURL + "/api",
-		WsURL:            toWSS(m.bridgeURL) + "/ws",
 		PushGateway:      m.bridgeURL + "/_matrix/push/v1/notify",
 		ServerName:       m.serverName,
 		ExpiresAt:        time.Now().Add(expiration).Unix(),
+	}
+
+	if m.wsURL != "" {
+		config.WsURL = m.wsURL
+	}
+
+	if os.Getenv("ARMORCLAW_QR_VERSION") == "2" {
+		config.Version = 2
+		config.TLSMode = m.tlsMode
+		config.TLSFingerprintSHA256 = m.tlsFingerprint
+		config.TLSTrustHint = m.tlsTrustHint
+		config.CertExpiresAt = m.tlsCertExpiresAt
 	}
 
 	// Sign the config
@@ -341,11 +377,23 @@ func (m *QRManager) GenerateConfigURL(expiration time.Duration) (string, *Config
 		Version:          1,
 		MatrixHomeserver: m.serverURL,
 		RpcURL:           m.bridgeURL + "/api",
-		WsURL:            toWSS(m.bridgeURL) + "/ws",
 		PushGateway:      m.bridgeURL + "/_matrix/push/v1/notify",
 		ServerName:       m.serverName,
 		ExpiresAt:        time.Now().Add(expiration).Unix(),
 	}
+
+	if m.wsURL != "" {
+		config.WsURL = m.wsURL
+	}
+
+	if os.Getenv("ARMORCLAW_QR_VERSION") == "2" {
+		config.Version = 2
+		config.TLSMode = m.tlsMode
+		config.TLSFingerprintSHA256 = m.tlsFingerprint
+		config.TLSTrustHint = m.tlsTrustHint
+		config.CertExpiresAt = m.tlsCertExpiresAt
+	}
+
 	config.Signature = m.signConfig(config)
 
 	configJSON, err := json.Marshal(config)
@@ -408,15 +456,30 @@ func ParseConfigURL(configURL string) (*ConfigPayload, error) {
 
 // signConfig generates a signature for a config payload
 func (m *QRManager) signConfig(config *ConfigPayload) string {
-	data := fmt.Sprintf("%d:%s:%s:%s:%s:%s:%d",
-		config.Version,
-		config.MatrixHomeserver,
-		config.RpcURL,
-		config.WsURL,
-		config.PushGateway,
-		config.ServerName,
-		config.ExpiresAt,
-	)
+	var data string
+	if config.Version == 1 {
+		data = fmt.Sprintf("%d:%s:%s:%s:%s:%s:%d",
+			config.Version,
+			config.MatrixHomeserver,
+			config.RpcURL,
+			config.WsURL,
+			config.PushGateway,
+			config.ServerName,
+			config.ExpiresAt,
+		)
+	} else {
+		data = fmt.Sprintf("%d:%s:%s:%s:%s:%s:%s:%s:%d",
+			config.Version,
+			config.MatrixHomeserver,
+			config.RpcURL,
+			config.WsURL,
+			config.PushGateway,
+			config.ServerName,
+			config.TLSMode,
+			config.TLSFingerprintSHA256,
+			config.ExpiresAt,
+		)
+	}
 
 	h := hmac.New(sha256.New, m.signingKey)
 	h.Write([]byte(data))

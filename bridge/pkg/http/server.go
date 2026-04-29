@@ -170,6 +170,8 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to setup certificates: %w", err)
 	}
 
+	s.updateQRTLSInfo()
+
 	var tlsCert tls.Certificate
 	if len(s.certPEM) > 0 && len(s.keyPEM) > 0 {
 		var err error
@@ -313,6 +315,31 @@ func (s *Server) loadOrGenerateCerts() error {
 
 	log.Printf("[HTTP] Generated and saved certificate to %s", certFile)
 	return nil
+}
+
+func (s *Server) updateQRTLSInfo() {
+	fp, err := s.GetCertificateFingerprint()
+	if err != nil {
+		return
+	}
+
+	block, _ := pem.Decode(s.certPEM)
+	if block == nil {
+		return
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return
+	}
+
+	selfSigned := cert.Issuer.String() == cert.Subject.String()
+	trustHint := "public_ca"
+	if selfSigned {
+		trustHint = "self_signed"
+	}
+
+	s.qrManager.SetTLSInfo("private", fp, trustHint, cert.NotAfter.Unix())
+	s.qrManager.SetWsURL(toWSS(fmt.Sprintf("https://%s:%d", s.config.Hostname, s.config.Port)) + "/ws")
 }
 
 func (s *Server) generateSelfSignedCert() ([]byte, []byte, error) {
