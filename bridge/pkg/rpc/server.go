@@ -87,6 +87,10 @@ type SkillManager interface {
 	GenerateSchema(skill *skills.Skill) interface{}
 }
 
+type TLSInfoProvider interface {
+	GetTLSInfo() interface{}
+}
+
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      interface{}     `json:"id,omitempty"`
@@ -167,6 +171,7 @@ type Server struct {
 	guard           *trust.TrustedProxyGuard
 	auditLog        *audit.AuditLog
 	governanceRoomID string
+	tlsInfoProvider  TLSInfoProvider
 }
 
 type Config struct {
@@ -243,6 +248,10 @@ func New(cfg Config) (*Server, error) {
 // BrowserSkill stub. Pass nil to restore fallback behaviour.
 func (s *Server) SetBrowserBroker(b browser.BrowserBroker) {
 	s.browserBroker = b
+}
+
+func (s *Server) SetTLSInfoProvider(p TLSInfoProvider) {
+	s.tlsInfoProvider = p
 }
 
 func (s *Server) Handle(ctx context.Context, req *Request) (resp *Response) {

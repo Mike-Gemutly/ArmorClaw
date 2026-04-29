@@ -42,6 +42,7 @@ type ServerConfig struct {
 	Hostname       string
 	EnableCORS     bool
 	AllowedOrigins []string
+	ServerMode     string
 	// Discovery configuration
 	MatrixHomeserver string // Matrix homeserver URL
 	ServerName       string // Human-readable server name
@@ -259,6 +260,102 @@ func (s *Server) GetCertificateFingerprint() (string, error) {
 
 	hash := sha256.Sum256(block.Bytes)
 	return fmt.Sprintf("%x", hash), nil
+}
+
+func (s *Server) GetCertExpiry() (int64, error) {
+	block, _ := pem.Decode(s.certPEM)
+	if block == nil {
+		return 0, fmt.Errorf("failed to decode certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	return cert.NotAfter.Unix(), nil
+}
+
+func (s *Server) isSelfSigned(cert *x509.Certificate) bool {
+	return cert.Issuer.String() == cert.Subject.String()
+}
+
+func (s *Server) certIncludesPublicIP(cert *x509.Certificate) bool {
+	extIP := getConfiguredExternalIP(s.config.Hostname)
+	if extIP == nil {
+		return false
+	}
+	for _, ip := range cert.IPAddresses {
+		if ip.Equal(extIP) {
+			return true
+		}
+	}
+	return false
+}
+
+type TLSInfo struct {
+	Mode                string `json:"mode"`
+	Health              string `json:"health"`
+	FingerprintSHA256   string `json:"fingerprint_sha256"`
+	TrustType           string `json:"trust_type"`
+	ExpiresAt           int64  `json:"expires_at"`
+	SANIncludesPublicIP bool   `json:"san_includes_public_ip"`
+	CertSource          string `json:"cert_source"`
+}
+
+func (s *Server) GetTLSInfo() TLSInfo {
+	if len(s.certPEM) == 0 {
+		return TLSInfo{Mode: s.deriveTLSMode(), Health: "degraded", CertSource: "proxy_only"}
+	}
+
+	block, _ := pem.Decode(s.certPEM)
+	if block == nil {
+		return TLSInfo{Mode: s.deriveTLSMode(), Health: "degraded", CertSource: "proxy_only"}
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return TLSInfo{Mode: s.deriveTLSMode(), Health: "degraded", CertSource: "proxy_only"}
+	}
+
+	mode := s.deriveTLSMode()
+	fp, _ := s.GetCertificateFingerprint()
+	trustType := "public_ca"
+	if s.isSelfSigned(cert) {
+		trustType = "self_signed"
+	}
+
+	return TLSInfo{
+		Mode:                mode,
+		Health:              "ok",
+		FingerprintSHA256:   fp,
+		TrustType:           trustType,
+		ExpiresAt:           cert.NotAfter.Unix(),
+		SANIncludesPublicIP: s.certIncludesPublicIP(cert),
+		CertSource:          "shared_cert",
+	}
+}
+
+func (s *Server) deriveTLSMode() string {
+	if envMode := os.Getenv("ARMORCLAW_TLS_MODE"); envMode != "" {
+		return envMode
+	}
+	if s.config.ServerMode != "sentinel" {
+		return "none"
+	}
+	if len(s.certPEM) == 0 {
+		return "none"
+	}
+	block, _ := pem.Decode(s.certPEM)
+	if block == nil {
+		return "private"
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "private"
+	}
+	if s.isSelfSigned(cert) {
+		return "private"
+	}
+	return "public"
 }
 
 func (s *Server) loadOrGenerateCerts() error {
@@ -543,6 +640,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		"rpc_url":           bridgeURL + "/api",
 		"ws_url":            toWSS(bridgeURL) + "/ws",
 		"push_gateway":      bridgeURL + "/_matrix/push/v1/notify",
+		"tls":               s.GetTLSInfo(),
 		"endpoints": map[string]string{
 			"rpc":    "/api",
 			"ws":     "/ws",

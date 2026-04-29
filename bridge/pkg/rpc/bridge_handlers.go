@@ -83,6 +83,21 @@ func (s *Server) handleBridgeStatus(ctx context.Context, req *Request) (interfac
 		}
 	}
 
+	// Always include TLS metadata (mandatory in all modes)
+	if s.tlsInfoProvider != nil {
+		stats["tls"] = s.tlsInfoProvider.GetTLSInfo()
+	} else {
+		stats["tls"] = map[string]interface{}{
+			"mode":                "none",
+			"health":              "ok",
+			"fingerprint_sha256":  "",
+			"trust_type":          "",
+			"expires_at":          int64(0),
+			"san_includes_public_ip": false,
+			"cert_source":         "",
+		}
+	}
+
 	return stats, nil
 }
 

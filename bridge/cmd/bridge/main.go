@@ -2681,7 +2681,10 @@ func runBridgeServer(cliCfg cliConfig) {
 			APIPath:          cfg.Discovery.APIPath,
 			WSPath:           cfg.Discovery.WSPath,
 			Metrics:          metrics,
+			ServerMode:       cfg.Server.Mode,
 		}, server)
+
+		server.SetTLSInfoProvider(httpsServer)
 
 		if eventBus != nil && httpsServer != nil {
 			eventBus.SetBroadcaster(httpsServer)
