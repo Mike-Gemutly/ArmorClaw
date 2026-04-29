@@ -35,6 +35,8 @@ declare -A SUITE_MAP=(
   ["cross-workflow-docs"]="test-cross-workflow-docs.sh"
   ["cross-browser-trust"]="test-cross-browser-trust.sh"
   ["cross-event-truth"]="test-cross-event-truth.sh"
+  ["tls-mode"]="test-tls-mode-integration.sh"
+  ["tls-restart"]="test-tls-restart-safety.sh"
 )
 
 IFS=',' read -ra SUITE_LIST <<< "$SUITES"
