@@ -1,0 +1,119 @@
+name: "armorclaw_e2e_deploy"
+version: "1.0.0"
+description: "End-to-end contract discovery, deployment, provisioning, event validation, and harness execution for ArmorClaw on VPS."
+
+parameters:
+  - name: "vps_ip"
+    type: "string"
+    required: false
+    description: "Target VPS IP address (default: from .env)"
+    default: ""
+
+  - name: "phase"
+    type: "string"
+    required: false
+    description: "Which phase to run: all, A0, A1, A2, A3, A4"
+    default: "all"
+
+  - name: "force_redeploy"
+    type: "boolean"
+    required: false
+    description: "Force redeploy even if bridge is already running"
+    default: false
+
+  - name: "suites"
+    type: "string"
+    required: false
+    description: "Comma-separated test suites for A4 (health, trust, workflow-core, email)"
+    default: "health"
+
+tools_required:
+  - ssh
+  - curl
+  - jq
+  - docker
+  - scp
+
+agent_instructions: |
+  Execute Phase A scripts in order: A0 (discovery) → A1 (deploy if needed) → A2 (provision) → A3 (event validation) → A4 (harness).
+  Discovery probes the LIVE Bridge — never assume RPC method names.
+  Deployment is topology-aware — inspect Docker image before composing.
+  After deployment, re-run A0 discovery to populate the manifest with live RPC data.
+  Matrix session is optional — if registration blocked, A3 degrades gracefully.
+  All evidence saved to .sisyphus/evidence/armorclaw/.
+  Master runner: scripts/a_run_all.sh (positional arg: all, A0, A1, A2, A3, A4).
+
+steps:
+  - name: "validate_environment"
+    automation: "auto"
+    description: "Check SSH connectivity and verify .env has required variables"
+    command: |
+      source .env
+      : "${VPS_IP:?VPS_IP required in .env}"
+      ssh -i "${SSH_KEY_PATH:-~/.ssh/openclaw_win}" -o StrictHostKeyChecking=no \
+        -o ConnectTimeout=10 "${VPS_USER:-root}@${VPS_IP}" "echo SSH_OK" || {
+        echo "ERROR: Cannot SSH to VPS at ${VPS_IP}"
+        exit 1
+      }
+
+  - name: "run_discovery"
+    automation: "auto"
+    description: "Execute Phase A0 contract discovery — probes live Bridge for RPC methods, endpoints, event types"
+    command: "bash scripts/a0_discover.sh"
+
+  - name: "deploy_if_needed"
+    automation: "auto"
+    description: "Execute Phase A1 deployment only if contract_manifest.json has deployment_required=true"
+    command: |
+      DEPLOY_FLAG=$(jq -r '.runtime_flags.deployment_required // false' \
+        .sisyphus/evidence/armorclaw/contract_manifest.json 2>/dev/null || echo "true")
+      if [ "$DEPLOY_FLAG" = "true" ] || [ "${force_redeploy}" = "true" ]; then
+        bash scripts/a1_deploy.sh
+        bash scripts/a0_discover.sh
+      else
+        echo "Bridge already running — skipping deployment"
+      fi
+
+  - name: "provision"
+    automation: "auto"
+    description: "Execute Phase A2 admin bootstrap — claim provisioning RPC, create Matrix session"
+    command: "bash scripts/a2_provision.sh"
+
+  - name: "validate_events"
+    automation: "auto"
+    description: "Execute Phase A3 event validation — verify Matrix /sync events, log scanning"
+    command: "bash scripts/a3_events.sh"
+
+  - name: "run_harness"
+    automation: "confirm"
+    description: "Execute Phase A4 test harness on VPS (confirm because it is long-running)"
+    command: |
+      SUITES="${suites:-health}"
+      bash scripts/a_run_all.sh A4
+
+  - name: "collect_evidence"
+    automation: "auto"
+    description: "Gather and summarize all evidence files from .sisyphus/evidence/armorclaw/"
+    command: |
+      echo "=== Evidence Summary ==="
+      ls -la .sisyphus/evidence/armorclaw/ 2>/dev/null || echo "No evidence files found"
+      for f in .sisyphus/evidence/armorclaw/*_summary.json; do
+        [ -f "$f" ] && echo "--- $(basename $f) ---" && jq . "$f" 2>/dev/null
+      done
+
+platforms:
+  - linux
+  - macos
+
+examples:
+  - description: "Run full E2E pipeline"
+    command: "/armorclaw_e2e_deploy"
+
+  - description: "Run only contract discovery (Phase A0)"
+    command: "/armorclaw_e2e_deploy phase=A0"
+
+  - description: "Force redeploy and run all phases"
+    command: "/armorclaw_e2e_deploy force_redeploy=true"
+
+  - description: "Run Phase A4 with specific test suites"
+    command: "/armorclaw_e2e_deploy phase=A4 suites=health,trust,workflow-core"
