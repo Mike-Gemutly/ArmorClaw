@@ -4,10 +4,10 @@
 > **Version:** 4.0.0-alpha01 (Governor Version)
 > **Build Status:** ✅ ALL MODULES COMPILE
 > **Deployment:** ✅ SUCCESS (Samsung Galaxy Note 20 Ultra - Android 13)
-> **Architecture:** Kotlin Multiplatform (KMP) + Jetpack Compose
+> **Architecture:** Android (Kotlin) + Jetpack Compose
 > **Matrix Migration:** ✅ COMPLETE (See MATRIX_MIGRATION.md)
 > **Discovery System:** ✅ ENHANCED (See Section 15)
-> **Unified Theme:** ✅ armorclaw-ui Module (See Section 3.3)
+> **Unified Theme:** ✅ ArmorColors Design System (See Section 3.3)
 > **Governor Strategy:** ✅ COMPLETE (All 4 Phases - See Section 17)
 > **New Features:** ✅ Cold Vault, Governor UI, Audit & Revocation, Provisioning System, Commercial Polish, SAS Verification State Machine, Trust Badges, Per-Message Encryption Indicators, Email Approval Screen, ToDevice Processing, ConfigRepository
 > **Bug Fixes:** ✅ 13 Critical Bugs Fixed (8 on 2026-02-21, 5 on 2026-02-24)
@@ -42,7 +42,7 @@
 
 ## 1. Executive Summary
 
-ArmorChat is a **secure end-to-end encrypted chat application** built on the Matrix protocol. The project uses **Kotlin Multiplatform (KMP)** for code sharing between platforms, with the Android app as the primary target using **Jetpack Compose** for the UI.
+ArmorChat is a **secure end-to-end encrypted chat application** built on the Matrix protocol. The project uses **Kotlin** with **Jetpack Compose** for the UI, following standard Android architecture.
 
 ### Key Characteristics
 
@@ -62,10 +62,10 @@ ArmorChat is a **secure end-to-end encrypted chat application** built on the Mat
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Shared Module (main) | ✅ Compiles | All compilation errors fixed |
-| Shared Module (tests) | ✅ Compiles | Tests updated for Matrix SDK |
-| AndroidApp Module | ✅ Compiles | All 47 navigation routes working |
-| armorclaw-ui Module | ✅ Compiles | Unified theme module (teal/navy branding) |
+| App Module (main) | ✅ Compiles | All compilation errors fixed |
+| App Module (tests) | ✅ Compiles | Tests updated for Matrix SDK |
+| App Module (UI) | ✅ Compiles | All navigation routes working |
+| ArmorColors Theme | ✅ Active | Unified theme system (teal/navy branding) |
 | Bridge Server | ✅ Builds | Go backend operational |
 | Matrix Migration | ✅ Complete | See `doc/MATRIX_MIGRATION.md` |
 | Unified Branding | ✅ Complete (~240 colors migrated to ArmorColors tokens) | See `doc/styling.md` |
@@ -93,7 +93,7 @@ ArmorChat is a **secure end-to-end encrypted chat application** built on the Mat
 | Session Refresh | ✅ New | 5-min monitoring interval, 5-min expiry threshold, mutex-guarded refresh |
 | ChatScreen Performance | ✅ Optimized | Memoized timestamp formatting, LazyColumn key optimization |
 | Accessibility | ✅ WCAG 2.1 AA | Top 10 screens audited (`doc/ACCESSIBILITY_AUDIT.md`) |
-| ArmorColors CI Gate | ✅ Active | Detekt runs on shared + androidApp modules, zero violations |
+| ArmorColors CI Gate | ✅ Active | Detekt runs on app module, zero violations |
 
 ### Latest Bug Fixes (2026-02-21)
 
@@ -169,7 +169,7 @@ ArmorChat follows **Clean Architecture** with clear separation of concerns acros
 │                     PRESENTATION LAYER (Compose UI)                      │
 │                                                                          │
 │   Screens │ Components │ ViewModels │ Navigation (58 routes)            │
-│   Location: androidApp/src/main/kotlin/com/armorclaw/app/               │
+│   Location: app/src/main/java/app/armorclaw/                        │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -177,7 +177,7 @@ ArmorChat follows **Clean Architecture** with clear separation of concerns acros
 │                           DOMAIN LAYER                                   │
 │                                                                          │
 │   Models │ Repository Interfaces │ Use Cases                            │
-│   Location: shared/src/commonMain/kotlin/domain/                        │
+│   Location: app/src/main/java/app/armorclaw/domain/                  │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -185,8 +185,8 @@ ArmorChat follows **Clean Architecture** with clear separation of concerns acros
 │                            DATA LAYER                                    │
 │                                                                          │
 │   Repository Implementations │ DAOs │ Stores │ Offline Queue            │
-│   Location: shared/src/commonMain/kotlin/data/                          │
-│            androidApp/src/main/kotlin/com/armorclaw/app/data/           │
+│   Location: app/src/main/java/app/armorclaw/data/                    │
+│            app/src/main/java/app/armorclaw/network/                  │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -198,10 +198,10 @@ ArmorChat follows **Clean Architecture** with clear separation of concerns acros
 │   │  (Messaging)    │    │ (Admin Ops)     │    │  (Biometric,    │     │
 │   │                 │    │                 │    │   Clipboard,    │     │
 │   │  Matrix Rust    │    │  JSON-RPC 2.0   │    │   Network)      │     │
-│   │  SDK FFI        │    │  WebSocket      │    │  expect/actual  │     │
+│   │  SDK FFI        │    │  WebSocket      │    │  Android SVCS   │     │
 │   └────────┬────────┘    └────────┬────────┘    └─────────────────┘     │
 │            │                      │                                      │
-│   Location: shared/src/commonMain/kotlin/platform/                      │
+│   Location: app/src/main/java/app/armorclaw/platform/                │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -222,9 +222,9 @@ ArmorChat follows **Clean Architecture** with clear separation of concerns acros
 |---------|---------------|----------|
 | **Clean Architecture** | Domain → Data → Presentation layers | All modules |
 | **MVVM** | ViewModels expose StateFlow, UI via collectAsState() | `viewmodels/` |
-| **Repository Pattern** | Interfaces in shared/domain, impl in androidApp/data | `repository/` |
-| **Expect/Actual** | Platform services declared in shared, impl in androidApp | `platform/` |
-| **Atomic Design** | UI components: atom → molecule → organism | `shared/ui/components/` |
+| **Repository Pattern** | Interfaces in domain/repository, impl in data/repository | `repository/` |
+| **Dependency Injection** | Koin modules for service registration | `di/` |
+| **Atomic Design** | UI components: atom → molecule → organism | `ui/components/` |
 | **Use Case Pattern** | Single responsibility use case classes | `domain/usecase/` |
 
 ---
@@ -235,29 +235,47 @@ ArmorChat follows **Clean Architecture** with clear separation of concerns acros
 
 ```
 ArmorChat/
-├── shared/                    # Kotlin Multiplatform shared module
-├── androidApp/                # Android application
-├── armorclaw-ui/              # Shared UI theme module (unified branding)
-├── doc/                       # Documentation (ARCHITECTURE.md, SECURITY.md, etc.)
-├── docs/                      # Additional documentation
-├── styling/                   # Branding assets (SVG, BrandingKit.docx)
-├── gradle/                    # Gradle wrapper
-├── build.gradle.kts           # Root build configuration
-├── settings.gradle.kts        # Project settings
-├── gradle.properties          # Gradle properties
-├── gradlew / gradlew.bat      # Gradle wrapper scripts
-├── CLAUDE.md                  # AI coding guidelines
-├── BUILD_STATUS.md            # Current build status
-└── REVIEW.md                  # This file
+├── app/                        # Android application module
+│   └── src/
+│       ├── main/java/app/armorclaw/
+│       ├── androidTest/
+│       └── test/
+├── vodozemac/                  # Rust Matrix E2EE library (native FFI)
+├── doc/                        # Documentation
+├── gradle/                     # Gradle wrapper
+├── build.gradle.kts            # Root build configuration
+├── settings.gradle.kts         # Project settings
+└── gradle.properties           # Gradle properties
 ```
 
-### Shared Module (`shared/`)
+### App Module (`app/`)
 
-The shared module contains platform-agnostic business logic:
+The app module contains all application code (domain, data, platform, and UI layers):
 
 ```
-shared/src/
-├── commonMain/kotlin/
+app/src/
+├── main/java/app/armorclaw/
+│   ├── config/                # App Configuration
+│   │   ├── BridgeTrustStore.kt       # TLS trust store
+│   │   ├── ConfigManager.kt          # Runtime config management
+│   │   └── SignedConfigParser.kt     # Signed QR/deep-link config parsing
+│   │
+│   ├── crypto/                # Cryptography
+│   │   ├── CryptoService.kt          # Crypto service interface
+│   │   ├── MatrixOlmService.kt       # Olm/Megolm operations
+│   │   └── VodozemacNative.kt        # Native vodozemac FFI bridge
+│   │
+│   ├── data/
+│   │   ├── local/entity/             # Room database entities
+│   │   │   └── Entities.kt           # Database entity definitions
+│   │   ├── model/                    # Data models
+│   │   │   ├── EmailApprovalEvent.kt # Email approval event types
+│   │   │   └── SystemAlert.kt        # System alert types
+│   │   └── repository/              # Repository implementations
+│   │       ├── BridgeCapabilities.kt # Bridge capability detection
+│   │       ├── BridgeRepository.kt   # Bridge RPC facade
+│   │       └── UserRepository.kt     # User data operations
+│   │
 │   ├── domain/                # Domain Layer
 │   │   ├── model/            # Domain models (12 files)
 │   │   │   ├── AppResult.kt          # Result wrapper
@@ -286,8 +304,18 @@ shared/src/
 │   │   │   └── WorkflowRepository.kt
 │   │   └── usecase/          # Use case interfaces
 │   │
+│   ├── navigation/            # Navigation
+│   │   ├── ArmorClawNavHost.kt       # NavHost with all routes
+│   │   ├── DeepLinkHandler.kt        # Deep link parsing and routing
+│   │   └── Route.kt                  # Route definitions
+│   │
+│   ├── network/               # Network Layer
+│   │   ├── BridgeApi.kt              # Bridge API interface
+│   │   ├── BridgeDiscovery.kt        # Server discovery
+│   │   ├── NetworkResilience.kt      # Retry, backoff, circuit breaker
+│   │   └── ResilientWebSocket.kt     # WebSocket with auto-reconnect
+│   │
 │   ├── platform/             # Platform Layer
-│   │   ├── biometric/        # Biometric auth interface
 │   │   ├── bridge/           # Bridge client (12 files)
 │   │   │   ├── BridgeAdminClient.kt      # Admin operations (22 methods)
 │   │   │   ├── BridgeAdminClientImpl.kt
@@ -301,174 +329,107 @@ shared/src/
 │   │   │   ├── InviteService.kt          # Room invite handling
 │   │   │   ├── RpcModels.kt              # RPC data models
 │   │   │   └── SetupService.kt           # Setup flow service
-│   │   ├── clipboard/        # Secure clipboard interface
-│   │   ├── encryption/       # Encryption interfaces
+│   │   ├── biometric/        # Biometric auth
+│   │   ├── clipboard/        # Secure clipboard
+│   │   ├── encryption/       # Encryption services
 │   │   ├── error/            # Error handling
 │   │   ├── logging/          # Logging (AppLogger, LoggerDelegate)
 │   │   ├── matrix/           # Matrix SDK integration
 │   │   │   ├── event/        # Matrix event types
 │   │   │   ├── MatrixClient.kt          # Matrix client interface (40+ methods)
-│   │   │   ├── MatrixClientFactory.kt   # Factory (expect/actual)
+│   │   │   ├── MatrixOlmService.kt      # Olm/Megolm operations
 │   │   │   ├── MatrixSyncManager.kt     # Sync with exponential backoff recovery
 │   │   │   ├── MatrixSessionStorage.kt  # Session persistence
 │   │   │   └── SessionRefreshManager.kt # Proactive token refresh (Phases 2-5)
 │   │   ├── network/          # Network monitoring
 │   │   ├── notification/     # Notification interface
-│   │   ├── voice/            # Voice input/recording
-│   │   ├── Analytics.kt      # Analytics interface
-│   │   └── CrashReporting.kt # Crash reporting interface
+│   │   └── voice/            # Voice input/recording
 │   │
-│   ├── data/                 # Data Layer
-│   │   ├── dao/              # Data access objects
-│   │   ├── offline/          # Offline message queue (Phases 2-5)
-│   │   │   └── OfflineMessageQueue.kt     # Queue interface
-│   │   ├── repository/       # Repository implementations
-│   │   └── store/            # State stores
-│   │       └── ControlPlaneStore.kt     # Control plane event processor
+│   ├── push/                  # Push Notifications
+│   │   ├── ArmorClawMessagingService.kt  # FCM messaging service
+│   │   ├── MatrixPusherManager.kt        # Matrix push registration
+│   │   ├── NotificationHelper.kt         # Notification builder
+│   │   └── PushTokenManager.kt           # Token lifecycle
 │   │
-│   └── ui/                   # Shared UI
-│       ├── theme/            # Design system (colors, typography, shapes)
-│       ├── components/       # UI components
-│       │   ├── atom/        # Atomic components (Button, Input, etc.)
-│       │   └── molecule/    # Molecular components (MessageBubble, etc.)
-│       ├── workflow/         # Workflow components (Phases 2-5)
-│       │   └── WorkflowTimeline.kt   # Animated event timeline with debounce
-│       └── base/             # Base classes
+│   ├── repository/            # Additional repositories
+│   │   └── SetupRepository.kt        # Setup flow state
+│   │
+│   ├── ui/                   # UI Layer (Jetpack Compose)
+│   │   ├── account/          # AccountDeletionScreen.kt
+│   │   ├── agent/            # AgentScreen.kt
+│   │   ├── approval/         # ApprovalScreen.kt
+│   │   ├── components/       # Shared UI components (14 files)
+│   │   │   ├── BlindFillCard.kt
+│   │   │   ├── BlockerResponseDialog.kt
+│   │   │   ├── EmailApprovalCard.kt
+│   │   │   ├── GovernanceBanner.kt
+│   │   │   ├── WorkflowTimeline.kt
+│   │   │   └── ... (more)
+│   │   ├── email/            # EmailApprovalScreen.kt
+│   │   ├── home/             # HomeScreen.kt
+│   │   ├── migration/        # MigrationScreen.kt
+│   │   ├── security/         # Security screens (7 files)
+│   │   │   ├── BiometricEnableScreen.kt
+│   │   │   ├── BondingScreen.kt
+│   │   │   ├── KeyBackupScreen.kt
+│   │   │   ├── KeyRecoveryScreen.kt
+│   │   │   ├── PasswordRotationScreen.kt
+│   │   │   ├── SecretsScreen.kt
+│   │   │   └── SecurityConfigScreen.kt
+│   │   ├── verification/     # BridgeVerificationScreen.kt
+│   │   ├── workflow/         # WorkflowScreen.kt
+│   │   └── theme/            # ArmorColors design system
+│   │       ├── ArmorColors.kt        # Color tokens (teal/navy)
+│   │       ├── ArmorTypography.kt    # Inter + JetBrains Mono
+│   │       ├── ArmorShapes.kt        # Shape definitions
+│   │       └── ArmorTheme.kt         # Theme composable
+│   │
+│   ├── utils/                 # Utilities
+│   │   └── ErrorHandler.kt
+│   │
+│   ├── validation/            # Validation
+│   │   └── ValidationReceiver.kt
+│   │
+│   ├── viewmodel/             # ViewModels (6 files)
+│   │   ├── AgentManagementVM.kt
+│   │   ├── BondingVM.kt
+│   │   ├── HardeningWizardVM.kt
+│   │   ├── HitlVM.kt
+│   │   ├── SecurityConfigVM.kt
+│   │   └── WorkflowVM.kt
+│   │
+│   └── MainActivity.kt        # Main activity
 │
-├── androidMain/kotlin/       # Android implementations
-│   └── com/armorclaw/shared/
-│       ├── data/offline/     # OfflineMessageQueueImpl (SQLDelight-backed)
-│       └── platform/         # Actual implementations
+├── androidTest/               # Instrumented tests
+│   └── FFIBoundaryTest.kt
 │
-├── androidUnitTest/kotlin/   # Android unit tests
-└── commonTest/kotlin/        # Common tests
+└── test/                      # Unit tests (8 files)
 ```
 
-### Android App Module (`androidApp/`)
+### Vodozemac (`vodozemac/`)
 
-The Android app module contains platform-specific code:
-
-```
-androidApp/src/main/kotlin/com/armorclaw/app/
-├── accessibility/            # Accessibility features
-│   ├── AccessibilityConfig.kt
-│   └── AccessibilityExtensions.kt
-│
-├── components/               # Android-specific UI components
-│   └── workflow/             # Workflow components (Phases 2-5)
-│       └── BlockerResponseDialog.kt  # Retry dialog with exponential backoff
-│
-├── data/                     # Data implementations
-│   ├── database/            # SQLCipher database
-│   ├── offline/             # Offline sync
-│   └── persistence/         # DataStore persistence
-│
-├── di/                       # Dependency Injection (Koin modules)
-│   └── AppModules.kt
-│
-├── navigation/               # Navigation
-│   └── AppNavigation.kt     # All 47 routes defined here
-│
-├── notifications/            # Push notification handling
-│
-├── performance/              # Performance monitoring
-│   ├── MemoryMonitor.kt
-│   └── PerformanceProfiler.kt
-│
-├── platform/                 # Platform implementations
-│   ├── BiometricAuthImpl.kt
-│   ├── SecureClipboardImpl.kt
-│   ├── NotificationManagerImpl.kt
-│   └── NetworkMonitorImpl.kt
-│
-├── release/                  # Release configuration
-│
-├── screens/                  # Compose screens by feature
-│   ├── auth/                # Authentication screens
-│   │   ├── LoginScreen.kt
-│   │   ├── RegistrationScreen.kt
-│   │   └── ForgotPasswordScreen.kt
-│   ├── call/                # Call screens
-│   │   ├── ActiveCallScreen.kt
-│   │   └── IncomingCallDialog.kt
-│   ├── chat/                # Chat screens
-│   │   ├── ChatScreenEnhanced.kt
-│   │   └── ThreadViewScreen.kt
-│   ├── home/                # Home screen
-│   │   └── HomeScreenFull.kt
-│   ├── media/               # Media viewers
-│   │   ├── ImageViewerScreen.kt
-│   │   └── FilePreviewScreen.kt
-│   ├── onboarding/          # Onboarding flow
-│   │   ├── WelcomeScreen.kt
-│   │   ├── SecurityExplanationScreen.kt
-│   │   ├── ConnectServerScreen.kt
-│   │   ├── PermissionsScreen.kt
-│   │   ├── CompletionScreen.kt
-│   │   └── TutorialScreen.kt
-│   ├── profile/             # Profile screens
-│   │   ├── ProfileScreen.kt
-│   │   ├── UserProfileScreen.kt
-│   │   ├── SharedRoomsScreen.kt
-│   │   ├── ChangePasswordScreen.kt
-│   │   ├── ChangePhoneNumberScreen.kt
-│   │   ├── EditBioScreen.kt
-│   │   └── DeleteAccountScreen.kt
-│   ├── room/                # Room management
-│   │   ├── RoomManagementScreen.kt
-│   │   ├── RoomDetailsScreen.kt
-│   │   └── RoomSettingsScreen.kt
-│   ├── search/              # Search screen
-│   │   └── SearchScreen.kt
-│   ├── settings/            # Settings screens
-│   │   ├── SettingsScreen.kt
-│   │   ├── SecuritySettingsScreen.kt
-│   │   ├── NotificationSettingsScreen.kt
-│   │   ├── AppearanceSettingsScreen.kt
-│   │   ├── DeviceListScreen.kt
-│   │   ├── AddDeviceScreen.kt
-│   │   ├── EmojiVerificationScreen.kt
-│   │   ├── EmailApprovalScreen.kt     # Email deep-link approval flow
-│   │   ├── AboutScreen.kt
-│   │   └── ... (more)
-│   └── splash/              # Splash screen
-│       └── SplashScreen.kt
-│
-├── service/                  # Android services
-│
-├── util/                     # Utilities
-│
-├── viewmodels/               # Screen ViewModels
-│   ├── AppPreferences.kt    # App preferences (DataStore)
-│   ├── ChatViewModel.kt     # Chat screen state (27KB)
-│   ├── HomeViewModel.kt     # Home screen state
-│   ├── InviteViewModel.kt   # Invite handling
-│   ├── ProfileViewModel.kt  # Profile state
-│   ├── SettingsViewModel.kt # Settings state
-│   ├── SetupViewModel.kt    # Setup flow state
-│   ├── SplashViewModel.kt   # Splash state
-│   ├── SyncStatusViewModel.kt # Sync status
-│   ├── EmailApprovalViewModel.kt # Email approval state
-│   ├── WelcomeViewModel.kt  # Welcome state
-│
-├── ArmorClawApplication.kt   # Application class (Koin init)
-└── MainActivity.kt           # Main activity
-```
-
-### armorclaw-ui Module (`armorclaw-ui/`)
-
-The armorclaw-ui module provides a **unified theme** for ArmorClaw applications (ArmorChat, ArmorTerminal, Component Catch browser extension):
+The `vodozemac/` directory contains the Rust Matrix E2EE library compiled as a native library for Android FFI:
 
 ```
-armorclaw-ui/src/
-├── commonMain/kotlin/com/armorclaw/ui/theme/
-│   ├── ArmorClawColor.kt       # Color palette, ArmorColors object, Bridge platform brand colors
-│   ├── ArmorClawTypography.kt  # Typography (Inter, JetBrains Mono)
-│   ├── ArmorClawShapes.kt      # Shape definitions
-│   ├── ArmorClawTheme.kt       # Theme wrapper composable
-│   └── GlowModifiers.kt        # Teal glow effect modifiers
-│
-└── androidMain/                # Android manifest
+vodozemac/
+├── Cargo.toml                # Rust crate definition
+├── src/                      # Rust source (libolm-compatible API)
+└── target/                   # Build artifacts (`.so` files for ARM64/x86)
+```
+
+This is consumed by `app/src/main/java/app/armorclaw/crypto/VodozemacNative.kt` via JNI.
+
+### ArmorColors Design System
+
+The ArmorColors theme is defined within the app module (not a separate module). It provides a **unified theme** for ArmorClaw applications:
+
+```
+app/src/main/java/app/armorclaw/ui/theme/
+├── ArmorColors.kt        # Color palette, ArmorColors object, Bridge platform brand colors
+├── ArmorTypography.kt    # Typography (Inter, JetBrains Mono)
+├── ArmorShapes.kt        # Shape definitions
+├── ArmorTheme.kt         # Theme wrapper composable
+└── GlowModifiers.kt      # Teal glow effect modifiers (if present)
 ```
 
 **Brand Colors:**
@@ -488,8 +449,8 @@ armorclaw-ui/src/
 - High contrast (≥4.5:1 ratio)
 - Sparse mascot usage (splash, empty states, about screen)
 - Unified typography across platforms
-- 100% ArmorColors token migration (~240 hardcoded hex values replaced across vault, governor, audit, androidApp modules)
-- Fonts loaded via expect/actual: Inter (body text) + JetBrains Mono (code, terminal)
+- 100% ArmorColors token migration (~240 hardcoded hex values replaced across vault, governor, audit, app modules)
+- Fonts loaded via Android resources: Inter (body text) + JetBrains Mono (code, terminal)
 
 ---
 
@@ -543,7 +504,7 @@ sealed class MessageSender {
 
 ### Repository Interfaces
 
-All repository interfaces are defined in `shared/domain/repository/`:
+All repository interfaces are defined in `domain/repository/`:
 
 | Repository | Purpose | Key Methods |
 |------------|---------|-------------|
@@ -564,7 +525,7 @@ All repository interfaces are defined in `shared/domain/repository/`:
 
 ## 5. Platform Layer
 
-The platform layer provides abstractions for platform-specific functionality using the **expect/actual** pattern.
+The platform layer provides abstractions for platform-specific functionality using standard Android services.
 
 ### MatrixClient Interface
 
@@ -615,12 +576,12 @@ The project integrates `org.matrix.rustcomponents:sdk-android:26.2.16` and `cryp
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `RustMatrixClientFactory` | `shared/platform/matrix/RustMatrixClientFactory.kt` | Creates Rust SDK `Client` via `ClientBuilder` |
-| `MatrixClientImpl` | `shared/platform/matrix/MatrixClientImpl.kt` | `sendTextMessage()` uses Rust `Timeline.send()` for encrypted rooms; `getRoomEncryptionStatus()` uses `Room.encryptionState()` |
-| `ToDeviceProcessorImpl` | `shared/platform/matrix/ToDeviceProcessorImpl.kt` | Routes `to_device` events to Rust SDK (replaces stub) |
-| `VerificationRepositoryImpl` | `shared/data/repository/VerificationRepositoryImpl.kt` | Cross-signing bootstrap, SAS verification, key backup status via Rust `Encryption` API |
-| `SlidingSyncCapability` | `shared/platform/matrix/SlidingSyncCapability.kt` | MSC3575 detection via `.well-known` and endpoint probing |
-| `SessionRefreshManager` | `shared/platform/matrix/SessionRefreshManager.kt` | Token refresh with Mutex serialization (stress-tested: 50 concurrent) |
+| `RustMatrixClientFactory` | `app/src/main/java/app/armorclaw/matrix/RustMatrixClientFactory.kt` | Creates Rust SDK `Client` via `ClientBuilder` |
+| `MatrixClientImpl` | `app/src/main/java/app/armorclaw/matrix/MatrixClientImpl.kt` | `sendTextMessage()` uses Rust `Timeline.send()` for encrypted rooms; `getRoomEncryptionStatus()` uses `Room.encryptionState()` |
+| `ToDeviceProcessorImpl` | `app/src/main/java/app/armorclaw/matrix/ToDeviceProcessorImpl.kt` | Routes `to_device` events to Rust SDK (replaces stub) |
+| `VerificationRepositoryImpl` | `data/repository/VerificationRepositoryImpl.kt` | Cross-signing bootstrap, SAS verification, key backup status via Rust `Encryption` API |
+| `SlidingSyncCapability` | `app/src/main/java/app/armorclaw/matrix/SlidingSyncCapability.kt` | MSC3575 detection via `.well-known` and endpoint probing |
+| `SessionRefreshManager` | `app/src/main/java/app/armorclaw/matrix/SessionRefreshManager.kt` | Token refresh with Mutex serialization (stress-tested: 50 concurrent) |
 
 ### BridgeRpcClient Interface
 
@@ -688,15 +649,15 @@ interface BridgeRpcClient {
 }
 ```
 
-### Platform Services (Expect/Actual)
+### Platform Services (Interfaces & Implementations)
 
-| Service | Expect Location | Actual Location | Purpose |
+| Service | Interface Location | Implementation Location | Purpose |
 |---------|-----------------|-----------------|---------|
-| `BiometricAuth` | `shared/platform/biometric/` | `androidApp/platform/` | Fingerprint/FaceID |
-| `SecureClipboard` | `shared/platform/clipboard/` | `androidApp/platform/` | Encrypted clipboard |
-| `NotificationManager` | `shared/platform/notification/` | `androidApp/platform/` | Push notifications |
-| `NetworkMonitor` | `shared/platform/network/` | `androidApp/platform/` | Connectivity |
-| `VoiceRecorder` | `shared/platform/voice/` | `androidApp/platform/` | Voice messages |
+| `BiometricAuth` | `app/.../platform/biometric/` | `app/.../platform/` | Fingerprint/FaceID |
+| `SecureClipboard` | `app/.../platform/clipboard/` | `app/.../platform/` | Encrypted clipboard |
+| `NotificationManager` | `app/.../platform/notification/` | `app/.../platform/` | Push notifications |
+| `NetworkMonitor` | `app/.../platform/network/` | `app/.../platform/` | Connectivity |
+| `VoiceRecorder` | `app/.../platform/voice/` | `app/.../platform/` | Voice messages |
 
 ---
 
@@ -732,8 +693,8 @@ class ControlPlaneStore(
 The app uses **SQLDelight** with **SQLCipher** for encrypted storage:
 
 ```
-shared/src/commonMain/sqldelight/
-└── com/armorclaw/shared/
+app/src/main/sqldelight/
+└── app/armorclaw/
     └── ArmorClawDatabase.sq   # Schema definitions
 ```
 
@@ -999,7 +960,7 @@ Architecture declares CLIENT_SIDE as the active encryption mode (comments: "Acti
 - All colors sourced from `ArmorColors` tokens (WarningAmber, SuccessGreen, InfoBlue, ErrorRed)
 
 **ToDevice Event Processing (Bucket 2 Scaffold):**
-- `ToDeviceProcessor` interface in `shared/platform/matrix/` processes `to_device` events from sync responses
+- `ToDeviceProcessor` interface in `app/src/main/java/app/armorclaw/matrix/` processes `to_device` events from sync responses
 - `ToDeviceProcessorStub` implementation logs event counts by type, warns on unknown types
 - Handles seven event types: `m.room.key`, `m.room.forwarded_key`, `m.key.verification.start/accept/key/mac/cancel`
 - Security contract: implementations MUST NOT log content field (contains cryptographic key material)
@@ -1459,13 +1420,13 @@ enum class AgentStatus {
 ### Build Optimizations
 
 - **R8**: Code shrinking and obfuscation
-- **ProGuard**: Additional rules in `androidApp/proguard-rules.pro`
+- **ProGuard**: Additional rules in `app/proguard-rules.pro`
 - **Resource Shrinking**: `isShrinkResources = true`
 - **Native Library Optimization**: Symbol stripping
 
 ### Debug TestHooks (Phases 2-5)
 
-Debug builds include a test instrumentation layer (`androidApp/src/debug/`):
+Debug builds include a test instrumentation layer (`app/src/debug/`):
 
 | Component | Type | Purpose |
 |-----------|------|---------|
@@ -1509,7 +1470,7 @@ Initialization via `TestHooksInitProvider` (ContentProvider, no Application subc
 - **Domain layer**: No Android dependencies
 - **Data layer**: Repository implementations
 - **Presentation layer**: ViewModels + Compose
-- **Platform layer**: expect/actual for platform code
+- **Platform layer**: Android service implementations for platform code
 
 ### Dependency Injection
 
@@ -1568,20 +1529,20 @@ A custom Detekt rule (`HardcodedColorLiteral`) enforces use of `ArmorColors` tok
 
 ```bash
 # Run the lint gate
-./gradlew :shared:detekt :androidApp:detekt
+./gradlew :app:detekt
 
 # Rule configuration (detekt-config.yml)
 armorclaw:
   HardcodedColorLiteral:
     active: true
-    allowlist: ["armorclaw-ui"]  # Only armorclaw-ui may define raw colors
+    allowlist: ["ui/theme/"]  # Only the theme package may define raw colors
 ```
 
-New colors must be added to `ArmorColors` in `armorclaw-ui/`. The rule catches violations at build time — zero hardcoded colors allowed outside the theme module.
+New colors must be added to `ArmorColors` in `ui/theme/`. The rule catches violations at build time — zero hardcoded colors allowed outside the theme package.
 
 ### TestToolRegistry
 
-Future development requiring UI testing should reference the TestToolRegistry spec (`.sisyphus/plans/test-tool-registry-spec.md`). The spec defines 6 test tools for manipulating app state during automated testing. Debug TestHooks (`androidApp/src/debug/`) provide the initial implementation.
+Future development requiring UI testing should reference the TestToolRegistry spec (`.sisyphus/plans/test-tool-registry-spec.md`). The spec defines 6 test tools for manipulating app state during automated testing. Debug TestHooks (`app/src/debug/`) provide the initial implementation.
 
 ---
 
@@ -1690,8 +1651,8 @@ Before ArmorChat can communicate, it must discover server endpoints:
 │  ┌──────────────────────────────────────────────────────────────────────────┐   │
 │  │                    ConfigRepository (Shared Domain)                       │   │
 │  │                                                                            │   │
-│  │  Interface: shared/domain/repository/ConfigRepository.kt                  │   │
-│  │  Implementation: shared/androidMain/data/repository/ConfigRepositoryImpl  │   │
+│  │  Interface: domain/repository/ConfigRepository.kt                          │   │
+│  │  Implementation: data/repository/ConfigRepositoryImpl                     │   │
 │  │                                                                            │   │
 │  │  Methods:                                                                  │   │
 │  │  • getServerConfig() → ServerConfig                                       │   │
@@ -2770,7 +2731,7 @@ All RPC methods available in BridgeRpcClient. **Note: Methods use snake_case to 
 | `CheckFeatureUseCase` | `domain.usecase` | Feature availability with caching |
 | `SetupService` | `domain.service` | First-time setup flow |
 | `UnifiedMessage` | `domain.model` | Message model for all types (Regular, Agent, System, Command) |
-| `AppNavigation` | `androidApp` | All navigation routes (40 routes) |
+| `AppNavigation` | `app` | All navigation routes (40 routes) |
 | `MatrixClient` | `platform.matrix` | Direct Matrix API |
 | `BridgeConfig` | `platform.bridge` | Configuration |
 | `BridgeWebSocketClient` | `platform.bridge` | WebSocket (stub - not used) |
@@ -3068,25 +3029,25 @@ When developing with Android emulator, use these addresses:
 
 | What | Location |
 |------|----------|
-| Navigation routes | `androidApp/.../navigation/AppNavigation.kt` |
-| Deep link handler | `androidApp/.../navigation/DeepLinkHandler.kt` |
-| ViewModels | `androidApp/.../viewmodels/` |
-| Screens | `androidApp/.../screens/` |
-| Domain models | `shared/.../domain/model/` |
-| Repository interfaces | `shared/.../domain/repository/` |
-| Setup service | `shared/.../platform/bridge/SetupService.kt` |
-| Setup config | `shared/.../platform/bridge/SetupService.kt` |
-| Matrix client | `shared/.../platform/matrix/MatrixClient.kt` |
-| Matrix sync manager | `shared/.../platform/matrix/MatrixSyncManager.kt` |
-| Bridge client | `shared/.../platform/bridge/BridgeRpcClient.kt` |
-| Bridge RPC impl | `shared/.../platform/bridge/BridgeRpcClientImpl.kt` |
-| Bridge repository | `shared/.../platform/bridge/BridgeRepository.kt` |
-| Real-time event store | `shared/.../data/store/RealTimeEventStore.kt` |
-| Check feature use case | `shared/.../domain/usecase/CheckFeatureUseCase.kt` |
-| Control plane | `shared/.../data/store/ControlPlaneStore.kt` |
-| Unified message | `shared/.../domain/model/UnifiedMessage.kt` |
-| RPC models | `shared/.../platform/bridge/RpcModels.kt` |
-| Android Manifest | `androidApp/src/main/AndroidManifest.xml` |
+| Navigation routes | `app/.../navigation/ArmorClawNavHost.kt` |
+| Deep link handler | `app/.../navigation/DeepLinkHandler.kt` |
+| ViewModels | `app/.../viewmodel/` |
+| Screens | `app/.../ui/` |
+| Domain models | `app/.../domain/model/` |
+| Repository interfaces | `app/.../domain/repository/` |
+| Setup service | `app/.../platform/bridge/SetupService.kt` |
+| Setup config | `app/.../platform/bridge/SetupService.kt` |
+| Matrix client | `app/.../platform/matrix/MatrixClient.kt` |
+| Matrix sync manager | `app/.../platform/matrix/MatrixSyncManager.kt` |
+| Bridge client | `app/.../platform/bridge/BridgeRpcClient.kt` |
+| Bridge RPC impl | `app/.../platform/bridge/BridgeRpcClientImpl.kt` |
+| Bridge repository | `app/.../platform/bridge/BridgeRepository.kt` |
+| Real-time event store | `app/.../data/store/RealTimeEventStore.kt` |
+| Check feature use case | `app/.../domain/usecase/CheckFeatureUseCase.kt` |
+| Control plane | `app/.../data/store/ControlPlaneStore.kt` |
+| Unified message | `app/.../domain/model/UnifiedMessage.kt` |
+| RPC models | `app/.../platform/bridge/RpcModels.kt` |
+| Android Manifest | `app/src/main/AndroidManifest.xml` |
 
 ### Key Classes
 
@@ -3106,10 +3067,10 @@ When developing with Android emulator, use these addresses:
 | `RealTimeEventStore` | `data.store` | Event distribution to UI |
 | `CheckFeatureUseCase` | `domain.usecase` | Feature availability with caching |
 | `UnifiedMessage` | `domain.model` | Message model (Regular, Agent, System, Command) |
-| `AppNavigation` | `androidApp` | All navigation routes (40 routes) |
-| `DeepLinkHandler` | `androidApp` | Deep link parsing and routing |
-| `ChatViewModel` | `androidApp` | Chat screen state (unified messages) |
-| `HomeViewModel` | `androidApp` | Home screen state (rooms + workflows) |
+| `AppNavigation` | `app` | All navigation routes (40 routes) |
+| `DeepLinkHandler` | `app` | Deep link parsing and routing |
+| `ChatViewModel` | `app` | Chat screen state (unified messages) |
+| `HomeViewModel` | `app` | Home screen state (rooms + workflows) |
 
 ### Related Documentation
 
@@ -3201,7 +3162,7 @@ The Governor Strategy transforms ArmorChat from a messaging client to a **secure
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| SQLCipher Integration | ✅ Complete | `androidApp/.../security/` |
+| SQLCipher Integration | ✅ Complete | `app/.../security/` |
 | KeystoreManager | ✅ Complete | Hardware-backed key management |
 | SqlCipherProvider | ✅ Complete | Encrypted database factory |
 | VaultRepository | ✅ Complete | PII CRUD operations |
@@ -3220,7 +3181,7 @@ The Governor Strategy transforms ArmorChat from a messaging client to a **secure
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| CommandBlock | ✅ Complete | `armorclaw-ui/.../governor/` |
+| CommandBlock | ✅ Complete | `app/.../governor/` |
 | CommandStatusBadge | ✅ Complete | Status indicators |
 | CapabilityRibbon | ✅ Complete | Horizontal capability display |
 | CapabilityChip | ✅ Complete | Individual capabilities |
@@ -3234,7 +3195,7 @@ The Governor Strategy transforms ArmorChat from a messaging client to a **secure
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| TaskReceipt | ✅ Complete | `armorclaw-ui/.../audit/` |
+| TaskReceipt | ✅ Complete | `app/.../audit/` |
 | ActionType | ✅ Complete | Action type enumeration |
 | TaskStatus | ✅ Complete | Status tracking |
 | CapabilityUsage | ✅ Complete | Usage tracking |
@@ -3251,7 +3212,7 @@ The Governor Strategy transforms ArmorChat from a messaging client to a **secure
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| ArmorClawTheme | ✅ Complete | `armorclaw-ui/.../theme/` |
+| ArmorClawTheme | ✅ Complete | `app/.../theme/` |
 | SecurityStatusIcon | ✅ Complete | Security state indicator |
 | AgentStatusIcon | ✅ Complete | Agent state indicator |
 | CapabilityStatusIcon | ✅ Complete | Capability state |
@@ -3263,7 +3224,7 @@ The Governor Strategy transforms ArmorChat from a messaging client to a **secure
 ### Files Created (20 Total)
 
 ```
-armorclaw-ui/src/commonMain/kotlin/
+app/src/main/java/app/armorclaw/
 ├── components/
 │   ├── vault/
 │   │   ├── VaultModels.kt           ✅ UI data models
@@ -3286,12 +3247,12 @@ armorclaw-ui/src/commonMain/kotlin/
     └── store/vault/
         └── VaultStore.kt            ✅ State management
 
-androidApp/src/main/kotlin/com/armorclaw/app/security/
+app/src/main/java/app/armorclaw/security/
 ├── KeystoreManager.kt               ✅ Keystore management
 ├── SqlCipherProvider.kt             ✅ Database encryption
 └── VaultRepository.kt               ✅ PII storage
 
-shared/src/commonMain/kotlin/domain/security/
+app/src/main/java/app/armorclaw/domain/security/
 ├── PiiRegistry.kt                   ✅ PII key registry
 ├── ShadowMap.kt                     ✅ Placeholder mapping
 └── AgentRequestInterceptor.kt       ✅ Request middleware
@@ -3701,7 +3662,7 @@ cd ArmorChat
 ./gradlew assembleRelease
 
 # APK will be at:
-# androidApp/build/outputs/apk/release/androidApp-release.apk
+# app/build/outputs/apk/release/app-release.apk
 ```
 
 ---
@@ -3904,14 +3865,14 @@ mux.HandleFunc("/qr/image", s.handleQRImage)
 
 #### 1. Create Discovery Service
 
-Create `shared/src/commonMain/kotlin/platform/discovery/DiscoveryService.kt`:
+Create `app/src/main/java/app/armorclaw/platform/discovery/DiscoveryService.kt`:
 
 ```kotlin
-package com.armorclaw.shared.platform.discovery
+package app.armorclaw.platform.discovery
 
-import com.armorclaw.shared.domain.model.OperationContext
-import com.armorclaw.shared.platform.bridge.DetectServerInfo
-import com.armorclaw.shared.platform.logging.repositoryLogger
+import app.armorclaw.domain.model.OperationContext
+import app.armorclaw.platform.bridge.DetectServerInfo
+import app.armorclaw.platform.logging.repositoryLogger
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -4202,7 +4163,7 @@ sealed class QRScanResult {
 }
 
 // ============================================================================
-// Platform Interfaces (expect/actual pattern)
+// Platform Interfaces (Android service pattern)
 // ============================================================================
 
 expect class MDNSDiscovery() {
@@ -4231,10 +4192,10 @@ class QRScannerStub : QRScanner {
 
 #### 2. Android mDNS Implementation
 
-Create `shared/src/androidMain/kotlin/platform/discovery/MDNSDiscovery.android.kt`:
+Create `app/src/main/java/app/armorclaw/platform/discovery/MDNSDiscovery.android.kt`:
 
 ```kotlin
-package com.armorclaw.shared.platform.discovery
+package app.armorclaw.platform.discovery
 
 import android.content.Context
 import android.net.nsd.NsdManager
@@ -4342,10 +4303,10 @@ actual class MDNSDiscovery actual constructor(
 
 #### 3. Android QR Scanner Implementation
 
-Create `shared/src/androidMain/kotlin/platform/discovery/QRScanner.android.kt`:
+Create `app/src/main/java/app/armorclaw/platform/discovery/QRScanner.android.kt`:
 
 ```kotlin
-package com.armorclaw.shared.platform.discovery
+package app.armorclaw.platform.discovery
 
 import android.app.Activity
 import android.content.Context
@@ -4469,9 +4430,9 @@ class SetupService(
 
 ### Add Dependencies
 
-Add to `shared/build.gradle.kts`:
+Add to `app/build.gradle.kts`:
 ```kotlin
-// In androidMain dependencies:
+// In app dependencies:
 implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 ```
 
@@ -5126,28 +5087,28 @@ User enters homeserver URL
 
 | Component | File | Status |
 |-----------|------|--------|
-| SetupConfig (enhanced) | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| ConfigSource (enhanced) | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| SetupState (enhanced) | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| SignedServerConfig | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| parseSignedConfig() | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| startSetupWithDiscovery() | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| DiscoveredServer | `shared/.../bridge/SetupService.kt` | ✅ Done |
-| Deep Link Actions | `androidApp/.../navigation/DeepLinkHandler.kt` | ✅ Done |
-| Intent Filters | `androidApp/.../AndroidManifest.xml` | ✅ Done |
+| SetupConfig (enhanced) | `app/.../bridge/SetupService.kt` | ✅ Done |
+| ConfigSource (enhanced) | `app/.../bridge/SetupService.kt` | ✅ Done |
+| SetupState (enhanced) | `app/.../bridge/SetupService.kt` | ✅ Done |
+| SignedServerConfig | `app/.../bridge/SetupService.kt` | ✅ Done |
+| parseSignedConfig() | `app/.../bridge/SetupService.kt` | ✅ Done |
+| startSetupWithDiscovery() | `app/.../bridge/SetupService.kt` | ✅ Done |
+| DiscoveredServer | `app/.../bridge/SetupService.kt` | ✅ Done |
+| Deep Link Actions | `app/.../navigation/DeepLinkHandler.kt` | ✅ Done |
+| Intent Filters | `app/.../AndroidManifest.xml` | ✅ Done |
 
 ### 📋 Android Components (To Create)
 
 #### 1. ConfigRepository (Persistence)
 
-Create `shared/src/androidMain/kotlin/platform/config/ConfigRepository.android.kt`:
+Create `app/src/main/java/app/armorclaw/platform/config/ConfigRepository.android.kt`:
 
 ```kotlin
-package com.armorclaw.shared.platform.config
+package app.armorclaw.platform.config
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.armorclaw.shared.platform.bridge.*
+import app.armorclaw.platform.bridge.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -5227,15 +5188,15 @@ class ConfigRepository(context: Context) {
 
 #### 2. SetupViewModel (Android)
 
-Create `androidApp/src/main/java/com/armorclaw/app/ui/setup/SetupViewModel.kt`:
+Create `app/src/main/java/app/armorclaw/ui/setup/SetupViewModel.kt`:
 
 ```kotlin
-package com.armorclaw.app.ui.setup
+package app.armorclaw.ui.setup
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.armorclaw.shared.platform.bridge.*
-import com.armorclaw.shared.platform.config.ConfigRepository
+import app.armorclaw.platform.bridge.*
+import app.armorclaw.platform.config.ConfigRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -5312,15 +5273,15 @@ class SetupViewModel(
 
 #### 3. Koin DI Module
 
-Create `androidApp/src/main/java/com/armorclaw/app/di/ConfigModule.kt`:
+Create `app/src/main/java/app/armorclaw/di/ConfigModule.kt`:
 
 ```kotlin
-package com.armorclaw.app.di
+package app.armorclaw.di
 
-import com.armorclaw.shared.platform.config.ConfigRepository
-import com.armorclaw.shared.platform.bridge.SetupService
-import com.armorclaw.shared.platform.bridge.BridgeRpcClient
-import com.armorclaw.shared.platform.bridge.BridgeWebSocketClient
+import app.armorclaw.platform.config.ConfigRepository
+import app.armorclaw.platform.bridge.SetupService
+import app.armorclaw.platform.bridge.BridgeRpcClient
+import app.armorclaw.platform.bridge.BridgeWebSocketClient
 import org.koin.android.ext.koin.androidContext
 import org.koin.dsl.module
 
@@ -5510,9 +5471,9 @@ The verifier type is recorded in `environment_capabilities.json` (`tier_b_verifi
 | Compose TestTags | `TestTags.kt` | 106 |
 | Debug TestHooks | `TestHooks.kt` | 6 (TRIGGER_SYNC, EXPIRE_SESSION, NAVIGATE_TO, SET_NETWORK_STATE, RESET_NETWORK_STATE + UiStateContentProvider) |
 | Maestro flows | `maestro/` | 27 |
-| Instrumented test files | `androidApp/src/androidTest/` | 14 |
+| Instrumented test files | `app/src/androidTest/` | 14 |
 | Existing Appium tests | `appium/tests/` | 10 |
-| Unit tests | `shared/src/commonTest/` + `androidApp/src/test/` | 19 (shared, pre-existing failures) |
+| Unit tests | `app/src/test/` | 19 (pre-existing failures) |
 
 ### 18.9 Helper Scripts
 

@@ -457,7 +457,7 @@ type Server struct {
 | `pkg/eventbus/` | Event broadcasting to WebSocket clients (v0.7.0: wired to WebSocket for live push) |
 | `pkg/config/` | TOML configuration management |
 | `pkg/logger/` | Structured logging |
-| `pkg/secretary/` | Workflow engine with 26 source files: RPC dispatch (13 secretary.* + 4 task.* methods), orchestrator (sequential + parallel + dependencies), approval engine, PII approval blocking, event reader (_events.jsonl tailer), task scheduler (15s tick), template engine, BlindFill integration, browser integration, calendar service, WebDAV service, rolodex, trusted workflows, bridge-local registry, doc query registration, studio integration, audit, cleanup, notifications, store (SQLite), result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
+| `pkg/secretary/` | Workflow engine with 29 source files: RPC dispatch (13 secretary.* + 4 task.* methods), orchestrator (sequential + parallel + dependencies), approval engine, PII approval blocking, event reader (_events.jsonl tailer), task scheduler (15s tick), template engine, BlindFill integration, browser integration, calendar service, WebDAV service, rolodex, trusted workflows, bridge-local registry, doc query registration, studio integration, audit, cleanup, notifications, store (SQLite), result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
 | `pkg/health/` | Health check and readiness monitoring |
 | `pkg/runtime/` | Bridge runtime configuration and lifecycle |
 
@@ -1456,7 +1456,7 @@ Matrix serves as the **primary control plane** for ArmorClaw, providing:
 - `app.armorclaw.pii_response` - PII access response
 - `app.armorclaw.consent.request` - Three-way consent request
 - `app.armorclaw.consent.response` - Three-way consent response
-- `app.armorclaw.task_dispatch` - Scheduler-to-agent task directive (internal control plane)
+- ~~`app.armorclaw.task_dispatch`~~ - **Removed v0.7.0** (warm dispatch deleted; see deprecation notes)
 - `app.armorclaw.workflow_step_progress` - Step execution progress during workflow run
 - `app.armorclaw.workflow_completed` - Workflow completed successfully (all steps done)
 - `app.armorclaw.workflow_failed` - Workflow failed with error (includes step ID and recoverability)
@@ -3385,7 +3385,7 @@ In addition to the reactive container-side compaction above, the Bridge now perf
 | `hardening.ack` | `{step}` | `HardeningState` | Acknowledge step |
 | `hardening.rotate_password` | `{new_password}` | `{success}` | Rotate password |
 
-### Secretary / Workflow (9 methods)
+### Secretary / Workflow (13 methods)
 
 | Method | Parameters | Returns | Description |
 |--------|------------|---------|-------------|
@@ -3399,6 +3399,9 @@ In addition to the reactive container-side compaction above, the Bridge now perf
 | `secretary.get_template` | `{template_id}` | `{template_id, name, steps[]}` | Get template definition |
 | `secretary.delete_template` | `{template_id}` | `{template_id, status}` | Delete a workflow template |
 | `secretary.update_template` | `{template_id, name?, description?, steps[]?}` | `{template_id, status}` | Update template definition |
+| `secretary.is_running` | `{workflow_id}` | `{running: bool}` | Check if a workflow is currently running |
+| `secretary.get_active_count` | - | `{count: int}` | Get number of actively running workflows |
+| `secretary.shutdown` | `{workflow_id}` | `{status}` | Gracefully shutdown a running workflow |
 
 ### Task Management (4 methods)
 
