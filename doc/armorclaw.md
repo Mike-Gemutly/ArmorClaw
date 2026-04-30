@@ -118,7 +118,7 @@ ArmorClaw is a **VPS-based AI secretary platform** that runs AI agents 24/7 on y
 | **Human-in-the-Loop** | Mobile approval for sensitive operations (payments, PII) |
 | **SQLCipher Keystore** | Hardware-bound encrypted credential storage |
 | **No-Code Agent Studio** | Define agents via chat commands or dashboard |
-| **21 Browser Skills** | Chrome DevTools MCP integration for web automation via Jetski sidecar (separate container with network access) |
+| **52 Browser Skills** | Chrome DevTools MCP integration for web automation via Jetski sidecar |
 | **Sentinel Mode** | Automatic VPS deployment with Let's Encrypt TLS |
 | **Split-Storage RAG** | Document chunks stored separately from vector embeddings |
 | **YARA Content Disarm** | Malicious content detected and neutralized before processing |
@@ -242,9 +242,9 @@ All skills use **shell variable interpolation** (`${variable}`) for consistency 
 ```
 armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (67 packages)
-│   ├── cmd/bridge/main.go    # Primary entry point (3,527 lines)
+│   ├── cmd/bridge/main.go    # Primary entry point (3,538 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (89 registered methods)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (88 registered methods)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -312,7 +312,7 @@ armorclaw-omo/
 │
 ├── applications/             # Client applications
 │   ├── ArmorChat/           # Android Kotlin client
-│   ├── ArmorTerminal/       # Terminal client
+│   ├── ArmorTerminal/       # Play Store publishing assets and checklist
 │   └── admin-panel/         # Web dashboard
 │
 ├── deploy/                   # Deployment scripts (32 scripts)
@@ -331,7 +331,7 @@ armorclaw-omo/
 │   ├── pom.xml              # Maven build with POI 5.3.0, gRPC-Java, JUnit 5, Mockito
 │   ├── src/main/java/com/armorclaw/sidecar/  # ServerMain, ExtractorServiceImpl, interceptors
 │   ├── src/test/java/com/armorclaw/sidecar/  # 8 JUnit 5 tests + TestFixtures (base64 DOC/PPT)
-│   └── proto/               # Shared sidecar.proto
+│   └── src/main/proto/         # sidecar.proto (Apache POI + gRPC stubs)
 │
 ├── .skills/                  # AI CLI deployment skills
 │   ├── deploy.yaml
@@ -393,7 +393,7 @@ armorclaw-omo/
 
 The Go Bridge is the **central orchestrator** that coordinates between the host system and isolated AI agent containers. It provides:
 - Secure credential management via SQLCipher
-- JSON-RPC 2.0 API (89 registered methods across 18 domains)
+- JSON-RPC 2.0 API (88 registered methods across 18 domains)
 - Matrix integration for encrypted messaging
 - Browser automation job queue
 - Skill execution with allowlist control
@@ -405,30 +405,46 @@ The Go Bridge is the **central orchestrator** that coordinates between the host 
 
 ```go
 type Server struct {
-    // Core communication
-    handlers map[string]HandlerFunc  // 89 registered methods
-    socketPath string
-    listener net.Listener
-    
-    // Rate limiting
-    aiMaxConcurrent int           // Default: 4
-    aiSemaphore chan struct{}
-    heartbeats sync.Map           // UserID -> time.Time
-    
     // Integration dependencies
-    keystore        Keystore
-    matrix          MatrixAdapter
-    aiService       *ai.AIService
-    bridgeMgr       BridgeManager
-    browserJobs     *BrowserJobManager
-    studio          StudioService
-    appService      AppService
-    provisioningMgr ProvisioningManager
-    skillMgr        SkillManager
-    skillGate       interfaces.SkillGate
-    eventBus        *eventbus.EventBus
-    hardeningStore  trust.Store
-    metrics         *Metrics
+    keystore          Keystore
+    matrix            MatrixAdapter
+    aiService         *ai.AIService
+    aiSemaphore       chan struct{}
+    aiMaxConcurrent   int
+    bridgeMgr         BridgeManager
+    browserJobs       *BrowserJobManager
+    browserBroker     browser.BrowserBroker
+    studio            StudioService
+    appService        AppService
+    provisioningMgr   ProvisioningManager
+    skillMgr          SkillManager
+    skillGate         interfaces.SkillGate
+    mcpRouter         *mcp.MCPRouter
+    translator        *translator.RPCToMCPTranslator
+    eventBus          *eventbus.EventBus
+    hardeningStore    trust.Store
+    deviceStore       *trust.DeviceStore
+    inviteStore       *invite.InviteStore
+    secretaryHandler  secretaryRPCHandler
+    heartbeats        sync.Map
+    metrics           *Metrics
+    
+    // Network / lifecycle
+    handlers          map[string]HandlerFunc  // 88 registered methods
+    listener          net.Listener
+    shutdownCh        chan struct{}
+    rpcTransport      string
+    listenAddr        string
+    
+    // Security / governance
+    dockerClient      *docker.Client
+    guard             *trust.TrustedProxyGuard
+    auditLog          *audit.AuditLog
+    governanceRoomID  string
+    tlsInfoProvider   TLSInfoProvider
+    
+    // PII
+    piiRequestManager *keystore.PIIRequestManager
 }
 ```
 
@@ -441,7 +457,7 @@ type Server struct {
 | `pkg/eventbus/` | Event broadcasting to WebSocket clients (v0.7.0: wired to WebSocket for live push) |
 | `pkg/config/` | TOML configuration management |
 | `pkg/logger/` | Structured logging |
-| `pkg/secretary/` | Workflow engine, task scheduler, approval engine, PII approval blocking, orchestrator (parallel + integration), event reader, audit, rolodex, browser integration, calendar service, WebDAV service, notifications, studio integration, template engine, trusted workflows, bridge-local registry, doc query registration, RPC, store, cleanup, result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
+| `pkg/secretary/` | Workflow engine with 26 source files: RPC dispatch (13 secretary.* + 4 task.* methods), orchestrator (sequential + parallel + dependencies), approval engine, PII approval blocking, event reader (_events.jsonl tailer), task scheduler (15s tick), template engine, BlindFill integration, browser integration, calendar service, WebDAV service, rolodex, trusted workflows, bridge-local registry, doc query registration, studio integration, audit, cleanup, notifications, store (SQLite), result types, secretary commands (v0.7.0: WorkflowStep.Input for inter-step data passing) |
 | `pkg/health/` | Health check and readiness monitoring |
 | `pkg/runtime/` | Bridge runtime configuration and lifecycle |
 
@@ -3139,7 +3155,7 @@ memory: 512M
 
 ### Skills
 
-OpenClaw includes **21 browser skills** for web automation:
+OpenClaw includes **52 browser skills** for web automation:
 - Navigation, form filling, clicking
 - Data extraction, screenshots
 - CAPTCHA/2FA handling
@@ -3373,6 +3389,7 @@ In addition to the reactive container-side compaction above, the Bridge now perf
 
 | Method | Parameters | Returns | Description |
 |--------|------------|---------|-------------|
+| `secretary.create_workflow` | `{template_id, variables, user_id?}` | `{workflow_id, status, steps[]}` | Create a new workflow instance from a template |
 | `secretary.start_workflow` | `{template_id, variables}` | `{workflow_id, status, steps[]}` | Start a new workflow from template |
 | `secretary.get_workflow` | `{workflow_id}` | `{workflow_id, status, state, steps[], current_step}` | Get workflow status and state |
 | `secretary.cancel_workflow` | `{workflow_id}` | `{workflow_id, status, cancelled_at}` | Cancel a running workflow |
