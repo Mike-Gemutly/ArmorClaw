@@ -171,7 +171,8 @@ type Server struct {
 	guard           *trust.TrustedProxyGuard
 	auditLog        *audit.AuditLog
 	governanceRoomID string
-	tlsInfoProvider  TLSInfoProvider
+	tlsInfoProvider   TLSInfoProvider
+	piiRequestManager *keystore.PIIRequestManager
 }
 
 type Config struct {
@@ -238,6 +239,10 @@ func New(cfg Config) (*Server, error) {
 		secretaryHandler: cfg.SecretaryHandler,
 		governanceRoomID: cfg.GovernanceRoomID,
 	}
+
+	s.piiRequestManager = keystore.NewPIIRequestManager(keystore.PIIRequestManagerConfig{
+		DefaultTTL: 5 * time.Minute,
+	})
 
 	s.registerHandlers()
 	return s, nil
@@ -936,12 +941,16 @@ func (s *Server) registerHandlers() {
 		"secretary.start_workflow":  s.handleSecretaryMethod,
 		"secretary.get_workflow":    s.handleSecretaryMethod,
 		"secretary.cancel_workflow": s.handleSecretaryMethod,
+		"secretary.create_workflow":  s.handleSecretaryMethod,
 		"secretary.advance_workflow": s.handleSecretaryMethod,
 		"secretary.list_templates":  s.handleSecretaryMethod,
 		"secretary.create_template": s.handleSecretaryMethod,
 		"secretary.get_template":    s.handleSecretaryMethod,
 		"secretary.delete_template": s.handleSecretaryMethod,
 		"secretary.update_template": s.handleSecretaryMethod,
+		"secretary.is_running":       s.handleSecretaryMethod,
+		"secretary.get_active_count": s.handleSecretaryMethod,
+		"secretary.shutdown":         s.handleSecretaryMethod,
 		"task.create":               s.handleSecretaryMethod,
 		"task.list":                 s.handleSecretaryMethod,
 		"task.cancel":               s.handleSecretaryMethod,

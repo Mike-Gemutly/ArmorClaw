@@ -40,7 +40,7 @@ CREATED_REQUEST_IDS=()
 # ── RPC helpers (dual-transport: HTTP then Unix socket) ───────────────────────
 
 rpc_http() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   curl -ksS -X POST "https://${VPS_IP}:${BRIDGE_PORT}/api" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -49,12 +49,12 @@ rpc_http() {
 }
 
 rpc_socket() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   ssh_vps "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"auth\":\"${ADMIN_TOKEN}\",\"params\":$params}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock" 2>/dev/null
 }
 
 rpc_call() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   local resp
   resp=$(rpc_http "$method" "$params")
   if [[ -z "$resp" ]]; then
@@ -193,16 +193,32 @@ fi
 
 # Start the workflow
 if [[ -n "$XE1_TEMPLATE_ID" ]]; then
-  XE1_WF_ID="wf-x1-xe1-$(date +%s)-$$"
-  XE1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XE1_WF_ID}\"}")
-  save_evidence "xe1-start-workflow" "$XE1_START_RESP"
+  XE1_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XE1_TEMPLATE_ID}\"}")
+  save_evidence "xe1-create-workflow" "$XE1_CREATE_WF_RESP"
 
-  if assert_rpc_success "$XE1_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$XE1_WF_ID")
-    XE1_WORKFLOW_ID="$XE1_WF_ID"
-    log_pass "XE1: Email workflow started"
+  XE1_WF_ID=""
+  if assert_rpc_success "$XE1_CREATE_WF_RESP"; then
+    XE1_WF_ID=$(echo "$XE1_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XE1_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XE1_WF_ID")
+      log_pass "XE1: Email workflow created (id=$XE1_WF_ID)"
+    else
+      log_fail "XE1: create_workflow returned no id"
+    fi
   else
-    log_fail "XE1: Workflow start failed"
+    log_fail "XE1: create_workflow failed"
+  fi
+
+  if [[ -n "$XE1_WF_ID" ]]; then
+    XE1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XE1_WF_ID}\"}")
+    save_evidence "xe1-start-workflow" "$XE1_START_RESP"
+
+    if assert_rpc_success "$XE1_START_RESP"; then
+      XE1_WORKFLOW_ID="$XE1_WF_ID"
+      log_pass "XE1: Email workflow started"
+    else
+      log_fail "XE1: Workflow start failed"
+    fi
   fi
 fi
 
@@ -247,16 +263,29 @@ fi
 
 # Start workflow
 if [[ -n "$XE2_TEMPLATE_ID" ]]; then
-  XE2_WF_ID="wf-x1-xe2-$(date +%s)-$$"
-  XE2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XE2_WF_ID}\"}")
-  save_evidence "xe2-start-workflow" "$XE2_START_RESP"
+  XE2_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XE2_TEMPLATE_ID}\"}")
+  save_evidence "xe2-create-workflow" "$XE2_CREATE_WF_RESP"
 
-  if assert_rpc_success "$XE2_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$XE2_WF_ID")
-    XE2_WORKFLOW_ID="$XE2_WF_ID"
-    log_pass "XE2: Workflow started for approval propagation"
+  XE2_WF_ID=""
+  if assert_rpc_success "$XE2_CREATE_WF_RESP"; then
+    XE2_WF_ID=$(echo "$XE2_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XE2_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XE2_WF_ID")
+    fi
   else
-    log_fail "XE2: Workflow start failed"
+    log_fail "XE2: create_workflow failed"
+  fi
+
+  if [[ -n "$XE2_WF_ID" ]]; then
+    XE2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XE2_WF_ID}\"}")
+    save_evidence "xe2-start-workflow" "$XE2_START_RESP"
+
+    if assert_rpc_success "$XE2_START_RESP"; then
+      XE2_WORKFLOW_ID="$XE2_WF_ID"
+      log_pass "XE2: Workflow started for approval propagation"
+    else
+      log_fail "XE2: Workflow start failed"
+    fi
   fi
 fi
 
@@ -328,16 +357,29 @@ fi
 
 # Start workflow
 if [[ -n "$XE3_TEMPLATE_ID" ]]; then
-  XE3_WF_ID="wf-x1-xe3-$(date +%s)-$$"
-  XE3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XE3_WF_ID}\"}")
-  save_evidence "xe3-start-workflow" "$XE3_START_RESP"
+  XE3_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XE3_TEMPLATE_ID}\"}")
+  save_evidence "xe3-create-workflow" "$XE3_CREATE_WF_RESP"
 
-  if assert_rpc_success "$XE3_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$XE3_WF_ID")
-    XE3_WORKFLOW_ID="$XE3_WF_ID"
-    log_pass "XE3: Workflow started for denial test"
+  XE3_WF_ID=""
+  if assert_rpc_success "$XE3_CREATE_WF_RESP"; then
+    XE3_WF_ID=$(echo "$XE3_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XE3_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XE3_WF_ID")
+    fi
   else
-    log_fail "XE3: Workflow start failed"
+    log_fail "XE3: create_workflow failed"
+  fi
+
+  if [[ -n "$XE3_WF_ID" ]]; then
+    XE3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XE3_WF_ID}\"}")
+    save_evidence "xe3-start-workflow" "$XE3_START_RESP"
+
+    if assert_rpc_success "$XE3_START_RESP"; then
+      XE3_WORKFLOW_ID="$XE3_WF_ID"
+      log_pass "XE3: Workflow started for denial test"
+    else
+      log_fail "XE3: Workflow start failed"
+    fi
   fi
 fi
 

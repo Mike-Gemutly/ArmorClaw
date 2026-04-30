@@ -98,7 +98,7 @@ echo "Socket ready at $SOCKET_PATH"
 # ── RPC helper ────────────────────────────────────────────────────────────────
 rpc_call() {
     local method="$1"
-    local params="${2:-{}}"
+    local params="${2:-{\}}"
     local timeout_sec="${3:-5}"
     local payload="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}"
 

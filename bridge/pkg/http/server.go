@@ -301,7 +301,7 @@ type TLSInfo struct {
 	CertSource          string `json:"cert_source"`
 }
 
-func (s *Server) GetTLSInfo() TLSInfo {
+func (s *Server) GetTLSInfo() interface{} {
 	if len(s.certPEM) == 0 {
 		return TLSInfo{Mode: s.deriveTLSMode(), Health: "degraded", CertSource: "proxy_only"}
 	}
@@ -332,6 +332,13 @@ func (s *Server) GetTLSInfo() TLSInfo {
 		SANIncludesPublicIP: s.certIncludesPublicIP(cert),
 		CertSource:          "shared_cert",
 	}
+}
+
+func (s *Server) tlsMode() string {
+	if info, ok := s.GetTLSInfo().(TLSInfo); ok {
+		return info.Mode
+	}
+	return s.deriveTLSMode()
 }
 
 func (s *Server) deriveTLSMode() string {
@@ -701,7 +708,7 @@ func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 			"api_endpoint": bridgeURL + "/api",
 			"ws_endpoint":  toWSS(bridgeURL) + "/ws",
 			"push_gateway": bridgeURL + "/_matrix/push/v1/notify",
-			"tls_mode":     s.GetTLSInfo().Mode,
+			"tls_mode":     s.tlsMode(),
 		},
 	}
 

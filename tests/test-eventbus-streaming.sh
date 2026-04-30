@@ -149,34 +149,38 @@ echo ""
 echo "--- E1: WebSocket connection ---"
 
 E1_TMP="/tmp/ws-test-e1-$$.txt"
-if subscribe_events 10 "$E1_TMP"; then
-  LINE_COUNT=$(wc -l < "$E1_TMP" 2>/dev/null || echo 0)
+DEVICE_ID_E1="test-harness-e1"
 
-  # Save evidence
-  cp "$E1_TMP" "$EVIDENCE_E1"
+(echo "{\"type\":\"register\",\"payload\":{\"device_id\":\"$DEVICE_ID_E1\"}}" && sleep 10) \
+  | timeout 12 websocat -k "$WS_URL" > "$E1_TMP" 2>/dev/null
+E1_RC=$?
 
-  if [[ "$LINE_COUNT" -ge 1 ]]; then
-    log_pass "E1: Received $LINE_COUNT lines from WebSocket"
+LINE_COUNT=0
+if [[ -f "$E1_TMP" ]]; then
+  LINE_COUNT=$(grep -c '^{' "$E1_TMP" 2>/dev/null || true)
+  LINE_COUNT=${LINE_COUNT:-0}
+fi
+
+cp "$E1_TMP" "$EVIDENCE_E1" 2>/dev/null || true
+
+if [[ "$LINE_COUNT" -ge 1 ]]; then
+  log_pass "E1: Received $LINE_COUNT lines from WebSocket"
+else
+  log_fail "E1: No lines received from WebSocket"
+fi
+
+if [[ "$LINE_COUNT" -ge 1 ]] && grep -q '"type"' "$E1_TMP" 2>/dev/null; then
+  HEARTBEATS=$(grep -c '"timestamp"' "$E1_TMP" 2>/dev/null || true)
+  HEARTBEATS=${HEARTBEATS:-0}
+  log_pass "E1: Found messages with 'type' field ($HEARTBEATS messages)"
+
+  if grep -q '"heartbeat"' "$E1_TMP" || grep -q '"event"' "$E1_TMP" || grep -q '"registered"' "$E1_TMP"; then
+    log_pass "E1: Contains heartbeat or event messages"
   else
-    log_fail "E1: No lines received from WebSocket"
-  fi
-
-  # Check for heartbeat or event messages
-  if file_has_json_key "$E1_TMP" "type"; then
-    HEARTBEATS=$(count_json_key "$E1_TMP" "timestamp")
-    log_pass "E1: Found messages with 'type' field ($HEARTBEATS messages)"
-
-    # Verify at least one heartbeat or event
-    if grep -q '"heartbeat"' "$E1_TMP" || grep -q '"event"' "$E1_TMP"; then
-      log_pass "E1: Contains heartbeat or event messages"
-    else
-      log_info "E1: No heartbeat/event messages seen (may need longer capture)"
-    fi
-  else
-    log_fail "E1: No valid JSON with 'type' field received"
+    log_info "E1: No heartbeat/event messages seen (may need longer capture)"
   fi
 else
-  log_fail "E1: subscribe_events failed — WebSocket connection error"
+  log_fail "E1: No valid JSON with 'type' field received"
 fi
 
 rm -f "$E1_TMP"

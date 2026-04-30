@@ -41,7 +41,7 @@ fi
 
 # Check via port probe
 if [[ "$BRIDGE_RUNNING" == "false" ]]; then
-  if ssh_vps "curl -sf -o /dev/null -m 5 'http://localhost:${BRIDGE_PORT}/health'" 2>/dev/null; then
+  if ssh_vps "curl -sf -k -o /dev/null -m 5 'https://localhost:${BRIDGE_PORT}/health'" 2>/dev/null; then
     BRIDGE_RUNNING=true
     log_pass "A0.2: Bridge is running (port probe successful)"
   fi
@@ -71,12 +71,12 @@ probe_endpoint() {
   local path="$1"
   local description="${2:-$path}"
   local status_code
-  status_code=$(ssh_vps "curl -sf -o /dev/null -w '%{http_code}' -m 5 'http://localhost:${BRIDGE_PORT}${path}'" 2>/dev/null || echo "000")
+  status_code=$(ssh_vps "curl -sf -k -o /dev/null -w '%{http_code}' -m 5 'https://localhost:${BRIDGE_PORT}${path}'" 2>/dev/null || echo "000")
 
   local entry
   if [[ "$status_code" != "000" ]]; then
     local body_preview
-    body_preview=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}${path}' 2>/dev/null | head -c 200" 2>/dev/null || echo "")
+    body_preview=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}${path}' 2>/dev/null | head -c 200" 2>/dev/null || echo "")
     local response_keys="[]"
     if [[ -n "$body_preview" ]] && echo "$body_preview" | jq -e . >/dev/null 2>&1; then
       response_keys=$(echo "$body_preview" | jq 'keys' 2>/dev/null || echo "[]")
@@ -155,7 +155,7 @@ for method in "${KNOWN_METHODS[@]}"; do
   local_result=""
   local_status="unknown"
   local_error=""
-  local notes=""
+  local_notes=""
 
   local_result=$(_contract_bridge_rpc "$method" "{}" 1 2>/dev/null) && {
     if echo "$local_result" | jq -e '.error' >/dev/null 2>&1; then
@@ -177,7 +177,6 @@ for method in "${KNOWN_METHODS[@]}"; do
     local_notes="no response or connection error"
   }
 
-  local entry
   entry=$(jq -nc \
     --arg name "$method" \
     --arg status "$local_status" \
@@ -199,10 +198,8 @@ SCHEMA_JSON="{}"
 
 while IFS= read -r method; do
   [[ -z "$method" ]] && continue
-  local result
   result=$(_contract_bridge_rpc "$method" "{}" 1 2>/dev/null || echo "")
   if [[ -n "$result" ]]; then
-    local error_msg
     error_msg=$(echo "$result" | jq -r '.error.message // empty' 2>/dev/null)
     if [[ -n "$error_msg" ]]; then
       SCHEMA_JSON=$(echo "$SCHEMA_JSON" | jq --arg m "$method" --arg e "$error_msg" '. + {($m): {hint: $e}}')
@@ -230,7 +227,7 @@ else
 fi
 
 # Check .well-known
-MATRIX_WELL_KNOWN=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/.well-known/matrix/client'" 2>/dev/null || echo "")
+MATRIX_WELL_KNOWN=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/.well-known/matrix/client'" 2>/dev/null || echo "")
 if [[ -n "$MATRIX_WELL_KNOWN" ]] && echo "$MATRIX_WELL_KNOWN" | jq -e . >/dev/null 2>&1; then
   log_pass "A0.6: /.well-known/matrix/client responded"
   MATRIX_ENDPOINTS_JSON=$(echo "$MATRIX_ENDPOINTS_JSON" | jq '. + [{"endpoint": "/.well-known/matrix/client", "status": "ok"}]')
@@ -267,7 +264,7 @@ _contract_save "a0_tls_status.json" "$TLS_INFO_JSON"
 
 # Also probe /fingerprint endpoint for cross-check
 FINGERPRINT_EP=""
-FINGERPRINT_EP=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "")
+FINGERPRINT_EP=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "")
 if [[ -n "$FINGERPRINT_EP" ]] && echo "$FINGERPRINT_EP" | jq -e . >/dev/null 2>&1; then
   _contract_update_manifest_merge '.live_discovered.tls.fingerprint_endpoint = $FP' --argjson FP "$FINGERPRINT_EP"
 fi
@@ -284,7 +281,7 @@ ENV_VARS_JSON=$(jq -nc '[
   "ARMORCLAW_PUBLIC_BASE_URL", "ARMORCLAW_EMAIL"
 ]')
 _contract_update_manifest_merge '.documented_reference.env_vars = $VARS' --argjson VARS "$ENV_VARS_JSON"
-log_pass "A0.7: ${#ENV_VARS_JSON[@]} env var names documented"
+log_pass "A0.7: $(echo "$ENV_VARS_JSON" | jq 'length') env var names documented"
 
 # ── A0.8: Document deep link formats ─────────────────────────────────────────
 log_info "A0.8: Documenting deep link formats..."
@@ -320,7 +317,7 @@ _contract_save "contract_manifest.json" "$MANIFEST"
 log_pass "A0.9: contract_manifest.json generated"
 log_info "  Methods found: ${METHODS_FOUND}/${#KNOWN_METHODS[@]}"
 log_info "  Methods responding: ${METHODS_RESPONDING}"
-log_info "  Endpoints probed: ${#ENDPOINTS_JSON[@]}"
+log_info "  Endpoints probed: $(echo "$ENDPOINTS_JSON" | jq 'length')"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 _contract_save "a0_summary.json" "$(jq -nc \

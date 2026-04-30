@@ -22,10 +22,10 @@ capture_state() {
 
   local fingerprint status_tls qr_config
 
-  fingerprint=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "{}")
-  status_tls=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/api' \
+  fingerprint=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "{}")
+  status_tls=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/api' \
     -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"bridge.status\",\"params\":{}}'" 2>/dev/null | jq '.result.tls // {}' || echo "{}")
-  qr_config=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/qr/config'" 2>/dev/null || echo "{}")
+  qr_config=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/qr/config'" 2>/dev/null || echo "{}")
 
   jq -nc \
     --argjson fp "$fingerprint" \

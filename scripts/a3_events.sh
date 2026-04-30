@@ -48,38 +48,61 @@ if [[ "$HAS_SESSION" == "false" ]]; then
   log_info "A3.0: A3.1-A3.3 will be SKIPPED, A3.4-A3.5 will proceed best-effort"
 fi
 
+# ── A3.0b: Load room ID from provisioning outputs ────────────────────────────
+ROOM_ID=""
+PROV_OUTPUTS_FILE="${EVIDENCE_DIR}/a2_provisioning_outputs.json"
+if [[ -f "$PROV_OUTPUTS_FILE" ]]; then
+  ROOM_ID=$(jq -r '.test_room_id // empty' "$PROV_OUTPUTS_FILE" 2>/dev/null)
+fi
+
 # ── A3.1: Send m.room.message and verify in /sync ────────────────────────────
 if [[ "$HAS_SESSION" == "true" ]]; then
   log_info "A3.1: Sending test message and verifying via /sync..."
 
   TEST_MSG="Plan A event test $(date +%s)"
+  TXN_ID="txn_$(date +%s)"
 
-  SEND_RESULT=$(ssh_vps "curl -sf -m 10 -X PUT 'http://localhost:${MATRIX_PORT}/_matrix/client/v3/rooms/${ROOM_ID:-!test}/send/m.room.message/$(date +%s)' \
-    -H 'Content-Type: application/json' \
-    -H 'Authorization: Bearer ${ACCESS_TOKEN}' \
-    -d '{\"msgtype\":\"m.text\",\"body\":\"${TEST_MSG}\"}'" 2>/dev/null || echo "")
-
-  if [[ -n "$SEND_RESULT" ]] && echo "$SEND_RESULT" | jq -e '.event_id' >/dev/null 2>&1; then
-    EVENT_ID=$(echo "$SEND_RESULT" | jq -r '.event_id')
-    log_pass "A3.1: Message sent: $EVENT_ID"
-    PASS_COUNT=$((PASS_COUNT + 1))
-
-    sleep 2
-    SYNC_RESULT=$(ssh_vps "curl -sf -m 10 'http://localhost:${MATRIX_PORT}/_matrix/client/v3/sync?timeout=5000' \
-      -H 'Authorization: Bearer ${ACCESS_TOKEN}'" 2>/dev/null || echo "")
-
-    if [[ -n "$SYNC_RESULT" ]] && echo "$SYNC_RESULT" | jq -e '.rooms' >/dev/null 2>&1; then
-      MSG_FOUND=$(echo "$SYNC_RESULT" | jq -r '.rooms.joined // {} | to_entries[] | .value.timeline.events[] | select(.content.body == "'"$TEST_MSG"'") | .event_id' 2>/dev/null | head -1)
-      if [[ -n "$MSG_FOUND" ]]; then
-        log_pass "A3.1: Message confirmed in /sync: $MSG_FOUND"
-        PASS_COUNT=$((PASS_COUNT + 1))
-      else
-        log_info "A3.1: Message sent but not found in initial /sync (may need next_batch token)"
-      fi
-    fi
+  if [[ -z "$ROOM_ID" ]]; then
+    log_skip "A3.1: No test room ID available from A2 provisioning"
+    SKIP_COUNT=$((SKIP_COUNT + 1))
   else
-    log_fail "A3.1: Failed to send message"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
+    # Escape the message for safe embedding in the remote curl body
+    TEST_MSG_ESCAPED=$(echo "$TEST_MSG" | sed 's/"/\\"/g')
+
+    SEND_RESULT=$(ssh_vps "curl -sf -m 10 -X PUT 'http://localhost:${MATRIX_PORT}/_matrix/client/v3/rooms/${ROOM_ID}/send/m.room.message/${TXN_ID}' \
+      -H 'Content-Type: application/json' \
+      -H 'Authorization: Bearer ${ACCESS_TOKEN}' \
+      -d '{\"msgtype\":\"m.text\",\"body\":\"${TEST_MSG_ESCAPED}\"}'" 2>/dev/null || echo "")
+
+    # Normalize: check for event_id (Matrix v3 success) or error
+    if [[ -n "$SEND_RESULT" ]] && echo "$SEND_RESULT" | jq -e '.event_id' >/dev/null 2>&1; then
+      EVENT_ID=$(echo "$SEND_RESULT" | jq -r '.event_id')
+      log_pass "A3.1: Message sent: $EVENT_ID"
+      PASS_COUNT=$((PASS_COUNT + 1))
+
+      sleep 2
+      SYNC_RESULT=$(ssh_vps "curl -sf -m 10 'http://localhost:${MATRIX_PORT}/_matrix/client/v3/sync?timeout=5000' \
+        -H 'Authorization: Bearer ${ACCESS_TOKEN}'" 2>/dev/null || echo "")
+
+      if [[ -n "$SYNC_RESULT" ]] && echo "$SYNC_RESULT" | jq -e '.rooms' >/dev/null 2>&1; then
+        MSG_FOUND=$(echo "$SYNC_RESULT" | jq -r '.rooms.joined // {} | to_entries[] | .value.timeline.events[] | select(.content.body == "'"$TEST_MSG"'") | .event_id' 2>/dev/null | head -1)
+        if [[ -n "$MSG_FOUND" ]]; then
+          log_pass "A3.1: Message confirmed in /sync: $MSG_FOUND"
+          PASS_COUNT=$((PASS_COUNT + 1))
+        else
+          log_info "A3.1: Message sent but not found in initial /sync (may need next_batch token)"
+        fi
+      fi
+    else
+      # Log the actual response for diagnosis
+      if [[ -n "$SEND_RESULT" ]]; then
+        SEND_ERR=$(echo "$SEND_RESULT" | jq -r '.error // .errcode // "unknown"' 2>/dev/null)
+        log_fail "A3.1: Failed to send message (room=$ROOM_ID, error=$SEND_ERR)"
+      else
+        log_fail "A3.1: Failed to send message (empty response, room=$ROOM_ID)"
+      fi
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
   fi
 else
   log_skip "A3.1: m.room.message test — no Matrix session"
@@ -170,7 +193,8 @@ echo "$MANIFEST" | jq -r '.live_discovered.event_types[]?.type // empty' 2>/dev/
 
 # Deduplicate
 sort -u "$DISCOVERED_TYPES_FILE" > "${DISCOVERED_TYPES_FILE}.tmp" && mv "${DISCOVERED_TYPES_FILE}.tmp" "$DISCOVERED_TYPES_FILE"
-TYPE_COUNT=$(grep -cv '^#' "$DISCOVERED_TYPES_FILE" 2>/dev/null || echo "0")
+TYPE_COUNT=$(grep -cv '^#' "$DISCOVERED_TYPES_FILE" 2>/dev/null || true)
+TYPE_COUNT=${TYPE_COUNT:-0}
 
 if [[ "$TYPE_COUNT" -gt 0 ]]; then
   log_pass "A3.5: Discovered ${TYPE_COUNT} unique event types"

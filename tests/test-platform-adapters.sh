@@ -60,7 +60,7 @@ fi
 # Args: method [params_json] [timeout_seconds]
 rpc_call() {
   local method="$1"
-  local params="${2:-{}}"
+  local params="${2:-{\}}"
   local timeout_s="${3:-10}"
   local payload="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params},\"auth\":\"${ADMIN_TOKEN}\"}"
 

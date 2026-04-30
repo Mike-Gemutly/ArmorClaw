@@ -99,6 +99,8 @@ func NewRPCHandler(cfg RPCHandlerConfig) *RPCHandler {
 
 func (h *RPCHandler) Handle(req *RPCRequest) *RPCResponse {
 	switch req.Method {
+	case "secretary.create_workflow":
+		return h.handleCreateWorkflow(req)
 	case "secretary.start_workflow":
 		return h.handleStartWorkflow(req)
 	case "secretary.get_workflow":
@@ -209,6 +211,57 @@ func (h *RPCHandler) handleCreateTemplate(req *RPCRequest) *RPCResponse {
 	h.log.Info("template_created_via_rpc", "template_id", template.ID, "name", template.Name, "created_by", req.UserID)
 
 	return SuccessResponse(template)
+}
+
+type CreateWorkflowParams struct {
+	TemplateID string                 `json:"template_id"`
+	Variables  map[string]interface{} `json:"variables,omitempty"`
+	CreatedBy  string                 `json:"created_by"`
+}
+
+func (h *RPCHandler) handleCreateWorkflow(req *RPCRequest) *RPCResponse {
+	var params CreateWorkflowParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return ErrorResponse(ErrInvalidParams, "Invalid params: "+err.Error())
+	}
+
+	if params.TemplateID == "" {
+		return ErrorResponse(ErrValidation, "template_id is required")
+	}
+
+	userID := req.UserID
+	if userID == "" {
+		userID = "rpc"
+	}
+
+	template, err := h.store.GetTemplate(context.Background(), params.TemplateID)
+	if err != nil {
+		return ErrorResponse(ErrNotFound, "Template not found: "+params.TemplateID)
+	}
+
+	if !template.IsActive {
+		return ErrorResponse(ErrValidation, "Template is inactive: "+params.TemplateID)
+	}
+
+	now := time.Now()
+	workflow := &Workflow{
+		ID:          fmt.Sprintf("wf_%d", now.UnixMilli()),
+		TemplateID:  params.TemplateID,
+		Name:        template.Name,
+		Description: template.Description,
+		Status:      StatusPending,
+		Variables:   params.Variables,
+		AgentIDs:    []string{},
+		CreatedBy:   userID,
+	}
+
+	if err := h.store.CreateWorkflow(context.Background(), workflow); err != nil {
+		return ErrorResponse(ErrInternal, "Failed to create workflow: "+err.Error())
+	}
+
+	h.log.Info("workflow_created_via_rpc", "workflow_id", workflow.ID, "template_id", params.TemplateID, "created_by", userID)
+
+	return SuccessResponse(workflow)
 }
 
 type StartWorkflowParams struct {

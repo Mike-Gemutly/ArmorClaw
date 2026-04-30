@@ -59,7 +59,7 @@ log_info() {
 
 rpc_call() {
     local method="$1"
-    local params="${2:-{}}"
+    local params="${2:-{\}}"
     echo "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":$params,\"id\":$(date +%s%N)}" | \
         socat - UNIX-CONNECT:"$BRIDGE_SOCK" 2>/dev/null
 }

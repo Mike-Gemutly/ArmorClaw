@@ -396,7 +396,7 @@ func (s *SQLiteStore) GetTemplate(ctx context.Context, id string) (*TaskTemplate
 	defer s.mu.RUnlock()
 
 	template := &TaskTemplate{}
-	var stepsJSON, variablesJSON, piiRefsJSON string
+	var stepsJSON, variablesJSON, piiRefsJSON sql.NullString
 	var isActive int
 	var createdAtInt, updatedAtInt sql.NullInt64
 
@@ -419,13 +419,19 @@ func (s *SQLiteStore) GetTemplate(ctx context.Context, id string) (*TaskTemplate
 		template.UpdatedAt = time.UnixMilli(updatedAtInt.Int64)
 	}
 
-	if err := json.Unmarshal([]byte(stepsJSON), &template.Steps); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+	if stepsJSON.Valid && stepsJSON.String != "" {
+		if err := json.Unmarshal([]byte(stepsJSON.String), &template.Steps); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+		}
 	}
 
-	template.Variables = json.RawMessage(variablesJSON)
-	if err := json.Unmarshal([]byte(piiRefsJSON), &template.PIIRefs); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+	if variablesJSON.Valid && variablesJSON.String != "" {
+		template.Variables = json.RawMessage(variablesJSON.String)
+	}
+	if piiRefsJSON.Valid && piiRefsJSON.String != "" {
+		if err := json.Unmarshal([]byte(piiRefsJSON.String), &template.PIIRefs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+		}
 	}
 	template.IsActive = isActive == 1
 
@@ -437,7 +443,7 @@ func (s *SQLiteStore) GetTemplateByTrigger(ctx context.Context, trigger string) 
 	defer s.mu.RUnlock()
 
 	template := &TaskTemplate{}
-	var stepsJSON, variablesJSON, piiRefsJSON string
+	var stepsJSON, variablesJSON, piiRefsJSON sql.NullString
 	var isActive int
 	var createdAtInt, updatedAtInt sql.NullInt64
 
@@ -460,13 +466,19 @@ func (s *SQLiteStore) GetTemplateByTrigger(ctx context.Context, trigger string) 
 		template.UpdatedAt = time.UnixMilli(updatedAtInt.Int64)
 	}
 
-	if err := json.Unmarshal([]byte(stepsJSON), &template.Steps); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+	if stepsJSON.Valid && stepsJSON.String != "" {
+		if err := json.Unmarshal([]byte(stepsJSON.String), &template.Steps); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+		}
 	}
 
-	template.Variables = json.RawMessage(variablesJSON)
-	if err := json.Unmarshal([]byte(piiRefsJSON), &template.PIIRefs); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+	if variablesJSON.Valid && variablesJSON.String != "" {
+		template.Variables = json.RawMessage(variablesJSON.String)
+	}
+	if piiRefsJSON.Valid && piiRefsJSON.String != "" {
+		if err := json.Unmarshal([]byte(piiRefsJSON.String), &template.PIIRefs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+		}
 	}
 	template.IsActive = isActive == 1
 
@@ -496,7 +508,7 @@ func (s *SQLiteStore) ListTemplates(ctx context.Context, filter TemplateFilter) 
 	var templates []TaskTemplate
 	for rows.Next() {
 		template := &TaskTemplate{}
-		var stepsJSON, variablesJSON, piiRefsJSON string
+		var stepsJSON, variablesJSON, piiRefsJSON sql.NullString
 		var isActive int
 		var createdAtInt, updatedAtInt sql.NullInt64
 
@@ -511,13 +523,19 @@ func (s *SQLiteStore) ListTemplates(ctx context.Context, filter TemplateFilter) 
 			template.UpdatedAt = time.UnixMilli(updatedAtInt.Int64)
 		}
 
-		if err := json.Unmarshal([]byte(stepsJSON), &template.Steps); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+		if stepsJSON.Valid && stepsJSON.String != "" {
+			if err := json.Unmarshal([]byte(stepsJSON.String), &template.Steps); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+			}
 		}
 
-		template.Variables = json.RawMessage(variablesJSON)
-		if err := json.Unmarshal([]byte(piiRefsJSON), &template.PIIRefs); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+		if variablesJSON.Valid && variablesJSON.String != "" {
+			template.Variables = json.RawMessage(variablesJSON.String)
+		}
+		if piiRefsJSON.Valid && piiRefsJSON.String != "" {
+			if err := json.Unmarshal([]byte(piiRefsJSON.String), &template.PIIRefs); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal PII refs: %w", err)
+			}
 		}
 		template.IsActive = isActive == 1
 

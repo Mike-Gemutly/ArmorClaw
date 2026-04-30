@@ -33,7 +33,7 @@ VOICE_AVAILABLE=false
 # ══════════════════════════════════════════════════════════════════════════════
 voice_rpc() {
   local method="$1"
-  local params="${2:-{}}"
+  local params="${2:-{\}}"
   local rpc_id="${3:-1}"
   local payload
   payload=$(printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$rpc_id" "$method" "$params")

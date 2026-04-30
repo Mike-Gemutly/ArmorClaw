@@ -36,7 +36,7 @@ CREATED_WORKFLOW_IDS=()
 # ── RPC helpers (dual-transport: HTTP then Unix socket) ───────────────────────
 
 rpc_http() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   curl -ksS -X POST "https://${VPS_IP}:${BRIDGE_PORT}/api" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -45,12 +45,12 @@ rpc_http() {
 }
 
 rpc_socket() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   ssh_vps "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"auth\":\"${ADMIN_TOKEN}\",\"params\":$params}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock" 2>/dev/null
 }
 
 rpc_call() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   local resp
   resp=$(rpc_http "$method" "$params")
   if [[ -z "$resp" ]]; then
@@ -214,16 +214,29 @@ fi
 
 # Start the workflow
 if [[ -n "$XD1_TEMPLATE_ID" ]]; then
-  XD1_WF_ID="wf-x2-xd1-$(date +%s)-$$"
-  XD1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XD1_WF_ID}\"}")
-  save_evidence "xd1-start-workflow" "$XD1_START_RESP"
+  XD1_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XD1_TEMPLATE_ID}\"}")
+  save_evidence "xd1-create-workflow" "$XD1_CREATE_WF_RESP"
 
-  if assert_rpc_success "$XD1_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$XD1_WF_ID")
-    XD1_WORKFLOW_ID="$XD1_WF_ID"
-    log_pass "XD1: Document workflow started"
+  XD1_WF_ID=""
+  if assert_rpc_success "$XD1_CREATE_WF_RESP"; then
+    XD1_WF_ID=$(echo "$XD1_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XD1_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XD1_WF_ID")
+    fi
   else
-    log_fail "XD1: Workflow start failed"
+    log_fail "XD1: create_workflow failed"
+  fi
+
+  if [[ -n "$XD1_WF_ID" ]]; then
+    XD1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XD1_WF_ID}\"}")
+    save_evidence "xd1-start-workflow" "$XD1_START_RESP"
+
+    if assert_rpc_success "$XD1_START_RESP"; then
+      XD1_WORKFLOW_ID="$XD1_WF_ID"
+      log_pass "XD1: Document workflow started"
+    else
+      log_fail "XD1: Workflow start failed"
+    fi
   fi
 fi
 
@@ -272,16 +285,29 @@ fi
 
 # Start workflow
 if [[ -n "$XD2_TEMPLATE_ID" ]]; then
-  XD2_WF_ID="wf-x2-xd2-$(date +%s)-$$"
-  XD2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XD2_WF_ID}\"}")
-  save_evidence "xd2-start-workflow" "$XD2_START_RESP"
+  XD2_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XD2_TEMPLATE_ID}\"}")
+  save_evidence "xd2-create-workflow" "$XD2_CREATE_WF_RESP"
 
-  if assert_rpc_success "$XD2_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$XD2_WF_ID")
-    XD2_WORKFLOW_ID="$XD2_WF_ID"
-    log_pass "XD2: Structured-output workflow started"
+  XD2_WF_ID=""
+  if assert_rpc_success "$XD2_CREATE_WF_RESP"; then
+    XD2_WF_ID=$(echo "$XD2_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XD2_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XD2_WF_ID")
+    fi
   else
-    log_fail "XD2: Workflow start failed"
+    log_fail "XD2: create_workflow failed"
+  fi
+
+  if [[ -n "$XD2_WF_ID" ]]; then
+    XD2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XD2_WF_ID}\"}")
+    save_evidence "xd2-start-workflow" "$XD2_START_RESP"
+
+    if assert_rpc_success "$XD2_START_RESP"; then
+      XD2_WORKFLOW_ID="$XD2_WF_ID"
+      log_pass "XD2: Structured-output workflow started"
+    else
+      log_fail "XD2: Workflow start failed"
+    fi
   fi
 fi
 
@@ -357,23 +383,36 @@ if assert_rpc_success "$XD3_CREATE_RESP"; then
 fi
 
 if [[ -n "$XD3_TEMPLATE_ID" ]]; then
-  XD3_WF_ID="wf-x2-xd3-$(date +%s)-$$"
-  XD3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XD3_WF_ID}\"}")
-  save_evidence "xd3-start-workflow" "$XD3_START_RESP"
+  XD3_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XD3_TEMPLATE_ID}\"}")
+  save_evidence "xd3-create-workflow" "$XD3_CREATE_WF_RESP"
 
-  if assert_rpc_success "$XD3_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$XD3_WF_ID")
-    log_pass "XD3: Workflow started despite potential format mismatch"
-
-    # Verify workflow still queryable after mismatch
-    XD3_GET_RESP=$(rpc_call "secretary.get_workflow" "{\"workflow_id\":\"${XD3_WF_ID}\"}")
-    if assert_rpc_success "$XD3_GET_RESP"; then
-      log_pass "XD3: Workflow queryable after format mismatch (resilient)"
-    else
-      log_fail "XD3: Workflow became unqueryable after format mismatch"
+  XD3_WF_ID=""
+  if assert_rpc_success "$XD3_CREATE_WF_RESP"; then
+    XD3_WF_ID=$(echo "$XD3_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XD3_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XD3_WF_ID")
     fi
   else
-    log_fail "XD3: Workflow start failed for mismatch test"
+    log_fail "XD3: create_workflow failed"
+  fi
+
+  if [[ -n "$XD3_WF_ID" ]]; then
+    XD3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XD3_WF_ID}\"}")
+    save_evidence "xd3-start-workflow" "$XD3_START_RESP"
+
+    if assert_rpc_success "$XD3_START_RESP"; then
+      log_pass "XD3: Workflow started despite potential format mismatch"
+
+      # Verify workflow still queryable after mismatch
+      XD3_GET_RESP=$(rpc_call "secretary.get_workflow" "{\"workflow_id\":\"${XD3_WF_ID}\"}")
+      if assert_rpc_success "$XD3_GET_RESP"; then
+        log_pass "XD3: Workflow queryable after format mismatch (resilient)"
+      else
+        log_fail "XD3: Workflow became unqueryable after format mismatch"
+      fi
+    else
+      log_fail "XD3: Workflow start failed for mismatch test"
+    fi
   fi
 fi
 

@@ -52,7 +52,7 @@ _contract_bridge_rpc() {
       '{jsonrpc:"2.0", id: 1, method: $method, params: $params}')
 
     # Call bridge via SSH
-    response=$(ssh_vps "curl -sf -m 10 'http://localhost:${BRIDGE_PORT}/api' -H 'Content-Type: application/json' -d '${request}'" 2>/dev/null) && {
+    response=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/api' -H 'Content-Type: application/json' -d '${request}'" 2>/dev/null) && {
       echo "$response"
       return 0
     }
@@ -196,15 +196,15 @@ _contract_update_manifest() {
 # Arguments:
 #   $1 - jq expression (e.g. '.live_discovered.rpc_methods += [$new_method]')
 _contract_update_manifest_merge() {
-  local expression="${1:?Usage: _contract_update_manifest_merge jq_expression}"
+  local expression="${1:?Usage: _contract_update_manifest_merge jq_expression [jq_args...]}"
   local manifest_path="${EVIDENCE_DIR}/contract_manifest.json"
   local tmp_path="${manifest_path}.tmp"
 
   # Ensure manifest exists
   _contract_load_manifest > /dev/null
 
-  # Read, apply expression, write atomically
-  jq "$expression" "$manifest_path" > "$tmp_path" && \
+  # Read, apply expression with any extra jq args, write atomically
+  jq "$expression" "${@:2}" "$manifest_path" > "$tmp_path" && \
     mv "$tmp_path" "$manifest_path"
 
   log_info "[MANIFEST] Applied merge: $expression"

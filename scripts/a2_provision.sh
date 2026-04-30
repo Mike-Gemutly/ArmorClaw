@@ -76,7 +76,7 @@ else
 fi
 
 # Cross-check fingerprint endpoint
-FP_ENDPOINT=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "")
+  FP_ENDPOINT=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/fingerprint'" 2>/dev/null || echo "")
 if [[ -n "$FP_ENDPOINT" ]] && echo "$FP_ENDPOINT" | jq -e '.sha256' >/dev/null 2>&1; then
   FP_EP_VALUE=$(echo "$FP_ENDPOINT" | jq -r '.sha256')
   if [[ "$TLS_FP" == "$FP_EP_VALUE" ]]; then
@@ -88,22 +88,22 @@ fi
 
 # ── A2.4: Verify bridge health/status ────────────────────────────────────────
 log_info "A2.4: Verifying bridge health..."
-HEALTH_RESULT=$(_contract_bridge_rpc "$HEALTH_METHOD" '{}' 2 2>/dev/null || echo "")
-if [[ -n "$HEALTH_RESULT" ]] && echo "$HEALTH_RESULT" | jq -e '.result' >/dev/null 2>&1; then
-  log_pass "A2.4: Bridge health check responded"
-else
-  log_info "A2.4: Health check via RPC not available, trying HTTP..."
-  HTTP_HEALTH=$(ssh_vps "curl -sf 'http://localhost:${BRIDGE_PORT}/health'" 2>/dev/null || echo "")
-  if [[ -n "$HTTP_HEALTH" ]]; then
-    log_pass "A2.4: HTTP /health responded"
+  HEALTH_RESULT=$(_contract_bridge_rpc "$HEALTH_METHOD" '{}' 2 2>/dev/null || echo "")
+  if [[ -n "$HEALTH_RESULT" ]] && echo "$HEALTH_RESULT" | jq -e '.result' >/dev/null 2>&1; then
+    log_pass "A2.4: Bridge health check responded"
   else
-    log_fail "A2.4: Bridge not healthy"
+    log_info "A2.4: Health check via RPC not available, trying HTTPS..."
+    HTTP_HEALTH=$(ssh_vps "curl -sf -k 'https://localhost:${BRIDGE_PORT}/health'" 2>/dev/null || echo "")
+    if [[ -n "$HTTP_HEALTH" ]] && echo "$HTTP_HEALTH" | jq -e '.status' >/dev/null 2>&1; then
+      log_pass "A2.4: HTTPS /health responded (status=$(echo "$HTTP_HEALTH" | jq -r '.status'))"
+    else
+      log_fail "A2.4: Bridge not healthy"
+    fi
   fi
-fi
 
 # ── A2.5: Retrieve /qr/config ────────────────────────────────────────────────
 log_info "A2.5: Checking /qr/config..."
-QR_CONFIG=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/qr/config'" 2>/dev/null || echo "")
+QR_CONFIG=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/qr/config'" 2>/dev/null || echo "")
 if [[ -n "$QR_CONFIG" ]] && echo "$QR_CONFIG" | jq -e . >/dev/null 2>&1; then
   _contract_save "a2_qr_config.json" "$QR_CONFIG"
   log_pass "A2.5: /qr/config available"
@@ -113,7 +113,7 @@ fi
 
 # ── A2.6: Verify /.well-known/matrix/client ──────────────────────────────────
 log_info "A2.6: Verifying Matrix client discovery..."
-WELL_KNOWN=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/.well-known/matrix/client'" 2>/dev/null || echo "")
+WELL_KNOWN=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/.well-known/matrix/client'" 2>/dev/null || echo "")
 HOMESERVER_URL=""
 
 if [[ -n "$WELL_KNOWN" ]] && echo "$WELL_KNOWN" | jq -e '.["m.homeserver"].base_url' >/dev/null 2>&1; then

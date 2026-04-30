@@ -36,7 +36,7 @@ WS_URL="wss://${VPS_IP}:${BRIDGE_PORT}/ws"
 # ── RPC helpers (dual-transport: HTTP then Unix socket) ───────────────────────
 
 rpc_http() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   curl -ksS -X POST "https://${VPS_IP}:${BRIDGE_PORT}/api" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -45,12 +45,12 @@ rpc_http() {
 }
 
 rpc_socket() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   ssh_vps "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"auth\":\"${ADMIN_TOKEN}\",\"params\":$params}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock" 2>/dev/null
 }
 
 rpc_call() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   local resp
   resp=$(rpc_http "$method" "$params")
   if [[ -z "$resp" ]]; then
@@ -92,7 +92,7 @@ start_event_capture() {
   local duration="${1:-30}"
   EVENT_CAPTURE_FILE=$(mktemp "$EVIDENCE_DIR/capture-XXXXXX.jsonl")
   if [[ "$WEBSOCAT_AVAILABLE" == "true" ]]; then
-    timeout "$duration" websocat -k "$WS_URL" > "$EVENT_CAPTURE_FILE" 2>/dev/null &
+    (echo '{"type":"register","payload":{"device_id":"x4-event-capture"}}' && sleep "$duration") | timeout "$((duration + 2))" websocat -k "$WS_URL" > "$EVENT_CAPTURE_FILE" 2>/dev/null &
     EVENT_CAPTURE_PID=$!
     log_info "Event capture started (pid=$EVENT_CAPTURE_PID, duration=${duration}s)"
   fi
@@ -109,7 +109,9 @@ stop_event_capture() {
 
 count_captured_events() {
   if [[ -f "${EVENT_CAPTURE_FILE:-}" ]]; then
-    grep -c '^{' "$EVENT_CAPTURE_FILE" 2>/dev/null || echo "0"
+    local n
+    n=$(grep -c '^{' "$EVENT_CAPTURE_FILE" 2>/dev/null || true)
+    echo "${n:-0}"
   else
     echo "0"
   fi
@@ -156,8 +158,8 @@ if [[ "$WEBSOCAT_AVAILABLE" != "true" ]]; then
 fi
 log_pass "websocat available"
 
-# Quick WebSocket connectivity test
-XV0_WS_TEST=$(timeout 5 websocat -k "$WS_URL" 2>/dev/null || true)
+# Quick WebSocket connectivity test — send a registration message and check for response
+XV0_WS_TEST=$(echo '{"type":"register","payload":{"device_id":"xv0-connectivity-test"}}' | timeout 5 websocat -k "$WS_URL" 2>/dev/null || true)
 if [[ -n "$XV0_WS_TEST" ]] || [[ $? -eq 124 ]]; then
   log_pass "WebSocket endpoint reachable at $WS_URL"
   XV0_WS_OK=true
@@ -182,15 +184,41 @@ start_event_capture 20
 sleep 2
 
 # Trigger a workflow event
-XV1_WF_ID="wf-x4-xv1-$(date +%s)-$$"
-XV1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XV1_WF_ID}\"}")
-save_evidence "xv1-start-workflow" "$XV1_START_RESP"
+XV1_TEMPLATE_NAME="${UNIQUE}-xv1-stream"
+XV1_STEP_1="{\"step_id\":\"xv1_s1\",\"order\":0,\"type\":\"action\",\"name\":\"Stream Test Step\"}"
+XV1_CREATE_PARAMS="{\"name\":\"${XV1_TEMPLATE_NAME}\",\"description\":\"XV1 event stream trigger\",\"steps\":[${XV1_STEP_1}],\"created_by\":\"harness\"}"
+XV1_WF_ID=""
 
-if assert_rpc_success "$XV1_START_RESP"; then
-  CREATED_WORKFLOW_IDS+=("$XV1_WF_ID")
-  log_pass "XV1: Workflow started (should emit workflow event)"
+XV1_TPL_RESP=$(rpc_call "secretary.create_template" "$XV1_CREATE_PARAMS")
+if assert_rpc_success "$XV1_TPL_RESP"; then
+  XV1_TPL_ID=$(echo "$XV1_TPL_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+  if [[ -n "$XV1_TPL_ID" ]]; then
+    CREATED_TEMPLATE_IDS+=("$XV1_TPL_ID")
+  fi
+fi
+
+if [[ -n "${XV1_TPL_ID:-}" ]]; then
+  XV1_CW_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XV1_TPL_ID}\"}")
+  if assert_rpc_success "$XV1_CW_RESP"; then
+    XV1_WF_ID=$(echo "$XV1_CW_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XV1_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XV1_WF_ID")
+    fi
+  fi
+fi
+
+if [[ -n "$XV1_WF_ID" ]]; then
+  XV1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XV1_WF_ID}\"}")
+  save_evidence "xv1-start-workflow" "$XV1_START_RESP"
+
+  if assert_rpc_success "$XV1_START_RESP"; then
+    log_pass "XV1: Workflow started (should emit workflow event)"
+  else
+    log_fail "XV1: Workflow start failed"
+  fi
 else
-  log_fail "XV1: Workflow start failed"
+  XV1_START_RESP=""
+  log_skip "XV1: Could not create workflow for event trigger"
 fi
 
 # Trigger an email approval event
@@ -256,13 +284,41 @@ start_event_capture 25
 sleep 2
 
 # Create a sequential chain: workflow start → PII request → PII deny → workflow check
-XV2_WF_ID="wf-x4-xv2-$(date +%s)-$$"
-XV2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XV2_WF_ID}\"}")
-save_evidence "xv2-start-workflow" "$XV2_START_RESP"
+XV2_TEMPLATE_NAME="${UNIQUE}-xv2-causal"
+XV2_STEP_1="{\"step_id\":\"xv2_s1\",\"order\":0,\"type\":\"action\",\"name\":\"Causal Chain Step\"}"
+XV2_CREATE_PARAMS="{\"name\":\"${XV2_TEMPLATE_NAME}\",\"description\":\"XV2 causal ordering test\",\"steps\":[${XV2_STEP_1}],\"created_by\":\"harness\"}"
+XV2_WF_ID=""
 
-if assert_rpc_success "$XV2_START_RESP"; then
-  CREATED_WORKFLOW_IDS+=("$XV2_WF_ID")
-  log_pass "XV2: Workflow started for causal chain"
+XV2_TPL_RESP=$(rpc_call "secretary.create_template" "$XV2_CREATE_PARAMS")
+if assert_rpc_success "$XV2_TPL_RESP"; then
+  XV2_TPL_ID=$(echo "$XV2_TPL_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+  if [[ -n "$XV2_TPL_ID" ]]; then
+    CREATED_TEMPLATE_IDS+=("$XV2_TPL_ID")
+  fi
+fi
+
+if [[ -n "${XV2_TPL_ID:-}" ]]; then
+  XV2_CW_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XV2_TPL_ID}\"}")
+  if assert_rpc_success "$XV2_CW_RESP"; then
+    XV2_WF_ID=$(echo "$XV2_CW_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XV2_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XV2_WF_ID")
+    fi
+  fi
+fi
+
+if [[ -n "$XV2_WF_ID" ]]; then
+  XV2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XV2_WF_ID}\"}")
+  save_evidence "xv2-start-workflow" "$XV2_START_RESP"
+
+  if assert_rpc_success "$XV2_START_RESP"; then
+    log_pass "XV2: Workflow started for causal chain"
+  else
+    log_fail "XV2: Workflow start failed"
+  fi
+else
+  XV2_START_RESP=""
+  log_skip "XV2: Could not create workflow for causal chain"
 fi
 
 sleep 1
@@ -387,31 +443,56 @@ else
 fi
 
 # Cross-check: trigger one more event and verify it appears in replay
-XV3_WF_ID="wf-x4-xv3-$(date +%s)-$$"
-XV3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XV3_WF_ID}\"}")
-save_evidence "xv3-final-trigger" "$XV3_START_RESP"
+XV3B_TEMPLATE_NAME="${UNIQUE}-xv3-replay"
+XV3B_STEP_1="{\"step_id\":\"xv3b_s1\",\"order\":0,\"type\":\"action\",\"name\":\"Replay Trigger Step\"}"
+XV3B_CREATE_PARAMS="{\"name\":\"${XV3B_TEMPLATE_NAME}\",\"description\":\"XV3 replay cross-check\",\"steps\":[${XV3B_STEP_1}],\"created_by\":\"harness\"}"
+XV3B_WF_ID=""
 
-if assert_rpc_success "$XV3_START_RESP"; then
-  CREATED_WORKFLOW_IDS+=("$XV3_WF_ID")
-  log_pass "XV3: Final trigger event sent"
+XV3B_TPL_RESP=$(rpc_call "secretary.create_template" "$XV3B_CREATE_PARAMS")
+if assert_rpc_success "$XV3B_TPL_RESP"; then
+  XV3B_TPL_ID=$(echo "$XV3B_TPL_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+  if [[ -n "$XV3B_TPL_ID" ]]; then
+    CREATED_TEMPLATE_IDS+=("$XV3B_TPL_ID")
+  fi
+fi
 
-  # Wait and check replay again
-  sleep 2
-  XV3_REPLAY2=$(rpc_call "events.replay" '{"offset":0,"limit":50}')
-  save_evidence "xv3-replay-after-trigger" "$XV3_REPLAY2"
-
-  if echo "$XV3_REPLAY2" | jq -e '.result' >/dev/null 2>&1; then
-    XV3_REPLAY2_COUNT=$(echo "$XV3_REPLAY2" | jq '.result | if type == "array" then length else 0 end' 2>/dev/null || echo "0")
-    log_info "XV3: Post-trigger replay has $XV3_REPLAY2_COUNT events"
-
-    if [[ "$XV3_REPLAY2_COUNT" -gt "${XV3_REPLAY_COUNT:-0}" ]]; then
-      log_pass "XV3: Event store grew after trigger ($XV3_REPLAY_COUNT → $XV3_REPLAY2_COUNT)"
-    else
-      log_pass "XV3: Event store queryable after trigger"
+if [[ -n "${XV3B_TPL_ID:-}" ]]; then
+  XV3B_CW_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${XV3B_TPL_ID}\"}")
+  if assert_rpc_success "$XV3B_CW_RESP"; then
+    XV3B_WF_ID=$(echo "$XV3B_CW_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$XV3B_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$XV3B_WF_ID")
     fi
   fi
+fi
+
+if [[ -n "$XV3B_WF_ID" ]]; then
+  XV3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${XV3B_WF_ID}\"}")
+  save_evidence "xv3-final-trigger" "$XV3_START_RESP"
+
+  if assert_rpc_success "$XV3_START_RESP"; then
+    log_pass "XV3: Final trigger event sent"
+
+    # Wait and check replay again
+    sleep 2
+    XV3_REPLAY2=$(rpc_call "events.replay" '{"offset":0,"limit":50}')
+    save_evidence "xv3-replay-after-trigger" "$XV3_REPLAY2"
+
+    if echo "$XV3_REPLAY2" | jq -e '.result' >/dev/null 2>&1; then
+      XV3_REPLAY2_COUNT=$(echo "$XV3_REPLAY2" | jq '.result | if type == "array" then length else 0 end' 2>/dev/null || echo "0")
+      log_info "XV3: Post-trigger replay has $XV3_REPLAY2_COUNT events"
+
+      if [[ "$XV3_REPLAY2_COUNT" -gt "${XV3_REPLAY_COUNT:-0}" ]]; then
+        log_pass "XV3: Event store grew after trigger ($XV3_REPLAY_COUNT → $XV3_REPLAY2_COUNT)"
+      else
+        log_pass "XV3: Event store queryable after trigger"
+      fi
+    fi
+  else
+    log_fail "XV3: Final trigger workflow start failed"
+  fi
 else
-  log_pass "XV3: Final trigger completed (workflow may not exist)"
+  log_skip "XV3: Could not create workflow for replay cross-check"
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────

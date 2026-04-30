@@ -2523,28 +2523,36 @@ func runBridgeServer(cliCfg cliConfig) {
 	metrics := rpc.NewMetrics()
 	log.Println("Metrics initialized")
 
-	server, err := rpc.New(rpc.Config{
-		SocketPath:      cfg.Server.SocketPath,
-		RPCTransport:    cfg.Server.RPCTransport,
-		ListenAddr:      cfg.Server.ListenAddr,
-		Keystore:        ks,
-		Matrix:          matrixAdapter,
-		AIService:       ai.NewAIService(ks),
-		AIMaxConcurrent: 4,
-		BridgeManager:   bridgeManager,
-		BrowserJobs:     browserJobs,
-		Studio:          studioService,
-		AppService:      nil,
-		ProvisioningMgr: provisioningMgr,
-		SkillManager:    skillMgr,
-		EventBus:        eventBus,
-		HardeningStore:  hardeningStore,
-		DeviceStore:     deviceStore,
-		InviteStore:     inviteStore,
-		Metrics:         metrics,
-		MCPRouter:       mcpRouter,
-		Translator:      mcpTranslator,
-	})
+	var rpcCfg rpc.Config
+	rpcCfg.SocketPath = cfg.Server.SocketPath
+	rpcCfg.RPCTransport = cfg.Server.RPCTransport
+	rpcCfg.ListenAddr = cfg.Server.ListenAddr
+	rpcCfg.Keystore = ks
+	rpcCfg.Matrix = matrixAdapter
+	rpcCfg.AIService = ai.NewAIService(ks)
+	rpcCfg.AIMaxConcurrent = 4
+	rpcCfg.BridgeManager = bridgeManager
+	rpcCfg.BrowserJobs = browserJobs
+	rpcCfg.Studio = studioService
+	rpcCfg.AppService = nil
+	rpcCfg.ProvisioningMgr = provisioningMgr
+	rpcCfg.SkillManager = skillMgr
+	rpcCfg.EventBus = eventBus
+	rpcCfg.HardeningStore = hardeningStore
+	rpcCfg.DeviceStore = deviceStore
+	rpcCfg.InviteStore = inviteStore
+	rpcCfg.Metrics = metrics
+	rpcCfg.MCPRouter = mcpRouter
+	rpcCfg.Translator = mcpTranslator
+
+	if rolodexStore != nil && workflowOrchestrator != nil {
+		rpcCfg.SecretaryHandler = rpc.NewSecretaryHandler(secretary.NewRPCHandler(secretary.RPCHandlerConfig{
+			Orchestrator: workflowOrchestrator,
+			Store:        rolodexStore,
+		}))
+	}
+
+	server, err := rpc.New(rpcCfg)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

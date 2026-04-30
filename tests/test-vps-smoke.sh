@@ -103,7 +103,7 @@ detect_transport() {
 
 rpc_socket() {
   local method="$1"
-  local params="${2:-{}}"
+  local params="${2:-{\}}"
   if [ "$params" = "\{\}" ] || [ "$params" = "{}" ]; then
     params='{}'
   fi

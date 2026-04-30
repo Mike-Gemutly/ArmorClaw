@@ -329,10 +329,14 @@ func (s *Server) handlePIIStats(ctx context.Context, req *Request) (interface{},
 	return stats, nil
 }
 
-// getOrCreatePIIRequestManager gets or creates the PII request manager
+// getOrCreatePIIRequestManager returns the singleton PII request manager
+// initialized during Server creation. Falls back to creating a new one only
+// if the Server was constructed outside of New() (should not happen).
 func (s *Server) getOrCreatePIIRequestManager() *keystore.PIIRequestManager {
-	// For now, create a new manager each time
-	// In production, this would be stored on the Server struct
+	if s.piiRequestManager != nil {
+		return s.piiRequestManager
+	}
+	// Fallback: should not happen in normal operation
 	return keystore.NewPIIRequestManager(keystore.PIIRequestManagerConfig{
 		DefaultTTL: 5 * time.Minute,
 	})

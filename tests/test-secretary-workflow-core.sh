@@ -40,7 +40,7 @@ CREATED_WORKFLOW_IDS=()
 
 # HTTP RPC call via HTTPS to VPS bridge
 rpc_http() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   curl -ksS -X POST "https://${VPS_IP}:${BRIDGE_PORT}/api" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -50,13 +50,13 @@ rpc_http() {
 
 # Socket RPC call via SSH + socat
 rpc_socket() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   ssh_vps "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"auth\":\"${ADMIN_TOKEN}\",\"params\":$params}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock" 2>/dev/null
 }
 
 # Try HTTP first, fall back to socket
 rpc_call() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   local resp
   resp=$(rpc_http "$method" "$params")
   if [[ -z "$resp" ]]; then
@@ -256,22 +256,37 @@ else
   log_fail "W2: template creation failed"
 fi
 
-# Start workflow — secretary.start_workflow expects workflow_id param
-# Workflows are created via the orchestrator internally; we use a generated ID
+# Create workflow from template, then start it
 if [[ -n "$W2_TEMPLATE_ID" ]]; then
-  W2_WF_ID="wf-t3a-w2-$(date +%s)-$$"
-  W2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W2_WF_ID}\"}")
-  save_evidence "w2-start-workflow.json" "$W2_START_RESP"
+  W2_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${W2_TEMPLATE_ID}\"}")
+  save_evidence "w2-create-workflow.json" "$W2_CREATE_WF_RESP"
 
-  if assert_rpc_success "$W2_START_RESP"; then
-    log_pass "W2: start_workflow succeeded"
-    CREATED_WORKFLOW_IDS+=("$W2_WF_ID")
-    W2_WORKFLOW_ID="$W2_WF_ID"
+  W2_WF_ID=""
+  if assert_rpc_success "$W2_CREATE_WF_RESP"; then
+    W2_WF_ID=$(echo "$W2_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$W2_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$W2_WF_ID")
+      log_pass "W2: create_workflow succeeded (id=$W2_WF_ID)"
+    else
+      log_fail "W2: create_workflow returned no id"
+    fi
   else
-    log_fail "W2: start_workflow failed"
-    # The workflow might not exist in the store yet — try to get status
-    W2_START_ERR=$(echo "$W2_START_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
-    log_info "W2: start_workflow error: $W2_START_ERR"
+    log_fail "W2: create_workflow failed"
+  fi
+
+  # Start the workflow
+  if [[ -n "$W2_WF_ID" ]]; then
+    W2_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W2_WF_ID}\"}")
+    save_evidence "w2-start-workflow.json" "$W2_START_RESP"
+
+    if assert_rpc_success "$W2_START_RESP"; then
+      log_pass "W2: start_workflow succeeded"
+      W2_WORKFLOW_ID="$W2_WF_ID"
+    else
+      log_fail "W2: start_workflow failed"
+      W2_START_ERR=$(echo "$W2_START_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
+      log_info "W2: start_workflow error: $W2_START_ERR"
+    fi
   fi
 
   # Get workflow status
@@ -343,24 +358,41 @@ else
   log_fail "W3: 3-step template creation failed"
 fi
 
-# Start and advance through steps
+# Create and advance through steps
 if [[ -n "$W3_TEMPLATE_ID" ]]; then
-  W3_WF_ID="wf-t3a-w3-$(date +%s)-$$"
-  W3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W3_WF_ID}\"}")
-  save_evidence "w3-start-workflow.json" "$W3_START_RESP"
+  W3_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${W3_TEMPLATE_ID}\"}")
+  save_evidence "w3-create-workflow.json" "$W3_CREATE_WF_RESP"
 
-  if assert_rpc_success "$W3_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$W3_WF_ID")
-    W3_WORKFLOW_ID="$W3_WF_ID"
-    log_pass "W3: multi-step workflow started"
+  W3_WF_ID=""
+  if assert_rpc_success "$W3_CREATE_WF_RESP"; then
+    W3_WF_ID=$(echo "$W3_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$W3_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$W3_WF_ID")
+      log_pass "W3: create_workflow succeeded (id=$W3_WF_ID)"
+    else
+      log_fail "W3: create_workflow returned no id"
+    fi
   else
-    log_fail "W3: start_workflow failed"
-    W3_START_ERR=$(echo "$W3_START_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
-    log_info "W3: error: $W3_START_ERR"
+    log_fail "W3: create_workflow failed"
   fi
 
-  # Advance through steps
-  if [[ -n "$W3_WORKFLOW_ID" ]]; then
+  if [[ -n "$W3_WF_ID" ]]; then
+    W3_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W3_WF_ID}\"}")
+    save_evidence "w3-start-workflow.json" "$W3_START_RESP"
+
+    if assert_rpc_success "$W3_START_RESP"; then
+      W3_WORKFLOW_ID="$W3_WF_ID"
+      log_pass "W3: multi-step workflow started"
+    else
+      log_fail "W3: start_workflow failed"
+      W3_START_ERR=$(echo "$W3_START_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
+      log_info "W3: error: $W3_START_ERR"
+    fi
+  fi
+fi
+
+# Advance through steps
+if [[ -n "$W3_WORKFLOW_ID" ]]; then
     for STEP_ID in w3_s1 w3_s2 w3_s3; do
       W3_ADV_RESP=$(rpc_call "secretary.advance_workflow" "{\"workflow_id\":\"${W3_WORKFLOW_ID}\",\"step_id\":\"${STEP_ID}\"}")
       save_evidence "w3-advance-${STEP_ID}.json" "$W3_ADV_RESP"
@@ -381,7 +413,6 @@ if [[ -n "$W3_TEMPLATE_ID" ]]; then
       W3_FINAL_STATUS=$(echo "$W3_FINAL_RESP" | jq -r '.result.status // "unknown"' 2>/dev/null)
       log_info "W3: final workflow status = $W3_FINAL_STATUS"
     fi
-  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -407,18 +438,31 @@ if assert_rpc_success "$W4_CREATE_RESP"; then
   fi
 fi
 
-# Start workflow for blocker testing
+# Create and start workflow for blocker testing
 if [[ -n "$W4_TEMPLATE_ID" ]]; then
-  W4_WF_ID="wf-t3a-w4-$(date +%s)-$$"
-  W4_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W4_WF_ID}\"}")
-  save_evidence "w4-start-workflow.json" "$W4_START_RESP"
+  W4_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${W4_TEMPLATE_ID}\"}")
+  save_evidence "w4-create-workflow.json" "$W4_CREATE_WF_RESP"
 
-  if assert_rpc_success "$W4_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$W4_WF_ID")
-    W4_WORKFLOW_ID="$W4_WF_ID"
-    log_pass "W4: workflow started for blocker test"
+  W4_WF_ID=""
+  if assert_rpc_success "$W4_CREATE_WF_RESP"; then
+    W4_WF_ID=$(echo "$W4_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$W4_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$W4_WF_ID")
+    fi
+  fi
+
+  if [[ -n "$W4_WF_ID" ]]; then
+    W4_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W4_WF_ID}\"}")
+    save_evidence "w4-start-workflow.json" "$W4_START_RESP"
+
+    if assert_rpc_success "$W4_START_RESP"; then
+      W4_WORKFLOW_ID="$W4_WF_ID"
+      log_pass "W4: workflow started for blocker test"
+    else
+      log_fail "W4: start_workflow failed for blocker test"
+    fi
   else
-    log_fail "W4: start_workflow failed for blocker test"
+    log_fail "W4: create_workflow failed"
   fi
 fi
 
@@ -469,18 +513,31 @@ else
   log_fail "W5: template creation failed"
 fi
 
-# Start workflow
+# Create and start workflow
 if [[ -n "$W5_TEMPLATE_ID" ]]; then
-  W5_WF_ID="wf-t3a-w5-$(date +%s)-$$"
-  W5_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W5_WF_ID}\"}")
-  save_evidence "w5-start-workflow.json" "$W5_START_RESP"
+  W5_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${W5_TEMPLATE_ID}\"}")
+  save_evidence "w5-create-workflow.json" "$W5_CREATE_WF_RESP"
 
-  if assert_rpc_success "$W5_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$W5_WF_ID")
-    W5_WORKFLOW_ID="$W5_WF_ID"
-    log_pass "W5: workflow started (id=$W5_WF_ID)"
+  W5_WF_ID=""
+  if assert_rpc_success "$W5_CREATE_WF_RESP"; then
+    W5_WF_ID=$(echo "$W5_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$W5_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$W5_WF_ID")
+    fi
   else
-    log_fail "W5: start_workflow failed"
+    log_fail "W5: create_workflow failed"
+  fi
+
+  if [[ -n "$W5_WF_ID" ]]; then
+    W5_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${W5_WF_ID}\"}")
+    save_evidence "w5-start-workflow.json" "$W5_START_RESP"
+
+    if assert_rpc_success "$W5_START_RESP"; then
+      W5_WORKFLOW_ID="$W5_WF_ID"
+      log_pass "W5: workflow started (id=$W5_WF_ID)"
+    else
+      log_fail "W5: start_workflow failed"
+    fi
   fi
 fi
 

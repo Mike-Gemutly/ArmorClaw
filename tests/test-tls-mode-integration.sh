@@ -97,13 +97,13 @@ else
   log_info "S7: HTTP accepted (may be expected in some configs)"
 fi
 
-# ── Scenario 8: Localhost-over-SSH still HTTP ────────────────────────────────
-log_info "Scenario 8: Localhost SSH HTTP access..."
-LOCAL_HEALTH=$(ssh_vps "curl -sf -m 5 'http://localhost:${BRIDGE_PORT}/health'" 2>/dev/null || echo "")
+# ── Scenario 8: Localhost HTTPS access ────────────────────────────────
+log_info "Scenario 8: Localhost SSH HTTPS access..."
+LOCAL_HEALTH=$(ssh_vps "curl -sf -k -m 5 'https://localhost:${BRIDGE_PORT}/health'" 2>/dev/null || echo "")
 if [[ -n "$LOCAL_HEALTH" ]] && echo "$LOCAL_HEALTH" | jq -e '.status' >/dev/null 2>&1; then
-  log_pass "S8: Localhost HTTP access works"
+  log_pass "S8: Localhost HTTPS access works"
 else
-  log_fail "S8: Localhost HTTP access failed"
+  log_fail "S8: Localhost HTTPS access failed"
 fi
 
 # ── Scenario 9: QR v1 default (no TLS fields) ───────────────────────────────

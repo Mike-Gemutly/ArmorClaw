@@ -39,7 +39,7 @@ DOCKER_CONTAINERS=()
 # ── RPC helpers (dual-transport: HTTP first, socket fallback) ──────────────────
 
 rpc_http() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   curl -ksS -X POST "https://${VPS_IP}:${BRIDGE_PORT}/api" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
@@ -48,12 +48,12 @@ rpc_http() {
 }
 
 rpc_socket() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   ssh_vps "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"auth\":\"${ADMIN_TOKEN}\",\"params\":$params}' | socat - UNIX-CONNECT:/run/armorclaw/bridge.sock" 2>/dev/null
 }
 
 rpc_call() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-{\}}"
   local resp
   resp=$(rpc_http "$method" "$params")
   if [[ -z "$resp" ]]; then
@@ -192,50 +192,66 @@ fi
 
 # Start a workflow using the PII template — verify it blocks at PII gate
 if [[ -n "$WD1_TEMPLATE_ID" ]]; then
-  WD1_WF_ID="wf-t3b-wd1-$(date +%s)-$$"
-  WD1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${WD1_WF_ID}\"}")
-  save_evidence "wd1-start-workflow.json" "$WD1_START_RESP"
+  WD1_CREATE_WF_RESP=$(rpc_call "secretary.create_workflow" "{\"template_id\":\"${WD1_TEMPLATE_ID}\"}")
+  save_evidence "wd1-create-workflow.json" "$WD1_CREATE_WF_RESP"
 
-  if assert_rpc_success "$WD1_START_RESP"; then
-    CREATED_WORKFLOW_IDS+=("$WD1_WF_ID")
-    log_pass "WD1: workflow started"
-
-    # Poll for blocked status (PII gate should halt workflow)
-    WD1_BLOCKED=false
-    for _attempt in $(seq 1 5); do
-      sleep 2
-      WD1_GET_RESP=$(rpc_call "secretary.get_workflow" "{\"workflow_id\":\"${WD1_WF_ID}\"}")
-      WD1_STATUS=$(echo "$WD1_GET_RESP" | jq -r '.result.status // "unknown"' 2>/dev/null)
-      log_info "WD1: workflow status = $WD1_STATUS (attempt $_attempt)"
-
-      if [[ "$WD1_STATUS" == "blocked" ]]; then
-        WD1_BLOCKED=true
-        break
-      fi
-      # Also accept running — PII gate may be handled differently
-      if [[ "$WD1_STATUS" == "running" ]]; then
-        break
-      fi
-    done
-
-    save_evidence "wd1-workflow-status.json" "$WD1_GET_RESP"
-
-    if $WD1_BLOCKED; then
-      log_pass "WD1: workflow blocked at PII gate (status=blocked)"
+  WD1_WF_ID=""
+  if assert_rpc_success "$WD1_CREATE_WF_RESP"; then
+    WD1_WF_ID=$(echo "$WD1_CREATE_WF_RESP" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+    if [[ -n "$WD1_WF_ID" ]]; then
+      CREATED_WORKFLOW_IDS+=("$WD1_WF_ID")
+      log_pass "WD1: create_workflow succeeded (id=$WD1_WF_ID)"
     else
-      # Verify template has pii_refs to confirm PII structure is valid
-      WD1_GET_TPL=$(rpc_call "secretary.get_template" "{\"template_id\":\"${WD1_TEMPLATE_ID}\"}")
-      WD1_PII_REFS=$(echo "$WD1_GET_TPL" | jq -r '.result.pii_refs | length' 2>/dev/null || echo "0")
-      if [[ "$WD1_PII_REFS" -ge 1 ]]; then
-        log_pass "WD1: template has $WD1_PII_REFS PII refs — PII structure valid"
-      else
-        log_fail "WD1: template missing PII refs after creation"
-      fi
+      log_fail "WD1: create_workflow returned no id"
     fi
   else
-    log_fail "WD1: start_workflow failed"
-    WD1_ERR=$(echo "$WD1_START_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
-    log_info "WD1: error: $WD1_ERR"
+    log_fail "WD1: create_workflow failed"
+  fi
+
+  if [[ -n "$WD1_WF_ID" ]]; then
+    WD1_START_RESP=$(rpc_call "secretary.start_workflow" "{\"workflow_id\":\"${WD1_WF_ID}\"}")
+    save_evidence "wd1-start-workflow.json" "$WD1_START_RESP"
+
+    if assert_rpc_success "$WD1_START_RESP"; then
+      log_pass "WD1: workflow started"
+
+      # Poll for blocked status (PII gate should halt workflow)
+      WD1_BLOCKED=false
+      for _attempt in $(seq 1 5); do
+        sleep 2
+        WD1_GET_RESP=$(rpc_call "secretary.get_workflow" "{\"workflow_id\":\"${WD1_WF_ID}\"}")
+        WD1_STATUS=$(echo "$WD1_GET_RESP" | jq -r '.result.status // "unknown"' 2>/dev/null)
+        log_info "WD1: workflow status = $WD1_STATUS (attempt $_attempt)"
+
+        if [[ "$WD1_STATUS" == "blocked" ]]; then
+          WD1_BLOCKED=true
+          break
+        fi
+        # Also accept running — PII gate may be handled differently
+        if [[ "$WD1_STATUS" == "running" ]]; then
+          break
+        fi
+      done
+
+      save_evidence "wd1-workflow-status.json" "$WD1_GET_RESP"
+
+      if $WD1_BLOCKED; then
+        log_pass "WD1: workflow blocked at PII gate (status=blocked)"
+      else
+        # Verify template has pii_refs to confirm PII structure is valid
+        WD1_GET_TPL=$(rpc_call "secretary.get_template" "{\"template_id\":\"${WD1_TEMPLATE_ID}\"}")
+        WD1_PII_REFS=$(echo "$WD1_GET_TPL" | jq -r '.result.pii_refs | length' 2>/dev/null || echo "0")
+        if [[ "$WD1_PII_REFS" -ge 1 ]]; then
+          log_pass "WD1: template has $WD1_PII_REFS PII refs — PII structure valid"
+        else
+          log_fail "WD1: template missing PII refs after creation"
+        fi
+      fi
+    else
+      log_fail "WD1: start_workflow failed"
+      WD1_ERR=$(echo "$WD1_START_RESP" | jq -r '.error.message // "unknown"' 2>/dev/null)
+      log_info "WD1: error: $WD1_ERR"
+    fi
   fi
 fi
 

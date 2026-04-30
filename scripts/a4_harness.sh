@@ -53,7 +53,7 @@ for suite_name in "${SUITE_LIST[@]}"; do
   fi
 
   log_info "A4: Running suite '${suite_name}' (${test_file})..."
-  RUN_OUTPUT=$(ssh_vps "cd ${REMOTE_DIR} && bash ./${test_file}" 2>/dev/null)
+  RUN_OUTPUT=$(cd "${_REPO_ROOT}" && bash "tests/${test_file}" 2>&1)
   RUN_EXIT=$?
 
   _contract_save "a4_${suite_name}_output.txt" "${RUN_OUTPUT}"

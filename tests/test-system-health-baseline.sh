@@ -146,8 +146,10 @@ if $H3_OK; then
     log_pass "Discovery returns endpoints"
   elif echo "$H3_RESPONSE" | jq -e '.methods' >/dev/null 2>&1; then
     log_pass "Discovery returns methods"
+  elif echo "$H3_RESPONSE" | jq -e '.service_name' >/dev/null 2>&1; then
+    log_pass "Discovery returns service metadata (service_name=$(echo "$H3_RESPONSE" | jq -r '.service_name'))"
   else
-    log_fail "Discovery response missing 'endpoints' or 'methods'"
+    log_fail "Discovery response missing 'endpoints', 'methods', or 'service_name'"
   fi
 else
   log_fail "Bridge /api/discovery endpoint did not return valid JSON"

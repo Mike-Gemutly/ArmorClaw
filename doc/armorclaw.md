@@ -3664,6 +3664,33 @@ ARMORCLAW_HOSTNAME=myserver.local sudo bash deploy/deploy-selfhosted.sh --auto
 
 **mDNS service types:** `_armorclaw._tcp` and `_openclaw-gw._tcp` (both advertised for discovery).
 
+### TLS Mode Detection
+
+ArmorClaw derives TLS mode from deployment topology:
+
+| Deployment | TLS Mode | Trust Type | bridge.status.tls.health |
+|------------|----------|------------|--------------------------|
+| Native (Unix socket) | `none` | `""` | `ok` |
+| Sentinel + self-signed cert | `private` | `self_signed` | `ok` / `degraded` |
+| Sentinel + CA-issued cert | `public` | `public_ca` | `ok` / `degraded` |
+
+**Shared-cert model**: Caddy reverse proxy and Bridge read the same certificate files from `/etc/armorclaw/certs/server.crt` and `server.key`. When both files are present, `bridge.status.tls.cert_source == "shared_cert"` and `health == "ok"`. If the cert file is missing, `cert_source == "proxy_only"` and `health == "degraded"` — the mode stays stable (topology doesn't change due to health).
+
+**Fingerprint format**: Standard SHA-256 of DER-encoded certificate bytes (64 lowercase hex characters). Operators upgrading from pre-TLS versions should expect different fingerprint values than the old signature truncation method.
+
+**Native mode zero-value semantics**: `bridge.status.tls` is always present in the RPC response. In native mode: `mode="none"`, `fingerprint_sha256=""`, `trust_type=""`, `expires_at=0`, `san_includes_public_ip=false`. Scripts can use simple string/numeric checks without null handling.
+
+**QR payload versioning**: `/qr/config` emits v1 by default (no TLS fields). Set `ARMORCLAW_QR_VERSION=2` to enable v2 emission with `tls_mode`, `tls_fingerprint_sha256` (signed), `tls_trust_hint`, and `cert_expires_at` (unsigned informational metadata).
+
+**/.well-known**: `/.well-known/matrix/client` includes `com.armorclaw.tls_mode` field reflecting the current TLS mode. In self-hosted/private topology, both `/.well-known` and API endpoints (`/api`, `/discover`, `/qr/config`) resolve to the same VPS host with Caddy routing by path.
+
+**TLS environment variables**:
+- `ARMORCLAW_TLS_MODE` — Override TLS mode (precedence over auto-detection)
+- `ARMORCLAW_PUBLIC_IP` — External IP to include in certificate SANs
+- `ARMORCLAW_QR_VERSION` — Set to `2` for QR v2 payload with TLS fields
+
+**Client-side note**: ArmorChat's `QRConfigPayload` and `DiscoveredServer` models (separate codebase) do not yet consume TLS metadata fields. Server-side changes produce v2 QR payloads and extended well-known responses; ArmorChat needs updating to consume these.
+
 ---
 
 ## Testing & Verification
@@ -3718,10 +3745,11 @@ A comprehensive bash-based test harness covering **13 major ArmorClaw subsystems
 **Running the Full Harness**:
 
 ```bash
-# Run all Tier A scripts (requires VPS with bridge running)
+# Run all Tier A scripts (requires VPS with bridge running) — includes TLS verification
 for f in tests/test-eventbus-streaming.sh tests/test-trust-layer.sh \
          tests/test-system-health-baseline.sh tests/test-secretary-workflow-core.sh \
-         tests/test-email-pipeline.sh; do
+         tests/test-email-pipeline.sh \
+         tests/test-tls-restart-safety.sh tests/test-tls-mode-integration.sh; do
   bash "$f"
 done
 
@@ -3740,9 +3768,15 @@ for f in tests/test-cross-*.sh; do bash "$f"; done
 for f in tests/test-*.sh tests/lib/*.sh; do bash -n "$f" && echo "OK: $f"; done
 ```
 
+**TLS suite integration**: TLS tests are also available through the Plan A harness via:
+```bash
+bash scripts/a4_harness.sh tls-mode
+bash scripts/a4_harness.sh tls-restart
+```
+
 **Evidence and Results**:
 
-- **Evidence path**: `.sisyphus/evidence/full-system-{task-name}/`
+- **Evidence path**: `.sisyphus/evidence/armorclaw/` (Plan A pipeline); `.sisyphus/evidence/tls/` (TLS verification)
 - **Plan file**: `.sisyphus/plans/full-system-test-harness.md`
 - **Full harness wall-clock target**: ≤ 10 minutes
 
@@ -3778,7 +3812,7 @@ bash tests/ssh/run_all_tests.sh --all --verbose
 
 ### Test Results Location
 
-- **Full System Harness Evidence**: `.sisyphus/evidence/full-system-{task-name}/`
+- **Full System Harness Evidence**: `.sisyphus/evidence/armorclaw/` (Plan A pipeline); `.sisyphus/evidence/tls/` (TLS verification)
 - **SSH Evidence Directory**: `.sisyphus/evidence/`
 - **Summary File**: `.sisyphus/evidence/IMPLEMENTATION_SUMMARY.md`
 - **JSON Output**: `task-N-results.json`

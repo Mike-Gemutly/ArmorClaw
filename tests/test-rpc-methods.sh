@@ -68,7 +68,7 @@ echo "✅ Socket created at $SOCKET_PATH"
 
 rpc_call() {
     local method="$1"
-    local params="${2:-{}}"
+    local params="${2:-{\}}"
     local timeout="${3:-5}"
     
     timeout "$timeout" bash -c \

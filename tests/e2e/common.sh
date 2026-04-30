@@ -217,7 +217,7 @@ test_summary() {
 
 rpc_call() {
     local method="$1"
-    local params="${2:-{}}"
+    local params="${2:-{\}}"
     local socket="${3:-$BRIDGE_SOCKET}"
     local timeout="${4:-5}"
 

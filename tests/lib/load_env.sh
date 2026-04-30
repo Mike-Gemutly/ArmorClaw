@@ -13,8 +13,9 @@
 
 # ── Source .env (matching test-vps-smoke.sh pattern) ──────────────────────────
 set -a
-# Try repo-root .env first, then caller-directory relative
-source "$(dirname "$0")/../../.env" 2>/dev/null || true
+# Use _REPO_ROOT when sourced from scripts/lib/contract.sh, fall back to $0-relative
+_ROOT="${_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}"
+source "${_ROOT}/.env" 2>/dev/null || true
 source .env 2>/dev/null || true
 set +a
 
@@ -30,7 +31,7 @@ export ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 export VPS_IP VPS_USER BRIDGE_PORT MATRIX_PORT SSH_KEY_PATH
 
 # ── Source common.sh AFTER .env so its defaults don't override ────────────────
-COMMON_SH="$(dirname "$0")/../e2e/common.sh"
+COMMON_SH="${_ROOT}/tests/e2e/common.sh"
 if [[ -f "$COMMON_SH" ]]; then
   source "$COMMON_SH"
 else
