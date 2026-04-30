@@ -28,7 +28,7 @@ The push subsystem delivers mobile and browser notifications to ArmorClaw users.
 - **FCM** (Firebase Cloud Messaging) for Android and iOS via Google's infrastructure
 - **APNS** (Apple Push Notification Service) for iOS devices
 - **Web Push** (VAPID) for browser notifications using ECDSA P-256 key pairs
-- **Unified Push** as an abstract platform identifier
+- **Unified Push** as an abstract platform identifier (constant defined, no provider implementation)
 
 **How it works:**
 

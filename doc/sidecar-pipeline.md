@@ -387,7 +387,7 @@ The Python sidecar extends the document pipeline with Microsoft Office legacy fo
 | **Threshold** | `_THRESHOLD_BYTES = 10 * 1024 * 1024` (10 MB) |
 | **TTL** | `MAX_REQUESTS = 50` before graceful shutdown |
 | **Version** | `SERVER_VERSION = "1.0.0"` in `HealthCheck` response |
-| **Socket** | `SIDECAR_SOCKET` env var (default: `/run/armorclaw/sidecar-office.sock`) |
+| **Socket** | `SIDECAR_SOCKET` env var (default: `/run/armorclaw/office-sidecar/sidecar-office.sock`) |
 
 #### Token Interceptor (`sidecar-python/interceptor.py`)
 

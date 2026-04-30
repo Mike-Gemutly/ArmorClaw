@@ -84,7 +84,7 @@ The admin panel talks to the Bridge through an HTTP proxy that forwards requests
 | | |
 |---|---|
 | **Location** | `applications/ArmorTerminal/` |
-| **Tech stack** | Android (Java), traditional Android SDK, Matrix SDK, OkHttp, Retrofit, Firebase Cloud Messaging |
+| **Tech stack** | Android (Kotlin), traditional Android SDK, OkHttp, Retrofit |
 | **Min SDK** | 26 (Android 8.0) |
 | **Target SDK** | 34 |
 | **Status** | In development |

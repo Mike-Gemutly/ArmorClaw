@@ -44,6 +44,8 @@ Sent by ArmorChat when the user approves or rejects.
 **Event Type**: `app.armorclaw.email_approval_response`
 **Classification**: Transient message event (NOT state event)
 
+> **Transport Note**: While this event type is defined for Matrix, the Bridge actually processes approval responses via JSON-RPC methods (`approve_email`, `deny_email`). The Matrix event type serves as the conceptual schema for the ArmorChat UI layer.
+
 ```json
 {
   "type": "app.armorclaw.email_approval_response",

@@ -244,7 +244,7 @@ armorclaw-omo/
 ├── bridge/                    # Go Bridge orchestrator (67 packages)
 │   ├── cmd/bridge/main.go    # Primary entry point (3,538 lines)
 │   ├── pkg/                  # Public packages
-│   │   ├── rpc/              # JSON-RPC 2.0 server (88 registered methods)
+│   │   ├── rpc/              # JSON-RPC 2.0 server (93 registered methods)
 │   │   ├── keystore/         # SQLCipher encrypted storage
 │   │   ├── pii/              # BlindFill engine
 │   │   ├── studio/           # Agent container management
@@ -393,7 +393,7 @@ armorclaw-omo/
 
 The Go Bridge is the **central orchestrator** that coordinates between the host system and isolated AI agent containers. It provides:
 - Secure credential management via SQLCipher
-- JSON-RPC 2.0 API (88 registered methods across 18 domains)
+- JSON-RPC 2.0 API (93 registered methods across 18 domains)
 - Matrix integration for encrypted messaging
 - Browser automation job queue
 - Skill execution with allowlist control
@@ -430,7 +430,7 @@ type Server struct {
     metrics           *Metrics
     
     // Network / lifecycle
-    handlers          map[string]HandlerFunc  // 88 registered methods
+    handlers          map[string]HandlerFunc  // 93 registered methods
     listener          net.Listener
     shutdownCh        chan struct{}
     rpcTransport      string
